@@ -3,9 +3,9 @@
 // overrides and the base's NEWWORLD; a cell's .wcb is byte for byte the same
 // whatever other cells and overrides the set holds (the override question of
 // docs/landscape-plan.md, Д3, tasks 2 and 2b); a second cook rewrites nothing
-// unchanged, and two cooks into the same files at once both finish; malformed,
-// stale and mismatched files are rejected; and the manifest cases carried over
-// from task 1. Needs GOTHIC_DIR and a ready base for NEWWORLD.
+// unchanged, and two cooks into the same files at once both finish; v3
+// hierarchies verify byte for byte, v2 still reads, and malformed, stale and
+// mismatched files are rejected. Needs GOTHIC_DIR and a ready base for NEWWORLD.
 
 #include "commandline.h"
 #include "gothicglb.h"
@@ -469,6 +469,53 @@ uint64_t get64(const std::vector<uint8_t>& bytes, size_t at) {
   return uint64_t(get32(bytes,at)) | (uint64_t(get32(bytes,at+4))<<32);
   }
 
+void hierarchyRoundTrip(const fs::path& root) {
+  const auto dir=root/"hierarchy";
+  writeWorldChunks(selectionMesh(),fixtureSource,dir);
+  cookWorldChunks(dir);
+  const auto path=dir/"chunks/0_0.wcb";
+  const auto bytes=fileBytes(path);
+  require(get32(bytes,4)==3 && get32(bytes,124)==10,"the cook must write v3 with ten sections");
+  const auto chunk=CookedChunk::open(bytes,path.string());
+  const auto hierarchy=chunk.hierarchy();
+  require(hierarchy.vertices.size()==3 && hierarchy.clusters.size()==1 && hierarchy.groups.size()==1 &&
+          hierarchy.vertexIndices.size()==3 && hierarchy.indices.size()==3,"a single triangle's cooked hierarchy");
+  require(verifyCookedWorld(dir,{},{},true).empty(),"the v3 hierarchy must match a fresh build");
+
+  constexpr size_t baseSections=5, hierarchyDirectory=baseSections*wcb::EntrySize;
+  constexpr size_t strings=wcb::HeaderSize+4*wcb::EntrySize, indices=wcb::HeaderSize+7*wcb::EntrySize;
+  auto changed=bytes;
+  const auto firstIndex=size_t(get64(bytes,indices+16));
+  // A cyclic permutation leaves the same triangle and is readable, but must fail a byte comparison.
+  changed[firstIndex]   = bytes[firstIndex+1];
+  changed[firstIndex+1] = bytes[firstIndex+2];
+  changed[firstIndex+2] = bytes[firstIndex];
+  gothicglb::writeFile(path,changed.data(),changed.size());
+  (void)CookedChunk::read(path,true);
+  require(verifyCookedWorld(dir,{},{},true).find("cluster hierarchy indices")!=std::string::npos,
+          "verification must report which hierarchy section changed");
+  gothicglb::writeFile(path,bytes.data(),bytes.size());
+
+  auto legacy=bytes;
+  legacy.resize(size_t(get64(bytes,strings+16)+get64(bytes,strings+24)));
+  const auto newSections=legacy.begin()+wcb::HeaderSize+baseSections*wcb::EntrySize;
+  legacy.erase(newSections,newSections+hierarchyDirectory);
+  for(size_t i=0;i<baseSections;++i) {
+    const size_t at=wcb::HeaderSize+i*wcb::EntrySize+16;
+    put64(legacy,at,get64(legacy,at)-hierarchyDirectory);
+    }
+  put32(legacy,4,2);
+  put32(legacy,124,baseSections);
+  put64(legacy,16,legacy.size());
+  const auto old=CookedChunk::open(legacy,"legacy.wcb");
+  const auto oldHierarchy=old.hierarchy();
+  require(old.version()==2 && oldHierarchy.vertices.empty() && oldHierarchy.clusters.empty() &&
+          oldHierarchy.groups.empty() && oldHierarchy.vertexIndices.empty() && oldHierarchy.indices.empty(),
+          "the reader must accept v2 without a hierarchy");
+  require(differingFields(chunk,old).empty(),"v2 keeps the same positions, features, triangles and materials");
+  std::puts("Cluster hierarchy: v3 round trip and byte verification; a v2 chunk reads without a hierarchy");
+  }
+
 void rejections(const fs::path& root) {
   const auto dir=root/"stale";
   fs::copy(root/"chunks",dir,fs::copy_options::recursive);
@@ -498,13 +545,14 @@ void rejections(const fs::path& root) {
   expectThrows(open(bytes),{"header","version "+std::to_string(wcb::Version+1)},"another version");
   bytes=good;
   put32(bytes,4,1);
-  expectThrows(open(bytes),{"header","version 1, this reader reads 2"},"a version 1 .wcb, with rank and resolved ids");
+  expectThrows(open(bytes),{"header","version 1"},"a version 1 .wcb, with rank and resolved ids");
   bytes=good;
   put64(bytes,triangles+16,(good.size()+31)/16*16);
   expectThrows(open(bytes),{"triangles","past the end of the file"},"a section past the end of the file");
   bytes=good;
-  put32(bytes,strings+8,get32(good,strings+8)+1); // the last section: starts inside the file, ends one byte past it
-  put64(bytes,strings+24,get32(good,strings+24)+1ull);
+  const auto length=good.size()-get64(good,strings+16)+1;
+  put32(bytes,strings+8,uint32_t(length));
+  put64(bytes,strings+24,length);
   expectThrows(open(bytes),{"strings","past the end of the file"},"a section that ends past the end of the file");
   bytes=good;
   put32(bytes,positions+8,get32(good,positions+8)+1);
@@ -727,6 +775,7 @@ int main() {
     selectionFixtures(temporary.path);
     chunkFixtures(temporary.path);
     editedOverride(temporary.path);
+    hierarchyRoundTrip(temporary.path);
     rejections(temporary.path);
     indexRejections(temporary.path);
     manifestCases(temporary.path);

@@ -9,6 +9,8 @@
 //     for the cell's full triangle list and for every third triangle reversed,
 //     and the counters show which path ran.
 //   - Every fallback gives the GLB result and its log line.
+//   - The catalogue reader returns the same v3 graph as a direct build from
+//     the GLB and skips it when disabled.
 //   - Two threads reading at once give the single-thread result.
 //   - The cook rewrites a .wcb whose bytes changed at the same length.
 // Needs GOTHIC_DIR and a ready base for NEWWORLD.
@@ -16,6 +18,7 @@
 #include "commandline.h"
 #include "gothicglb.h"
 #include "resources.h"
+#include "worldchunkcatalogue.h"
 #include "worldchunkcook.h"
 #include "worldchunk_fixtures.h"
 #include "worldchunk_strip.h"
@@ -27,7 +30,9 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -63,6 +68,17 @@ void setCookedPath(bool on) {
     unsetenv("OPENGOTHIC_WCB");
   else
     setenv("OPENGOTHIC_WCB","0",1);
+#endif
+  }
+
+void setHierarchyPath(bool on) {
+#ifdef _WIN32
+  _putenv_s("OPENGOTHIC_CLUSTER_LOD",on ? "" : "0");
+#else
+  if(on)
+    unsetenv("OPENGOTHIC_CLUSTER_LOD");
+  else
+    setenv("OPENGOTHIC_CLUSTER_LOD","0",1);
 #endif
   }
 
@@ -151,6 +167,98 @@ Loaded loadWorld(const fs::path& dir, const fs::path& over, bool cooked) {
     std::reverse(filtered.begin(),filtered.end());
     }
   return out;
+  }
+
+template<class T>
+bool sameBytes(std::span<const T> read, const std::vector<T>& built) {
+  return read.size()==built.size() && (read.empty() || std::memcmp(read.data(),built.data(),read.size_bytes())==0);
+  }
+
+void hierarchyRead(const fs::path& root) {
+  LogCapture log;
+  const auto dir=root/"hierarchy";
+  auto mesh=stripMesh();
+  // Give one corner a feature already used at another position. Its other
+  // corners at this position keep their original feature.
+  mesh.polygons.feature_indices[3]=mesh.polygons.feature_indices[1];
+  writeWorldChunks(mesh,fixtureSource,dir);
+  cookWorldChunks(dir);
+  constexpr size_t cell=1;
+  const auto plain=loadWorld(dir,{},false);
+  auto ordinals=plain.full[cell];
+  std::sort(ordinals.begin(),ordinals.end());
+  const auto glb=plain.source().read(cell,ordinals);
+  require(!glb.clusterHierarchy,"a GLB read has no cluster hierarchy");
+
+  std::vector<ClusterLod::Vertex> vertices;
+  std::vector<ClusterLod::Triangle> triangles;
+  std::vector<wcb::VertexRef> refs;
+  std::map<std::pair<uint32_t,uint32_t>,uint32_t> pairs;
+  std::map<uint32_t,uint32_t> materials;
+  const auto& polygons=glb.mesh.polygons;
+  for(size_t i=0;i<ordinals.size();++i) {
+    ClusterLod::Triangle triangle {};
+    triangle.material=materials.try_emplace(polygons.material_indices[i],uint32_t(materials.size())).first->second;
+    for(size_t c=0;c<3;++c) {
+      const auto p=polygons.vertex_indices[3*i+c], f=polygons.feature_indices[3*i+c];
+      const auto [it,inserted]=pairs.try_emplace({p,f},uint32_t(vertices.size()));
+      if(inserted) {
+        const auto& position=glb.mesh.vertices[p];
+        const auto& feature=glb.mesh.features[f];
+        const auto light=feature.light;
+        const auto rgba=(light&0xff00ff00u) | ((light&0x00ff0000u)>>16) | ((light&0x000000ffu)<<16);
+        vertices.push_back({{position.x,position.y,position.z},{feature.normal.x,feature.normal.y,feature.normal.z},
+                            {feature.texture.x,feature.texture.y},rgba});
+        refs.push_back({p,f});
+        }
+      triangle.vertices[c]=it->second;
+      }
+    triangles.push_back(triangle);
+    }
+  require(vertices.size()>glb.mesh.vertices.size() && materials.size()==2,
+          "the hierarchy fixture must have split features and two materials");
+  const auto direct=ClusterLod::build(vertices,triangles,std::vector<uint8_t>(vertices.size()));
+
+  const auto manifest=readWorldChunkManifest(dir);
+  auto start=[&] {
+    ChunkTable table;
+    startWorldChunks(dir,{},manifest,table,true);
+    require(table.source && table.source->catalogue(),"the cooked hierarchy fixture must start from its catalogue");
+    return table.source;
+    };
+  setHierarchyPath(true);
+  const auto source=start();
+  source->cooked().setResident(cell,true);
+  const auto cooked=source->readLandscape(cell);
+  require(source->reads().cooked==1 && cooked.clusterHierarchy && cooked.clusterHierarchy->version()==3,
+          "the game's catalogue reader must return the v3 hierarchy from the .wcb");
+  require(source->cooked().clusterHierarchy(cell)==cooked.clusterHierarchy,"the resident cell must retain its graph");
+  const auto actual=cooked.clusterHierarchy->hierarchy();
+  require(sameBytes(actual.vertices,refs) && sameBytes(actual.vertexIndices,direct.vertexIndices) &&
+          sameBytes(actual.indices,direct.indices) && sameBytes(actual.clusters,direct.clusters) &&
+          sameBytes(actual.groups,direct.groups),"the catalogue hierarchy must equal a direct build from the GLB");
+  source->cooked().setResident(cell,false);
+  require(!source->cooked().clusterHierarchy(cell),"the evicted cell must release its graph");
+
+  // Corrupt a hierarchy reference, leaving the level 0 arrays and directory intact.
+  const auto path=dir/"chunks/1_0.wcb";
+  auto bytes=fileBytes(path);
+  const auto refsAt=size_t(wcb::le64(bytes.data()+wcb::HeaderSize+9*wcb::EntrySize+16));
+  put32(bytes,refsAt,0xffffffffu);
+  writeBytes(path,bytes);
+  setHierarchyPath(false);
+  const auto disabled=start();
+  const auto skipped=disabled->readLandscape(cell);
+  setHierarchyPath(true);
+  require(disabled->reads().cooked==1 && !skipped.clusterHierarchy && compareReads(cooked,skipped).empty(),
+          "the switched-off hierarchy must be skipped while the cell still comes from its .wcb");
+  const auto recovered=source->readLandscape(cell);
+  require(source->reads().glb==1 && !recovered.clusterHierarchy && compareReads(cooked,recovered).empty(),
+          "a corrupt hierarchy must fall back to the GLB");
+  const auto message=log.take();
+  require(message.find("1_0.wcb")!=std::string::npos && message.find("the cell reads its GLB")!=std::string::npos &&
+          message.find("vertex")!=std::string::npos,"the fallback log must name the .wcb and the bad vertex reference");
+  std::puts("Cluster hierarchy: catalogue matches a direct GLB build, switches off, and diagnoses bad references");
   }
 
 struct Outcome {
@@ -715,6 +823,7 @@ int main() {
   TemporaryDirectory temporary;
   try {
     fs::create_directories(temporary.path);
+    hierarchyRead(temporary.path);
     fixtureSets(temporary.path);
     overrideDirectory(temporary.path);
     fallbacks(temporary.path);

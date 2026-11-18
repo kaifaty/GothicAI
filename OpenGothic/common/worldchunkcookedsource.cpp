@@ -216,6 +216,7 @@ void CookedChunkSource::load(const fs::path& dir, const fs::path& overrideDir, c
       cells.push_back(cell.id);
     set = {path,hash,manifest.source,files.size(),std::move(first),dir,overrideDir};
     index = std::move(read);
+    configureClusterLod(true);
     Tempest::Log::i("[world-chunks] index ",path.string(),": ",uint64_t(files.size()-stale)," of ",
                     uint64_t(files.size())," cells read from their .wcb when it is there (OPENGOTHIC_WCB=0 turns this off)");
     }
@@ -231,6 +232,32 @@ void CookedChunkSource::loadCatalogue(CookedIndex validated, CookedSet loaded, c
     cells.push_back(cell.id);
   set = std::move(loaded);
   index = std::move(validated);
+  configureClusterLod(true);
+  }
+
+void CookedChunkSource::configureClusterLod(bool enabled) const {
+  const auto* value = std::getenv("OPENGOTHIC_CLUSTER_LOD");
+  const std::string_view flag = value!=nullptr ? value : "";
+  readHierarchy = flag=="1" || (flag!="0" && enabled);
+  residentHierarchies.resize(readHierarchy ? cells.size() : 0);
+  }
+
+void CookedChunkSource::setResident(size_t cell, bool resident) const {
+  if(residentHierarchies.empty())
+    return;
+  std::lock_guard lock(residencyMutex);
+  auto& state = residentHierarchies[cell];
+  if(bool(state.generation%2)!=resident) {
+    ++state.generation;
+    state.chunk.reset();
+    }
+  }
+
+std::shared_ptr<const CookedChunk> CookedChunkSource::clusterHierarchy(size_t cell) const {
+  if(residentHierarchies.empty())
+    return {};
+  std::lock_guard lock(residencyMutex);
+  return residentHierarchies[cell].chunk;
   }
 
 WorldChunkMesh CookedChunkSource::read(size_t cell, std::span<const uint32_t> sources, bool currentFile,
@@ -248,14 +275,43 @@ WorldChunkMesh CookedChunkSource::readLandscape(size_t cell, std::span<const uin
 WorldChunkMesh CookedChunkSource::readCell(size_t cell, std::span<const uint32_t> sources, const Landscape* landscape,
                                            bool currentFile, const World& world,
                                            const std::function<WorldChunkMesh()>& glb) const {
+  uint64_t generation = 0;
+  if(!residentHierarchies.empty()) {
+    std::lock_guard lock(residencyMutex);
+    auto& state = residentHierarchies[cell];
+    if(currentFile) {
+      state.generation += 2;
+      state.chunk.reset();
+      }
+    generation = state.generation;
+    }
+  const auto retain = [&](std::shared_ptr<const CookedChunk> chunk) {
+    if(generation%2==0)
+      return;
+    std::lock_guard lock(residencyMutex);
+    auto& state = residentHierarchies[cell];
+    if(state.generation==generation && (!chunk || states[cell].load()!=Glb))
+      state.chunk = std::move(chunk);
+    };
   if(!currentFile && index) {
     const auto start = Clock::now();
     if(auto mesh = readCooked(cell,sources,landscape,world)) {
       cookedNs += nanoseconds(start);
       ++cookedReads;
+      retain(mesh->clusterHierarchy);
+      if(mesh->clusterHierarchy) {
+        if(!loggedHierarchy.test_and_set()) {
+          auto path = world.glb.path;
+          path.replace_extension(".wcb");
+          const auto graph = mesh->clusterHierarchy->hierarchy();
+          Tempest::Log::i("[cluster-lod] read ",path.string()," (v3): ",uint64_t(graph.clusters.size()),
+                          " clusters, ",uint64_t(graph.groups.size())," groups");
+          }
+        }
       return std::move(*mesh);
       }
     }
+  retain({});
   const auto start = Clock::now();
   ++glbReads;
   std::optional<WorldChunkMesh> mesh;
@@ -310,11 +366,14 @@ std::optional<WorldChunkMesh> CookedChunkSource::readCooked(size_t cell, std::sp
       throw std::runtime_error(world.glb.path.string()+" had "+std::to_string(world.glb.size)+
                                " bytes at world load, the index lists the cell with a GLB of "+
                                std::to_string(entry.glbSize)+" bytes");
-    const auto chunk = CookedChunk::read(path);
+    auto chunk = CookedChunk::read(path,readHierarchy);
     const auto name = path.filename().string();
     checkCookedCell(chunk,cell,cells[cell],set.source,*index,name);
     world.glb.verify();
-    return readMesh(chunk,cell,sources,landscape,world,name);
+    auto mesh = readMesh(chunk,cell,sources,landscape,world,name);
+    if(readHierarchy && chunk.version()==wcb::Version)
+      mesh.clusterHierarchy = std::make_shared<const CookedChunk>(std::move(chunk));
+    return mesh;
     }
   catch(const SourceError&) {
     throw;
@@ -338,8 +397,13 @@ ChunkReadCounts CookedChunkSource::counts() const {
   }
 
 size_t CookedChunkSource::memoryBytes() const {
+  std::lock_guard lock(residencyMutex);
+  size_t hierarchyBytes = residentHierarchies.capacity()*sizeof(ResidentHierarchy);
+  for(const auto& state:residentHierarchies)
+    if(state.chunk)
+      hierarchyBytes += sizeof(CookedChunk)+state.chunk->byteSize();
   return (index ? index->byteSize()+index->name().capacity() : 0)+set.source.world.capacity()+
          (set.index.native().capacity()+set.dir.native().capacity()+set.overrideDir.native().capacity())*
          sizeof(fs::path::value_type)+set.stale.capacity()+
-         cells.capacity()*sizeof(ChunkId)+(states ? cells.size()*sizeof(std::atomic<uint8_t>) : 0);
+         cells.capacity()*sizeof(ChunkId)+(states ? cells.size()*sizeof(std::atomic<uint8_t>) : 0)+hierarchyBytes;
   }

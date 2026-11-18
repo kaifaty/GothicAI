@@ -3,6 +3,12 @@
 # (CMakeLists.txt), content-convert (scripts/convert) and the standalone storygraph (ai_bridge/storygraph): a source
 # added to one copy only once broke the others' link. Outside BaseImport.cmake, since that file is a base format input
 # (BaseFormat.cmake): a runtime source or a flag must not change the base fingerprint.
+include(${CMAKE_CURRENT_LIST_DIR}/ClusterLod.cmake)
+target_link_libraries(gothic-base-runtime PRIVATE gothic-cluster-lod)
+# Edited GLBs can contain node transforms. Keep contraction off when decoding
+# the positions and attributes that are fed to the hierarchy builder.
+set_property(SOURCE "${BASE_ROOT}/common/worldchunksruntime.cpp" "${BASE_ROOT}/common/gltfmesh.cpp"
+  APPEND PROPERTY COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/fp:precise,-ffp-contract=off>")
 target_sources(gothic-base-runtime PRIVATE "${BASE_ROOT}/common/worldchunkmanifest.cpp"
   "${BASE_ROOT}/common/worldchunkbinary.cpp" "${BASE_ROOT}/common/worldchunkindex.cpp" "${BASE_ROOT}/common/worldchunkcook.cpp"
   "${BASE_ROOT}/common/worldchunkassemble.cpp" "${BASE_ROOT}/common/worldchunkcookedsource.cpp"

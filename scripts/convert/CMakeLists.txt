@@ -18,7 +18,6 @@ include(../../OpenGothic/cmake/BaseImport.cmake)
 # runtime manifest reading, cooked chunks, world cloth and the MSVC flag (one list with the game)
 include(../../OpenGothic/cmake/BaseRuntime.cmake)
 include(../../OpenGothic/cmake/VideoImport.cmake)
-include(../../OpenGothic/cmake/ClusterLod.cmake)
 add_subdirectory(../../OpenGothic/common/daedalus daedalus)
 if(MSVC)
   # M_PI in the Bink decoder; OpenGothic/CMakeLists.txt defines this for every target

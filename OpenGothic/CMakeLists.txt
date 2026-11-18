@@ -187,7 +187,6 @@ include(cmake/BaseImport.cmake)
 # Runtime manifest reading, cooked chunks, world cloth and the MSVC flag: one list for every build with the base.
 include(cmake/BaseRuntime.cmake)
 include(cmake/VideoImport.cmake)
-include(cmake/ClusterLod.cmake)
 add_executable(gothic-cluster-lod-test EXCLUDE_FROM_ALL tests/cluster_lod_test.cpp)
 target_link_libraries(gothic-cluster-lod-test PRIVATE gothic-cluster-lod)
 if(NOT MSVC)

@@ -41,6 +41,7 @@ struct CookedWorldStats {
   uint64_t triangles    = 0;
   uint64_t glbBytes     = 0;     // of the GLBs read
   uint64_t wcbBytes     = 0;     // of every cell's .wcb, written or left
+  uint64_t hierarchyBytes = 0;   // v3 cluster hierarchy sections, excluding alignment and directory entries
   uint64_t indexBytes   = 0;
   uint64_t clothBytes   = 0;
   size_t   clothSurfaces  = 0;
@@ -128,6 +129,6 @@ std::string compareChunkTables(const ChunkTable& expected, const ChunkTable& act
 // the table are equal field by field and the world cloth bundle equals a fresh
 // island search on that mesh (with the index's SHA-256, this build's rules and
 // algorithm), otherwise the first difference. With hash, every GLB's SHA-256 is
-// checked against its chunk as well.
+// checked against its chunk as well. Rebuilds and compares the v3 cluster hierarchy sections from each GLB.
 std::string verifyCookedWorld(const std::filesystem::path& dir, const std::filesystem::path& overrideDir = {},
                               const std::filesystem::path& outDir = {}, bool hash = false);

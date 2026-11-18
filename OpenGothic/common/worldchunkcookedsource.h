@@ -39,6 +39,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -80,6 +81,10 @@ class CookedChunkSource {
               const WorldCellManifest& manifest, std::span<const WorldChunkFile> files, const asset::WorldMesh& mesh);
     // The catalogue start's load: the index and set it validated, every cell on the cooked path. Logs nothing.
     void loadCatalogue(CookedIndex validated, CookedSet loaded, const WorldCellManifest& manifest);
+    // Set at world load, before reads. A recognized environment value takes precedence over the INI.
+    void configureClusterLod(bool enabled) const;
+    void setResident(size_t cell, bool resident) const;
+    std::shared_ptr<const CookedChunk> clusterHierarchy(size_t cell) const;
     // Cell i from its .wcb, or from glb() when the cooked path cannot be taken
     // or currentFile is set. Throws, naming the file, for a source ordinal past
     // the cell's triangles. Safe to call from several threads at once.
@@ -106,6 +111,15 @@ class CookedChunkSource {
     std::vector<ChunkId>                       cells;
     std::unique_ptr<std::atomic<uint8_t>[]>    states;
     mutable std::atomic<uint64_t>              cookedReads {0}, glbReads {0}, cookedNs {0}, glbNs {0};
+    mutable bool                               readHierarchy = true;
+    mutable std::atomic_flag                   loggedHierarchy {};
+
+    struct ResidentHierarchy {
+      uint64_t generation = 0; // odd while the cell is in Near or Far
+      std::shared_ptr<const CookedChunk> chunk;
+      };
+    mutable std::mutex                         residencyMutex;
+    mutable std::vector<ResidentHierarchy>     residentHierarchies;
 
     struct Landscape {
       std::span<const uint32_t> exclusions;
