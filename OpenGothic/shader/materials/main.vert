@@ -67,6 +67,12 @@ layout(location = 3) out flat uint vsmMipIdOut;
 layout(location = 3) out flat uint vsmMipIdOut[];
 #endif
 
+#if defined(MAT_MOTION) && defined(GL_VERTEX_SHADER)
+layout(location = PROBE_INSTANCE_LOC) flat out uint probeInstance;
+#elif defined(MAT_MOTION)
+layout(location = PROBE_INSTANCE_LOC) flat out uint probeInstance[];
+#endif
+
 #if defined(VIRTUAL_SHADOW)
 uint shadowPageId = 0;
 #endif
@@ -257,6 +263,9 @@ void vertexShader(const uvec4 task) {
 #if defined(MAT_VARYINGS)
   bucketIdOut = bucketId;
 #endif
+#if defined(MAT_MOTION)
+  probeInstance = instanceId;
+#endif
 
   Varyings var;
   uint idx = processPrimitive(meshletId, bucketId, laneID)[gl_VertexIndex%3];
@@ -322,6 +331,7 @@ void meshShader(const uvec4 task) {
     shOut[laneID].normal.xyz = var.normal; // normal is vec3, applying the workaround
 #endif
 #if defined(MAT_MOTION)
+    probeInstance[laneID]        = instanceId;
     shOut[laneID].prevStatic.xyz = var.prevStatic; // vec3, the same workaround
     shOut[laneID].prevDelta.xyz  = var.prevDelta;
 #endif

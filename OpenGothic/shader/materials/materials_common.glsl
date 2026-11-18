@@ -94,6 +94,7 @@ const uint L_VsmLights  = L_Shadow1;
 // Landscape and particles write 0 without them
 #if defined(GBUFFER_MOTION)
 #define MAT_MOTION 1
+const uint PROBE_INSTANCE_LOC = 12;
 #endif
 
 #if defined(MAT_UV) || defined(MAT_NORMAL) || defined(MAT_POSITION) || defined(MAT_COLOR) || defined(MAT_MOTION)

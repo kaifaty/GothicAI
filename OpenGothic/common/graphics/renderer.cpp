@@ -15,6 +15,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <iomanip>
+#include <limits>
 
 #include "graphics/drawcommands.h"
 #include "graphics/foliagewind.h"
@@ -892,6 +895,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   updateEye(fId, camera);
   updateFogSky(camera);
   prepareTaa(wview, camera);
+  if(treeProbe!=nullptr)
+    wview.setTreeOcclusionProbe();
   prepareMotion(wview);
   wview.setTaaReactiveLref(settings.taaReactiveLref);
   wview.setVsmLampNear(settings.vsmLampNearCm);
@@ -943,12 +948,29 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   wview.visibilityPass(cmd, 0);
   prepareSky(cmd, wview);
 
+  // The SSAO depth sampler copies every texel when its output is full size.
+  const auto copyProbeDepth = [&](StorageImage& dst) {
+    cmd.setFramebuffer({});
+    cmd.setBinding(0, zbuffer, Sampler::nearest());
+    cmd.setBinding(1, usesImage2d(dst, TextureFormat::R32F, zbuffer.size()));
+    cmd.setPipeline(shaders.ssaoDepth);
+    cmd.dispatchThreads(zbuffer.w(), zbuffer.h());
+    };
+
   drawHiZ (cmd, wview);
   buildHiZ(cmd);
+  if(treeProbe!=nullptr)
+    copyProbeDepth(treeProbe->occluderDepth);
 
   wview.visibilityPass(cmd, 1);
-  wview.visibilityStats(cmd, fId);
+  if(treeProbe==nullptr)
+    wview.visibilityStats(cmd, fId);
   drawGBuffer(cmd, fId, wview);
+  if(treeProbe!=nullptr) {
+    copyProbeDepth(treeProbe->mainDepth);
+    wview.postFrameupdate();
+    return;
+    }
   const auto* world = GameServices::inst().bloodDecalSource();
   if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
     blood.draw(cmd, fId, wview.sceneGlobals(), gbufDiffuse, Shaders::options().doMaterialMaps ? &gbufOrm : nullptr,
@@ -1480,7 +1502,68 @@ void Renderer::readGiStats(uint8_t fId) {
   gi.statsWritten[fId] = false;
   }
 
-Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&& reuse) {
+void Renderer::captureTreeOcclusion(Attachment& result, uint8_t fId, WorldView& view, const Camera& camera) {
+  const char* dir = std::getenv("OPENGOTHIC_BENCH_OUT");
+  if(dir==nullptr || *dir=='\0' || settings.pathTraceEnabled)
+    return;
+
+  auto& device = Resources::device();
+  const auto previousVP = view.sceneGlobals().viewProject();
+  const auto prefix = std::string(dir) + "/tree-hidden-" + std::to_string(++treeProbeIndex);
+  const auto savePixmap = [](std::ostream& out, const Pixmap& pix) {
+    out.write(static_cast<const char*>(pix.data()), std::streamsize(pix.dataSize()));
+    };
+  const auto matrix = [](std::ostream& out, const Matrix4x4& vp) {
+    out << std::setprecision(std::numeric_limits<float>::max_digits10);
+    for(size_t i=0; i<16; ++i)
+      out << vp.data()[i] << ' ';
+    out << '\n';
+    };
+
+  // The ordinary shot is the preceding submitted frame. Its stashed opaque depth still belongs to it.
+  std::ofstream previous(prefix + ".previous.f32", std::ios::binary);
+  savePixmap(previous, device.readPixels(sceneDepth));
+  std::ofstream previousMeta(prefix + ".previous.txt");
+  matrix(previousMeta, previousVP);
+
+  TreeOcclusionProbe capture;
+  CommandBuffer cmd;
+  {
+    auto enc = cmd.startEncoding(device);
+    taa.shot = true;
+    treeProbe = &capture;
+    draw(result,enc,fId,view,camera);
+    treeProbe = nullptr;
+    taa.shot = false;
+    }
+  auto sync = device.submit(cmd);
+  sync.wait();
+
+  std::ofstream info(prefix + ".txt");
+  info << std::setprecision(std::numeric_limits<float>::max_digits10)
+       << zbuffer.w() << ' ' << zbuffer.h() << ' ' << hiz.hiZ.w() << ' ' << hiz.hiZ.h()
+       << ' ' << view.sceneGlobals().znear << '\n';
+  matrix(info, view.sceneGlobals().viewProject());
+  for(const auto& p : frustrum[SceneGlobals::V_Main].f)
+    info << p[0] << ' ' << p[1] << ' ' << p[2] << ' ' << p[3] << '\n';
+  view.writeTreeOcclusionProbe(info);
+
+  std::ofstream pre(prefix + ".pre.f32", std::ios::binary);
+  std::ofstream main(prefix + ".main.f32", std::ios::binary);
+  std::ofstream ids(prefix + ".id.u32", std::ios::binary);
+  std::ofstream levels(prefix + ".hiz.u16", std::ios::binary);
+  savePixmap(pre, device.readPixels(capture.occluderDepth));
+  savePixmap(main, device.readPixels(capture.mainDepth));
+  savePixmap(ids, device.readPixels(gbufNormal));
+  for(uint32_t mip=0; mip<hiz.hiZ.mipCount(); ++mip)
+    savePixmap(levels, device.readPixels(hiz.hiZ,mip));
+  if(info && pre && main && ids && levels && previous && previousMeta)
+    Log::i("render: tree occlusion probe ",prefix);
+  else
+    Log::e("render: failed to write tree occlusion probe ",prefix);
+  }
+
+Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&& reuse, bool benchShot) {
   auto& device = Resources::device();
   device.waitIdle();
 
@@ -1510,6 +1593,12 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&&
 
   auto sync = device.submit(cmd);
   sync.wait();
+  if(benchShot) {
+    const char* env = std::getenv("OPENGOTHIC_TREE_OCCLUSION_PROBE");
+    const bool enabled = env!=nullptr ? std::string_view(env)=="1" : ::Settings::getI("INTERNAL","treeOcclusionProbe")!=0;
+    if(enabled)
+      captureTreeOcclusion(img,frameId,*wview,*camera);
+    }
   return img;
 
   // debug

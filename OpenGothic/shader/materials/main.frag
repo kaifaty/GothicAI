@@ -36,6 +36,10 @@ layout(location = 3) in flat uint vsmMipId;
 layout(location = DEBUG_DRAW_LOC) in flat uint debugId;
 #endif
 
+#if defined(GBUFFER) && defined(MAT_MOTION)
+layout(location = PROBE_INSTANCE_LOC) flat in uint probeInstance;
+#endif
+
 #if defined(GBUFFER)
 layout(location = 0) out vec4 outDiffuse;
 layout(location = 1) out uint outNormal;
@@ -1101,6 +1105,15 @@ void main() {
   if(alphaTest<alphaThreshold())
     discard;
 #endif
+  if((scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u) {
+#if defined(MAT_MOTION)
+    outNormal = probeInstance + 1u;
+#elif defined(FLAT_NORMAL)
+    outNormal = 0xffffffffu;
+#else
+    outNormal = 0u;
+#endif
+    }
 #elif defined(WATER)
   mainWater(t);
 #elif defined(FORWARD) && !defined(DEPTH_ONLY)
