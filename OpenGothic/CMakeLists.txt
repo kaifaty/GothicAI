@@ -360,7 +360,7 @@ if(UNIX)
   # wind's travelling front; CPU only, no device or game data.
   add_executable(gothic-grass-test EXCLUDE_FROM_ALL tests/grass_test.cpp tests/grass_cover_test.cpp)
   target_link_libraries(gothic-grass-test PRIVATE OpenGothic AiBridge)
-  target_include_directories(gothic-grass-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  target_include_directories(gothic-grass-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include ${PROJECT_SOURCE_DIR}/shader)
   target_compile_options(gothic-grass-test PRIVATE -Wall -Wconversion -Werror)
   # Windows that glow at night (graphics/windowglow.h) and the house they go out with (graphics/houselights.h); CPU only.
   add_executable(gothic-window-glow-test EXCLUDE_FROM_ALL tests/window_glow_test.cpp)
