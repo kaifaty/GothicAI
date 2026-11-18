@@ -249,37 +249,7 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
                   double(st.reload),double(st.need),double(st.strength),double(st.steadyDraw),double(st.burstDraw));
     say(buf);
     }
-  else if(c=="npcday") {
-    // npcday <game minutes> [period minutes 5] [shared]: journal every NPC over continuous game time
-    // (common/npcdayjournal.h) into npc-day*.csv; the scenario waits until the time has passed. Each NPC gets
-    // a private script random stream from the last `seed`, unless `shared`.
-    NpcDayJournal::Options opt;
-    opt.directory = outDir;
-    opt.seed      = context.scenarioSeed;
-    size_t positional = 0;
-    bool   ok = a.size()>1;
-    for(size_t i=1; i<a.size(); ++i) {
-      if(a[i]=="shared")
-        opt.isolate = false;
-      else if(isNumber(a[i]) && positional==0 && num(a,i,0)>0)
-        opt.minutes = uint64_t(num(a,i,0)), ++positional;
-      else if(isNumber(a[i]) && positional==1 && num(a,i,0)>0)
-        opt.period = uint32_t(num(a,i,0)), ++positional;
-      else
-        ok = false;
-      }
-    std::string error;
-    if(!ok || !NpcDayJournal::start(w,opt,error)) {
-      say("npcday failed: "+(ok ? error : "usage: npcday <game minutes> [period minutes] [shared]"));
-      event("npcday_error","\"reason\":"+jsonStr(ok ? error : "usage"));
-      return true;
-      }
-    state.npcDayStart = w.time().toInt();
-    state.npcDayMinutes = opt.minutes;
-    say("npcday "+std::to_string(opt.minutes)+" min every "+std::to_string(opt.period)+(opt.isolate ? "" : " shared"));
-    event("npcday_start","\"minutes\":"+std::to_string(opt.minutes)+",\"period\":"+std::to_string(opt.period)+
-          ",\"isolate\":"+(opt.isolate ? "true" : "false")+",\"seed\":"+std::to_string(opt.seed));
-    }
+  else if(c=="npcday" || c=="npcday-save") return npcDayCommand(context,a,w);
   else if(c=="seed") {
     // seed <n>: the random numbers start over: the scripts' (the dice, the release), the bench's, the
     // hero's sway

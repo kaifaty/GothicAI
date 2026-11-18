@@ -1,0 +1,7 @@
+# A real smith Loop at an occupied anvil, full save, then one continuous game hour.
+# @headless
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_XARDAS_TOWER_VALLEY_091
+npcday-save VLK_412_HARAD 60 5 shared

@@ -1,4 +1,5 @@
 #include "gamescript.h"
+#include "world/npcactivityprobe.h"
 
 #include <Tempest/Log>
 #include <Tempest/SoundEffect>
@@ -1076,6 +1077,7 @@ void GameScript::invokeState(const std::shared_ptr<NpcRecord>& hnpc, const std::
 
   ScopeVar self (*vm.global_self(),  hnpc);
   ScopeVar other(*vm.global_other(), oth);
+  NpcActivityProbe::Phase phase(findNpc(hnpc.get()),id->name());
   vm.call_function<void>(id);
   }
 
@@ -1101,7 +1103,8 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
   ScopeVar other (*vm.global_other(),  oth != nullptr ? oth->handlePtr() : nullptr);
   ScopeVar victim(*vm.global_victim(), vic != nullptr ? vic->handlePtr() : nullptr);
   auto* sym = vm.find_symbol_by_index(uint32_t(fn.ptr));
-  int   ret = 0;
+  NpcActivityProbe::Phase phase(npc,sym ? std::string_view(sym->name()) : std::string_view{});
+  int& ret = phase.result;
   if(sym!=nullptr && sym->name().starts_with("RTN_")) {
     ret = initializeRoutine(npc!=nullptr ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr,sym);
     }
@@ -1522,14 +1525,6 @@ uint64_t GameScript::tickCount() const {
 void GameScript::tick(uint64_t) {
   }
 
-uint32_t GameScript::rand(uint32_t max, const Npc* actor) {
-  if(actor!=nullptr && !isolatedRandom.empty()) {
-    auto it = isolatedRandom.find(actor);
-    if(it!=isolatedRandom.end())
-      return uint32_t(it->second())%max;
-    }
-  return uint32_t(randGen())%max;
-  }
 
 void GameScript::isolateRandom(const Npc& actor, uint32_t seed, uint32_t stream) {
   std::seed_seq sequence{seed, stream, 0x5C21D7u};

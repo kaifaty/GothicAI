@@ -41,7 +41,7 @@ class AiQueue {
     size_t   size() const { return aiActions.size(); }
     const AiAction* front() const { return aiActions.empty() ? nullptr : &aiActions.front(); }
     void     clear();
-    void     pushBack (AiAction&& a);
+    void     pushBack (AiAction&& a, const Npc* actor = nullptr);
     void     pushFront(AiAction&& a);
     AiAction pop();
     AiAction popPhysicsNoiseState();
@@ -50,6 +50,8 @@ class AiQueue {
     bool     nativeCombatOnly(const Npc* target) const;
 
     void     onWldItemRemoved(const Item& itm);
+
+    static const char* actionName(uint32_t action);
 
     static AiAction aiLookAt(const WayPoint* to);
     static AiAction aiLookAtNpc(Npc* other);

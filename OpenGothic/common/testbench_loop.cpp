@@ -254,6 +254,7 @@ bool streamingWaitTick(World& w) {
 namespace testbench_detail {
 
 void run(World& w, Npc& pl, PlayerControl& ctrl) {
+  if(npcDayCheckpointTick(w)) return;
   if(npcTierTestTick(bench.npcTierTest,w,pl,bench.frameMs))return;
   if(npcSpeedTick(bench.npcSpeedTest,w))return;
   if(bench.routeActive || bench.placedItems.probing)return;
@@ -473,7 +474,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
     const std::string line = bench.prog[bench.pc++];
     exec(line,w,pl,ctrl);
     if(bench.routeActive || bench.placedItems.probing || bench.world.waitStreaming || NavBench::running() || NavDemos::running() ||
-       NpcDayJournal::running() || bench.npcTierTest.npc || bench.npcSpeedTest.npc) return;
+       NpcDayJournal::running() || npcDayCheckpointRunning() || bench.npcTierTest.npc || bench.npcSpeedTest.npc) return;
     if(bench.movables.spellWaitFrozen>=0 || bench.movables.spellEquipPending) return;
     if(bench.routine.questWait || bench.routine.questStandingWait || bench.routine.routinePhase) return;
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
@@ -564,7 +565,10 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       }
     if(bench.pc<bench.prog.size()) {
       const auto args=split(bench.prog[bench.pc]);
-      if(args.size()>1 && args[0]=="ragdoll" && args[1]=="session-initial") {
+      if(!args.empty() && args[0]=="npcday") {
+        exec(bench.prog[bench.pc++],*world,*player,ctrl);
+        }
+      else if(args.size()>1 && args[0]=="ragdoll" && args[1]=="session-initial") {
         const auto line=bench.prog[bench.pc++];
         try {
           ragdollSessionArchive(args,*world,*player,dt);

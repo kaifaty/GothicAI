@@ -1,0 +1,3 @@
+# SAVE=<absolute session-activity.sav>; journal starts before the first positive native step.
+# @headless
+npcday 60 5 shared probe trace=VLK_412_HARAD
