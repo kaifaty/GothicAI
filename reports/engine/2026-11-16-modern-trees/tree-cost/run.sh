@@ -46,12 +46,15 @@ VARIANTS=(
   "F1024-wind0|OPENGOTHIC_FOLIAGE=light"
   "F1024-crown0|OPENGOTHIC_CROWN_LIGHT=0"
 )
-declare -A SET=([C]=tree-cost-0 [F64]=tree-cost-64 [F256]=tree-cost-256 [F1024]=tree-cost-1024
-                [F1024h]=tree-cost-1024-h [F1024q]=tree-cost-1024-q [F1024e]=tree-cost-1024-e)
+set_of() {  # the set of a variant (bash 3 of macOS has no maps)
+  case "${1%%-*}" in C) echo tree-cost-0 ;; F64) echo tree-cost-64 ;; F256) echo tree-cost-256 ;;
+    F1024) echo tree-cost-1024 ;; F1024h) echo tree-cost-1024-h ;; F1024q) echo tree-cost-1024-q ;;
+    F1024e) echo tree-cost-1024-e ;; esac
+}
 JOB="set -u"$'\n'
 line() {  # name, round, extra env
-  local name="$1" round="$2" extra="$3" base="${1%%-*}"
-  JOB+="echo \"tree-cost: $name round $round\"; env ${ENV[*]} NO_BUILD=1 PERF_ENV='OPENGOTHIC_CONTENT=$CONTENT/${SET[$base]} OPENGOTHIC_GPU_PASSES=1 $extra' bash $SOURCE/scripts/perf.sh __run $REMOTE_OUT/$name/round-$round trees || echo \"tree-cost: $name round $round FAILED\""$'\n'
+  local name="$1" round="$2" extra="$3"
+  JOB+="echo \"tree-cost: $name round $round\"; env ${ENV[*]} NO_BUILD=1 PERF_ENV='OPENGOTHIC_CONTENT=$CONTENT/$(set_of "$name") OPENGOTHIC_GPU_PASSES=1 $extra' bash $SOURCE/scripts/perf.sh __run $REMOTE_OUT/$name/round-$round trees || echo \"tree-cost: $name round $round FAILED\""$'\n'
 }
 for v in "${VARIANTS[@]}"; do line "${v%%|*}" 1 "${v#*|}"; done
 for ((k=${#VARIANTS[@]}-1; k>=0; k--)); do v="${VARIANTS[$k]}"; line "${v%%|*}" 2 "${v#*|}"; done
