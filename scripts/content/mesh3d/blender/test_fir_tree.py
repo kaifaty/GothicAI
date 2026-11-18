@@ -14,6 +14,7 @@ import fir
 import fir_tree
 import tree_density
 import tree_glb
+import tree_prefix
 
 HERE = Path(__file__).resolve().parent
 
@@ -131,6 +132,38 @@ def test_the_outline_takes_in_a_hole_and_leaves_out_a_notch_wider_than_the_closi
     assert inside[solid].all() and inside[hole].all()
     assert not inside[:60].any() and inside[notch].mean() < .1
     assert 400 <= (inside & ~solid).sum() <= 400 + .1 * 40 * 14
+
+
+def test_ranked_prefix_covers_two_boughs_before_adding_a_duplicate(tmp_path):
+    def quad(left, right, low, high, depth):
+        return [(left, depth, low), (left, depth, high), (right, depth, low), (right, depth, high)]
+
+    def part(name, quads, cutout, openness):
+        position = np.array(quads, np.float32).reshape(-1, 3)
+        count = len(position)
+        colour = np.zeros((count, 4), np.uint8)
+        colour[:, 2] = np.tile([0, 128, 128, 255], len(quads))
+        colour[:, 3] = openness
+        index = np.array([(0, 1, 2), (1, 3, 2)]) + np.arange(len(quads))[:, None, None] * 4
+        return dict(name=name, cutout=cutout, position=position, normal=np.tile([0, 1, 0], (count, 1)),
+                    uv=np.full((count, 2), .5), colour=colour, index=index.reshape(-1, 3))
+
+    wood = part('bark', [quad(-.06, .06, 0, 3, 0)], False, 255)
+    left, right = quad(-1.2, -.1, .9, 2.7, .15), quad(.1, .9, .9, 2.5, .15)
+    hidden = quad(-1.2, -.1, .9, 2.7, .15001)
+    full, designed = tmp_path / 'full.glb', tmp_path / 'designed.glb'
+    tree_glb.write(full, [wood, part('boughs', [left, hidden, right], True, 128)])
+    tree_glb.write(designed, [wood, part('boughs', [left, right], True, 128)])
+    rows = tree_prefix.measure(full, {50: designed}, np.ones((4, 4), bool), np.full((4, 4), 27.),
+                               {50: (1/3, 2/3)})[50]
+    assert rows['same_total']['cards'] == 2
+    assert rows['same_total']['triangles'] == rows['designed']['triangles'] == 6
+    assert rows['same_total']['views'] == rows['designed']['views'] == rows['0.666667']['views']
+    assert rows['0.333333']['views'][0]['reference_opening'] > rows['0.666667']['views'][0]['reference_opening']
+    assert rows['0.666667_grown']['growth'] == pytest.approx(1.5**.25)
+    assert rows['0.666667_grown']['views'][0]['extra_outline'] > 0
+    assert rows['same_total']['luma_srgb'] == pytest.approx(27)
+    assert rows['same_total']['mean_openness'] == pytest.approx(128 / 255)
 
 
 def test_colour_0_is_laid_out_for_the_tree_wind(spruce):
