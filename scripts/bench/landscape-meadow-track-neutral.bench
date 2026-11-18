@@ -1,7 +1,6 @@
 # Alternate the neutral path in one session, resetting the temporal history before each shot.
 # The two camera setups match landscape-meadow-track-cheap.bench.
 seed 73013
-deterministic on
 cheat god
 overlay off
 ui off
@@ -20,6 +19,7 @@ streaming wait
 grass wait
 wait 5000
 cam hold
+deterministic on
 grass parts 0
 set time 12 0
 streaming wait
@@ -41,6 +41,7 @@ streaming wait
 shot track-off-2
 wait 34
 grass parts 0
+deterministic off
 
 # The camera is 30 m from the reference point on the track; the hero is behind it.
 goto NW_TAVERNE_TROLLAREA_07
@@ -48,6 +49,7 @@ cam at 42968 3406 2499 41940 3300 -317
 streaming wait
 grass wait
 wait 5000
+deterministic on
 grass parts 0
 set time 12 0
 streaming wait
@@ -69,3 +71,4 @@ streaming wait
 shot track-30m-off-2
 wait 34
 grass parts 0
+deterministic off
