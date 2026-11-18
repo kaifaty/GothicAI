@@ -15,6 +15,7 @@ layout(binding = 4) uniform sampler2D atlasOrm;
 layout(location = 0) in vec3 centeredPosition;
 layout(location = 1) flat in vec3 centeredEye;
 layout(location = 2) flat in uint instanceId;
+layout(location = 3) flat in mat3 normalTransform;
 
 layout(location = 0) out vec4 outDiffuse;
 layout(location = 1) out uint outNormal;
@@ -145,7 +146,7 @@ void main() {
   const ViewSample dominant = weights.x>=max(weights.y,weights.z) ? a : (weights.y>=weights.z ? b : c);
   if(dot(normal,normal)<1e-8)
     normal = dominant.normal;
-  normal = normalize(transpose(inverse(mat3(transform))) * normal);
+  normal = normalize(normalTransform * normal);
   int hints = 1 << 2; // the usual G-buffer alpha-test hint
 #if defined(MATERIAL_MAPS)
   const int materialClass = dominant.materialClass;
