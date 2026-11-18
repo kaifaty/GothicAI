@@ -138,13 +138,13 @@ void switches() {
           low.radius<full.radius && low.density<full.density && full.density==1.f,
           "the ring of the low quality is smaller and thinner");
 
-  setenv("OPENGOTHIC_GRASS_LINKS","750,1750,3000",1);
+  setenv("OPENGOTHIC_GRASS_LINKS","1000,2500,4500",1);
   const Grass::WasteRule waste;
-  require(Grass::broadLinks(749.f)==4 && Grass::broadLinks(750.f)==3 &&
-          Grass::broadLinks(1750.f)==2 && Grass::broadLinks(3000.f)==1 && waste.links(1750.f)==2,
+  require(Grass::broadLinks(999.f)==4 && Grass::broadLinks(1000.f)==3 &&
+          Grass::broadLinks(2500.f)==2 && Grass::broadLinks(4500.f)==1 && waste.links(2500.f)==2,
           "drawing and waste counting use the configured grass link thresholds");
   unsetenv("OPENGOTHIC_GRASS_LINKS");
-  require(Grass::broadLinks(750.f)==3, "grass link thresholds are read once");
+  require(Grass::broadLinks(999.f)==4, "grass link thresholds are read once");
   }
 
 // ---- the ground of the tests ----
@@ -273,23 +273,24 @@ void drawOrder(bool disabled) {
 
 void environmentFallbacks() {
   // Each child sets its environment before the first use of the cached switches.
-  for(const char* links:{"3000,1750,750", "750,1750,3000x"}) {
+  for(const char* links:std::array<const char*,3>{nullptr, "3000,1750,750", "750,1750,3000x"}) {
     const auto child = fork();
     require(child>=0, "cannot fork grass environment test");
     if(child==0) {
       try {
         require(setenv("OPENGOTHIC_GRASS_ORDER","0",1)==0, "cannot set grass order switch");
         drawOrder(true);
-        require(setenv("OPENGOTHIC_GRASS_LINKS",links,1)==0, "cannot set invalid grass link thresholds");
+        const int result = links==nullptr ? unsetenv("OPENGOTHIC_GRASS_LINKS") : setenv("OPENGOTHIC_GRASS_LINKS",links,1);
+        require(result==0, "cannot configure grass link thresholds");
         size_t errors = 0;
         Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
           if(mode==Tempest::Log::Error && std::string_view(text).find("OPENGOTHIC_GRASS_LINKS")!=std::string_view::npos)
             ++errors;
           });
-        require(Grass::broadLinks(999.f)==4 && Grass::broadLinks(1000.f)==3 &&
-                Grass::broadLinks(2500.f)==2 && Grass::broadLinks(4500.f)==1,
-                "invalid grass link thresholds must restore defaults");
-        require(errors==1, "invalid grass link thresholds must be logged once");
+        require(Grass::broadLinks(799.f)==4 && Grass::broadLinks(800.f)==3 &&
+                Grass::broadLinks(1200.f)==2 && Grass::broadLinks(2400.f)==1,
+                "unset or invalid grass link thresholds must use defaults");
+        require(errors==size_t(links!=nullptr), "only invalid grass link thresholds must be logged once");
         _exit(0);
         }
       catch(const std::exception& e) {
@@ -299,7 +300,7 @@ void environmentFallbacks() {
       }
     int status = 0;
     require(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0,
-            std::string("grass environment test failed for ")+links);
+            std::string("grass environment test failed for ")+(links==nullptr ? "unset thresholds" : links));
     }
   }
 
