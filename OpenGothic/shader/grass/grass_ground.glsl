@@ -27,6 +27,10 @@ void grassGround(uint bits, vec3 pos, vec3 normal, float sward, inout vec4 diffu
     return; // the mark alone: the pair that shows what it does to the near ground
 
   const uint  partsOff = grassPartsOff(ring.w);
+  if((partsOff & GrassPartBands)!=0u) {
+    diffuse.rgb = grassPaintFarBand(distance(pos, scene.camPos));
+    return;
+    }
   if((partsOff & GrassPartPaint)!=0u) {
     // with the ground's shade off as well: the whole ground of the grass, the mask of the tone's measure
     diffuse.rgb = (partsOff & GrassPartGroundShade)==0u ? grassPaintBand(distance(pos.xz, scene.camPos.xz)) :

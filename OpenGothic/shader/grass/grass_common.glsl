@@ -27,6 +27,7 @@ const uint GrassPartNormal      = 32u;
 const uint GrassPartPaint       = 64u;
 const uint GrassPartHide        = 128u;
 const uint GrassPartCover       = 256u; // the paint of the meadow's own ground (grass_layers.glsl): sward green, earth red
+const uint GrassPartBands       = 512u; // the ground of the grass painted by the bands of its distance (grassPaintFarBand)
 const uint GrassPartLayers      = 4096u; // a ground with its own layers as a painted ground: no layers, its blades as there
 const uint GrassPartCells       = 8192u;
 const uint GrassPartTrack       = 16384u; // a road with `track` as with its `verge` alone
@@ -42,6 +43,18 @@ vec3 grassPaintBand(float d) {
   if(abs(d- 500.0)< 62.0) return vec3(0,1,0);
   if(abs(d-1000.0)<125.0) return vec3(1,1,0);
   return vec3(0);
+  }
+
+// The paint of the whole ground of the grass by the bands of its distance from the camera, the blades' own
+// (grass.vert): to 10, 24, 48, 64 and 100 m and beyond in magenta, red, blue, green, cyan and yellow, colours a
+// lit scene hardly has. reports/engine/2026-11-18-grass-volume counts the pixels a layer over the far ground takes
+vec3 grassPaintFarBand(float d) {
+  if(d<1000.0) return vec3(1,0,1);
+  if(d<2400.0) return vec3(1,0,0);
+  if(d<4800.0) return vec3(0,0,1);
+  if(d<6400.0) return vec3(0,1,0);
+  if(d<10000.0) return vec3(0,1,1);
+  return vec3(1,1,0);
   }
 
 // The paint of the squares: red by the squares of 0.5 m, green by those of 5 m, as a chessboard each; blue the

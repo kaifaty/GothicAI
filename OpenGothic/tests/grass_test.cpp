@@ -145,6 +145,13 @@ void switches() {
           "drawing and waste counting use the configured grass link thresholds");
   unsetenv("OPENGOTHIC_GRASS_LINKS");
   require(Grass::broadLinks(750.f)==3, "grass link thresholds are read once");
+
+  require(Grass::wasteBand(999.f)==0 && Grass::wasteBand(1000.f)==1 && Grass::wasteBand(2399.f)==1 &&
+          Grass::wasteBand(2400.f)==2 && Grass::wasteBand(4800.f)==3 && Grass::wasteBand(9000.f)==3,
+          "the waste count's bands of distance are 0-10, 10-24, 24-48 m and beyond");
+  require(Grass::wasteLinks(0,999.f)==4 && Grass::wasteLinks(0,2400.f)==3 && Grass::wasteLinks(0,4500.f)==1 &&
+          Grass::wasteLinks(1,1100.f)==3 && Grass::wasteLinks(1,2400.f)==1 && Grass::wasteLinks(2,900.f)==2,
+          "the waste count weighs each set of link bounds of step 1b");
   }
 
 // ---- the ground of the tests ----
