@@ -12,8 +12,8 @@ and the hand torch's effects, which it is based on; the set needs torch-model-*,
 The fire bolt (round 2, firebolt-design.md: one body on one axis):
 - in the hand: a small flame standing on the palm, leaning as the hand moves, and its tongues;
 - flying at 10 m/s: a white-hot head, one flame pressed to the way by the air behind it (the torch's flame card lying
-  along the way, a short bright one inside it as its root), embers left behind that cool and sink. No standing
-  tongues, no second tail, no smoke;
+  along the way, a short bright one inside it as its root), embers left behind that cool and sink, the air shimmers around the flame
+  and in a wake behind it. No standing tongues, no second tail, no smoke;
 - hit: the game keeps the effect on for as long as the target burns, so it is a small fire, not a burst: tongues,
   sparks on arcs and puffs of smoke that play their atlas once.
 """
@@ -46,6 +46,15 @@ def foot(height) -> dict:
     return {'shpFOR_S': 'WORLD', 'shpOffsetVec_S': f'0 {height / 2:g} 0'}
 
 
+def haze(name, shift, inherit, **change) -> dict:
+    """Hot air (particles.d "haze"): a sprite without a colour of its own that shows the frame behind it shifted."""
+    return {'name': name, 'base': 'LIGHTSMOKE', 'haze': {'shift': shift, 'cell': 4.0}, 'inherit': inherit, 'drag': 0.3,
+            'set': {'visName_S': 'OWN_SMOKE_WISPY.TGA', 'visAlphaFunc_S': 'BLEND', 'visAlphaStart': 255.0, 'visAlphaEnd': 0.0,
+                    'visTexColorStart_S': '255 255 255', 'visTexColorEnd_S': '255 255 255', 'shpType_S': 'SPHERE',
+                    'shpIsVolume': 1, 'shpOffsetVec_S': '0 0 0', 'velAvg': 0.01, 'velVar': 0.005, 'flyGravity_S': '0 0 0',
+                    'visOrientation_S': 'NONE', **ALL_AROUND, **change}}
+
+
 def firebolt() -> list:
     return [
         # in the hand
@@ -69,9 +78,14 @@ def firebolt() -> list:
                  'lspPartAvg': 900.0, 'lspPartVar': 400.0, 'visSizeStart_S': '0.7 0.7', 'visSizeEndScale': 0.6,
                  'visTexColorStart_S': '255 150 40', 'visTexColorEnd_S': '170 25 0', 'visAlphaEnd': 0.0, **ALL_AROUND},
                  inherit=0.12, minPixels=2.2),
+        # the heat: the air shimmers around the flame and in a wake behind it that widens and calms down
+        haze('OWN_BOLT_HEAT', 4.0, inherit=1.0, ppsValue=24.0, lspPartAvg=170.0, lspPartVar=40.0, shpDim_S='6',
+             visSizeStart_S='60 60', visSizeEndScale=1.2),
+        haze('OWN_BOLT_WAKE', 7.0, inherit=0.1, ppsValue=45.0, lspPartAvg=420.0, lspPartVar=90.0, shpDim_S='5',
+             visSizeStart_S='34 34', visSizeEndScale=2.0),
         # the body: the flame pressed to the way by the air, its foot at the head, widest behind it, torn at the tip
         {'name': 'MFX_FIREBOLT_CAST', 'base': 'OWN_HAND_FLAME', 'replaces': True,
-         'with': ['OWN_BOLT_HEAD', 'OWN_BOLT_ROOT', 'OWN_BOLT_EMBERS'],
+         'with': ['OWN_BOLT_HEAD', 'OWN_BOLT_ROOT', 'OWN_BOLT_EMBERS', 'OWN_BOLT_HEAT', 'OWN_BOLT_WAKE'],
          'set': {'visSizeStart_S': '40 100', **foot(100)},
          'lean': {'rise': 1.8, 'max_deg': 87, 'response': 0.03, 'along': 0.2, 'grow': 0.3, 'grow_from': 0.16}},
         # hit
