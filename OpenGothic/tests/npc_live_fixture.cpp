@@ -94,6 +94,7 @@ void world(const fs::path& base) {
 
 fs::path program(const fs::path& base) {
   const auto value=NpcDefinitionFixture::program();
+  for(const char* name:{"TEST","ERROR_HELPER","MUTABLE_ROOT","STATE_ROOT","QUERY_ROOT","ERROR_ROOT"}) fs::create_directories(base/"worlds"/name);
   fs::create_directories(base/"programs");
   std::string name;
   const auto sha=ProgramData::writeProgram(value.data,base/"programs",&name);
@@ -106,6 +107,7 @@ fs::path program(const fs::path& base) {
   NpcSnapshot::writeItems(value,definitions/"items.json");
   NpcSnapshot::writeRoutines(value,definitions/"routines.json");
   NpcSnapshot::writeNpcs(value,definitions/"npcs.json");
+  NpcSnapshot::writePlacements(value,definitions/"placement.json",base/"worlds");
   return definitions/"npcs.json";
   }
 
@@ -182,7 +184,8 @@ void mutations(const fs::path& file, Gothic& gothic, void (*compare)(World&)) {
 
 // The same live comparator as the installed-game corpus runs on a complete, tiny own-format
 // base. The fixture needs neither Gothic archives nor a graphics or sound device.
-void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&)) {
+void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
+                      void (*placement)(World&), void (*placementDisabled)(World&)) {
   const auto root=fs::temp_directory_path()/("gothic-npc-live-"+
       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   struct Cleanup {
@@ -208,6 +211,7 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&)) {
   environment.set("OPENGOTHIC_NPC_RECORDS",std::nullopt);
   environment.set("OPENGOTHIC_ITEM_RECORDS",std::nullopt);
   environment.set("OPENGOTHIC_ROUTINE_RECORDS",std::nullopt);
+  environment.set("OPENGOTHIC_PLACEMENT_RECORDS",std::nullopt);
   const auto directory=game.string();
   const char* args[]={"gothic-placed-items-contract","-g",directory.c_str(),"-benchmark","ci"};
   CommandLine commandLine(5,args);
@@ -218,13 +222,16 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&)) {
   GameMusic music;
   gothic.setGame(std::make_unique<GameSession>("NPC_CONTRACT.ZEN"));
   compare(*gothic.world());
+  placement(*gothic.world());
   mutations(definitions,gothic,compare);
   gothic.clearGame().reset();
   environment.set("OPENGOTHIC_NPC_RECORDS","0");
   environment.set("OPENGOTHIC_ITEM_RECORDS","0");
   environment.set("OPENGOTHIC_ROUTINE_RECORDS","0");
+  environment.set("OPENGOTHIC_PLACEMENT_RECORDS","0");
   gothic.setGame(std::make_unique<GameSession>("NPC_CONTRACT.ZEN"));
   disabled(*gothic.world());
+  placementDisabled(*gothic.world());
   gothic.clearGame().reset();
   std::puts("Synthetic live NPC definitions: normal GameSession and engine externals, no game data");
   }

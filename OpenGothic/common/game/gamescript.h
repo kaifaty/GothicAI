@@ -24,6 +24,7 @@
 #include "game/itemdefinitionruntime.h"
 #include "game/routinedefinitionruntime.h"
 #include "game/npcdefinitionruntime.h"
+#include "game/placementdefinitionruntime.h"
 #include "asset/worldtypes.h"
 
 class GameSession;
@@ -68,6 +69,7 @@ class GameScript final : public GameRules {
     float attackFinishDistance() override;
 
     bool         hasSymbolName(std::string_view fn);
+    void         runStartup(std::string_view fn);
 
     auto         createNpc(Npc& owner, size_t instance, std::string_view waypoint, uint32_t& kind) -> std::shared_ptr<NpcRecord> override;
     uint32_t     initializeInstanceNpc(const std::shared_ptr<NpcRecord>& npc, size_t instance) override;
@@ -288,7 +290,7 @@ class GameScript final : public GameRules {
     bool searchScheme(std::string_view sc, std::string_view listName);
     static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                        RoutineDefinitionRuntime::Definitions& routines,
-                                       NpcDefinitionRuntime::Definitions& npcs);
+                                       NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements);
     int initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* function);
     bool game_initgerman     ();
     bool game_initenglish    ();
@@ -519,6 +521,7 @@ class GameScript final : public GameRules {
     ItemDefinitionRuntime::Definitions                          itemDefinitions;
     RoutineDefinitionRuntime::Definitions                       routineDefinitions;
     NpcDefinitionRuntime::Definitions                           npcDefinitions;
+    PlacementDefinitionRuntime::Definitions                     placementDefinitions;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};

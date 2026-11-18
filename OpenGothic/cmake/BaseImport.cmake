@@ -21,7 +21,7 @@ endif()
 set(BASE_RUNTIME_SOURCES
   common/baseidentity.cpp common/sha256.cpp common/worldchunks.cpp common/worlddata.cpp common/modeldata.cpp
   common/fontdata.cpp common/programdata.cpp common/outputunits.cpp common/audiodata.cpp common/basemesh.cpp
-  common/itemdefinitions.cpp common/routinedefinitions.cpp common/npcdefinitions.cpp
+  common/itemdefinitions.cpp common/routinedefinitions.cpp common/npcdefinitions.cpp common/placementdefinitions.cpp
   common/gothicglb.cpp common/gltfmesh.cpp common/utils/fileutil.cpp common/musicdata.cpp common/dmusic/musicrecord.cpp common/musicnative.c
   common/dmusic/dlsruntime.cpp common/dmusic/styleruntime.cpp common/dmusic/waveruntime.cpp
   common/dmusic/hydra.cpp common/dmusic/soundfont.cpp)
@@ -54,7 +54,7 @@ file(CONFIGURE OUTPUT "${NPC_SNAPSHOT_GENERATED_DIR}/npcsnapshotfields.h" CONTEN
 file(CONFIGURE OUTPUT "${NPC_SNAPSHOT_GENERATED_DIR}/itemrecordfields.h" CONTENT "@BASE_ITEM_FIELDS@" @ONLY)
 target_include_directories(gothic-base-runtime PUBLIC "${NPC_SNAPSHOT_GENERATED_DIR}")
 add_library(gothic-npc-snapshot STATIC "${BASE_ROOT}/common/import/npcsnapshot.cpp"
-  "${BASE_ROOT}/common/import/npcdefinitions.cpp")
+  "${BASE_ROOT}/common/import/npcdefinitions.cpp" "${BASE_ROOT}/common/import/placementdefinitions.cpp")
 target_include_directories(gothic-npc-snapshot PUBLIC "${BASE_ROOT}/common/import" "${NPC_SNAPSHOT_GENERATED_DIR}")
 target_include_directories(gothic-npc-snapshot SYSTEM PRIVATE "${BASE_ROOT}/lib/rapidjson/include")
 target_link_libraries(gothic-npc-snapshot PUBLIC gothic-daedalus gothic-base-runtime)

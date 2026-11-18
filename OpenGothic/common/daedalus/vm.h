@@ -629,6 +629,16 @@ namespace daedalus {
 		void observe_instructions(std::function<void(DaedalusInstruction const&)> callback) { _m_instruction_observer = std::move(callback); }
 		// Optional script-call instrumentation; includes functions reached through BL overrides.
 		void observe_calls(std::function<void(DaedalusSymbol const&)> callback) { _m_call_observer = std::move(callback); }
+		void add_call_observer(std::function<void(DaedalusSymbol const&)> callback) {
+			auto previous = std::move(_m_call_observer);
+			_m_call_observer = [previous = std::move(previous), callback = std::move(callback)](auto const& symbol) {
+				if (previous) previous(symbol);
+				callback(symbol);
+			};
+		}
+		// Both bytecode and record playback report externals before consuming their arguments.
+		void observe_externals(std::function<void(DaedalusSymbol const&)> callback) { _m_external_observer = std::move(callback); }
+		[[nodiscard]] DaedalusStackFrame const& stack_frame(uint16_t depth) const;
 		// Like override_function, with a signature read from program records by the caller.
 		void override_function_custom(DaedalusSymbol const& sym, std::function<void(DaedalusVm&)> callback) {
 			_m_function_overrides[sym.address()] = std::move(callback);
@@ -1041,6 +1051,7 @@ namespace daedalus {
 		std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> _m_member_write_observer;
 		std::function<void(DaedalusInstruction const&)> _m_instruction_observer;
 		std::function<void(DaedalusSymbol const&)> _m_call_observer;
+		std::function<void(DaedalusSymbol const&)> _m_external_observer;
 		std::optional<std::function<
 		    DaedalusVmExceptionStrategy(DaedalusVm&, DaedalusScriptError const&, DaedalusInstruction const&)>>
 		    _m_exception_handler {std::nullopt};
