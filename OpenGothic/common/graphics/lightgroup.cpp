@@ -115,6 +115,12 @@ void LightGroup::Light::setTimeOffset(uint64_t t) {
   data.setTimeOffset(t);
   }
 
+void LightGroup::Light::setRangeOnce(bool once) {
+  if(owner==nullptr)
+    return;
+  owner->lightSourceDesc[id].setRangeOnce(once);
+  }
+
 void LightGroup::Light::setYaw(float yaw) {
   if(owner==nullptr)
     return;

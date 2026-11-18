@@ -22,6 +22,7 @@ using namespace Tempest;
 // particles.d "lean": a longer way in a frame is a teleport, a longer frame is a pause; the spring's substep and
 // damping; how much longer the card is at its largest lean
 static constexpr float LeanJumpCm      = 300.f;
+static constexpr float MeshBornBiasCm  = 10.f;  // a mesh-born sprite of an own effect is drawn this much nearer
 static constexpr uint64_t LeanLongFrameMs = 250;
 static constexpr float LeanSubstepMs   = 8.f;
 static constexpr float LeanDamping     = 0.6f;
@@ -646,7 +647,14 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
     if(decl.flipSteady || decl.inherit>0 || decl.plumeCm>0) {
       // a steady particle is its emitter's flame: it goes where the emitter goes (a torch in a hand); a living one
       // takes the share "inherit" of the way, so the tail behind a carried flame stays short
-      const auto  moved = emitter.pos-emitter.steadyAt;
+      // tongues born on a body's mesh go with the body, not with the bone their emitter sits on (a swinging hand)
+      Vec3 at = emitter.pos;
+      if(decl.own && decl.shpType==ParticleFx::EmitterType::Mesh && emitter.mesh!=nullptr &&
+         emitter.skin!=nullptr && !emitter.skin->empty()) {
+        const auto& m = (*emitter.skin)[0];
+        at = Vec3(m.at(3,0),m.at(3,1),m.at(3,2));
+        }
+      const auto  moved = at-emitter.steadyAt;
       const float share = decl.flipSteady ? 1.f : decl.inherit;
       if(emitter.block!=size_t(-1) && moved.quadLength()>0 && !(decl.useEmittersFOR && !decl.flipSteady)) {
         auto& p = getBlock(emitter);
@@ -689,7 +697,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
       // a fast emitter (a flying bolt) drops its tail along the way of the tick, not in a clump per frame
       emitter.trail    = (emitter.carried && decl.inherit>0 && decl.inherit<1 &&
                           moved.quadLength()<=LeanJumpCm*LeanJumpCm) ? moved : Vec3();
-      emitter.steadyAt = emitter.pos;
+      emitter.steadyAt = at;
       emitter.carried  = true;
       }
 
@@ -929,6 +937,12 @@ void PfxBucket::buildBilboard(PfxState& v, const Block& p, const ParState& ps, c
   v.bits0 |= uint32_t(0) << 3; // TODO: trails
   v.bits0 |= uint32_t(decl.visOrientation) << 4;
   v.dir   = ps.dir;
+  if(decl.own && decl.shpType==ParticleFx::EmitterType::Mesh && !decl.visZBias) {
+    // a tongue born on a body's surface stands half inside the body: without the step to the camera only those
+    // past the silhouette were seen, a rim of fire around a dark body (pfx.vert: visZBias, size.z in cm)
+    v.bits0 |= 1;
+    v.size.z = MeshBornBiasCm;
+    }
   if(decl.leanRise>0) {
     // a leaning flame card (particles.d "lean", pfx.vert): orientation 3 with a flipbook, dir the way from the
     // card's lower edge to its upper in card heights

@@ -82,6 +82,7 @@ class Effect final {
     const MeshObjects::Mesh* meshEmitter = nullptr;
     const std::vector<Tempest::Matrix4x4>* meshSkin = nullptr;
     bool                  meshPfx   = false; // the particle effect is born on the mesh
+    const ParticleFx* ownPfx = nullptr; // the particle effect of this one: its own light (particles.d "light")
 
     Tempest::Matrix4x4    pos;
     Tempest::Vec3         selfRotation;

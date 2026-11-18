@@ -129,7 +129,8 @@ def body_fire() -> list:
             'ppsIsLooping': 0, 'ppsIsSmooth': 1}
     return [
         # tall tongues: born on the mesh as the short ones, they rise higher and join over the shoulders into the plume
-        {'name': 'OWN_BODY_TALL', 'base': 'OWN_HAND_LICKS', 'inherit': 0.85,
+        # the wind's share is small: at the torch's 0.5 a breeze blew every tongue off to one side of the body
+        {'name': 'OWN_BODY_TALL', 'base': 'OWN_HAND_LICKS', 'inherit': 0.85, 'wind': 0.2,
          'set': {**burn, 'ppsValue': 9.0, 'shpType_S': 'MESH', 'shpIsVolume': 0, 'shpDim_S': '0 0 0',
                  'shpOffsetVec_S': '0 0 0', 'visSizeStart_S': '34 60', 'visSizeEndScale': 0.75, 'lspPartAvg': 560.0,
                  'lspPartVar': 140.0, 'velAvg': 0.05, 'velVar': 0.02, 'flyGravity_S': '0 0.00012 0'}},
@@ -143,9 +144,16 @@ def body_fire() -> list:
                  'visSizeStart_S': '0.6 0.6'}, inherit=0.2, minPixels=2.0),
         haze('OWN_BODY_HEAT', 5.0, inherit=0.3, **burn, ppsValue=1.0, lspPartAvg=600.0, lspPartVar=120.0, shpDim_S='10',
              **up, shpOffsetVec_S='0 50 0', visSizeStart_S='60 60', visSizeEndScale=1.5, flyGravity_S='0 0.0001 0'),
+        # the one effect on the root keeps the game's smoke and brings the body's light: the game's own is a point a
+        # metre wide at the belt that hardly reaches the ground. The range follows the fire's stages, with a flicker, and
+        # ends at 0: the keys play once, the smoke outlives the fire
+        {'name': 'MFX_MAGICFIRE_HUMANSMOKE', 'base': 'MFX_MAGICFIRE_HUMANSMOKE', 'replaces': True, 'set': {},
+         'light': {'range': 450, 'color': [255, 150, 60], 'fps': 6.0,
+                   'keys': [0.4, 0.8, 1, 0.94, 1.05, 0.97, 1.03, 0.93, 1, 1.06, 0.95, 1.02, 0.96, 1.04, 0.93, 1, 1.05,
+                            0.96, 1.02, 0.94, 1, 0.97, 1.03, 0.95, 0.8, 0.55, 0.3, 0.1, 0]}},
         # the short tongues on the clothes: born on the body's mesh, they rise and go out. Each of the seven emitters
         # brings a seventh of the smoke, the embers and the hot air, over its own bone
-        {'name': 'MFX_MAGICFIRE_HUMANBURN', 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.92,
+        {'name': 'MFX_MAGICFIRE_HUMANBURN', 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.92, 'wind': 0.1,
          'with': ['OWN_BODY_TALL', 'OWN_BODY_SMOKE', 'OWN_BODY_EMBERS', 'OWN_BODY_HEAT'],
          'set': {**burn, 'ppsValue': 30.0, 'shpType_S': 'MESH', 'shpIsVolume': 0, 'shpDim_S': '0 0 0', 'shpOffsetVec_S': '0 0 0',
                  'visSizeStart_S': '24 40', 'visSizeEndScale': 0.7, 'lspPartAvg': 380.0, 'lspPartVar': 100.0,

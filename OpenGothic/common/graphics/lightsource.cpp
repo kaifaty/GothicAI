@@ -127,8 +127,9 @@ void LightSource::update(uint64_t time) {
     if(!rangeSmooth)
       a = 0;
 
-    float    r0    = rangeAniScale[(frame  )%rangeAniScale.size()];
-    float    r1    = rangeAniScale[(frame+1)%rangeAniScale.size()];
+    const size_t last = rangeAniScale.size()-1;
+    float    r0    = rangeAniScale[rangeOnce ? std::min(frame,  last) : (frame  )%rangeAniScale.size()];
+    float    r1    = rangeAniScale[rangeOnce ? std::min(frame+1,last) : (frame+1)%rangeAniScale.size()];
     curRgn = r0+(r1-r0)*a;
     }
 

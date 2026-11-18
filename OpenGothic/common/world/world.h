@@ -210,6 +210,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     MeshObjects::Mesh    addDecalView (const asset::VisualDecal& decal);
     LightGroup::Light    addLight(const asset::VLight& vob);
     LightGroup::Light    addLight(std::string_view preset);
+    LightGroup::Light    addLight(const asset::LightPreset& preset);
 
     void                 updateAnimation(uint64_t dt);
     void                 catchUpAnimation();

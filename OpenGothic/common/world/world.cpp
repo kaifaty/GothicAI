@@ -1100,6 +1100,12 @@ LightGroup::Light World::addLight(const asset::VLight& vob) {
   return view()->addLight(vob, tickCount());
   }
 
+LightGroup::Light World::addLight(const asset::LightPreset& preset) {
+  if(Resources::isHeadless())
+    return LightGroup::Light();
+  return view()->addLight(preset, tickCount());
+  }
+
 LightGroup::Light World::addLight(std::string_view preset) {
   if(Resources::isHeadless())
     return LightGroup::Light();
