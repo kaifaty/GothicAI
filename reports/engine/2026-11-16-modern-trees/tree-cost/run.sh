@@ -4,8 +4,8 @@
 # with its own PERF_ENV; then one run of the full forest with OPENGOTHIC_VSM_STATS=1 for the counters of the shadow
 # maps (it waits for the GPU: not a timing run). The sets of `scripts/content/fir_set.py forest` must already lie in
 # ~/gothic-ai/tree-cost/content/<set>/ on Ryzen (rsync, see tree-cost.md, «Как повторить»).
-# With variant names after the output, only those run, in that order, as rounds 3 and 4 (a repeat of runs a hang
-# stopped), without the counters' run.
+# With variant names after the output, only those run, in that order, as round 3 (round 4 for a name given twice):
+# a repeat of runs a hang stopped, without the counters' run; NO_BUILD=1 keeps the stand's build.
 #   reports/engine/2026-11-16-modern-trees/tree-cost/run.sh /absolute/local/out [variant...]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
@@ -32,9 +32,11 @@ rsync -a "$ROOT"/scripts/bench/perf-*.bench "$HOST:$SOURCE/scripts/bench/"
 
 ENV=(PERF_REMOTE=1 PERF_VID_RES=0 PERF_INI= PERF_WINDOW=2560x1440 PERF_REPEAT=1 PERF_WAIT=600 PERF_ARGS=
      "PERF_COMMIT=$COMMIT" "PERF_DIRTY=$DIRTY" "PERF_SOURCE_FINGERPRINT=$FINGERPRINT")
-[[ -z "${NO_BUILD:-}" ]] && "$ROOT/scripts/gq" --host "$HOST" run --class quick --threads 8 --mem 12G --max 30m --wait-max 7200 \
-  --name 'build tree-cost stand' -- env "${ENV[@]}" PERF_ENV= RYZEN_JOBS=8 \
-  bash "$SOURCE/scripts/perf.sh" __build "$REMOTE_OUT/build"
+if [[ -z "${NO_BUILD:-}" ]]; then
+  "$ROOT/scripts/gq" --host "$HOST" run --class quick --threads 8 --mem 12G --max 30m --wait-max 7200 \
+    --name 'build tree-cost stand' -- env "${ENV[@]}" PERF_ENV= RYZEN_JOBS=8 \
+    bash "$SOURCE/scripts/perf.sh" __build "$REMOTE_OUT/build"
+fi
 
 # name|PERF_ENV after the content and the pass markers
 VARIANTS=(
@@ -61,10 +63,11 @@ line() {  # name, round, extra env
   JOB+="echo \"tree-cost: $name round $round\"; env ${ENV[*]} NO_BUILD=1 PERF_ENV='OPENGOTHIC_CONTENT=$CONTENT/$(set_of "$name") OPENGOTHIC_GPU_PASSES=1 $extra' bash $SOURCE/scripts/perf.sh __run $REMOTE_OUT/$name/round-$round trees || echo \"tree-cost: $name round $round FAILED\""$'\n'
 }
 if ((${#ONLY[@]})); then
-  round=3
+  DONE=" "
   for name in "${ONLY[@]}"; do
-    for v in "${VARIANTS[@]}"; do [[ "${v%%|*}" == "$name" ]] && line "$name" "$round" "${v#*|}"; done
-    round=$((round == 3 ? 4 : 3))
+    round=3; [[ "$DONE" == *" $name "* ]] && round=4
+    DONE+="$name "
+    for v in "${VARIANTS[@]}"; do if [[ "${v%%|*}" == "$name" ]]; then line "$name" "$round" "${v#*|}"; fi; done
   done
 else
   for v in "${VARIANTS[@]}"; do line "${v%%|*}" 1 "${v#*|}"; done
