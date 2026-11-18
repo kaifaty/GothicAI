@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The runs of tree-cost.md: every variant of the forest on one Ryzen build, in one quiet queue job, two rounds,
 # the second in the reverse order. Each run is `scripts/perf.sh __run <out> trees` (scripts/bench/perf-trees.bench)
-# with its own PERF_ENV; then one run of the full forest with OPENGOTHIC_VSM_STATS=1 for the counters of the shadow
+# with its own PERF_ENV; then one run of each forest with OPENGOTHIC_VSM_STATS=1 for the counters of the shadow
 # maps (it waits for the GPU: not a timing run). The sets of `scripts/content/fir_set.py forest` must already lie in
 # ~/gothic-ai/tree-cost/content/<set>/ on Ryzen (rsync, see tree-cost.md, «Как повторить»).
 # With variant names after the output, only those run, in that order, as round 3 (round 4 for a name given twice):
@@ -74,7 +74,7 @@ if ((${#ONLY[@]})); then
 else
   for v in "${VARIANTS[@]}"; do line "${v%%|*}" 1 "${v#*|}"; done
   for ((k=${#VARIANTS[@]}-1; k>=0; k--)); do v="${VARIANTS[$k]}"; line "${v%%|*}" 2 "${v#*|}"; done
-  line F1024-vsmstats 1 "OPENGOTHIC_VSM_STATS=1"
+  for name in F1024 F64 F256 F1024h F1024q F1024e; do line "$name-vsmstats" 1 "OPENGOTHIC_VSM_STATS=1"; done
 fi
 "$ROOT/scripts/gq" --host "$HOST" run --class quiet --threads 4 --mem 5G --gpu-mem 4G --display --max 180m \
   --wait-max 7200 --name 'tree-cost runs' --archive "$REMOTE_OUT" -- bash -c "$JOB" 2>&1 | tee "$OUT.log"

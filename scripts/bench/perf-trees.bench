@@ -11,7 +11,8 @@
 #           46 m over the forest's ground;
 #   view-3  100 m from the edge, west-south-west, 1.7 m over the ground;
 #   view-4  300 m west of the edge, 70 m over the ground: lower, the hills by the tavern hide the forest;
-#   view-5  the hero runs east from the west column of the block of 64 through the forest, the game's camera.
+#   view-5  the hero runs 9 s north through the block of 64, the game's camera: from x 545 m, z -127 m, a line
+#           without the hut, the farm's things and the original's trunks in it (they collide).
 # The cameras stand by X0, Z0, STEP and NEST_ROW of fir_set.py: change both together.
 seed 73013
 cheat god
@@ -61,9 +62,9 @@ shot far-300
 wait 200
 # the pass: the spruces have no collision, the hero runs straight through them
 cam game
-goto pos 52300 1650 -10780
+goto pos 54500 1640 -12700
 clear 5000
-face 0
+face 110
 wait 15000
 press forward
 wait 500
