@@ -72,6 +72,19 @@ constexpr float LeafSide      = 0.6f;     // the part across the wind
 constexpr float LeafPlaceX    = 0.045f;   // rad per cm of the mesh: the corners of one card are out of step, and the
 constexpr float LeafPlaceY    = 0.031f;   // card twists
 constexpr float LeafPlaceZ    = 0.053f;
+// The fade with the distance (the note's section 4), in pixels of the main view: a motion is whole while the most
+// of it is *Full pixels or more and gone under *None. The branches' most is the end of the longest one the rule
+// lets a tree have, which goes four times as far as a middle one, so their numbers are above a pixel
+constexpr float FadeLeafFull   = 0.8f;
+constexpr float FadeLeafNone   = 0.5f;
+constexpr float FadeBranchFull = 5.f;
+constexpr float FadeBranchNone = 3.f;
+constexpr float FadeTrunkFull  = 4.f;
+constexpr float FadeTrunkNone  = 2.5f;
+// The bounds of a tree whose wind fades (fadeBound): the fade is taken this share of the way to the camera and
+// up to a whole one of FadeBoundSteps, so the sphere is never less than the motion and is not set anew each frame
+constexpr float FadeBoundNear  = 0.98f;
+constexpr float FadeBoundSteps = 8.f;
 
 inline bool isTree(const FoliageWind::Params& p) { return p.on && p.anchor==FoliageWind::AnchorTree; }
 inline bool isTree(uint32_t bits)                { return (bits >> 24)==FoliageWind::AnchorTree; }
@@ -93,6 +106,67 @@ inline float travel(uint32_t bits, float reach) {
          FoliageWind::packedFlutter(bits)*LeafMax*(LeafUp + LeafSide);
   }
 
+// What is left of a tree's three motions far off (foliageTreeFade): 1 near, where the rule is what it was; never
+// trunk < branch < leaf, so the needles stop first and the trunk last
+struct Fade final {
+  float trunk  = 1.f;
+  float branch = 1.f;
+  float leaf   = 1.f;
+  bool  none() const { return trunk<=0.f; }  // no wind at all: the vertex is not moved
+  };
+
+// SceneDesc::foliageFade.x: the pixels of the main view a unit of the tangent is. projY: the projection's [1][1]
+inline float fadeScale(float projY, int screenH) {
+  return 0.5f*float(std::max(screenH,0))*std::abs(projY);
+  }
+
+// The fade of a tree `distance` cm from the main camera, by how many pixels the most of each motion is there: the
+// needles' LeafMax, the end of the longest branch a tree of this height has by the rule, the lean of the top, all
+// at a wind and a flutter of one, so the bark and the leaves of a tree fade as one body. scale: of the object's
+// matrix up the trunk; pxPerTan: fadeScale, 0 without the fade. Not a tree: no fade
+inline Fade fade(uint32_t bits, float reach, float scale, float distance, float pxPerTan) {
+  Fade f;
+  if(!isTree(bits) || pxPerTan<=0.f)
+    return f;
+  const auto  smooth = [](float from, float full, float v) {
+    const float t = std::clamp((v-from)/(full-from), 0.f, 1.f);
+    return t*t*(3.f-2.f*t);
+    };
+  const float height = std::max(reach, 1e-3f);
+  const float px     = scale*pxPerTan/std::max(distance, 1.f); // pixels a cm of the mesh is
+  const float arm    = height*BranchReach;
+  const float bough  = arm*BranchGive*std::min(std::sqrt(scale*arm/BranchLong), BranchTopK);
+  f.leaf   = smooth(FadeLeafNone, FadeLeafFull, LeafMax*px);
+  f.branch = std::max(f.leaf,   smooth(FadeBranchNone, FadeBranchFull, bough*px));
+  f.trunk  = std::max(f.branch, smooth(FadeTrunkNone,  FadeTrunkFull,  TreeLean*height*px));
+  return f;
+  }
+
+// the fade the bounds are grown by: no less than the shader's of the same frame
+inline Fade fadeBound(uint32_t bits, float reach, float scale, float distance, float pxPerTan) {
+  Fade f = fade(bits, reach, scale, distance*FadeBoundNear, pxPerTan);
+  f.trunk  = std::ceil(f.trunk *FadeBoundSteps)/FadeBoundSteps;
+  f.branch = std::ceil(f.branch*FadeBoundSteps)/FadeBoundSteps;
+  f.leaf   = std::ceil(f.leaf  *FadeBoundSteps)/FadeBoundSteps;
+  return f;
+  }
+
+// a fade of fadeBound in twelve bits: what a tree's sphere is grown by now
+inline uint16_t fadeCode(const Fade& f) {
+  const auto step = [](float v) { return uint16_t(std::lround(std::clamp(v, 0.f, 1.f)*FadeBoundSteps)); };
+  return uint16_t(step(f.trunk) | (step(f.branch) << 4) | (step(f.leaf) << 8));
+  }
+
+// travel of a tree whose wind has faded: each motion's part by what is left of it; all of it at Fade()
+inline float travel(uint32_t bits, float reach, const Fade& f) {
+  if(!isTree(bits))
+    return FoliageWind::travel(bits,reach);
+  const float trunk  = 2.f*(TreeLean + (TreeSwayCalm+TreeSwayWind)*(1.f+TreeAcross));
+  const float branch = BranchReach*BranchGive*BranchTopK*(1.f + BranchGust);
+  return reach*FoliageWind::packedWind(bits)*(trunk*f.trunk + branch*f.branch) +
+         FoliageWind::packedFlutter(bits)*LeafMax*(LeafUp + LeafSide)*f.leaf;
+  }
+
 // the same for a material's mesh, by the switch
 inline float travel(const FoliageWind::Params& p, const Tempest::Vec3& boxMin, const Tempest::Vec3& boxMax) {
   return p.on ? travel(FoliageWind::pack(p,FoliageWind::enabled()), reach(p,boxMin,boxMax)) : 0.f;
@@ -110,13 +184,15 @@ inline FoliageWind::SwingRates swayRates(float hash, float heightCm) {
 // The vertex of a tree in its mesh's axes, moved by the wind. color: Resources::Vertex::color, R in the low byte;
 // reach: the mesh's height; axis: the columns of the object's matrix; place: its translation; sc: the scene's wind
 // with the pressure of the tree's place; front: the front the branches and the needles read at the vertex's place,
-// `previous` its last frame's. Without a front every vertex has the tree's pressure
+// `previous` its last frame's. Without a front every vertex has the tree's pressure. fd: what the distance leaves
+// of the motions (fade); all of them without it
 inline Tempest::Vec3 bend(const Tempest::Vec3& p, uint32_t color, uint32_t bits, float reach,
                           const Tempest::Vec3 axis[3], const Tempest::Vec3& place, const FoliageWind::Scene& sc,
-                          const FoliageFront::Front& front = FoliageFront::Front(), bool previous = false) {
+                          const FoliageFront::Front& front = FoliageFront::Front(), bool previous = false,
+                          const Fade& fd = Fade()) {
   using FoliageWind::fract;
   const float windK = FoliageWind::packedWind(bits), flutK = FoliageWind::packedFlutter(bits);
-  if(sc.wind.w<=0.f || (windK<=0.f && flutK<=0.f))
+  if(sc.wind.w<=0.f || (windK<=0.f && flutK<=0.f) || fd.none())
     return p;
   const float height = std::max(reach, 1e-3f);
   const float cR = float( color      & 0xFFu)/255.f;
@@ -145,8 +221,8 @@ inline Tempest::Vec3 bend(const Tempest::Vec3& p, uint32_t color, uint32_t bits,
       const float sa    = Tree1Share*std::sin(a1) + Tree2Share*std::sin(a2);
       const float sb    = Tree1Share*std::cos(a1) - Tree2Share*std::cos(a2);
       const float sway  = TreeSwayCalm + TreeSwayWind*q;
-      const float along = height*u*u*windK*(TreeLean*q + sway*sa);
-      const float side  = height*u*u*windK*sway*TreeAcross*sb;
+      const float along = height*u*u*windK*(TreeLean*q + sway*sa)*fd.trunk;
+      const float side  = height*u*u*windK*sway*TreeAcross*sb*fd.trunk;
       const Tempest::Vec3 t(p.x + wx*along - wz*side, p.y, p.z + wz*along + wx*side);
       const float pl = p.length(), tl = t.length();
       r = tl>1e-6f ? t*(pl/tl) : p;
@@ -154,7 +230,8 @@ inline Tempest::Vec3 bend(const Tempest::Vec3& p, uint32_t color, uint32_t bits,
 
     }
 
-  const bool branch = cR>0.f && windK>0.f, leaf = cB>0.f && flutK>0.f;
+  // a far tree has the trunk's motion alone: no front and no waves for its vertices
+  const bool branch = cR>0.f && windK>0.f && fd.branch>0.f, leaf = cB>0.f && flutK>0.f && fd.leaf>0.f;
   if(!branch && !leaf)
     return r;
 
@@ -186,7 +263,7 @@ inline Tempest::Vec3 bend(const Tempest::Vec3& p, uint32_t color, uint32_t bits,
       }
     gusts /= sum;
     const float give  = BranchGive*std::min(std::sqrt(al[1]*rl*cR/BranchLong), BranchTopK);
-    const float push  = windK*std::min(rl, height*BranchReach)*give*(ql + BranchGust*el*gusts);
+    const float push  = windK*std::min(rl, height*BranchReach)*give*(ql + BranchGust*el*gusts)*fd.branch;
     r.x += push*(wx - firm*along*p.x/rl);
     r.z += push*(wz - firm*along*p.z/rl);
     r.y += push*BranchLift*firm*along;
@@ -201,7 +278,7 @@ inline Tempest::Vec3 bend(const Tempest::Vec3& p, uint32_t color, uint32_t bits,
       };
     const float crest = smooth(PatchFrom, PatchFull, 0.5f*(wave[2] + wave[3]));
     const float end   = LeafInner + (1.f-LeafInner)*smooth(LeafEndFrom, LeafEndFull, cR);
-    const float amp   = flutK*cB*LeafMax*el*crest*end;
+    const float amp   = flutK*cB*LeafMax*el*crest*end*fd.leaf;
     const float at    = p.x*LeafPlaceX + p.y*LeafPlaceY + p.z*LeafPlaceZ;
     const float s1    = std::sin(12.5663706f*(sc.phase.z + cG + h) + at);
     const float s2    = std::sin(12.5663706f*(sc.phase.w + cG + fract(h*1.618034f)) + at*1.3f + 1.7f);
@@ -215,8 +292,9 @@ inline Tempest::Vec3 bend(const Tempest::Vec3& p, uint32_t color, uint32_t bits,
 // what the vertex shader does to a vertex of a BK_FOLIAGE bucket (foliageMove, foliage_tree.glsl)
 inline Tempest::Vec3 move(const Tempest::Vec3& p, uint32_t color, uint32_t bits, float reach,
                           const Tempest::Vec3 axis[3], const Tempest::Vec3& place, const FoliageWind::Scene& sc,
-                          const FoliageFront::Front& front = FoliageFront::Front(), bool previous = false) {
-  return isTree(bits) ? bend(p,color,bits,reach,axis,place,sc,front,previous) : FoliageWind::bend(p,bits,reach,axis,place,sc);
+                          const FoliageFront::Front& front = FoliageFront::Front(), bool previous = false,
+                          const Fade& fd = Fade()) {
+  return isTree(bits) ? bend(p,color,bits,reach,axis,place,sc,front,previous,fd) : FoliageWind::bend(p,bits,reach,axis,place,sc);
   }
 
 }
