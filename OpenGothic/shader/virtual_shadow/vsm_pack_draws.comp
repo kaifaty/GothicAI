@@ -61,7 +61,7 @@ void mainCmd() {
 void mainClusters() {
   uint index = gl_GlobalInvocationID.x;
   if(index>=min(vsm.header.meshletCount, push.pairCap))
-    return; // the classes let in fit under the cap (vsmAdmit); the bound holds anyway
+    return; // the bins let in fit under the cap (vsm_cull_meshlets.comp); the bound holds anyway
 
   const uvec4 cluster    = payloadSrc[index];
   if(cluster.w==VSM_PAIR_SKIP)

@@ -20,7 +20,8 @@ layout(push_constant, std430) uniform UboPush {
   } push;
 layout(binding = 0, std140) uniform UboScene    { SceneDesc   scene;         };
 // a cluster and the page entry its sphere touches (vsm_cull_meshlets.comp takes its meshlets): the cluster's id, the
-// entry's index and its class above 16 bits, then the meshlets that pass, which the meshlets' pass writes
+// entry's index and its bin above 16 bits (vsmSunBin, vsmLampBin), then the meshlets that pass, which the meshlets'
+// pass writes
 layout(binding = 1, std430) writeonly buffer Cnd { uvec4      candidates[];  };
 layout(binding = 2, std430) readonly buffer Mem { uint        instanceMem[]; };
 layout(binding = 3, std140) readonly buffer Bbo { Bucket      bucket[];      };
@@ -102,10 +103,10 @@ bool projectCluster(const Cluster cluster, out vec4 aabb, out float depthMax) {
   // return projectInstance(cluster, aabb, depthMax);
   }
 
-void listCandidate(uint clusterId, uint entry, uint cls) {
+void listCandidate(uint clusterId, uint entry, uint bin) {
   const uint at = atomicAdd(vsm.header.candidateCount, 1);
   if(at<push.candidateCap)
-    candidates[at] = uvec4(clusterId, entry | (cls << 16), 0, 0);
+    candidates[at] = uvec4(clusterId, entry | (bin << 16), 0, 0);
   }
 
 
@@ -267,7 +268,7 @@ void runCluster(const uint clusterId, const uint mip) {
       continue;
 #endif
 
-    listCandidate(clusterId, i, mip);
+    listCandidate(clusterId, i, vsmSunBin(page, sz));
     }
   }
 
@@ -288,7 +289,7 @@ void runClusterOmni(const uint clusterId) {
 
     // imageAtomicAdd(dbg, ivec2(0,1), cluster.meshletCount);
     // imageAtomicAdd(dbg, ivec2(page.x%64,1+page.x/64), cluster.meshletCount);
-    listCandidate(clusterId, i, VSM_CLASS_OMNI);
+    listCandidate(clusterId, i, vsmLampBin(distance(lx.pos, scene.camPos)));
     }
   }
 

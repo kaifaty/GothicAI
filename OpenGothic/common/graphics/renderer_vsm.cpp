@@ -182,8 +182,9 @@ void Renderer::logVsmStats(const WorldView& wview) {
     uint32_t pagePerMip[16];
     int32_t  pageBbox[16][4];
     uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax;
-    uint32_t pairSpill, candidateCount, clusterPairs, admitMask, admitPrev;
-    uint32_t pairDemand[17]; // the sun's mips, then the lamps (VSM_PAIR_CLASSES)
+    uint32_t pairSpill, candidateCount, clusterPairs;
+    uint32_t admitBits[9], admitPrevBits[9]; // VSM_BIN_WORDS
+    uint32_t pairDemand[16+16*16];          // VSM_PAIR_BINS: the lamps by distance, then the sun's mips by ring
     } h = {};
   uint32_t visibleLights = 0;
   auto& device = Resources::device();
@@ -208,14 +209,23 @@ void Renderer::logVsmStats(const WorldView& wview) {
          ", spilled = ", h.pairSpill,
          ", lights = ", visibleLights, "/", uint32_t(wview.lights().size()),
          ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
-  // the demand of each class with any, a class dropped this frame (vsmAdmit) marked
+  // the pairs of the lamps and of each sun's mip with any, and how many of them the bins left out this frame
+  // (vsm_cull_meshlets.comp) did not draw
+  const auto drawn = [&](uint32_t bin) { return (h.admitBits[bin/32] & (1u << (bin%32)))!=0; };
   std::string classes;
-  for(uint32_t i=0; i<17; ++i) {
-    if(h.pairDemand[i]==0)
+  for(uint32_t c=0; c<17; ++c) {
+    const uint32_t first = c==0 ? 0 : 16+(c-1)*16;
+    uint32_t sum = 0, left = 0;
+    for(uint32_t bin=first; bin<first+16; ++bin) {
+      sum += h.pairDemand[bin];
+      if(!drawn(bin))
+        left += h.pairDemand[bin];
+      }
+    if(sum==0)
       continue;
-    classes += (i==16 ? std::string(" lamps ") : " mip" + std::to_string(i) + " ") + std::to_string(h.pairDemand[i]);
-    if((h.admitMask & (1u << i))==0)
-      classes += " DROPPED";
+    classes += (c==0 ? std::string(" lamps ") : " mip" + std::to_string(c-1) + " ") + std::to_string(sum);
+    if(left>0)
+      classes += " (left out " + std::to_string(left) + ")";
     }
   Log::i("vsm pairs by class:", classes);
 

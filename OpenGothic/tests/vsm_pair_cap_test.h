@@ -3,9 +3,10 @@
 // A part of material_texture_test.cpp, included inside its unnamed namespace after `require`.
 // The meshlet-page pairs of the sun's virtual shadow map and the lamps' faces (reports/engine/2026-11-16-modern-trees/
 // shadow-flicker.md): the engine's own vsm_visibility_pass.comp, vsm_cull_meshlets.comp and vsm_pack_draws.comp on
-// three page entries - mip 0, mip 1 and a lamp's face - and two clusters. An object's cluster keeps the meshlets whose
-// own spheres touch an entry; a cluster of one meshlet goes whole. The classes go in whole, lamps first, up to the cap
-// and exactly at it, the same ones however the GPU runs; a class dropped the frame before needs 1/8 of the cap spare.
+// four page entries - mip 0, mip 1, a lamp's face and mip 2 - and two clusters. An object's cluster keeps the meshlets
+// whose own spheres touch an entry; a cluster of one meshlet goes whole. The bins of pairs go in whole in their order,
+// lamps first, as long as they fit the cap, exactly at it too; one that does not is left out and the next is tried,
+// the same ones however the GPU runs; a bin left out the frame before needs 1/8 of the cap spare.
 // Before, the object went with all its meshlets into every entry, and past the cap the order of the GPU's groups chose
 // which pairs dropped: the shadow over a forest flickered from frame to frame.
 void vsmPairCapRecords(Tempest::Device& device) {
@@ -17,7 +18,8 @@ void vsmPairCapRecords(Tempest::Device& device) {
     return;
     }
 
-  constexpr uint32_t Slots = 64, Draws = 2, Old = 999, Skip = 0xFFFFFFFFu, Sun0 = 0, Sun1 = 1, Lamps = 16;
+  // the bins of vsm_common.glsl: a lamp 5 m from the camera, then the centre ring of mips 0, 1 and 2
+  constexpr uint32_t Slots = 64, Draws = 2, Old = 999, Skip = 0xFFFFFFFFu, Lamp = 1, Sun0 = 16, Sun1 = 32, Sun2 = 48;
   constexpr uint32_t ObjectMeshlet = 10, SpheresAt = 2; // the object's first meshlet, its mesh's first sphere
   struct Cluster { float sphere[4]; uint32_t bucketId_commandId, firstMeshlet; int32_t meshletCount; uint32_t instanceId; };
   struct Cmd     { uint32_t vertexCount, instanceCount, firstVertex, firstInstance, writeOffset; };
@@ -26,7 +28,13 @@ void vsmPairCapRecords(Tempest::Device& device) {
     uint32_t pageCount, meshletCount, counterM, counterV, pagePerMip[16];
     int32_t  pageBbox[16][4];
     uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax, pairSpill;
-    uint32_t candidateCount, clusterPairs, admitMask, admitPrev, pairDemand[17];
+    uint32_t candidateCount, clusterPairs, admitBits[9], admitPrevBits[9], pairDemand[16+16*16];
+    };
+  const auto bits = [](std::initializer_list<uint32_t> bins) {
+    std::array<uint32_t,9> ret = {};
+    for(auto b:bins)
+      ret[b/32] |= 1u << (b%32);
+    return ret;
     };
   const size_t headerSize = shaders.vsmClear.sizeofBuffer(0, 0);
   require(headerSize>=sizeof(Header) && headerSize<sizeof(Header)+16, "the test's VsmHeader follows vsm_common.glsl");
@@ -34,20 +42,20 @@ void vsmPairCapRecords(Tempest::Device& device) {
   require(sizeof(Light)==shaders.vsmCullMeshlets.sizeofBuffer(6, 1), "the test's LightSource follows scene.glsl");
   require(shaders.vsmCullMeshlets.sizeofBuffer(3, 1)==144, "Bucket of scene.glsl is DrawBuckets::BucketGpu's 144 bytes");
 
-  // the sun's view is the identity: mip 0's page (16,16) is x and y of 0..64, mip 1's of 0..128; a lamp hangs 5 m over
-  // them and its face 5 looks down on them
+  // the sun's view is the identity: mip 0's page (16,16) is x and y of 0..64, mip 1's of 0..128, mip 2's of 0..256; a
+  // lamp hangs 5 m over them and its face 5 looks down on them
   std::vector<uint8_t> scene(sizeof(SceneGlobals::UboGlobal), 0);
   const auto identity = Tempest::Matrix4x4::mkIdentity();
   std::memcpy(scene.data(), &identity, sizeof(identity));
   const auto sunEntry = [](uint32_t mip) { // packVsmPageInfo(ivec3(16,16,mip), ivec2(1))
     return (16u << 1) | (16u << 9) | (mip << 17) | (1u << 24) | (1u << 28);
     };
-  const uint32_t entries[3] = {sunEntry(0), sunEntry(1), 0x1u | (5u << 1) | (1u << 24) | (1u << 28)}; // light 0, face 5
+  const uint32_t entries[4] = {sunEntry(0), sunEntry(1), 0x1u | (5u << 1) | (1u << 24) | (1u << 28), sunEntry(2)};
   const Light light = {{32.f, 32.f, 500.f}, 1000.f, {1.f, 1.f, 1.f}, 0.f, 0.f, 0.f, {0.f, 0.f}};
 
   // cluster 0: an object of six meshlets at the instance's origin (identity). Its meshlets' spheres: 0, 1 and 5 touch
-  // both sun entries, 2 only mip 1's, 3 and 4 neither, and all but 3 and 4 the lamp's face. Cluster 1: one meshlet of
-  // the landscape, whole in each entry
+  // all sun entries, 2 those of mips 1 and 2, 3 and 4 none, and all but 3 and 4 the lamp's face. Cluster 1: one
+  // meshlet of the landscape, whole in each entry but mip 2's, where it is too small (the visibility pass's 32 pixels)
   const float meshlets[6][4] = {{32,32,0,4}, {40,20,0,4}, {100,32,0,4}, {-3000,32,0,4}, {32,-3000,0,4}, {60,60,0,4}};
   std::vector<float> spheres(32*4, 0.f);
   for(size_t i=0; i<spheres.size(); i+=4)
@@ -94,13 +102,13 @@ void vsmPairCapRecords(Tempest::Device& device) {
     };
   // the packing alone, from slots and counts set here; or a whole frame: the visibility pass, the meshlets' pass and
   // the packing, under cap pairs, with the classes drawn the frame before
-  const auto run = [&](bool packOnly, uint32_t cap, uint32_t admitPrev, uint32_t written,
+  const auto run = [&](bool packOnly, uint32_t cap, const std::array<uint32_t,9>& admitPrev, uint32_t written,
                        const std::vector<Cmd>& counts, const std::vector<uint32_t>& slots) {
     std::vector<uint8_t> pages(shaders.vsmClear.sizeofBuffer(0, 16), 0);
     Header header = {};
-    header.pageCount    = 3;
+    header.pageCount    = 4;
     header.meshletCount = written;
-    header.admitPrev    = admitPrev;
+    std::copy(admitPrev.begin(), admitPrev.end(), header.admitPrevBits);
     std::memcpy(pages.data(), &header, sizeof(header));
     std::memcpy(pages.data()+headerSize, entries, sizeof(entries));
     auto pageBuf    = device.ssbo(pages.data(), pages.size());
@@ -197,33 +205,42 @@ void vsmPairCapRecords(Tempest::Device& device) {
   std::vector<Cmd> counts = zero;
   counts[0].instanceCount = 2;
   counts[1].instanceCount = 1;
-  const Frame f = run(true, Slots, 0, 3, counts, slots);
+  const Frame f = run(true, Slots, {}, 3, counts, slots);
   require(f.header.pairSpill==0 && f.draws[0].instanceCount==1 && f.draws[1].writeOffset==2 &&
           f.draws[1].instanceCount==1 && f.packed[1]==ObjectMeshlet && f.packed[2*4+1]==77,
           "the packing skips a slot left with VSM_PAIR_SKIP, and no draw takes it");
   }
 
   // room for all: the object's meshlets by their spheres in each entry, the landscape's meshlet whole
-  const Frame all = run(false, Slots, 0, 0, zero, older);
-  require(all.header.pairDemand[Sun0]==4 && all.header.pairDemand[Sun1]==5 && all.header.pairDemand[Lamps]==5,
-          "the demand of each class: the meshlets whose spheres touch its entry");
-  require(all.header.clusterPairs==3*6+3*1, "whole clusters would ask a pair for each meshlet in each entry");
-  require(all.header.admitMask==((1u << Sun0) | (1u << Sun1) | (1u << Lamps)) && all.header.meshletCount==14 &&
-          all.header.pairSpill==0, "with room for all every class is drawn");
+  const auto admitted = [](const Frame& f) {
+    std::array<uint32_t,9> ret = {};
+    std::copy(std::begin(f.header.admitBits), std::end(f.header.admitBits), ret.begin());
+    return ret;
+    };
+  const Frame all = run(false, Slots, {}, 0, zero, older);
+  require(all.header.pairDemand[Sun0]==4 && all.header.pairDemand[Sun1]==5 && all.header.pairDemand[Lamp]==5 &&
+          all.header.pairDemand[Sun2]==4, "the demand of each bin: the meshlets whose spheres touch its entries");
+  require(all.header.clusterPairs==4*6+3*1, "whole clusters would ask a pair for each meshlet in each entry");
+  require(admitted(all)==bits({Lamp, Sun0, Sun1, Sun2}) && all.header.meshletCount==18 && all.header.pairSpill==0,
+          "with room for all every bin is drawn");
   require(pairsOf(all, 0, 0)==ids({0, 1, 5}) && pairsOf(all, 0, 1)==ids({0, 1, 2, 5}) &&
-          pairsOf(all, 0, 2)==ids({0, 1, 2, 5}), "an object's entry takes the meshlets whose spheres touch it");
-  require(pairsOf(all, 1, 0).size()==1 && pairsOf(all, 1, 1).size()==1 && pairsOf(all, 1, 2).size()==1,
-          "a cluster without spheres goes whole into each entry");
+          pairsOf(all, 0, 2)==ids({0, 1, 2, 5}) && pairsOf(all, 0, 3)==ids({0, 1, 2, 5}),
+          "an object's entry takes the meshlets whose spheres touch it");
+  require(pairsOf(all, 1, 0).size()==1 && pairsOf(all, 1, 1).size()==1 && pairsOf(all, 1, 2).size()==1 &&
+          pairsOf(all, 1, 3).empty(), "a cluster without spheres goes whole into each entry");
 
-  // the cap is the lamps' and mip 0's pairs exactly: they are drawn whole, mip 1 is not drawn at all
-  const Frame edge = run(false, 9, all.header.admitMask, 0, zero, older);
-  require(edge.header.admitMask==((1u << Sun0) | (1u << Lamps)) && edge.header.meshletCount==9 &&
-          edge.header.pairSpill==0, "classes go in whole, the lamps first, up to the cap and exactly at it");
+  // a cap of 13: the lamp's 5 and mip 0's 4 go in, mip 1's 5 would make 14 and is left out, mip 2's 4 make 13, exactly
+  // the cap, and go in
+  const Frame edge = run(false, 13, admitted(all), 0, zero, older);
+  require(admitted(edge)==bits({Lamp, Sun0, Sun2}) && edge.header.meshletCount==13 && edge.header.pairSpill==0,
+          "bins go in whole in their order, lamps first, up to the cap and exactly at it; one past it is left out");
   require(pairsOf(edge, 0, 0)==ids({0, 1, 5}) && pairsOf(edge, 0, 1).empty() && pairsOf(edge, 0, 2)==ids({0, 1, 2, 5}) &&
-          pairsOf(edge, 1, 1).empty(), "a dropped class has no pair, the classes drawn all theirs");
+          pairsOf(edge, 0, 3)==ids({0, 1, 2, 5}) && pairsOf(edge, 1, 1).empty(),
+          "a bin left out has no pair, the bins drawn all theirs");
 
-  // all 14 pairs fit a cap of 14, but mip 1 was dropped the frame before: it comes back only under 7/8 of the cap
-  const Frame held = run(false, 14, edge.header.admitMask, 0, zero, older);
-  require(held.header.admitMask==edge.header.admitMask && held.header.meshletCount==9,
-          "a class dropped the frame before needs an eighth of the cap spare to come back");
+  // a cap of 14 holds the lamp, mip 0 and mip 1 (14), but mip 1 was left out the frame before and needs 14 under 7/8
+  // of the cap: it stays out, and mip 2 stays in
+  const Frame held = run(false, 14, admitted(edge), 0, zero, older);
+  require(admitted(held)==admitted(edge) && held.header.meshletCount==13,
+          "a bin left out the frame before needs an eighth of the cap spare to come back");
   }

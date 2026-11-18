@@ -14,8 +14,8 @@
 // (Bucket::meshletSpheres) touch the candidate's page entry; before, a spruce went with all its 724 meshlets into every
 // page its sphere touched (reports/engine/2026-11-16-modern-trees/shadow-flicker.md, «Второй круг»). Any other
 // cluster is taken whole.
-// Pass 0 counts the meshlets of each candidate and the pairs of each class; pass 1 lets in the classes of vsmAdmit
-// and writes their pairs. One pipeline for both, so the two passes count the same meshlets.
+// Pass 0 counts the meshlets of each candidate and the pairs of each bin (vsmSunBin, vsmLampBin); pass 1 lets in the
+// bins of admit() and writes their pairs. One pipeline for both, so the two passes count the same meshlets.
 layout(local_size_x = 64) in;
 
 layout(push_constant, std430) uniform UboPush {
@@ -33,7 +33,7 @@ layout(binding = 7, std430) readonly buffer Sph  { vec4        spheres[];     };
 layout(binding = 8, std430) buffer Pages         { VsmHeader   header; uint  pageList[]; } vsm;
 layout(binding = 9, std430) writeonly buffer Pld { uvec4       payload[];     };
 
-shared uint sAdmit; // the classes drawn this frame
+shared uint sAdmit[VSM_BIN_WORDS]; // the bins drawn this frame
 shared uint sBase;  // the first slot of the candidate's pairs
 shared uint sPass;  // its meshlets found so far
 
@@ -87,11 +87,11 @@ void cullCandidate(const uint c) {
   const uvec4   cand    = candidates[c];
   const Cluster cluster = clusters[cand.x];
   const uint    entry   = cand.y & 0xFFFFu;
-  const uint    cls     = cand.y >> 16;
+  const uint    bin     = cand.y >> 16;
   const uint    lane    = gl_LocalInvocationIndex;
   const bool    emit    = push.emit!=0u;
 
-  if(emit && ((sAdmit & (1u << cls))==0u || cand.z==0u))
+  if(emit && ((sAdmit[bin/32] & (1u << (bin%32)))==0u || cand.z==0u))
     return; // the same for the whole workgroup
   if(lane==0) {
     sPass = 0;
@@ -135,20 +135,41 @@ void cullCandidate(const uint c) {
     }
   else if(lane==0) {
     candidates[c].z = sPass;
-    atomicAdd(vsm.header.pairDemand[cls], sPass);
+    atomicAdd(vsm.header.pairDemand[bin], sPass);
     atomicAdd(vsm.header.clusterPairs, uint(count));
     }
   barrier();
   }
 
+// The bins drawn this frame, in their order: lamps by distance, then the sun's mips from the finest, each by the ring
+// from the centre. A bin goes in whole while the sum stays within the cap, else it is left out and the next is tried.
+// The demand is counted before any pair is written, so the order the GPU runs its groups in decides nothing: a still
+// camera leaves out the same bins every frame. A bin not drawn the frame before goes in only under 7/8 of the cap, so
+// a demand at the edge does not switch a ring of pages on and off.
+void admit() {
+  for(uint i=0; i<VSM_BIN_WORDS; ++i)
+    sAdmit[i] = 0;
+  uint sum = 0;
+  for(uint bin=0; bin<VSM_PAIR_BINS; ++bin) {
+    const uint d = vsm.header.pairDemand[bin];
+    if(d==0)
+      continue;
+    const bool drawn = (vsm.header.admitPrevBits[bin/32] & (1u << (bin%32)))!=0u;
+    const uint limit = drawn ? push.pairCap : push.pairCap - push.pairCap/8u;
+    if(d > limit || sum > limit - d)
+      continue;
+    sum += d;
+    sAdmit[bin/32] |= 1u << (bin%32);
+    }
+  }
+
 void main() {
   if(push.emit!=0u && gl_LocalInvocationIndex==0) {
-    uint demand[VSM_PAIR_CLASSES];
-    for(int i=0; i<VSM_PAIR_CLASSES; ++i)
-      demand[i] = vsm.header.pairDemand[i];
-    sAdmit = vsmAdmit(demand, push.pairCap, vsm.header.admitPrev);
-    if(gl_WorkGroupID.x==0)
-      vsm.header.admitMask = sAdmit;
+    admit();
+    if(gl_WorkGroupID.x==0) {
+      for(uint i=0; i<VSM_BIN_WORDS; ++i)
+        vsm.header.admitBits[i] = sAdmit[i];
+      }
     }
   barrier();
 
