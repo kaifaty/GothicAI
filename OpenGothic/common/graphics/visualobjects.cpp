@@ -922,6 +922,7 @@ void VisualObjects::preFrameUpdateLevels() {
   FrameProfile::add(FrameProfile::Amount::MeshLevel1, count[1]);
   FrameProfile::add(FrameProfile::Amount::MeshLevel2, count[2]);
   FrameProfile::add(FrameProfile::Amount::MeshLevel3, count[3]);
+  FrameProfile::add(FrameProfile::Amount::MeshLevel4, count[4]);
   }
 
 void VisualObjects::preFrameUpdateWind() {

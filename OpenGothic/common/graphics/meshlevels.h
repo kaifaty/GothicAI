@@ -14,7 +14,8 @@
 // Levels of detail of an own static mesh (reports/engine/2026-11-16-modern-trees/tree-lod.md). Its record of
 // meshes/meshes.json names up to MaxLevels coarser GLBs with the materials of the mesh, each with the height of the
 // object on the main view's screen under which it is drawn:
-//   "levels": [{"glb": "<path>", "px": 400}, {"glb": "<path>", "px": 200}, {"glb": "<path>", "px": 100}]
+//   "levels": [{"glb": "<path>", "px": 400}, {"glb": "<path>", "px": 200},
+//              {"glb": "<path>", "px": 100}, {"glb": "<path>", "px": 50}]
 // px falling. The levels are packed after the mesh into its own buffers (PackedMesh::addLevel): a level is a slice of
 // meshlets of each submesh, so an object draws one by its cluster's range, and every pass that reads the cluster —
 // the main view, the occluders, the shadows — draws that level. The level is picked on the processor once a frame by
@@ -24,7 +25,7 @@
 // traced as it was without them. Read once
 namespace MeshLevels {
 
-constexpr size_t MaxLevels  = 3;
+constexpr size_t MaxLevels  = 4;
 // A level gives way to the finer one only at this many times its pixels: a height on a threshold does not switch the
 // level back and forth
 constexpr float  Hysteresis = 1.1f;
