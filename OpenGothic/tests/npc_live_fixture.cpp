@@ -94,7 +94,7 @@ void world(const fs::path& base) {
 
 fs::path program(const fs::path& base) {
   const auto value=NpcDefinitionFixture::program();
-  for(const char* name:{"TEST","ERROR_HELPER","MUTABLE_ROOT","ERROR_ROOT"}) fs::create_directories(base/"worlds"/name);
+  for(const char* name:{"TEST","ERROR_HELPER","MUTABLE_ROOT","STATE_ROOT","QUERY_ROOT","ERROR_ROOT"}) fs::create_directories(base/"worlds"/name);
   fs::create_directories(base/"programs");
   std::string name;
   const auto sha=ProgramData::writeProgram(value.data,base/"programs",&name);

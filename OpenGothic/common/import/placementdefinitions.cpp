@@ -13,6 +13,7 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <set>
 #include <stdexcept>
 
@@ -64,6 +65,38 @@ Value reference(const DaedalusScript& script,int32_t index) {
     }
   return value;
   }
+
+// Prove that a result remains below every subsequent operand until the void
+// frame returns. Unsupported instructions retain the original VM path.
+bool discardedResult(const DaedalusScript& script,uint32_t pc) {
+  uint32_t depth=0;
+  while(pc<script.size()) {
+    const auto instruction=script.instruction_at(pc);
+    switch(instruction.op) {
+      case Op::PUSHI:
+      case Op::PUSHV:
+      case Op::PUSHVI:
+      case Op::PUSHVV: ++depth; break;
+      case Op::MOVI:
+      case Op::MOVF:
+      case Op::MOVS:
+        if(depth<2) return false;
+        depth-=2;
+        break;
+      case Op::BE: {
+        const auto* function=script.find_symbol_by_index(instruction.symbol);
+        if(function==nullptr || depth<function->count()) return false;
+        depth-=function->count();
+        if(function->has_return()) ++depth;
+        break;
+        }
+      case Op::RSR: return true;
+      default: return false;
+      }
+    pc+=instruction.size;
+    }
+  return false;
+  }
 struct Capture {
   Definition definition;
   std::string reason,detail;
@@ -111,6 +144,12 @@ class Runner {
         std::set<uint32_t> assigned;
         };
       std::vector<Frame> frames;
+      struct GlobalTarget {
+        DaedalusSymbol* symbol;
+        uint16_t index;
+        bool written=false;
+        };
+      std::optional<GlobalTarget> globalTarget;
       auto validateDeferred=[&](const DaedalusSymbol& helper) {
         std::map<uint32_t,const DaedalusSymbol*> functions;
         for(const auto& symbol:vm.symbols())
@@ -150,13 +189,36 @@ class Runner {
             throw Stop("deferred_local_dependency",helper.name()+": "+symbol->name());
         };
       auto fail=[&](const std::string& reason,const std::string& detail) -> void {
-        // Defer the whole outer helper, discarding all of its partially captured effects.
-        // A root dependency has no call boundary at which it can be retained.
-        if(frames.size()>1 && !frames[1].function->has_return()) {
-          validateDeferred(*frames[1].function);
-          throw Defer{frames[1].function->address(),reason+": "+detail};
+        const auto where=detail+" at pc="+std::to_string(vm.pc())+" opcode="+
+                         std::to_string(uint32_t(vm.instruction_at(vm.pc()).op));
+        // Keep the nearest void helper at its call boundary. A value-returning
+        // helper needs its nearest void caller so no computed result is baked in.
+        for(size_t i=frames.size();i>1;--i) {
+          const auto* helper=frames[i-1].function;
+          if(helper->type()!=Type::FUNCTION || helper->has_return()) continue;
+          validateDeferred(*helper);
+          throw Defer{helper->address(),reason+": "+where};
           }
-        throw Stop(reason,detail);
+        throw Stop(reason,where);
+        };
+      auto flushGlobal=[&] {
+        if(globalTarget && globalTarget->written) {
+          GlobalWrite write{globalTarget->symbol->name(),globalTarget->index,{}};
+          switch(globalTarget->symbol->type()) {
+            case Type::INT: write.value.integer=globalTarget->symbol->get_int(write.index); break;
+            case Type::FLOAT:
+              write.value.kind=Value::Kind::Float;
+              write.value.real=globalTarget->symbol->get_float(write.index);
+              break;
+            case Type::STRING:
+              write.value.kind=Value::Kind::String;
+              write.value.text=globalTarget->symbol->get_string(write.index);
+              break;
+            default: throw std::runtime_error("placement global type changed after assignment");
+            }
+          result.definition.steps.emplace_back(std::move(write));
+          }
+        globalTarget.reset();
         };
       vm.register_exception_handler([&](DaedalusVm&,const DaedalusScriptError& error,const DaedalusInstruction&)
                                       -> DaedalusVmExceptionStrategy {
@@ -182,7 +244,13 @@ class Runner {
           }
         });
       vm.observe_writes([&](const DaedalusSymbol& symbol) {
-        if(mutableGlobal(symbol,vm)) fail("game_state_write",symbol.name());
+        if(mutableGlobal(symbol,vm)) {
+          if(!globalTarget || globalTarget->symbol!=&symbol) fail("game_state_write",symbol.name());
+          // The VM has consumed and checked the RHS, but has not stored it yet.
+          // Read its exact typed value at the next instruction boundary.
+          globalTarget->written=true;
+          return;
+          }
         if(symbol.is_member()) fail("engine_state_write",symbol.name());
         if(const auto* owner=localOwner(symbol,vm)) {
           const auto frame=std::find_if(frames.rbegin(),frames.rend(),[&](const auto& frame) {
@@ -194,9 +262,26 @@ class Runner {
         });
       size_t instructions=0;
       vm.observe_instructions([&](const DaedalusInstruction& instruction) {
+        flushGlobal();
         if(++instructions>1000000) fail("execution_limit",root->name());
-        // GMOVI changes the member context seen by engine calls. A call-only
-        // record cannot express that change, so preserve its enclosing helper.
+        if(instruction.op==Op::MOVI || instruction.op==Op::MOVF || instruction.op==Op::MOVS) {
+          try {
+            const auto& target=vm.stack_frame(0);
+            if(target.reference) {
+              auto* symbol=std::get<DaedalusSymbol*>(target.value);
+              if(symbol && mutableGlobal(*symbol,vm)) {
+                const auto type=instruction.op==Op::MOVI ? Type::INT :
+                                instruction.op==Op::MOVF ? Type::FLOAT : Type::STRING;
+                if(symbol->type()!=type || target.index>=symbol->count())
+                  fail("game_state_write",symbol->name()+": unsupported type or array index");
+                globalTarget=GlobalTarget{symbol,target.index};
+                }
+              }
+            }
+          catch(const DaedalusScriptError& error) { fail("script_error",error.what()); }
+          }
+        // GMOVI changes the member context seen by engine calls. Preserve its
+        // enclosing helper because placement steps do not represent that context.
         if(instruction.op==Op::GMOVI) fail("instance_context",std::to_string(instruction.symbol));
         if(instruction.op==Op::RSR) {
           require(!frames.empty(),"placement capture call stack is empty");
@@ -232,7 +317,7 @@ class Runner {
             case Type::INT: {
               const auto integer=vm.pop_int();
               const bool symbol=parameter->type()==Type::FUNCTION ||
-                  ((function.name()=="WLD_INSERTNPC" || function.name()=="WLD_INSERTITEM") && i==1);
+                  ((function.name()=="WLD_INSERTNPC" || function.name()=="WLD_INSERTITEM" || function.name()=="B_KILLNPC") && i==1);
               if(symbol) value=reference(vm,integer);
               else value.integer=integer;
               break;
@@ -249,18 +334,17 @@ class Runner {
         const auto* function=vm.find_symbol_by_address(address);
         require(function!=nullptr,"missing deferred helper at "+std::to_string(address));
         vm.override_function_custom(*function,[&,function](DaedalusVm&) {
-          result.definition.steps.push_back({function->name(),arguments(*function),true});
+          result.definition.steps.emplace_back(Call{function->name(),arguments(*function),true});
           });
         }
       vm.register_default_external_custom([&](DaedalusVm&,DaedalusSymbol& function) {
         if(function.has_return()) {
           const auto instruction=vm.instruction_at(vm.pc());
           const auto next=vm.pc()+instruction.size;
-          // A void script frame discards this terminal external's result on return.
-          // Do not synthesize values that can reach arguments or control flow.
+          // Never synthesize values that can reach arguments, fields or control flow.
           const bool discarded=engineCalls.contains(function.name()) && function.rtype()==Type::INT &&
               !frames.empty() && !frames.back().function->has_return() && instruction.op==Op::BE &&
-              next<vm.size() && vm.instruction_at(next).op==Op::RSR;
+              discardedResult(vm,next);
           if(!discarded) fail("external_query",function.name());
           }
         if(!engineCalls.contains(function.name())) fail("unsupported_external",function.name());
@@ -278,7 +362,7 @@ class Runner {
             symbol->set_instance(previous);
             }
           }
-        result.definition.steps.push_back(std::move(call));
+        result.definition.steps.emplace_back(std::move(call));
         if(function.has_return()) vm.push_int(0);
         });
       vm.call_function(root);
@@ -334,13 +418,22 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
     put(json,"reason",text(capture.reason,allocator),allocator);
     put(json,"detail",text(capture.detail,allocator),allocator);
     }
-  for(const auto& call:capture.definition.steps) {
-    Json step(rapidjson::kObjectType),arguments(rapidjson::kArrayType);
-    for(const auto& argument:call.args) arguments.PushBack(valueJson(argument,allocator),allocator);
-    put(step,"function",text(call.function,allocator),allocator);
-    put(step,"arguments",std::move(arguments),allocator);
-    put(step,"deferred",Json(call.deferred),allocator);
-    steps.PushBack(step,allocator);
+  for(const auto& step:capture.definition.steps) {
+    Json jsonStep(rapidjson::kObjectType);
+    if(const auto* call=std::get_if<Call>(&step)) {
+      Json arguments(rapidjson::kArrayType);
+      for(const auto& argument:call->args) arguments.PushBack(valueJson(argument,allocator),allocator);
+      put(jsonStep,"function",text(call->function,allocator),allocator);
+      put(jsonStep,"arguments",std::move(arguments),allocator);
+      put(jsonStep,"deferred",Json(call->deferred),allocator);
+      }
+    else {
+      const auto& write=std::get<GlobalWrite>(step);
+      put(jsonStep,"global",text(write.symbol,allocator),allocator);
+      put(jsonStep,"index",Json(write.index),allocator);
+      put(jsonStep,"value",valueJson(write.value,allocator),allocator);
+      }
+    steps.PushBack(jsonStep,allocator);
     }
   put(json,"steps",std::move(steps),allocator);
   return json;
@@ -388,7 +481,8 @@ NpcSnapshot::PlacementCounts NpcSnapshot::writePlacements(const Program& program
     ++counts.total;
     if(capture.reason.empty()) ++counts.captured;
     counts.steps+=capture.definition.steps.size();
-    for(const auto& call:capture.definition.steps) if(call.deferred) ++counts.deferred;
+    for(const auto& step:capture.definition.steps)
+      if(const auto* call=std::get_if<Call>(&step); call && call->deferred) ++counts.deferred;
     const auto& name=program.data.symbols[id].name;
     if(!capture.reason.empty()) std::cout<<"placement "<<name<<": uncaptured "<<capture.reason<<": "<<capture.detail<<'\n';
     for(const auto& [address,reason]:capture.deferred)

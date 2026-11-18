@@ -70,8 +70,22 @@ PlacementDefinitions::Value value(const Json& json) {
   else throw std::runtime_error("unsupported value type "+type);
   return result;
   }
-PlacementDefinitions::Call step(const Json& json) {
+PlacementDefinitions::Step step(const Json& json) {
   require(json.IsObject(),"step must be an object");
+  if(json.HasMember("global")) {
+    PlacementDefinitions::GlobalWrite write;
+    write.symbol=string(at(json,"global"));
+    require(!write.symbol.empty(),"empty global symbol");
+    const auto& index=at(json,"index");
+    require(index.IsUint() && index.GetUint()<=std::numeric_limits<uint16_t>::max(),"expected uint16 global index");
+    write.index=uint16_t(index.GetUint());
+    write.value=value(at(json,"value"));
+    using Kind=PlacementDefinitions::Value::Kind;
+    require(write.value.kind==Kind::Int || write.value.kind==Kind::Float || write.value.kind==Kind::String,
+            "global write requires an int, float or string value");
+    require(json.MemberCount()==3,"unexpected global write step member");
+    return write;
+    }
   PlacementDefinitions::Call call;
   call.function=string(at(json,"function"));
   require(!call.function.empty(),"empty function symbol");

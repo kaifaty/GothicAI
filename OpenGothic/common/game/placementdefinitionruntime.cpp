@@ -105,8 +105,28 @@ PlacementDefinitionRuntime::Definitions PlacementDefinitionRuntime::resolve(
       if(symbol==nullptr || symbol->type()!=Type::FUNCTION || symbol->is_external() ||
          symbol->has_return() || symbol->count()!=0 || !symbol->name().starts_with("STARTUP_"))
         throw std::runtime_error("invalid startup function");
-      std::vector<Call> steps;
-      for(const auto& call:definition.steps) {
+      std::vector<Step> steps;
+      for(const auto& step:definition.steps) {
+        if(const auto* write=std::get_if<PlacementDefinitions::GlobalWrite>(&step)) {
+          const auto* target=script.find_symbol_by_name(write->symbol);
+          if(target==nullptr || target->is_const() || target->is_member() || write->index>=target->count())
+            throw std::runtime_error("invalid global write "+write->symbol+"["+std::to_string(write->index)+"]");
+          const auto* parent=script.find_symbol_by_index(target->parent());
+          const auto dot=target->name().find('.');
+          const auto* owner=dot==std::string::npos ? nullptr : script.find_symbol_by_name(target->name().substr(0,dot));
+          if((parent && parent->type()==Type::FUNCTION) || (owner && owner->type()==Type::FUNCTION))
+            throw std::runtime_error("global write targets a function local: "+write->symbol);
+          const auto kind=write->value.kind;
+          if(!((target->type()==Type::INT && kind==Kind::Int) ||
+               (target->type()==Type::FLOAT && kind==Kind::Float) ||
+               (target->type()==Type::STRING && kind==Kind::String)))
+            throw std::runtime_error("global write type differs from script binding: "+write->symbol);
+          if(kind==Kind::String && !literals.contains(write->value.text))
+            throw std::runtime_error("no immutable string literal for global write "+write->symbol);
+          steps.emplace_back(GlobalWrite{target->index(),write->index,write->value});
+          continue;
+          }
+        const auto& call=std::get<PlacementDefinitions::Call>(step);
         const auto* function=script.find_symbol_by_name(call.function);
         if(function==nullptr || function->type()!=Type::FUNCTION || function->is_external()==call.deferred ||
            (function->has_return() && (call.deferred || function->rtype()!=Type::INT)))
@@ -149,10 +169,10 @@ void PlacementDefinitionRuntime::observeCalls(daedalus::DaedalusVm& vm, const st
   const auto library=PlacementDefinitions::read(base,sha256);
   for(const auto& [name,definition]:library.placements) {
     (void)name;
-    for(const auto& call:definition.steps)
-      if(call.deferred) {
-        const auto* function=vm.find_symbol_by_name(call.function);
-        if(function==nullptr) throw std::runtime_error("placement probe: unknown helper "+call.function);
+    for(const auto& step:definition.steps)
+      if(const auto* call=std::get_if<PlacementDefinitions::Call>(&step); call && call->deferred) {
+        const auto* function=vm.find_symbol_by_name(call->function);
+        if(function==nullptr) throw std::runtime_error("placement probe: unknown helper "+call->function);
         deferred.insert(function->index());
         }
     }
@@ -174,7 +194,15 @@ bool PlacementDefinitionRuntime::execute(daedalus::DaedalusVm& vm, const daedalu
     vm.call_function(function);
     return false;
     }
-  for(const auto& call:found->second) {
+  for(const auto& step:found->second) {
+    if(const auto* write=std::get_if<GlobalWrite>(&step)) {
+      auto* target=vm.find_symbol_by_index(write->symbol);
+      if(write->value.kind==Kind::String) target->set_string(write->value.text,write->index);
+      else if(write->value.kind==Kind::Float) target->set_float(write->value.real,write->index);
+      else target->set_int(write->value.integer,write->index);
+      continue;
+      }
+    const auto& call=std::get<Call>(step);
     for(const auto& argument:call.args) push(vm,argument);
     const auto* target=vm.find_symbol_by_index(call.function);
     if(call.deferred) {

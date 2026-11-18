@@ -1032,6 +1032,7 @@ void placementDefinitions(World& world) {
   require(gameRecords.size()==library.placements.size() && !gameRecords.empty(),
           "the game must load every captured placement by default");
   const auto baseline=placementSnapshot(world,true);
+  const auto baselineGlobals=placementSymbols(script,false);
   const auto random=NpcDefinitionContract::random(script);
   std::vector<std::string> differences;
   std::set<std::string> differentLocals;
@@ -1060,9 +1061,15 @@ void placementDefinitions(World& world) {
     };
   try {
     for(const auto& [name,definition]:library.placements) {
-      (void)definition;
       const auto* function=vm.find_symbol_by_name(name);
       require(function!=nullptr && gameRecords.contains(function->index()),"game placement must resolve its startup symbol");
+      std::map<std::pair<std::string,uint16_t>,const daedalus::DaedalusSymbol*> writtenGlobals;
+      for(const auto& step:definition.steps)
+        if(const auto* write=std::get_if<PlacementDefinitions::GlobalWrite>(&step)) {
+          const auto* symbol=vm.find_symbol_by_name(write->symbol);
+          require(symbol!=nullptr,"recorded global must resolve in the game's VM");
+          writtenGlobals.emplace(std::make_pair(write->symbol,write->index),symbol);
+          }
       std::vector<std::string> expectedTrace,actualTrace;
       auto observe=[&](std::vector<std::string>& trace) {
         vm.observe_externals([&,target=&trace,prepared=std::set<Npc*>{}](const daedalus::DaedalusSymbol& external) mutable {
@@ -1077,6 +1084,16 @@ void placementDefinitions(World& world) {
                 " OTHER="+placementInstance(vm.global_other()->get_instance(),world)+
                 " ITEM="+placementInstance(vm.global_item()->get_instance(),world)+
                 " context="+placementInstance(vm.unsafe_get_gi(),world);
+          for(const auto& [target,symbol]:writtenGlobals) {
+            line+=" "+target.first+"["+std::to_string(target.second)+"]=";
+            switch(symbol->type()) {
+              case daedalus::DaedalusDataType::INT: line+=std::to_string(symbol->get_int(target.second)); break;
+              case daedalus::DaedalusDataType::FLOAT:
+                line+="float:"+std::to_string(std::bit_cast<uint32_t>(symbol->get_float(target.second))); break;
+              case daedalus::DaedalusDataType::STRING: line+=Bench::bodyJson(symbol->get_string(target.second)); break;
+              default: throw std::runtime_error("unsupported global type in placement trace: "+target.first);
+              }
+            }
           target->push_back(std::move(line));
           });
         };
@@ -1118,7 +1135,14 @@ void placementDefinitions(World& world) {
         difference(name,"step "+std::to_string(index+1),expectedTrace[index],actualTrace[index]);
       compareWorld(name,expectedState,archiveEntries(placementSnapshot(world,false)));
       compareWorld(name+".ITEM",expectedItem,itemState(script));
-      compareSymbols(name,expectedGlobals,placementSymbols(script,false));
+      const auto actualGlobals=placementSymbols(script,false);
+      compareSymbols(name,expectedGlobals,actualGlobals);
+      if(name=="STARTUP_MUTABLE_ROOT")
+        for(const auto& [global,value]:baselineGlobals)
+          if(global.starts_with("$PHOENIX_FAKE_STRINGS[")) {
+            difference(name,"reference "+global+" unchanged by string assignment",value,expectedGlobals.at(global));
+            difference(name,"record "+global+" unchanged by string assignment",value,actualGlobals.at(global));
+            }
       const auto actualLocals=placementSymbols(script,true);
       for(const auto& [local,value]:expectedLocals)
         if(actualLocals.contains(local) && value!=actualLocals.at(local)) differentLocals.insert(local);
@@ -1202,10 +1226,16 @@ std::vector<std::string> placementFirstWorld(Gothic& gothic) {
     for(const auto& [field,value]:actual)
       if(!expected.contains(field)) differences.push_back(field+" expected=<absent> actual="+value);
     const auto actualLocals=placementSymbols(gothic.world()->script(),true);
-    for(const auto& [name,value]:expectedLocals)
-      if(actualLocals.contains(name) && value!=actualLocals.at(name))
-        std::printf("First-world placement VM local differs: %s\n",name.c_str());
+    for(const auto& [name,value]:expectedLocals) {
+      const auto found=actualLocals.find(name);
+      if(found==actualLocals.end() || value!=found->second)
+        differences.push_back("VM local "+name+" expected="+value+" actual="+(found==actualLocals.end() ? "<absent>" : found->second));
+      }
+    for(const auto& [name,value]:actualLocals)
+      if(!expectedLocals.contains(name)) differences.push_back("VM local "+name+" expected=<absent> actual="+value);
     const auto* startup=gothic.world()->script().getVm().find_symbol_by_name("STARTUP_NEWWORLD");
+    require(startup && NpcDefinitionContract::placements(gothic.world()->script()).placements.contains(startup->index()),
+            "default NEWWORLD startup must replay a captured placement record");
     std::printf("First-world NEWWORLD placement: %s NPCs, %s items; %zu saved/global state entries, %zu differences; STARTUP_NEWWORLD=%s\n",
                 actual.at("NPC count").c_str(),actual.at("item count").c_str(),expected.size(),differences.size(),
                 startup && NpcDefinitionContract::placements(gothic.world()->script()).placements.contains(startup->index()) ? "record" : "VM");

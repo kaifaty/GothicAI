@@ -66,6 +66,7 @@ inline NpcSnapshot::Program program() {
   f.symbol("SPELLFXINSTANCENAMES",Type::STRING);
   f.symbol("SPELLFXANILETTERS",Type::STRING);
   const auto chapter=f.symbol("CHAPTER",Type::INT);
+  const auto placementText=f.symbol("PLACEMENT_TEXT",Type::STRING);
   const auto random=f.fn("HLP_RANDOM",{Type::INT},true,Type::INT);
   const auto create=f.fn("CREATEINVITEMS",{Type::INSTANCE,Type::INT,Type::INT},true);
   const auto equip=f.fn("EQUIPITEM",{Type::INSTANCE,Type::INT},true);
@@ -164,11 +165,20 @@ inline NpcSnapshot::Program program() {
   f.op(Op::PUSHI,item); f.op(Op::PUSHV,point); f.op(Op::BE,insertItem);
   f.call(error);
   f.op(Op::PUSHI,trailerItem); f.op(Op::PUSHV,point); f.op(Op::BE,insertItem); f.op(Op::RSR);
+  const auto german=f.fn("GAME_INITGERMAN",{},true,Type::INT);
+  const auto constants=f.fn("PLACE_CONSTANTS"); f.begin(constants);
+  f.op(Op::BE,german);
+  f.set(chapter,9);
+  f.op(Op::PUSHV,text); f.op(Op::PUSHV,placementText); f.op(Op::MOVS);
+  f.op(Op::RSR);
   const auto startupGlobal=f.fn("STARTUP_MUTABLE_ROOT"); f.begin(startupGlobal);
-  f.set(chapter,9); f.op(Op::RSR);
+  f.call(constants); f.call(dependentPlacement); f.op(Op::RSR);
+  const auto startupState=f.fn("STARTUP_STATE_ROOT"); f.begin(startupState);
+  f.op(Op::PUSHV,chapter); f.op(Op::PUSHI,1); f.op(Op::ADD); f.op(Op::PUSHV,chapter); f.op(Op::MOVI); f.op(Op::RSR);
+  const auto startupQuery=f.fn("STARTUP_QUERY_ROOT"); f.begin(startupQuery);
+  f.op(Op::BE,german); f.op(Op::PUSHV,chapter); f.op(Op::MOVI); f.op(Op::RSR);
   const auto startupErrorRoot=f.fn("STARTUP_ERROR_ROOT"); f.begin(startupErrorRoot);
   f.op(Op::PUSHI,0); f.op(Op::PUSHI,1); f.op(Op::DIV); f.op(Op::RSR);
-  const auto german=f.fn("GAME_INITGERMAN",{},true,Type::INT);
   const auto globalStartup=f.fn("STARTUP_GLOBAL"); f.begin(globalStartup);
   // The real STARTUP_GLOBAL discards this external's return at the void function boundary.
   f.op(Op::BE,german); f.op(Op::RSR);

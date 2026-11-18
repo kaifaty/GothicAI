@@ -17,8 +17,14 @@ struct Call {
   std::vector<Argument> args;
   bool deferred = false;
   };
+struct GlobalWrite {
+  uint32_t symbol = 0;
+  uint16_t index = 0;
+  PlacementDefinitions::Value value;
+  };
+using Step = std::variant<Call,GlobalWrite>;
 struct Definitions {
-  std::unordered_map<uint32_t,std::vector<Call>> placements;
+  std::unordered_map<uint32_t,std::vector<Step>> placements;
   };
 
 bool enabled();

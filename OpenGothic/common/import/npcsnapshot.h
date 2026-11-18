@@ -31,7 +31,7 @@ struct PlacementCounts {
   size_t total = 0, captured = 0, steps = 0, deferred = 0;
   };
 // Roots are STARTUP_GLOBAL and STARTUP_<directory name> from worldsDirectory.
-// Engine calls stay ordered; state-dependent helpers remain in the VM.
+// Engine calls and constant global writes stay ordered; state-dependent helpers remain in the VM.
 PlacementCounts writePlacements(const Program& program, const std::filesystem::path& file,
                                const std::filesystem::path& worldsDirectory);
 int verifyPlacements(const Program& program, const std::filesystem::path& file,
