@@ -1441,20 +1441,6 @@ bool Npc::spellFrozen() const {
   return true;
   }
 
-void Npc::aiPush(AiQueue::AiAction&& a) {
-  // Vanilla quiet-sound scripts aim at OTHER. A physical sound is located at the
-  // collision, and OTHER may be null or a distant culprit, so native turning owns it.
-  if(physicsNoiseCallback && (a.act==AI_TurnToNpc || a.act==AI_LookAtNpc))
-    return;
-  a.physicsNoiseState = physicsNoiseCallback && a.act==AI_StartState;
-  a.nativeCombatTarget=nativeCombatQueueTarget;
-  if(BodyController::owns(*this) && a.act!=AI_OutputSvmOverlay)
-    BodyController::takeover(*this,"native_script_queue");
-  if(a.act==AI_OutputSvmOverlay)
-    aiQueueOverlay.pushBack(std::move(a)); else
-    aiQueue.pushBack(std::move(a));
-  }
-
 Vec3 Npc::mapWeaponBone() const {
   syncDeferredAnimation();
   return visual.mapWeaponBone();
@@ -1554,50 +1540,6 @@ Npc* Npc::talkPartner() const {
   if((talkWith->position()-position()).quadLength()>maxDist*maxDist)
     return nullptr;
   return talkWith;
-  }
-
-bool Npc::setInteraction(Interactive *id, bool quick) {
-  if(currentInteract==id)
-    return true;
-
-  if(currentInteract!=nullptr) {
-    return currentInteract->detach(*this,quick);
-    }
-
-  if(id==nullptr)
-    return (currentInteract==nullptr);
-
-  if(id->attach(*this)) {
-    currentInteract = id;
-    if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual)) {
-      mvAlgo.resetCharacterVirtual(true);
-      resetCharacterVisualHeight();
-      }
-    // Remove the contact rig in the sequential physics handoff, including
-    // when an immediate detach leaves only its transition animation behind.
-    livingWasInteracting = true;
-    attachToPoint(nullptr); //NOTE: Fajeth campfire
-    if(!quick) {
-      visual.stopAnim(*this,"");
-      setAnimRotate(0);
-      }
-    return true;
-    }
-
-  return false;
-  }
-
-void Npc::quitInteraction() {
-  if(currentInteract==nullptr)
-    return;
-  if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual)) {
-    mvAlgo.resetCharacterVirtual(true);
-    resetCharacterVisualHeight();
-    }
-  if(invTorch)
-    processDefInvTorch();
-  setDirectionY(0);
-  currentInteract=nullptr;
   }
 
 void Npc::processDefInvTorch() {

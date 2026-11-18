@@ -1,4 +1,5 @@
 #include "npc.h"
+#include "world/npcactivityprobe.h"
 
 #include <Tempest/Log>
 #include <algorithm>
@@ -728,6 +729,7 @@ void Npc::attachToPoint(const WayPoint *p) {
      (pending->act==AI_GoToNextFp || pending->act==AI_GoToPoint) &&
      currentFp==pending->point && go2.flag==GT_Way && p==go2.wp && p!=pending->point)
     return;
+  if(auto* probe=NpcActivityProbe::instance; probe && currentFp!=p) probe->point(*this,currentFp,p);
   currentFp     = p;
   currentFpLock = FpLock(currentFp);
   }

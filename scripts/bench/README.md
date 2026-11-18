@@ -992,7 +992,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `npctier <npc> full\|simplified\|auto` | Override one NPC tier until reset or reload. Hero, training and arena actors stay Full. |
 | `npctier-test <npc> <start waypoint> <end waypoint>` | Verify 20 switches in each direction during movement and turns, unchanged remaining path/destination and every arrival. `npc-tier-transitions` runs the fixture on a fresh NEWWORLD. |
 | `npcspeed <start waypoint>` | Compare Sequence speed with Full and Simplified movement on one authored edge for human/orc/wolf in walk/run/sneak; appended to `npc-tier-transitions`. Removes ambient NPCs for calibration. |
-| `npcday <game minutes> [period 5] [shared]` | Journal every NPC over continuous game time ([NPC day parity](#npc-day-parity)); the scenario waits until the time has passed. Every NPC gets a private script random stream from the last `seed`; `shared` keeps the game's one shared stream. |
+| `npcday <game minutes> [period 5] [shared] [probe] [trace=id,name]` | Journal every NPC over continuous game time ([NPC day parity](#npc-day-parity)); the scenario waits until the time has passed. Every NPC gets a private script random stream from the last `seed`; `shared` keeps the game's one shared stream. |
 | `ui on\|off` | the interface in the captured frames, as the player sees it: subtitles, the input line, the deal window (off by default: only the world) |
 | `label <text>` | text on the overlay |
 | `ik on\|off`, `ik param <name> <value>`, `ik params` | foot IK and its parameters, without rebuilding; `ik off` on a four-legged creature brings back the old whole-body tilt |
@@ -1893,6 +1893,8 @@ explain the bounds and remaining combat/body work. `npcday` files:
 | `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag |
 | `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
 | `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
+| `npc-day-script.json` | Opt-in `probe`: deterministic script calls by symbol/family, per-state engine Init/Loop/End entries, nested calls, inclusive VM instruction counts, externals and RNG sources. Header records `npc` or `shared` random streams. |
+| `npc-day-activity.jsonl` | Opt-in `trace=ID,SYMBOL,display-name`: phase entry/result, engine queue commands with raw action arguments, RNG bound/result/source, FP and MOB occupancy, observed body-state changes. Numeric IDs are world-array NPC IDs; symbols select all matching instances. |
 | `npc-day-arrivals.csv` | Audit-only exact terminal arrivals, observed movement start, final goal identity, actor/target position, ZS, queue and executor; it adds no records to the strict samples/events files. |
 
 The society stand's core is checked against the same journal: `scripts/society_parity.py` compares its marks
@@ -1904,6 +1906,47 @@ keeps the game's single stream. The journal drops exactly the streams it registe
 stops, so commands after `npcday` use the shared stream again. Do not combine `npcday` with the body arena
 in one scenario: the arena isolates its actors and clears all streams on reset. `std::rand` (sound variants, gestures, parry variant) is not reseeded.
 States that start and end within one world tick are not seen by the event poll.
+
+`probe` and `trace=...` install measurement only for that journal interval; both are off by default.
+The original journal fields and event thresholds are unchanged. `trace=` implies `probe`.
+The instruction metric includes helpers and reentrant script work during the engine phase; it is
+not wall time. `engine` counts entries through `invokeState`, while `nested` excludes that entry.
+Family counts classify called symbols; per-state nested costs additionally attribute helpers to
+the executing phase. Summing families equals `calls`; summing `random_sources` equals `random`.
+Human routine membership and row counts come from the selected base's `routines.json`.
+Native draws with an actor are combat (all current native actor call sites are in fight tactics,
+damage, melee or ranged combat); actorless native draws are `native_other`. `std::rand` is a different
+stream and is not counted. Body state is a derived value: the trace observes it at phase boundaries,
+MOB changes and every journal tick. Occupancy and queue events are observed at the engine mutation.
+Queue `action` uses the `Action` enum in `game/rpgvocabulary.h`; `i0/i1/i2/s0/s1` retain its full arguments
+(wait duration in ms, animation or MOB scheme in `s0`, item symbol in `i0` for item-use actions).
+
+`npcday-save <npc> [minutes 60] [period 5] [shared]` waits up to one game day for an executed
+`ZS_SMITH_ANVIL_LOOP` on an occupied `BSANVIL`, writes `session-activity.sav`, then journals
+and traces the next hour. It leaves the actor's routine and position untouched. Load that save in a
+fresh process with a scenario with `cheat god` followed by `npcday 60 5 shared probe trace=<symbol>`.
+With explicit `SAVE=` and no `WORLD`, an opening `cheat god` followed immediately by `npcday`
+restores god mode and starts the journal at `dt=0`, before the first positive loaded-world step.
+This applies with measurement enabled or disabled. Fresh-world journals retain the normal command
+boundary after the first step. The trace header retains each scenario's last explicit `seed` as metadata;
+exclude only that header field when comparing a load, without reseeding the shared stream, and
+require equal start times and all other header fields. Use the same stream mode
+and compare the complete activity trace and strict sample/event files. A current-game save/load
+mismatch is reported as the first differing record, never corrected by this measuring step.
+The current checkpoint control verifies equal initial `world_ms`/native ticks before comparing
+records. It exposes a 1 ms trace shift from the restarted 30 FPS bench cadence and a recalculated
+transient NPC simulation tier; state timers and the game-time remainder are saved. The current
+boundaries, first differences and source analysis are in the
+[D4 baseline](../../reports/engine/2026-11-14-npc-data/d4-baseline.md#харад-и-загрузка-на-занятии).
+`npc-day-smith-save.bench` and `npc-day-smith-reload.bench` provide this fixture for Harad.
+`gothic-npc-day-contract` checks nested VM calls, random ownership, totals, repeated JSON bytes and
+actual engine queue observation on a synthetic program, without game data. The synthetic fixture of
+`gothic-placed-items-contract` additionally exercises `invokeState` through the real `Hlp_Random`,
+`GameScript::rand` and measurement probe, and verifies JSONL commands from both regular and overlay
+`Npc::aiPush` queues. The day contract also checks that merged `LookAtNpc` commands are both traced.
+Repeated probe intervals in one VM retain inactive call observer links and their collectors;
+removable VM observers are tracked in [#1550](https://github.com/kaifaty/GothicAI/issues/1550).
+
 
 `scripts/npc_day_parity.py` matches samples by time and key and leaves the hero out, with his events
 (`--min-hero-distance <m>` also leaves out NPCs near him). Completeness gates come first, because the metrics

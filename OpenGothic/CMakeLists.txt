@@ -304,6 +304,9 @@ if(UNIX)
   # Pure production resolver/command gates: no assets, simulation or rendering device.
   add_executable(gothic-body-resolver-test tests/body_resolver_test.cpp)
   target_link_libraries(gothic-body-resolver-test PRIVATE OpenGothic AiBridge)
+  add_executable(gothic-npc-day-contract tests/npc_day_contract.cpp)
+  target_link_libraries(gothic-npc-day-contract PRIVATE OpenGothic AiBridge)
+  target_include_directories(gothic-npc-day-contract SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   # Real NPC/world fixture for growing and shrinking the live observation subscription.
   add_executable(gothic-body-watch-test tests/body_watch_test.cpp)
   target_link_libraries(gothic-body-watch-test PRIVATE OpenGothic AiBridge)

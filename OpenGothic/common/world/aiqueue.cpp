@@ -1,4 +1,5 @@
 #include "aiqueue.h"
+#include "npcactivityprobe.h"
 
 #include <limits>
 #include "game/serialize.h"
@@ -36,7 +37,8 @@ void AiQueue::clear() {
   aiActions.clear();
   }
 
-void AiQueue::pushBack(AiAction&& a) {
+void AiQueue::pushBack(AiAction&& a, const Npc* actor) {
+  if(auto* probe=NpcActivityProbe::instance; probe && actor) probe->queued(actor,a);
   if(aiActions.size()>0) {
     if(aiActions.back().act==AI_LookAtNpc && a.act==AI_LookAtNpc) {
       aiActions.back() = a;
@@ -463,4 +465,17 @@ AiQueue::AiAction AiQueue::aiPrintScreen(int time, std::string_view font, int x,
   a.i2     = time;
   a.s1     = font;
   return a;
+  }
+
+const char* AiQueue::actionName(uint32_t act) {
+  static const char* names[] = {
+    "None","LookAtNpc","StopLookAt","RemoveWeapon","TurnToNpc","GoToNpc","GoToNextFp","GoToPoint",
+    "StartState","PlayAnim","PlayAnimBs","Wait","StandUp","StandUpQuick","EquipArmor","EquipBestArmor",
+    "EquipMelee","EquipRange","UseMob","UseItem","UseItemToState","Teleport","DrawWeaponMelee",
+    "DrawWeaponRange","DrawSpell","Attack","Flee","Dodge","UnEquipWeapons","UnEquipArmor","Output",
+    "OutputSvm","OutputSvmOverlay","ProcessInfo","StopProcessInfo","ContinueRoutine","AlignToFp",
+    "AlignToWp","SetNpcsToState","SetWalkMode","FinishingMove","DrawWeapon","TakeItem","GotoItem",
+    "PointAtNpc","PointAt","StopPointAt","PrintScreen","LookAt","WhirlToNpc","TurnAway",
+    };
+  return act<sizeof(names)/sizeof(names[0]) ? names[act] : "?";
   }
