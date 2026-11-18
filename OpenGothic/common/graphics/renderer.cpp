@@ -88,6 +88,8 @@ Renderer::Renderer() {
   settings.vsmEnabled       = Shaders::options().doVirtualShadow;
   if(const char* stats = std::getenv("OPENGOTHIC_VSM_STATS"))
     settings.vsmStats = std::string_view(stats)=="1";
+  if(const char* bias = std::getenv("OPENGOTHIC_VSM_PAIR_BIAS"))
+    settings.vsmPairBias = std::string_view(bias)!="0";
   // OPENGOTHIC_VSM_LAMP=hard|flat: the lamp shadow filter for a study of its cost
   // (reports/render-features/2026-11-04-lamp-pcss/step-2c.md): one gather at the centre, or the same taps against
   // the receiver's depth without its plane; unset or pcss: the PCSS ([INTERNAL] vsmLampSoft does not change the study)

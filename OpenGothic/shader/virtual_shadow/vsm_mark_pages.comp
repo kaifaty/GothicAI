@@ -28,6 +28,7 @@ layout(binding = 2)        uniform utexture2D gbufNormal;
 layout(binding = 3)        uniform texture2D  depth;
 layout(binding = 4, r32ui) uniform uimage3D   pageTbl;
 layout(binding = 5, r32ui) uniform uimage3D   pageTblDepth;
+layout(binding = 6, std430) readonly buffer Pages { VsmHeader header; } vsm;
 
 ivec2 fragCoord = ivec2(gl_GlobalInvocationID.xy);
 
@@ -128,7 +129,8 @@ int shadowLod(vec2 dx, vec2 dy) {
   float maxLod = 0.5 * log2(max(px, py)); // log2(sqrt()) = 0.5*log2()
   float minLod = 0.5 * log2(min(px, py));
 
-  const float bias = vsmMipBias;
+  // the pair bias (vsm_clear.comp): coarser pages when the last frame asked more pairs than the cap holds
+  const float bias = vsmMipBias + vsm.header.pairBias;
   //return max(0, int((minLod + maxLod)*0.5 + bias + 0.5));
   return max(0, int(minLod + bias));
   }

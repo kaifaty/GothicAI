@@ -15,10 +15,36 @@ const int VSM_FOG_MIP       = 5;
 const int VSM_PAGE_PER_ROW  = 8192/VSM_PAGE_SIZE;
 const int VSM_MAX_PAGES     = VSM_PAGE_PER_ROW * VSM_PAGE_PER_ROW; // 1024;
 const int VSM_CLIPMAP_SIZE  = VSM_PAGE_SIZE * VSM_PAGE_TBL_SIZE;
-// Meshlet-page pairs the visibility pass may emit a frame (peak 18.6k at 1280x720 on Ryzen, 2026-11-04);
-// the cluster buffers are sized to it
-// (Renderer/DrawCommands: VsmMaxMeshlets). Past it, clusters drop out of the shadow.
+// Meshlet-page pairs the visibility pass may emit a frame (peak 18.6k at 1280x720 on Ryzen, 2026-11-04; a forest of
+// 1 024 modern spruces asks 2.0-2.3 million at view near-30, reports/engine/2026-11-16-modern-trees/shadow-flicker.md);
+// the cluster buffers are sized to it (Renderer/DrawCommands: VsmMaxMeshlets, the cap at run time vsmPairCap).
+// Past it, clusters drop out of the shadow: the pair bias below brings the count back under it.
 const uint VSM_MAX_MESHLETS = 512u*1024u;
+// The visibility pass fills the slots a cluster reserved past the cap with this entry, and the packing skips it:
+// the slots are not left with the pairs of an older frame (vsm_pack_draws.comp)
+const uint VSM_PAIR_SKIP = 0xFFFFFFFFu;
+
+// The pair bias: a mip bias for the sun's pages that grows when the last frame asked more meshlet-page pairs than the
+// cap holds and falls back slowly when it asks far fewer (vsm_clear.comp sets it, vsm_mark_pages.comp adds it). A
+// page a mip coarser covers four times the area, so a tree spans about a quarter of the pages and of the pairs.
+// The processor's copy for the tests: common/graphics/vsmpairbias.h; keep the two in step.
+const float VSM_PAIR_BIAS_MAX  = 3.0;
+const float VSM_PAIR_LOAD_HIGH = 0.85; // a fuller cap raises the bias at once
+const float VSM_PAIR_LOAD_AIM  = 0.6;  // to where the raise aims
+const float VSM_PAIR_LOAD_LOW  = 0.35; // a frame below it lowers the bias by one step
+const float VSM_PAIR_BIAS_UP   = 1.0/16.0; // the least raise
+const float VSM_PAIR_BIAS_DOWN = 1.0/64.0; // the fall, per frame
+
+float vsmPairBiasNext(float bias, uint pairs, uint cap) {
+  if(!(bias>=0.0 && bias<=VSM_PAIR_BIAS_MAX))
+    bias = 0.0; // a fresh buffer
+  const float load = float(pairs)/float(max(cap,1u));
+  if(load>VSM_PAIR_LOAD_HIGH)
+    return min(bias + clamp(0.5*log2(load/VSM_PAIR_LOAD_AIM), VSM_PAIR_BIAS_UP, 1.0), VSM_PAIR_BIAS_MAX);
+  if(load<VSM_PAIR_LOAD_LOW)
+    return max(bias - VSM_PAIR_BIAS_DOWN, 0.0);
+  return bias;
+  }
 // const int VSM_CUBE_TBL_SIZE = 2;
 
 struct VsmHeader {
@@ -34,6 +60,8 @@ struct VsmHeader {
   uint  pagePlaced;        // entries the allocator placed in the pool
   uint  omniTileOverflow;  // 16x16 screen tiles with more shadowed lights than a tile holds
   uint  omniTileLightsMax; // most shadowed lights in one tile
+  float pairBias;          // the pair bias of this frame's sun pages (vsmPairBiasNext); kept from frame to frame
+  uint  pairSpill;         // pairs the packing put past their draw's range (vsm_pack_draws.comp): 0 unless broken
   };
 
 uint packVsmPageInfo(ivec3 at, ivec2 size) {
