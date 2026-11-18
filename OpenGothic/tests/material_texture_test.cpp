@@ -3,6 +3,7 @@
 #include "graphics/mesh/submesh/animmesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/hizoccluders.h"
 #include "graphics/mdlvisual.h"
 #include "graphics/meshobjects.h"
 #include "graphics/rtscene.h"

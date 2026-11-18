@@ -11,6 +11,7 @@
 #include "shaders.h"
 
 #include "benchprobe.h"
+#include "frameprofile.h"
 
 using namespace Tempest;
 
@@ -373,6 +374,51 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
     cmd.setPipeline(*pso);
     cmd.dispatchThreads(ordered ? 1 : push.meshletCount);
     }
+  }
+
+void DrawCommands::visibilityStats(Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  // the counters of the main view's culling for the frame profile (visibility_stats.comp): what this frame slot wrote
+  // last time - its fence has been waited for, the buffer is host-visible - then this frame's. Without the profile
+  // nothing runs
+  if(!FrameProfile::enabled())
+    return;
+  if(statsWritten[fId]) {
+    uint32_t v[4] = {};
+    Resources::device().readBytes(statsRead[fId], v, sizeof(v));
+    FrameProfile::add(FrameProfile::Amount::MainClusters,       v[0]);
+    FrameProfile::add(FrameProfile::Amount::MainMeshlets,       v[1]);
+    FrameProfile::add(FrameProfile::Amount::MainCanopyClusters, v[2]);
+    FrameProfile::add(FrameProfile::Amount::MainCanopyMeshlets, v[3]);
+    statsWritten[fId] = false;
+    }
+
+  auto& view = views[SceneGlobals::V_Main];
+  if(this->cmd.empty() || maxPayload==0 || view.visClusters.isEmpty() || view.indirectCmd.isEmpty())
+    return;
+  auto& device = Resources::device();
+  if(statsSum.isEmpty())
+    statsSum = device.ssbo(Tempest::Uninitialized, 4*sizeof(uint32_t));
+  if(statsRead[fId].isEmpty())
+    statsRead[fId] = device.ssbo(Tempest::BufferHeap::Readback, Tempest::Uninitialized, 4*sizeof(uint32_t));
+
+  struct Push { uint32_t phase; uint32_t count; } push = {};
+  push.count = uint32_t(maxPayload);
+  cmd.setDebugMarker("Visibility-stats");
+  cmd.setFramebuffer({});
+  cmd.setBinding(0, view.visClusters);
+  cmd.setBinding(1, view.indirectCmd);
+  cmd.setBinding(2, buckets.ssbo());
+  cmd.setBinding(3, statsSum);
+  cmd.setBinding(4, statsRead[fId]);
+  cmd.setPipeline(Shaders::inst().visibilityStats);
+  for(uint32_t phase=0; phase<3; ++phase) {
+    push.phase = phase;
+    cmd.setPushData(push);
+    if(phase==1)
+      cmd.dispatchThreads(maxPayload); else
+      cmd.dispatch(1);
+    }
+  statsWritten[fId] = true;
   }
 
 const Tempest::StorageBuffer& DrawCommands::orderedClusters() {

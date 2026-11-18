@@ -5,6 +5,8 @@
         textures --boughs DIR --bark DIR --out WORK
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
         probe fir-probe-3 --textures WORK [--from working-28] [--pairs | --sides flip]
+    uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
+        forest tree-cost-1024 --textures WORK [--from working-34] [--count 1024] [--share 1] [--no-sample]
 
 `textures` reads what mesh3d/blender/fir_boughs.py and fir_bark.py baked (boughs.npz, bark.npz) and writes
 WORK/{boughs,bark}-{albedo,normal,orm}.dds, PNG previews for mesh3d/blender/fir_views.py, boughs-mask.npz (the
@@ -35,12 +37,20 @@ boughs' record says `"two_sided": "same"`: the engine draws both sides and light
 it lit the two copies before (reports/engine/2026-11-16-modern-trees/two-sided.md). `--sides flip` writes the
 other value of the field, the side away from the winding lit by the normal turned to the eye; `--pairs` lists
 the triangles twice under a one-sided record, as fir-probe-2 has them.
+
+`forest` builds a set of the cost stand (reports/engine/2026-11-16-modern-trees/tree-cost.md) the same way: the
+five spruces of PROBE, thinned to `--share` of their triangles by mesh3d/blender/fir_tree.py thin() when below 1,
+stand in a grid of `--count` (forest_layout(), X0 and the next constants) on the ground of the base's world mesh,
+and spruce A alone on the hill west of it (LONE) unless `--no-sample`. The layer is
+worlds/NEWWORLD/vobs.d/tree-cost.json, the numbers of the spruces are in tree-cost.json of the set. `--count 0`
+is the control: the same set without the forest. The spruces of `--share 1` are those of `probe`, byte for byte.
 """
 from __future__ import annotations
 
 import argparse
 import importlib.util
 import json
+import math
 import os
 import shutil
 import sys
@@ -71,6 +81,19 @@ PROBE = (((38700., 3456.2, 1000.), 40., 1.2, 33),
          ((40400., 3378., 950.), 250., .8, 48),
          ((41250., 3323.5, 650.), 0., 1., None),
          ((42100., 3227.1, 1600.), 170., .9, 59))
+
+# The cost stand (tree-cost mode, reports/engine/2026-11-16-modern-trees/tree-cost.md): a grid of SIDE x SIDE spruces,
+# STEP apart (the original's forest has 6.6 m to the nearest neighbour), each shifted up to JITTER, in the basin
+# of Akil's farm east of the meadow of PROBE and of the rock hill east of it. Column i runs east from X0, row j
+# north from Z0; a forest of n spruces is the block of the first sqrt(n) columns and of sqrt(n) rows round
+# NEST_ROW, so 64, 256 and 1 024 nest at the west edge where the views of scripts/bench/perf-trees.bench look:
+# from the hill, the only open sight on the forest. Each place takes one of the five spruces of PROBE and a yaw
+# by FOREST_SEED, the same in every forest. LONE: spruce A alone on the top of the hill, west of the forest, for
+# the pairs of frames at distances; the hill hides the forest behind it from the west.
+X0, Z0, STEP, SIDE, JITTER, NEST_ROW = 51500., -16060., 660., 32, 150., 8
+FOREST_SEED = 20261118
+LONE = (48500., 500.)
+GROUND = ('ground', 'rock')     # the material classes a root stands on
 
 
 def sibling(name: str, folder: Path = HERE):
@@ -205,35 +228,45 @@ def rewrite(path: Path, more: dict) -> None:
     path.write_text(json.dumps(index | more, indent=2) + '\n')
 
 
+def stage(source_name: str, name: str) -> tuple[Path, Path]:
+    """A hard-linked copy of a working set under a temporary name: (the copy, the final path)."""
+    source, output = STAGING / source_name, PROBES / name
+    if output.exists():
+        raise SystemExit(f'{output}: the set exists; choose a new name')
+    if not (source / 'materials/materials.json').exists():
+        raise SystemExit(f'{source}: no such working set')
+    work = output.with_name(output.name + '.tmp')
+    if work.exists():
+        shutil.rmtree(work)
+    work.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, work, copy_function=os.link)
+    return work, output
+
+
+def add_materials(work: Path, config: dict, textures: Path, pairs: bool = False, sides: str = 'same') -> dict:
+    directory = work / 'materials' / FOLDER
+    directory.mkdir()
+    materials = {}
+    for part, name in config['materials'].items():
+        for kind in ('albedo', 'normal', 'orm'):
+            shutil.copyfile(textures / f'{part}-{kind}.dds', directory / f'{part}-{kind}.dds')
+        materials[f'{name}.TGA'] = dict({kind: f'{FOLDER}/{part}-{kind}.dds' for kind in ('albedo', 'normal', 'orm')},
+                                        scale=1., antitile='off', antitile_cell=1., foliage=FOLIAGE[part])
+        if part == 'boughs' and not pairs:
+            materials[f'{name}.TGA']['two_sided'] = sides
+    rewrite(work / 'materials/materials.json', materials)
+    return materials
+
+
 def probe(args) -> int:
     sys.path.insert(0, str(BLENDER))
     import fir_tree
     import tree_check
     import tree_density
     import tree_glb
-    source, output = STAGING / args.source, PROBES / args.set
-    if output.exists():
-        raise SystemExit(f'{output}: the set exists; choose a new name')
-    if not (source / 'materials/materials.json').exists():
-        raise SystemExit(f'{source}: no such working set')
     config = json.loads(args.config.read_text())
-    work = output.with_name(output.name + '.tmp')
-    if work.exists():
-        shutil.rmtree(work)
-    work.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source, work, copy_function=os.link)
-
-    directory = work / 'materials' / FOLDER
-    directory.mkdir()
-    materials = {}
-    for part, name in config['materials'].items():
-        for kind in ('albedo', 'normal', 'orm'):
-            shutil.copyfile(args.textures / f'{part}-{kind}.dds', directory / f'{part}-{kind}.dds')
-        materials[f'{name}.TGA'] = dict({kind: f'{FOLDER}/{part}-{kind}.dds' for kind in ('albedo', 'normal', 'orm')},
-                                        scale=1., antitile='off', antitile_cell=1., foliage=FOLIAGE[part])
-        if part == 'boughs' and not args.pairs:
-            materials[f'{name}.TGA']['two_sided'] = args.sides
-    rewrite(work / 'materials/materials.json', materials)
+    work, output = stage(args.source, args.set)
+    materials = add_materials(work, config, args.textures, args.pairs, args.sides)
 
     folder = work / 'meshes' / FOLDER
     folder.mkdir()
@@ -273,6 +306,124 @@ def probe(args) -> int:
     return 0
 
 
+def forest_layout(count: int) -> list[dict]:
+    """The places of a forest of `count` spruces, a square of an even number: column, row, x and z in Gothic
+    centimetres, yaw, and the number of the spruce of PROBE (1 to 5)."""
+    side = math.isqrt(count)
+    if side * side != count or side % 2 or side > SIDE:
+        raise SystemExit(f'{count}: a forest is a square of an even side up to {SIDE}: 0, 4, 16, 64, 256, 1024')
+    rng = np.random.default_rng(FOREST_SEED)
+    shift = rng.uniform(-JITTER, JITTER, (SIDE, SIDE, 2))
+    yaw = rng.uniform(0., 360., (SIDE, SIDE))
+    spruce = rng.integers(1, len(PROBE) + 1, (SIDE, SIDE))
+    first = min(max(NEST_ROW - side // 2, 0), SIDE - side)
+    rows = range(first, first + side)
+    return [dict(column=i, row=j, x=X0 + (i + .5) * STEP + shift[i, j, 0], z=Z0 + (j + .5) * STEP + shift[i, j, 1],
+                 yaw=round(float(yaw[i, j]), 1), spruce=int(spruce[i, j]))
+            for i in range(side) for j in rows]
+
+
+def ground_heights(world: Path, points: np.ndarray, reach: float = 50.) -> np.ndarray:
+    """The height of the ground (GROUND classes of the world mesh) under each (x, z): the lowest of the highest
+    surface at the point and at four points `reach` cm round it, so a trunk on a slope does not hang over it.
+    NaN where there is no ground under the point itself (a house: the farm south-east of the hill)."""
+    sys.path.insert(0, str(HERE / 'world'))
+    from landscape_tuft_spots import chunk
+    from world_classes import material_class
+    offsets = np.array([(0., 0.), (reach, 0.), (-reach, 0.), (0., reach), (0., -reach)])
+    probes = (points[:, None, :] + offsets[None]).reshape(-1, 2)
+    keys = {(int(math.floor(x / 6400)), int(math.floor(z / 6400))) for x, z in probes}
+    triangles = np.concatenate([position for cx, cz in sorted(keys) if (world / 'chunks' / f'{cx}_{cz}.glb').exists()
+                                for name, group, position, _, _ in chunk(world / 'chunks' / f'{cx}_{cz}.glb')
+                                if material_class(name, group) in GROUND])
+    a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
+    low, high = triangles[..., [0, 2]].min(axis=1), triangles[..., [0, 2]].max(axis=1)
+    height = np.full(len(probes), np.nan)
+    for k, (x, z) in enumerate(probes):
+        near = np.flatnonzero((low[:, 0] <= x) & (x <= high[:, 0]) & (low[:, 1] <= z) & (z <= high[:, 1]))
+        det = (b[near, 2] - c[near, 2]) * (a[near, 0] - c[near, 0]) + (c[near, 0] - b[near, 0]) * (a[near, 2] - c[near, 2])
+        ok = np.abs(det) > 1e-9
+        near, det = near[ok], det[ok]
+        l0 = ((b[near, 2] - c[near, 2]) * (x - c[near, 0]) + (c[near, 0] - b[near, 0]) * (z - c[near, 2])) / det
+        l1 = ((c[near, 2] - a[near, 2]) * (x - c[near, 0]) + (a[near, 0] - c[near, 0]) * (z - c[near, 2])) / det
+        inside = (l0 >= -1e-6) & (l1 >= -1e-6) & (1 - l0 - l1 >= -1e-6)
+        if inside.any():
+            y = l0 * a[near, 1] + l1 * b[near, 1] + (1 - l0 - l1) * c[near, 1]
+            height[k] = y[inside].max()
+    height = height.reshape(len(points), len(offsets))
+    return np.where(np.isnan(height[:, 0]), np.nan, np.nanmin(height, axis=1))
+
+
+def newest_base() -> Path:
+    bases = [p.parent for p in Path.home().glob('.cache/gothic-ai/base/*/worlds') if (p / WORLD / 'chunks').is_dir()]
+    if not bases:
+        raise SystemExit('no base with world chunks in ~/.cache/gothic-ai/base; pass --base')
+    return max(bases, key=lambda p: (p / 'worlds' / WORLD / 'chunks').stat().st_mtime)
+
+
+def forest(args) -> int:
+    """The cost stand: a forest of `count` spruces of PROBE thinned to `share` of their triangles, and LONE."""
+    sys.path.insert(0, str(BLENDER))
+    import fir_tree
+    import tree_check
+    import tree_density
+    import tree_glb
+    config = json.loads(args.config.read_text())
+    layout = forest_layout(args.count)
+    base = args.base or newest_base()
+    points = np.array([(t['x'], t['z']) for t in layout] + [LONE])
+    height = ground_heights(base / 'worlds' / WORLD, points)
+    if np.isnan(height[-1]):
+        raise SystemExit(f'no ground under the lone spruce at {LONE}')
+    standing = [(t, y) for t, y in zip(layout, height) if not np.isnan(y)]
+    work, output = stage(args.source, args.set)
+    materials = add_materials(work, config, args.textures)
+
+    folder = work / 'meshes' / FOLDER
+    folder.mkdir()
+    meshes, spruces = {}, []
+    mask = tree_density.load_mask(BLENDER / config['atlas']['mask'])
+    for number, (_, _, scale, seed) in enumerate(PROBE, 1):
+        visual = f'{VISUAL}_{number}'
+        full = fir_tree.build(config, seed, scale)
+        tree = fir_tree.thin(full, args.share, number)
+        glb = folder / f'{visual}.glb'
+        tree_glb.write(glb, [{k: v for k, v in p.items() if k != 'owner'} for p in tree.parts], visual,
+                       extras=dict(tree=config['id'], seed=config['seed'] if seed is None else seed, scale=scale,
+                                   share=args.share))
+        read = tree_check.check(glb)
+        density = tree_density.measure(glb, mask)
+        # a thinned spruce is a stand for the cost, not a tree whose look is checked: its fails are reported
+        spruces.append(dict(visual=visual, seed=config['seed'] if seed is None else seed, scale=scale,
+                            triangles=read['triangles_total'], triangles_full=full.metrics['triangles'],
+                            triangles_by_material=read['triangles'], thin=tree.metrics.get('thin'),
+                            height_m=round(float(tree.metrics['bbox_max_m'][2]), 3),
+                            crown_width_m=density['crown_width_m'], background_share=density['background_share'],
+                            check_fails=read['fails'] + tree_density.rules(density, config['density'], scale),
+                            bytes=glb.stat().st_size))
+        meshes[visual] = dict(glb=f'{FOLDER}/{glb.name}')
+    rewrite(work / 'meshes/meshes.json', meshes)
+    added = [dict(key=f'tree-cost-{t["column"]}-{t["row"]}', kind='mesh', visual=f'{VISUAL}_{t["spruce"]}',
+                  position=[round(t['x'], 1), round(float(y), 1), round(t['z'], 1)], yaw_deg=t['yaw'], collision='none')
+             for t, y in standing]
+    if args.sample:
+        added.append(dict(key='tree-cost-lone', kind='mesh', visual=f'{VISUAL}_4',
+                          position=[LONE[0], round(float(height[-1]), 1), LONE[1]], yaw_deg=0., collision='none'))
+    layer = work / 'worlds' / WORLD / 'vobs.d/tree-cost.json'
+    layer.write_text(json.dumps(dict(format=1, add=added), indent=1) + '\n')
+    per_spruce = {s['visual']: s['triangles'] for s in spruces}
+    report = dict(set=args.set, source=args.source, base=base.name, share=args.share, count=args.count,
+                  standing=len(standing), without_ground=[[t['column'], t['row']] for t, y in zip(layout, height)
+                                                          if np.isnan(y)],
+                  sample=args.sample, triangles=sum(per_spruce[a['visual']] for a in added), spruces=spruces,
+                  materials=materials, grid=dict(x0=X0, z0=Z0, step=STEP, side=SIDE, jitter=JITTER, seed=FOREST_SEED),
+                  lone=dict(position=[LONE[0], round(float(height[-1]), 1), LONE[1]]))
+    (work / 'tree-cost.json').write_text(json.dumps(report, indent=1) + '\n')
+    work.rename(output)
+    print(json.dumps({k: v for k, v in report.items() if k != 'materials'}, indent=1))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--config', type=Path, default=BLENDER / 'fir.json')
@@ -289,8 +440,18 @@ def main() -> int:
                          help="a bough's triangles twice under a one-sided record, as before two-sided materials")
     command.add_argument('--sides', choices=('same', 'flip'), default='same',
                          help='the value of "two_sided" in the record of the boughs')
+    command = commands.add_parser('forest', help='the cost stand: a forest of spruces, maybe thinned')
+    command.add_argument('set')
+    command.add_argument('--textures', type=Path, required=True,
+                         help='a folder with {boughs,bark}-{albedo,normal,orm}.dds: textures, or materials/trees_fir '
+                              'of a probe set')
+    command.add_argument('--from', dest='source', default='working-34')
+    command.add_argument('--count', type=int, default=1024, help='0, 64, 256 or 1024 spruces')
+    command.add_argument('--share', type=float, default=1., help="the share of a spruce's triangles kept (thin)")
+    command.add_argument('--no-sample', dest='sample', action='store_false', help='without the lone spruce A')
+    command.add_argument('--base', type=Path, help='the base the ground is read from (the newest in the cache)')
     args = parser.parse_args()
-    return textures(args) if args.command == 'textures' else probe(args)
+    return dict(textures=textures, probe=probe, forest=forest)[args.command](args)
 
 
 if __name__ == '__main__':

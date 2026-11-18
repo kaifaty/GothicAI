@@ -98,6 +98,7 @@ class WorldView {
 
     void updateFrustrum (const Frustrum fr[]);
     void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
+    void visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
