@@ -340,8 +340,10 @@ try:
     if not rows or any(int(row.get('overflow', 0)) for row in rows):
         raise ValueError('empty or overflowed frame profile')
     if place == 'grass-track':
+        track_samples = ('', '-noroad', '-nowander', '-nofade', '-noragged', '-noorm', '-nocolor',
+                         '-nospots', '-notone', '-noribbonnormal', '-nolayernormal')
         segments_expected = [f'perf-{place}/view-{view}{suffix}'
-                             for view in (5, 1) for suffix in ('', '-before', '-noroad')]
+                             for view in (5, 1) for suffix in track_samples]
     else:
         segments_expected = [f'perf-{place}/view-{view}' for view in range(1, 5)]
     for segment in segments_expected:

@@ -41,8 +41,7 @@ enum Part : uint32_t {
   PartTrackTone   = 1u << 22,
   PartTrackForm   = 1u << 23,
   PartTrackGrain  = 1u << 24,
-  PartTrackNeutral = 1u << 25,
-  PartAll         = (1u << 26) - 1u,
+  PartAll         = (1u << 25) - 1u,
   PartTrackMask   = PartAll & ~0xFFFFu,
   };
 
@@ -54,14 +53,6 @@ inline uint32_t& benchPartsOff() {
 // SceneDesc::grassRing.w carries the low bits as 1 + 2*mask. The track bits use SceneDesc::viewFlags.
 inline uint32_t partsOff() {
   return benchPartsOff() & 0xFFFFu;
-  }
-
-inline uint32_t trackPartsOff() {
-  static const bool neutralOff = [] {
-    const char* value = std::getenv("OPENGOTHIC_GRASS_TRACK_NEUTRAL");
-    return value!=nullptr && value[0]=='0' && value[1]=='\0';
-    }();
-  return (benchPartsOff() & PartTrackMask) | (neutralOff ? PartTrackNeutral : 0u);
   }
 
 // OPENGOTHIC_GRASS_ORDER=0: submit grass draws in cell traversal order

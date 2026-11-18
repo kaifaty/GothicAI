@@ -28,8 +28,6 @@
 // from afar - its mips are means of the encoded colour, 0.86-0.89 of the linear mean at the third and fourth. By
 // the frames the road with its stains stands at 0.94-0.96 of the painted one near and, with 0.86 of this shade,
 // at 1.04-1.05 from afar.
-// Skip work outside the track's share and samples or noise that cannot affect the result.
-// OPENGOTHIC_GRASS_TRACK_NEUTRAL=0 restores the full path for comparison.
 const float GrassTrackHeight   = 140.0;  // of 256 of the wear: what the heights' difference is worth
 const float GrassTrackFarFrom  = 1200.0; // cm: the hard choice of a layer passes to their mix
 const float GrassTrackFarTo    = 1500.0;
@@ -54,7 +52,6 @@ const uint GrassPartTrackSpots  = 1u << 21;
 const uint GrassPartTrackTone   = 1u << 22;
 const uint GrassPartTrackForm   = 1u << 23;
 const uint GrassPartTrackGrain  = 1u << 24;
-const uint GrassPartTrackNeutral = 1u << 25;
 
 // the crust's lattice, turned the other way from the loose earth's
 vec2 grassCrustUv(vec2 xz) { return vec2(0.84805*xz.x - 0.52992*xz.y, 0.52992*xz.x + 0.84805*xz.y); }
@@ -77,7 +74,6 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
   const float mip    = scene.mipGradScale;
   const uint  rib    = tex + 2u;
   const uint  partsOff = scene.viewFlags;
-  const bool  neutral = (partsOff & GrassPartTrackNeutral)==0u;
 
   // the ribbon's frame on the ground: t and b along the growth of u and v, over det the gradients themselves
   const vec3  py  = cross(dpdy, gn), px = cross(gn, dpdx);
@@ -107,18 +103,14 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
   const float own  = max(mask.b, strip);
   if(own<=0.004)
     return;
-  // With a unit height the near share is still zero here, and so is the far share.
-  if(neutral && (own<=(128.0 - 0.5*GrassTrackHeight)/256.0 || (far>=1.0 && own<=0.3)))
-    return;
 
   // where the ruts fade: 1 at their full depth and tone; by 6 m and by 2.2 m - one rut of the two may fade alone
-  float k = 1.0;
-  if((partsOff & GrassPartTrackFade)==0u && (!neutral || fade>0.0))
-    k = 1.0 - fade*smoothstep(0.05, 0.55, grassTrackNoise(place,9600,0x75u)*0.6 + grassTrackNoise(place,3520,0x76u)*0.4);
-  float lean = (mask.g*mix(1.0, k, 0.5) + strip)*256.0 - 128.0;
-  // Neither the winning layer nor the clamped far weight can change beyond the combined noise's amplitude.
-  if((partsOff & GrassPartTrackRagged)==0u && (!neutral || (ragged>0.0 && abs(lean)<0.5*GrassTrackHeight + 130.0*ragged + 1.0)))
-    lean += (grassTrackNoise(place,3840,0x77u)*90.0 + grassTrackNoise(place,560,0x78u)*40.0)*ragged;
+  const float k = (partsOff & GrassPartTrackFade)==0u ?
+                  1.0 - fade*smoothstep(0.05, 0.55, grassTrackNoise(place,9600,0x75u)*0.6 +
+                                                   grassTrackNoise(place,3520,0x76u)*0.4) : 1.0;
+  const float lean = (mask.g*mix(1.0, k, 0.5) + strip)*256.0 - 128.0 +
+                     ((partsOff & GrassPartTrackRagged)==0u ?
+                      (grassTrackNoise(place,3840,0x77u)*90.0 + grassTrackNoise(place,560,0x78u)*40.0)*ragged : 0.0);
 
   const vec2  uvC = grassCrustUv(pos.xz)*crustK, dxC = grassCrustUv(dpdx.xz)*crustK, dyC = grassCrustUv(dpdy.xz)*crustK;
   const vec2  uvL = grassLooseUv(pos.xz)*looseK, dxL = grassLooseUv(dpdx.xz)*looseK, dyL = grassLooseUv(dpdy.xz)*looseK;
@@ -127,32 +119,16 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
   vec3  o  = vec3(1.0, GrassTrackRough, 0.5);
   bool  loose = lean>0.0;
   if(far<1.0) {
-    vec3 own0 = o;
-    if((partsOff & GrassPartTrackOrm)==0u) {
-      if(neutral) {
-        own0 = fringeTexture(2u, tex+uint(loose), loose ? uvL : uvC,
-                             (loose ? dxL : dxC)*mip, (loose ? dyL : dyC)*mip).rgb;
-        if(abs(lean)<0.5*GrassTrackHeight) {
-          // The second height is in [0,1]. Read it only if it can overturn the expected winner.
-          const bool uncertain = loose ? lean + (own0.b-1.0)*GrassTrackHeight<=0.0 :
-                                         lean + (1.0-own0.b)*GrassTrackHeight>0.0;
-          if(uncertain) {
-            const vec3 other = fringeTexture(2u, tex+uint(!loose), loose ? uvC : uvL,
-                                             (loose ? dxC : dxL)*mip, (loose ? dyC : dyL)*mip).rgb;
-            const float delta = loose ? own0.b-other.b : other.b-own0.b;
-            const bool pickLoose = lean + delta*GrassTrackHeight>0.0;
-            own0 = loose==pickLoose ? own0 : other;
-            loose = pickLoose;
-            }
-          }
-        } else if(abs(lean)<0.5*GrassTrackHeight) {
-        const vec3 oC = fringeTexture(2u, tex,    uvC, dxC*mip, dyC*mip).rgb;
-        const vec3 oL = fringeTexture(2u, tex+1u, uvL, dxL*mip, dyL*mip).rgb;
-        loose = lean + (oL.b-oC.b)*GrassTrackHeight>0.0;
-        own0  = loose ? oL : oC;
-        } else {
-        own0  = loose ? fringeTexture(2u, tex+1u, uvL, dxL*mip, dyL*mip).rgb : fringeTexture(2u, tex, uvC, dxC*mip, dyC*mip).rgb;
-        }
+    vec3 own0;
+    if((partsOff & GrassPartTrackOrm)!=0u) {
+      own0 = o;
+      } else if(abs(lean)<0.5*GrassTrackHeight) {
+      const vec3 oC = fringeTexture(2u, tex,    uvC, dxC*mip, dyC*mip).rgb;
+      const vec3 oL = fringeTexture(2u, tex+1u, uvL, dxL*mip, dyL*mip).rgb;
+      loose = lean + (oL.b-oC.b)*GrassTrackHeight>0.0;
+      own0  = loose ? oL : oC;
+      } else {
+      own0  = loose ? fringeTexture(2u, tex+1u, uvL, dxL*mip, dyL*mip).rgb : fringeTexture(2u, tex, uvC, dxC*mip, dyC*mip).rgb;
       }
     wl = mix(loose ? 1.0 : 0.0, wl, far);
     o  = mix(own0, o, far);
@@ -180,11 +156,11 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
     }
   const vec3  tint   = fringeTexture(0u, rib, uvR, dxR, dyR).rgb;
   // the stains by the world: by 2.6 m and by 0.7 m
-  const float inside = clamp((1.0 - max(tint.r, max(tint.g, tint.b)))*(1.0/(1.0 - GrassTrackBody)), 0.0, 1.0);
-  const float rut    = clamp((GrassTrackBody - tint.g)*GrassTrackStainRut, 0.0, 1.0)*k;
   float stain = 0.0;
-  if((partsOff & GrassPartTrackSpots)==0u && (!neutral || (inside>0.0 && rut<1.0 && strip<1.0))) {
-    const float spots = grassTrackNoise(place,4160,0x7Du)*0.55 + grassTrackNoise(place,1120,0x7Eu)*0.45;
+  if((partsOff & GrassPartTrackSpots)==0u) {
+    const float inside = clamp((1.0 - max(tint.r, max(tint.g, tint.b)))*(1.0/(1.0 - GrassTrackBody)), 0.0, 1.0);
+    const float spots  = grassTrackNoise(place,4160,0x7Du)*0.55 + grassTrackNoise(place,1120,0x7Eu)*0.45;
+    const float rut    = clamp((GrassTrackBody - tint.g)*GrassTrackStainRut, 0.0, 1.0)*k;
     stain = smoothstep(GrassTrackStainFrom, GrassTrackStainTo, spots)*inside*(1.0 - rut)*(1.0 - strip);
     }
   const float tone = (partsOff & GrassPartTrackTone)==0u ? grassTrackTone(place) : 1.0;
