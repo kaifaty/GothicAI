@@ -11,6 +11,7 @@ automatically; to update one, copy the needed parts of a newer upstream version 
 | `ZenKit/vendor/libsquish/` | https://github.com/lmichaelis/phoenix-libsquish | 53167b39beee3c7ff441c4ee6ba522c2db27dad4 | MIT | — |
 | `recastnavigation/` | https://github.com/recastnavigation/recastnavigation | 6dc1667f580357e8a2154c28b7867bea7e8ad3a7 (v1.6.0) | zlib | everything but `Recast/{Include,Source}`, `Detour/{Include,Source}` and `License.txt`; local minimal CMake builds these two libraries only |
 | `JoltPhysics/` | https://github.com/jrouwe/JoltPhysics | e77f175595e64cb44218cc9d9d56fc365ad0e36a (v5.6.0) | MIT | everything but `Jolt/`, `Build/CMakeLists.txt` and `LICENSE` (examples, test framework, unit/performance tests, viewer, documentation, assets and build helper scripts omitted) |
+| `meshoptimizer/` | https://github.com/zeux/meshoptimizer | 9e1f07b159d3cb777f1c67ed31fc11fd117986f4 (v1.3) | MIT (`LICENSE.md`) | everything but `src/` and `LICENSE.md`; local CMake builds the library. The cluster hierarchy builder adapts upstream `demo/clusterlod.h` in `common/graphics/mesh/clusterlod.cpp` |
 | `dmusic/` | https://github.com/GothicKit/dmusic | b73b270b94714b8ec8d9d0b2a9f3a5c445da52d1 | MIT | `docs/`, `examples/` |
 | `rapidjson/` | https://github.com/Tencent/rapidjson | f54b0e47a08782a6131cc3d60f94d038fa6e0a51 (v1.1.0) | MIT | everything but `include/` (header-only) |
 | `cgltf/` | https://github.com/jkuhlmann/cgltf | 360db1a95480fe102ae9c69b27c5d101167ff5ba (v1.15) | MIT | everything but `cgltf.h` and `LICENSE` (single-header GLB parser) |
@@ -33,6 +34,7 @@ retained in `BulletCompat.LICENSE`; the Jolt library and its existing code retai
 
 Keep these when updating a library from upstream.
 
+- `meshoptimizer/src/simplifier.cpp`: test edge collapses for flips and zero area in double precision in the original coordinates. Normalizing positions in single precision can change the winding of thin triangles and hide collinearity on regular terrain grids.
 - `Tempest/Engine/graphics/device.cpp`, `gapi/metal/mtdevice.mm` and
   `gapi/vulkan/vallocator.cpp`: `tempestProbeGpuBytes()` reports Metal
   `currentAllocatedSize` and live Vulkan allocations (including cached allocator pages).
