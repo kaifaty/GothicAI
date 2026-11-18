@@ -67,6 +67,9 @@ inline NpcSnapshot::Program program() {
   f.symbol("SPELLFXANILETTERS",Type::STRING);
   const auto chapter=f.symbol("CHAPTER",Type::INT);
   const auto placementText=f.symbol("PLACEMENT_TEXT",Type::STRING);
+  const auto placementLimits=f.symbol("PLACEMENT_LIMITS",Type::INT,2);
+  f.p.symbols[placementLimits].int_values[0]=4;
+  const auto placementScale=f.symbol("PLACEMENT_SCALE",Type::FLOAT);
   const auto random=f.fn("HLP_RANDOM",{Type::INT},true,Type::INT);
   const auto create=f.fn("CREATEINVITEMS",{Type::INSTANCE,Type::INT,Type::INT},true);
   const auto equip=f.fn("EQUIPITEM",{Type::INSTANCE,Type::INT},true);
@@ -170,6 +173,8 @@ inline NpcSnapshot::Program program() {
   f.op(Op::BE,german);
   f.set(chapter,9);
   f.op(Op::PUSHV,text); f.op(Op::PUSHV,placementText); f.op(Op::MOVS);
+  f.op(Op::PUSHI,27); f.op(Op::PUSHVV,placementLimits); f.p.bytecode.push_back(std::byte{1}); f.op(Op::MOVI);
+  f.op(Op::PUSHI,std::bit_cast<uint32_t>(1.25f)); f.op(Op::PUSHV,placementScale); f.op(Op::MOVF);
   f.op(Op::RSR);
   const auto startupGlobal=f.fn("STARTUP_MUTABLE_ROOT"); f.begin(startupGlobal);
   f.call(constants); f.call(dependentPlacement); f.op(Op::RSR);
