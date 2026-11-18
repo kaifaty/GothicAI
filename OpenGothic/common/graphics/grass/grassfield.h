@@ -24,6 +24,7 @@
 #include "asset/material.h"
 #include "asset/worldmesh.h"
 #include "graphics/grass/grassborder.h"
+#include "graphics/grass/grassdiag.h"
 #include "graphics/grass/grassplace.h"
 #include "graphics/grass/grasswaste.h"
 #include "worldchunkmanifest.h"
@@ -34,6 +35,8 @@ namespace Grass {
 
 template<class Draw>
 void orderDraws(std::vector<Draw>& draws) {
+  if(orderOff())
+    return;
   std::stable_sort(draws.begin(), draws.end(), [](const Draw& a, const Draw& b) {
     return a.cell->dist < b.cell->dist;
     });

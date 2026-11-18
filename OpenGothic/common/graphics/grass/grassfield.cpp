@@ -757,8 +757,7 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId) {
 
   if(!draws.empty()) {
     // The draws keep their original offsets into spanCpu. Stable ordering keeps each cell's batches in order.
-    if(!Grass::orderOff())
-      Grass::orderDraws(draws);
+    Grass::orderDraws(draws);
 
     auto&        device = Resources::device();
     auto&        buf    = spanGpu[fId];

@@ -252,10 +252,19 @@ void drawOrder() {
     bool operator==(const Draw&) const = default;
     };
   const Cell farther{2500.f}, closer{300.f}, tied{300.f};
-  std::vector<Draw> draws = {{&farther,0}, {&farther,32}, {&closer,64}, {&closer,96}, {&tied,128}};
+  std::vector<Draw> draws = {{&farther,0}, {&farther,32}, {&closer,64}, {&closer,96}};
+  // Forty draws at the same distance exercise ties beyond std::sort's small-range insertion sort.
+  for(uint32_t i=0; i<38; ++i)
+    draws.push_back({&tied,(i+4)*32});
+  auto expected = draws;
   Grass::orderDraws(draws);
-  require(draws==std::vector<Draw>{{&closer,64}, {&closer,96}, {&tied,128}, {&farther,0}, {&farther,32}},
-          "grass draws must be near first, preserving batch order and span offsets");
+  const char* order = std::getenv("OPENGOTHIC_GRASS_ORDER");
+  if(order!=nullptr && std::string(order)=="0") {
+    require(draws==expected, "OPENGOTHIC_GRASS_ORDER=0 must keep cell traversal order");
+    } else {
+    std::rotate(expected.begin(), expected.begin()+2, expected.end());
+    require(draws==expected, "grass draws must be near first, preserving batch order and span offsets");
+    }
   }
 
 // ---- the placement ----
