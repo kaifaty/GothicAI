@@ -27,9 +27,9 @@ def test_a_forest_is_an_even_square_within_the_grid(count):
         fir_set.forest_layout(count)
 
 
-def test_the_levels_are_the_field_the_engine_takes_and_keep_the_spruces_materials(tmp_path):
-    """--levels (reports/engine/2026-11-16-modern-trees/tree-lod.md): four levels, px falling, each a GLB of
-    thin() with the materials and the COLOR_0 of the spruce, as the engine's check of meshes.json wants them."""
+@pytest.mark.parametrize('method', ['designed', 'random'])
+def test_the_levels_are_the_field_the_engine_takes_and_keep_the_spruces_materials(tmp_path, monkeypatch, method):
+    """Each mode writes four GLBs with the materials and COLOR_0 required by the engine."""
     import json
     import sys
     sys.path.insert(0, str(fir_set.BLENDER))
@@ -37,14 +37,31 @@ def test_the_levels_are_the_field_the_engine_takes_and_keep_the_spruces_material
     import tree_glb
     config = json.loads((fir_set.BLENDER / 'fir.json').read_text())
     full = fir_tree.build(config)
-    field, numbers = fir_set.write_levels(tmp_path, 'OWN_TREE_FIR_A_4', full, 4, dict(tree=config['id']))
+    mask = np.ones((2, 2), dtype=bool)
+    atlas = np.zeros((2, 2, 4), dtype=np.uint8)
+    designed = []
+
+    def design_level(tree, level, given_mask, given_atlas):
+        assert tree is full and given_mask is mask and given_atlas is atlas
+        designed.append(level)
+        return fir_tree.thin(tree, level['share'], 4)
+
+    monkeypatch.setattr(fir_tree, 'design_level', design_level)
+    options = {'method': 'random'} if method == 'random' else {}
+    field, numbers = fir_set.write_levels(tmp_path, 'OWN_TREE_FIR_A_4', full, 4, dict(tree=config['id']),
+                                          config, mask, atlas, **options)
     assert [f['px'] for f in field] == [400, 200, 100, 50]
     assert [f['glb'] for f in field] == [f'{fir_set.FOLDER}/OWN_TREE_FIR_A_4_L{k}.glb' for k in (1, 2, 3, 4)]
-    assert [level['share'] for level in numbers] == [.5, .25, .125, 1 / 32]
+    if method == 'random':
+        assert [level['share'] for level in numbers] == [.5, .25, .125, 1 / 32]
+        assert numbers[-1]['triangles'] / full.metrics['triangles'] == pytest.approx(1 / 32, rel=.02)
+        assert not designed
+    else:
+        assert designed == config['levels']
+        assert [level['share'] for level in numbers] == [level['share'] for level in config['levels']]
     names = [p['name'] for p in full.parts]
     for level in numbers:
         prims = tree_glb.read(tmp_path / f"OWN_TREE_FIR_A_4_L{level['level']}.glb")
         assert sorted(p['name'] for p in prims) == sorted(set(names))
         assert all(p['colour_format'] == (tree_glb.UBYTE, 'VEC4', True) for p in prims)
         assert abs(level['triangles'] / full.metrics['triangles'] - level['share']) < .01
-    assert numbers[-1]['triangles'] / full.metrics['triangles'] == pytest.approx(1 / 32, rel=.02)

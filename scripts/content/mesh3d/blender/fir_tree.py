@@ -2,6 +2,7 @@
 
     build(config, seed=None, scale=1.0, pairs=False) -> Tree
     thin(tree, share, seed=0) -> Tree
+    design_level(tree, level, mask, atlas) -> Tree
 
 thin() makes a lighter copy of a built tree for the cost stand (reports/engine/2026-11-16-modern-trees/tree-cost.md):
 not a level of detail whose look is accepted, only the same crown with fewer and larger cards. card_planes(), clusters() and axis_cover() measure a built tree: how far apart the planes of each bough are and how
@@ -44,6 +45,7 @@ Axes: Z up, metres, the origin is the trunk's centre on the ground.
 """
 from __future__ import annotations
 
+import heapq
 import math
 from dataclasses import dataclass, field
 
@@ -108,6 +110,7 @@ class Branch:
     phase: float                # G
     weight: float = 1.0         # R at the tip
     arc: np.ndarray = field(default=None)
+    whorl: int = -1
 
     def __post_init__(self):
         steps = np.linalg.norm(np.diff(self.points, axis=0), axis=1)
@@ -602,7 +605,9 @@ class Fir:
             pitches = lerp(low, high, height ** np.array(b['pitch_rise'])) + rng.uniform(-6, 6, 3)
             r = float(self.trunk_radius(np.array(z), np.array(azimuth))) * .4
             base = np.array([r * math.cos(azimuth), r * math.sin(azimuth), z])
-            self.dress(self.branch(base, azimuth, length, pitches, height, wood=b['wood'], shade=True))
+            branch = self.branch(base, azimuth, length, pitches, height, wood=b['wood'], shade=True)
+            branch.whorl = number
+            self.dress(branch)
 
         while z < top + 1e-6:
             t = (z - w['first']) / (top - w['first'])
@@ -772,6 +777,266 @@ def thin(tree: Tree, share: float, seed: int = 0) -> Tree:
                              card_growth=round(float(grow), 3), narrowed=round(narrow, 3),
                              branches_with_wood=int(len(np.unique(bark['owner'][bark['owner'] > tree.stubs])))))
     return Tree(parts, metrics, tree.branches, [], tree.stubs)
+
+
+def _level_trunk(bark: dict, sides: int) -> dict:
+    trunk = np.flatnonzero(bark['owner'] == 0)
+    starts = np.flatnonzero(bark['uv'][trunk, 0] == 0)
+    rings = trunk.reshape(len(starts), -1)
+    columns = np.rint(np.linspace(0, rings.shape[1] - 1, sides + 1)).astype(int)
+    if len(np.unique(columns)) != sides + 1:
+        raise ValueError('Too many sides for the level trunk')
+    ring = np.arange(len(rings) * (sides + 1)).reshape(len(rings), sides + 1)
+    joins = np.flatnonzero(np.diff(bark['position'][rings[:, 0], 2]) > 0)
+    a, b = ring[joins, :-1].ravel(), ring[joins, 1:].ravel()
+    c, d = ring[joins + 1, :-1].ravel(), ring[joins + 1, 1:].ravel()
+    top = ring[-1, 0]
+    k = np.arange(1, sides - 1)
+    caps = np.column_stack([np.full(len(k), 0), k + 1, k])
+    index = np.concatenate([np.column_stack([a, b, d]), np.column_stack([a, d, c]), caps,
+                            caps[:, ::-1] + top])
+    used = rings[:, columns].ravel()
+    return dict(bark, index=index, **{key: bark[key][used]
+                                     for key in ('position', 'normal', 'uv', 'colour', 'owner')})
+
+
+def _level_groups(tree: Tree, level: dict, visible: np.ndarray, starts: np.ndarray, area: np.ndarray):
+    boughs = tree.parts[1]
+    openness = np.maximum.reduceat(boughs['colour'][:, 3], starts) / 255
+    centres = np.add.reduceat(boughs['position'], starts) / np.diff(np.r_[starts, len(boughs['position'])])[:, None]
+    branches = {branch.number: branch for branch in tree.branches}
+    span = level['merge_px'] * np.ptp(tree.parts[0]['position'][:, 2]) / level['px']
+    groups = {}
+    for number in np.flatnonzero(visible & (openness >= level['min_open'])):
+        card = tree.cards[number]
+        branch = branches.get(card['branch'])
+        radius = np.linalg.norm(centres[number, :2])
+        segment = int(radius / span)
+        if level['merge'] == 'whorl' and branch is not None:
+            sector = int(branch.azimuth % math.tau * 6 / math.tau)
+            key = ('whorl', branch.whorl, sector, segment)
+        elif level['merge'] == 'branch' and branch is not None:
+            key = ('branch', branch.number, segment)
+        elif card['cluster'] and area[number] < span ** 2:
+            key = ('cluster', card['cluster'])
+        else:
+            key = ('card', number)
+        groups.setdefault(key, []).append(int(number))
+    return groups.values(), centres
+
+
+def _atlas_samples(luma: np.ndarray, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+    height, width = luma.shape
+    return luma[np.clip((v * height).astype(int), 0, height - 1),
+                np.clip((u * width).astype(int), 0, width - 1)]
+
+
+def _level_reference(parts: list[dict], starts: np.ndarray, views, mask: np.ndarray, luma: np.ndarray):
+    import tree_density
+
+    bark, boughs = parts
+    owner = np.searchsorted(starts, boughs['index'][:, 0], side='right') - 1
+    visible = np.zeros(len(starts), bool)
+    reference = []
+    tone_sum = tone_count = 0
+    for _, project, shape, ppm in views:
+        wood = tree_density.raster(project(bark['position']), bark['index'], shape).ravel()
+        nearest = wood.copy()
+        winner = np.full(len(nearest), -1, np.int32)
+        tone = np.zeros(len(nearest), np.float32)
+        for triangle, pixel, depth, u, v in tree_density.fragments(
+                project(boughs['position']), boughs['index'], shape, boughs['uv'], mask):
+            np.minimum.at(nearest, pixel, depth)
+            front = (depth == nearest[pixel]) & (depth < wood[pixel])
+            winner[pixel[front]] = owner[triangle[front]]
+            tone[pixel[front]] = _atlas_samples(luma, u[front], v[front])
+        # A later, nearer fragment can replace a winner. Pixels that show only bark have no card.
+        visible[winner[winner >= 0]] = True
+        reference.append((np.isfinite(nearest), shape, ppm))
+        tone_sum += tone.sum(dtype=np.float64)
+        tone_count += np.count_nonzero(winner >= 0)
+    return visible, reference, tone_sum / tone_count
+
+
+def _level_stencils(bark: dict, boughs: dict, triangle_options: np.ndarray, views, reference,
+                    mask: np.ndarray, luma: np.ndarray):
+    import tree_density
+
+    pieces, targets, filled, weights = [], [], [], []
+    size = int(triangle_options[-1]) + 1
+    total_rays = sum(np.prod(shape) for _, _, shape, _ in views)
+    tone_sum, tone_count = np.zeros(size), np.zeros(size)
+    offset = 0
+    for (_, project, shape, ppm), (target, _, _) in zip(views, reference):
+        wood = np.isfinite(tree_density.raster(project(bark['position']), bark['index'], shape)).ravel()
+        points = project(boughs['position'])
+        projected = []
+        for triangle, pixel, _, u, v in tree_density.fragments(points, boughs['index'], shape, boughs['uv'], mask):
+            option = triangle_options[triangle]
+            show = ~wood[pixel]
+            projected.append(option[show] * total_rays + pixel[show] + offset)
+            tone_count += np.bincount(option, minlength=size)
+            tone_sum += np.bincount(option, weights=_atlas_samples(luma, u, v), minlength=size)
+        pieces.append(np.unique(np.concatenate(projected)))
+        targets.append(target)
+        filled.append(wood)
+        # Balance the views by their projected areas. Opposite views contribute equally.
+        weights.append((1. / max(target.sum(), 1), np.prod(shape)))
+        offset += np.prod(shape)
+    option, pixel = np.divmod(np.sort(np.concatenate(pieces)), total_rays)
+    cuts = np.searchsorted(option, np.arange(size + 1))
+    return (np.split(pixel, cuts[1:-1]), np.concatenate(targets), np.concatenate(filled),
+            np.repeat(*zip(*weights)), tone_sum / np.maximum(tone_count, 1))
+
+
+def _fit_level(positive, spill: np.ndarray, initial: np.ndarray, filled: np.ndarray, weights: np.ndarray,
+               group_ids: np.ndarray, costs: np.ndarray, budget: int, spill_weight: float,
+               tone_weight: np.ndarray) -> list[int]:
+    """Cover the full silhouette with the fewest exposed cards, charging for rays outside it."""
+    filled = filled.copy()
+    taken = np.zeros(group_ids[-1] + 1, bool)
+    factor = tone_weight / costs
+    score = (initial - spill_weight * spill) * factor
+    queue = [(-value, option) for option, value in enumerate(score)]
+    heapq.heapify(queue)
+    selected = []
+    minimum = costs.min()
+    while queue and budget >= minimum:
+        previous, option = heapq.heappop(queue)
+        group = group_ids[option]
+        if taken[group] or costs[option] > budget:
+            continue
+        p = positive[option]
+        value = (weights[p[~filled[p]]].sum() - spill_weight * spill[option]) * factor[option]
+        if value <= 0:
+            continue
+        if value < -previous - 1e-15:
+            heapq.heappush(queue, (-value, option))
+            continue
+        filled[p] = True
+        taken[group] = True
+        budget -= costs[option]
+        selected.append(option)
+    return selected
+
+
+def _projected_openings(coverage: np.ndarray, reference) -> np.ndarray:
+    from tree_density import RAYS, level_opening
+
+    readings = []
+    offset = 0
+    for target, shape, ppm in reference:
+        hit = coverage[offset:offset + len(target)]
+        solid = hit.reshape(shape[0] // RAYS, RAYS, shape[1] // RAYS, RAYS).sum(axis=(1, 3)) > RAYS ** 2 // 2
+        readings.append(level_opening(solid, ppm))
+        offset += len(target)
+    return np.array(readings)
+
+
+def design_level(tree: Tree, level: dict, mask: np.ndarray, atlas: np.ndarray) -> Tree:
+    """Fit grouped cards to the full spruce at the threshold's projected height."""
+    import tree_density
+
+    bark, boughs = tree.parts
+    starts = np.array([card['first'] for card in tree.cards])
+    ends = np.r_[starts[1:], len(boughs['position'])]
+    index = boughs['index']
+    owners = np.searchsorted(starts, index[:, 0], side='right') - 1
+    cuts = np.searchsorted(owners, np.arange(len(starts) + 1))
+    points = boughs['position'][index]
+    area = np.add.reduceat(np.linalg.norm(np.cross(points[:, 1] - points[:, 0], points[:, 2] - points[:, 0]),
+                                         axis=1) * .5, cuts[:-1])
+    views = list(tree_density.level_views(tree.parts, level['px']))
+    luma = atlas[..., :3].astype(np.float32) @ np.array((.2126, .7152, .0722), np.float32)
+    visible, reference, tone = _level_reference(tree.parts, starts, views, mask, luma)
+    groups, centres = _level_groups(tree, level, visible, starts, area)
+    trunk = _level_trunk(bark, level['trunk_sides'])
+    budget = int(tree.metrics['triangles'] * level['share']) - len(trunk['index'])
+    sources, members, groups_by_option, geometry, scales = [], [], [], [], []
+    for group_id, group in enumerate(groups):
+        source = max(group, key=area.__getitem__)
+        # The largest shoot keeps its UVs, normals and wind bytes. The merged footprint sets the
+        # upper size we try, with additional room to compensate for the groups omitted by the budget.
+        centre = centres[source]
+        points = boughs['position'][starts[source]:ends[source]] - centre
+        merged = min(2., math.sqrt(area[group].sum() / area[source]))
+        for grow in sorted({1., 1.18, 1.4, round(merged, 3), round(merged * 1.25, 3), round(merged * 1.6, 3)}):
+            sources.append(source)
+            members.append(group)
+            groups_by_option.append(group_id)
+            scales.append(grow)
+            geometry.append((centre + points * grow).astype(np.float32))
+    sources = np.array(sources)
+    counts = ends[sources] - starts[sources]
+    first = np.r_[0, np.cumsum(counts)]
+    triangles = [index[cuts[s]:cuts[s + 1]] - starts[s] + f for s, f in zip(sources, first)]
+    costs = np.diff(cuts)[sources]
+    used = np.concatenate([np.arange(starts[s], ends[s]) for s in sources])
+    candidates = dict(position=np.concatenate(geometry), uv=boughs['uv'][used], index=np.concatenate(triangles))
+    def assemble(selected):
+        positions, vertex_ids, kept_indices, cards = [], [], [], []
+        first_vertex = 0
+        for option in selected:
+            source = sources[option]
+            positions.append(geometry[option])
+            vertex_ids.extend(range(starts[source], ends[source]))
+            kept_indices.append(triangles[option] - first[option] + first_vertex)
+            cards.append(dict(tree.cards[source], first=first_vertex, source=int(source),
+                              members=members[option], growth=scales[option]))
+            first_vertex += counts[option]
+        part = dict(boughs, position=np.concatenate(positions), index=np.concatenate(kept_indices),
+                    **{key: boughs[key][vertex_ids] for key in ('normal', 'uv', 'colour', 'owner')})
+        return [trunk, part], cards
+
+    pixels, target, filled, weights, option_tone = _level_stencils(
+        trunk, candidates, np.repeat(np.arange(len(sources)), costs), views, reference, mask, luma)
+    positive = [p[target[p]] for p in pixels]
+    spill = np.array([weights[p[~target[p]]].sum() for p in pixels])
+    initial = np.array([weights[p].sum() for p in positive])
+    full = _projected_openings(target, reference)
+    best = None
+    group_ids = np.array(groups_by_option)
+    for share in (level['target_share'], level['share']):
+        limit = int(tree.metrics['triangles'] * share) - len(trunk['index'])
+        fits = []
+        for penalty in (.25, .65, 1.):
+            for bias in (0., 12., 24.):
+                tone_weight = np.exp(-bias * (option_tone / tone - 1))
+                selected = _fit_level(positive, spill, initial, filled, weights, group_ids, costs,
+                                      min(limit, budget), penalty, tone_weight)
+                if not selected:
+                    continue
+                hit = filled.copy()
+                for option in selected:
+                    hit[pixels[option]] = True
+                opening = _projected_openings(hit, reference)
+                gap = np.abs(opening[:, 0] - full[:, 0]).max()
+                outline = np.abs(opening[:, 1] / full[:, 1] - 1).max()
+                fits.append((max(0., gap - .01), outline, gap, tuple(selected)))
+        for _, outline, gap, selected in sorted(set(fits)):
+            parts, cards = assemble(selected)
+            rgb = np.zeros(3)
+            count = 0
+            for _, project, shape, _ in views:
+                _, colours, rays = tree_density.level_sample(parts, project, shape, mask, atlas)
+                rgb += colours
+                count += rays
+            delta = abs(rgb @ (.2126, .7152, .0722) / (count * tone) - 1)
+            score = (max(0., gap / .01 - 1, delta / .005 - 1), outline, gap, delta)
+            if best is None or score < best[0]:
+                best = score, parts, cards
+            if score[0] == 0:
+                break
+        if best is not None and best[0][0] == 0:
+            break
+    if best is None:
+        raise ValueError(f'No crown cards fit under {level["px"]} px')
+    _, parts, cards = best
+    metrics = dict(tree.metrics, triangles=sum(len(part['index']) for part in parts),
+                   triangles_by_material={part['name']: len(part['index']) for part in parts},
+                   vertices={part['name']: len(part['position']) for part in parts},
+                   designed=dict(px=level['px'], share=level['share'], cards_kept=len(cards)))
+    return Tree(parts, metrics, tree.branches, cards, tree.stubs)
 
 
 BLADE_DEG = 30.     # triangles whose planes are closer than this are one blade of a bough

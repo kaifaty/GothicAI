@@ -1,6 +1,7 @@
 """Check a tree's GLB against the wind layout of COLOR_0 and the rules of the cards. Reads only the file.
 
     python tree_check.py TREE.glb [--json OUT.json]
+    python tree_check.py LEVEL.glb ... --full TREE.glb [--json OUT.json]
 
 The numbers it prints are the acceptance of the layout (tree_glb.py, engine-plan.md task 1):
 
@@ -15,6 +16,9 @@ The numbers it prints are the acceptance of the layout (tree_glb.py, engine-plan
 - the cards' material is two-sided and no triangle of a card has a twin, or (the mode of pairs) it is one-sided
   and every triangle has a twin wound the other way over the same vertices;
 - no closed piece of wood is inside out.
+
+With --full, verify a coarse level's materials, trunk wind, card sides and inherited UV and COLOR_0, using the
+full tree as its source. Moved card stems and the removal of branch wood are expected on levels.
 
 Exits 1 when a rule fails.
 """
@@ -93,7 +97,65 @@ def on_axis(point: np.ndarray, line: np.ndarray, weight: np.ndarray) -> tuple[fl
     return float(distance[k]), float(weight[k] + t[k] * (weight[k + 1] - weight[k]))
 
 
-def check(path: Path) -> dict:
+def card_sides(index: np.ndarray, two_sided: bool) -> tuple[dict, list[str]]:
+    order = np.sort(index, axis=1)
+    _, inverse, copies = np.unique(order, axis=0, return_inverse=True, return_counts=True)
+    parity = np.array([(tuple(t) in ((a, b, c), (b, c, a), (c, a, b))) for t, (a, b, c) in zip(index.tolist(), order.tolist())])
+    even = np.bincount(inverse.reshape(-1), weights=parity, minlength=len(copies))
+    twins = int(((copies == 2) & (even == 1)).sum())
+    single = int(len(index) - 2 * twins)
+    out = dict(triangles=int(len(index)), sides='material' if two_sided else 'pairs', pairs=twins, single=single)
+    fails = []
+    if two_sided and single != len(index):
+        fails.append(f'{2 * twins} card triangles are listed twice under a two-sided material')
+    if not two_sided and single != 0:
+        fails.append(f'{single} card triangles without a twin wound the other way')
+    return out, fails
+
+
+def card_signatures(part: dict) -> list[tuple]:
+    """Each connected card's atlas coordinates paired with the original four wind and light bytes."""
+    label = components(part['index'], len(part['position']))
+    order = np.argsort(label, kind='stable')
+    groups = np.split(order, np.flatnonzero(np.diff(label[order])) + 1)
+    values = np.column_stack((part['uv'].view(np.uint32), part['colour'])).tolist()
+    return [tuple(sorted(tuple(values[v]) for v in group)) for group in groups]
+
+
+def check_level(full: Path, wood: dict, cards: dict, out: dict) -> dict:
+    reference = tree_glb.read(full)
+    fails = []
+    if {p['name']: p['material'] for p in reference} != {p['name']: p['material'] for p in (wood, cards)}:
+        return out | dict(fails=['level materials differ from the full tree'])
+    for part in (wood, cards):
+        count = len(part['position'])
+        if not count or not len(part['index']) or part['index'].min() < 0 or part['index'].max() >= count:
+            fails.append(f"{part['name']}: empty geometry or index outside the vertex buffer")
+        if not all(np.isfinite(part[key]).all() for key in ('position', 'normal', 'uv')):
+            fails.append(f"{part['name']}: non-finite vertex attributes")
+    if fails:
+        return out | dict(fails=fails)
+
+    closed, inside_out = closed_parts(wood['position'], wood['index'])
+    out['closed_parts'], out['inside_out_parts'] = closed, inside_out
+    if inside_out:
+        fails.append(f'{inside_out} closed parts are inside out')
+    if (wood['colour'] != (0, 0, 0, 255)).any():
+        fails.append('level wood must have the trunk wind and openness')
+
+    out['cards'], side_fails = card_sides(cards['index'], bool(cards['material'].get('doubleSided')))
+    fails.extend(side_fails)
+    full_cards = next(p for p in reference if p['name'] == cards['name'])
+    originals = set(card_signatures(full_cards))
+    signatures = card_signatures(cards)
+    unmatched = sum(signature not in originals for signature in signatures)
+    out['cards'].update(count=len(signatures), without_source=unmatched)
+    if unmatched:
+        fails.append(f'{unmatched} level cards lack matching UV and COLOR_0 in the full tree')
+    return out | dict(fails=fails)
+
+
+def check(path: Path, full: Path | None = None) -> dict:
     prims = tree_glb.read(path)
     wood = [p for p in prims if p['material'].get('alphaMode') != 'MASK']
     cards = [p for p in prims if p['material'].get('alphaMode') == 'MASK']
@@ -113,6 +175,8 @@ def check(path: Path) -> dict:
         return out | dict(fails=fails)
     wood, cards = wood[0], cards[0]
     out['colour_format'] = 'VEC4 UNSIGNED_BYTE normalized'
+    if full is not None:
+        return check_level(full, wood, cards, out)
 
     # wood: the trunk and the branches
     position, colour = wood['position'].astype(np.float64), wood['colour'].astype(np.int64)
@@ -153,18 +217,8 @@ def check(path: Path) -> dict:
 
     # cards
     position, colour, index = cards['position'].astype(np.float64), cards['colour'].astype(np.int64), cards['index']
-    order = np.sort(index, axis=1)
-    _, inverse, copies = np.unique(order, axis=0, return_inverse=True, return_counts=True)
-    parity = np.array([(tuple(t) in ((a, b, c), (b, c, a), (c, a, b))) for t, (a, b, c) in zip(index.tolist(), order.tolist())])
-    even = np.bincount(inverse.reshape(-1), weights=parity, minlength=len(copies))
-    twins = int(((copies == 2) & (even == 1)).sum())
-    two_sided = bool(cards['material'].get('doubleSided'))
-    single = int(len(index) - 2 * twins)
-    out['cards'] = dict(triangles=int(len(index)), sides='material' if two_sided else 'pairs', pairs=twins, single=single)
-    if two_sided:
-        rule(single == len(index), f'{2 * twins} card triangles are listed twice under a two-sided material')
-    else:
-        rule(single == 0, f'{single} card triangles without a twin wound the other way')
+    out['cards'], side_fails = card_sides(index, bool(cards['material'].get('doubleSided')))
+    fails.extend(side_fails)
     label = components(index, len(position))
     wrong_phase = stemless = edgeless = stepped = 0
     r_error, b_growth, spans, off_axis = [], [], [], []
@@ -229,9 +283,10 @@ def check(path: Path) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('glb', type=Path, nargs='+')
+    parser.add_argument('--full', type=Path, help='full tree whose coarse levels are being checked')
     parser.add_argument('--json', type=Path)
     args = parser.parse_args()
-    results = [check(path) for path in args.glb]
+    results = [check(path, args.full) for path in args.glb]
     text = json.dumps(results if len(results) > 1 else results[0], indent=1, ensure_ascii=False)
     print(text)
     if args.json:
