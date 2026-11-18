@@ -109,6 +109,12 @@ void DayScriptStats::begin(std::string_view symbol) {
   if(auto* p=this->phase()) ++p->engine;
   }
 
+// A phase from its record has no root script call: its first VM call (a deferred helper) is nested.
+void DayScriptStats::record() {
+  if(auto* p=phase()) ++p->records;
+  if(!contexts.empty()) contexts.back().root=false;
+  }
+
 void DayScriptStats::end() {
   contexts.pop_back();
   }
@@ -145,7 +151,8 @@ std::string DayScriptStats::json() const {
       const auto p=found==state.phases.end() ? Phase{} : found->second;
       if(!firstPhase) out+=",";
       firstPhase=false;
-      out+=jsonEscape(phaseName)+":{\"engine\":"+std::to_string(p.engine)+",\"nested\":"+std::to_string(p.nested)+
+      out+=jsonEscape(phaseName)+":{\"engine\":"+std::to_string(p.engine)+",\"records\":"+std::to_string(p.records)+
+           ",\"nested\":"+std::to_string(p.nested)+
            ",\"instructions\":"+std::to_string(p.instructions)+",\"random\":"+std::to_string(p.random)+",\"externals\":"+counts(p.externals)+"}";
       }
     out+="}}";

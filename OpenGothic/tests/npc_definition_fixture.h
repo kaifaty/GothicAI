@@ -57,6 +57,95 @@ struct Fixture {
   void set(uint32_t field,int value) { op(Op::PUSHI,uint32_t(value)); op(Op::PUSHV,field); op(Op::MOVI); }
   void call(uint32_t id) { op(Op::BL,uint32_t(p.symbols[id].address)); }
   };
+// D4.1: routine states of the activity template with Gothic 2's own bytecode, names and external
+// signatures. ZS_SMITH_ANVIL is accepted, ZS_SMITH_FIRE is captured but not accepted.
+inline void activities(Fixture& f,uint32_t self,uint32_t perceptionHandler,uint32_t ta,uint32_t point) {
+  auto constant=[&](const char* name,int value) {
+    const auto id=f.symbol(name,Type::INT,1,Flag::CONST); f.p.symbols[id].int_values[0]=value; return id;
+    };
+  auto text=[&](const char* value) {
+    const auto id=f.symbol("$ACTIVITY_"+std::to_string(f.p.symbols.size()),Type::STRING,1,Flag::CONST);
+    f.p.symbols[id].string_values[0]=value; return id;
+    };
+  auto jump=[&](Op op) { f.op(op,0u); return f.p.bytecode.size()-4; };
+  auto land=[&](size_t at) {
+    const auto to=uint32_t(f.p.bytecode.size());
+    for(size_t i=0;i<4;++i) f.p.bytecode[at+i]=std::byte((to>>(8*i))&255);
+    };
+  const auto walk=constant("NPC_WALK",1),no=constant("FALSE",0),yes=constant("TRUE",1);
+  const auto busy=constant("BS_MOBINTERACT_INTERRUPT",32784),loopContinue=constant("LOOP_CONTINUE",0);
+  const auto freeHands=constant("BS_FLAG_FREEHANDS",65536),interruptable=constant("BS_FLAG_INTERRUPTABLE",32768);
+  const auto maxState=constant("BS_MAX",31);
+  const auto wp=f.find("C_NPC.WP");
+  const auto percEnable=f.fn("NPC_PERCENABLE",{Type::INSTANCE,Type::INT,Type::FUNCTION},true);
+  const auto lookAt=f.fn("NPC_GETLOOKATTARGET",{Type::INSTANCE},true,Type::INSTANCE);
+  const auto valid=f.fn("HLP_ISVALIDNPC",{Type::INSTANCE},true,Type::INT);
+  const auto stopLook=f.fn("AI_STOPLOOKAT",{Type::INSTANCE},true);
+  const auto removeWeapon=f.fn("AI_REMOVEWEAPON",{Type::INSTANCE},true);
+  const auto setWalk=f.fn("AI_SETWALKMODE",{Type::INSTANCE,Type::INT},true);
+  const auto nearest=f.fn("NPC_GETNEARESTWP",{Type::INSTANCE},true,Type::STRING);
+  const auto compare=f.fn("HLP_STRCMP",{Type::STRING,Type::STRING},true,Type::INT);
+  const auto gotoWp=f.fn("AI_GOTOWP",{Type::INSTANCE,Type::STRING},true);
+  const auto available=f.fn("WLD_ISMOBAVAILABLE",{Type::INSTANCE,Type::STRING},true,Type::INT);
+  const auto bodyState=f.fn("NPC_GETBODYSTATE",{Type::INSTANCE},true,Type::INT);
+  const auto useMob=f.fn("AI_USEMOB",{Type::INSTANCE,Type::STRING,Type::INT},true,Type::INT);
+
+  const auto perceptions=f.fn("PERCEPTION_SET_NORMAL"); f.begin(perceptions);
+  f.op(Op::PUSHI,3u); f.op(Op::GMOVI,self); f.op(Op::PUSHV,f.find("C_NPC.SENSES")); f.op(Op::MOVI);
+  f.op(Op::PUSHVI,self); f.op(Op::PUSHI,1u); f.op(Op::PUSHI,perceptionHandler); f.op(Op::BE,percEnable); f.op(Op::RSR);
+  const auto stopLookAt=f.fn("B_STOPLOOKAT",{Type::INSTANCE});
+  const auto target=f.symbol("B_STOPLOOKAT.TARGET",Type::INSTANCE,1,0,int32_t(f.find("C_NPC")));
+  f.begin(stopLookAt); f.op(Op::PUSHVI,stopLookAt+1); f.op(Op::MOVVI);
+  f.op(Op::PUSHVI,stopLookAt+1); f.op(Op::BE,lookAt); f.op(Op::PUSHVI,target); f.op(Op::MOVVI);
+  f.op(Op::PUSHVI,target); f.op(Op::BE,valid);
+  auto skipStop=jump(Op::BZ);
+  f.op(Op::PUSHVI,stopLookAt+1); f.op(Op::BE,stopLook);
+  land(skipStop); f.op(Op::RSR);
+  const auto reset=f.fn("B_RESETALL",{Type::INSTANCE}); f.begin(reset);
+  f.op(Op::PUSHVI,reset+1); f.op(Op::MOVVI);
+  f.op(Op::PUSHVI,reset+1); f.call(stopLookAt);
+  f.op(Op::PUSHVI,reset+1); f.op(Op::BE,removeWeapon); f.op(Op::RSR);
+  const auto contains=f.fn("C_BODYSTATECONTAINS",{Type::INSTANCE,Type::INT},false,Type::INT); f.begin(contains);
+  f.op(Op::PUSHV,contains+2); f.op(Op::MOVI); f.op(Op::PUSHVI,contains+1); f.op(Op::MOVVI);
+  auto mask=[&] { f.op(Op::PUSHV,freeHands); f.op(Op::PUSHV,interruptable); f.op(Op::PUSHV,maxState); f.op(Op::OR); f.op(Op::OR); };
+  mask(); f.op(Op::PUSHV,contains+2); f.op(Op::ANDB);
+  mask(); f.op(Op::PUSHVI,contains+1); f.op(Op::BE,bodyState); f.op(Op::ANDB); f.op(Op::EQ);
+  auto notContained=jump(Op::BZ);
+  f.op(Op::PUSHV,yes); f.op(Op::RSR);
+  auto after=jump(Op::B);
+  land(notContained); f.op(Op::PUSHV,no); f.op(Op::RSR);
+  land(after); f.op(Op::RSR);
+
+  auto mobState=[&](const std::string& name,const char* scheme) {
+    const auto init=f.fn(name.c_str()); f.begin(init);
+    f.call(perceptions);
+    f.op(Op::PUSHVI,self); f.call(reset);
+    f.op(Op::PUSHVI,self); f.op(Op::PUSHV,walk); f.op(Op::BE,setWalk);
+    f.op(Op::PUSHV,no); f.op(Op::PUSHVI,self); f.op(Op::BE,nearest);
+    f.op(Op::GMOVI,self); f.op(Op::PUSHV,wp); f.op(Op::BE,compare); f.op(Op::EQ);
+    auto atPoint=jump(Op::BZ);
+    f.op(Op::PUSHVI,self); f.op(Op::GMOVI,self); f.op(Op::PUSHV,wp); f.op(Op::BE,gotoWp);
+    land(atPoint); f.op(Op::RSR);
+    const auto loop=f.fn((name+"_LOOP").c_str(),{},false,Type::INT); f.begin(loop);
+    f.op(Op::PUSHVI,self); f.op(Op::PUSHV,text(scheme)); f.op(Op::BE,available);
+    f.op(Op::PUSHVI,self); f.op(Op::PUSHV,busy); f.call(contains); f.op(Op::NOT); f.op(Op::AND);
+    auto skipUse=jump(Op::BZ);
+    f.op(Op::PUSHVI,self); f.op(Op::PUSHV,text(scheme)); f.op(Op::PUSHI,1u); f.op(Op::BE,useMob);
+    land(skipUse); f.op(Op::PUSHV,loopContinue); f.op(Op::RSR); f.op(Op::RSR);
+    const auto end=f.fn((name+"_END").c_str()); f.begin(end);
+    f.op(Op::PUSHVI,self); f.op(Op::PUSHV,text(scheme)); f.op(Op::PUSHI,1u); f.op(Op::NEGATE); f.op(Op::BE,useMob); f.op(Op::RSR);
+    return init;
+    };
+  const auto anvil=mobState("ZS_SMITH_ANVIL","BSANVIL");
+  const auto fire=mobState("ZS_SMITH_FIRE","BSFIRE");
+  const auto routine=f.fn("RTN_SMITH_7"); f.begin(routine);
+  for(auto [from,to,state]:{std::tuple{8u,12u,anvil},std::tuple{12u,16u,fire}}) {
+    f.op(Op::PUSHVI,self); f.op(Op::PUSHI,from); f.op(Op::PUSHI,0u); f.op(Op::PUSHI,to); f.op(Op::PUSHI,0u);
+    f.op(Op::PUSHI,state); f.op(Op::PUSHV,point); f.op(Op::BE,ta);
+    }
+  f.op(Op::RSR);
+  }
+
 inline NpcSnapshot::Program program() {
   Fixture f;
   const auto npcClass=f.cls<INpc>("C_NPC"),itemClass=f.cls<IItem>("C_ITEM");
@@ -188,6 +277,7 @@ inline NpcSnapshot::Program program() {
   const auto globalStartup=f.fn("STARTUP_GLOBAL"); f.begin(globalStartup);
   // The real STARTUP_GLOBAL discards this external's return at the void function boundary.
   f.op(Op::BE,german); f.op(Op::RSR);
+  activities(f,self,state,ta,point);
   const auto guildClass=f.symbol("C_GILVALUES",Type::CLASS);
   f.p.symbols[guildClass].class_size=sizeof(IGuildValues);
   for(const char* field:{"WATER_DEPTH_KNEE","WATER_DEPTH_CHEST","JUMPUP_HEIGHT","SWIM_TIME","DIVE_TIME",

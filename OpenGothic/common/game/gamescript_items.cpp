@@ -9,7 +9,8 @@
 
 daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                          RoutineDefinitionRuntime::Definitions& routines,
-                                         NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements) {
+                                         NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,
+                                         ActivityDefinitionRuntime::Definitions& activities) {
   const auto lang=Settings::getI("GAME", "language");
   std::string sha256;
   auto script=loadBaseProgram(gothic.defaultGameDatFile(),lang,&sha256);
@@ -17,6 +18,7 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
   routines=RoutineDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
   npcs=NpcDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
   placements=PlacementDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
+  activities=ActivityDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
   const auto flags=daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
   daedalus::DaedalusVm vm(std::move(script),flags);
   NpcDefinitionRuntime::observeCalls(vm,npcs,baseProgramIndex().dir.parent_path(),sha256);

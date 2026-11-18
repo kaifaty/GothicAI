@@ -12,7 +12,7 @@
 class DayScriptStats {
   public:
     struct Phase {
-      uint64_t engine=0, nested=0, instructions=0, random=0;
+      uint64_t engine=0, records=0, nested=0, instructions=0, random=0;
       std::map<std::string,uint64_t> externals;
       };
     struct State {
@@ -24,6 +24,7 @@ class DayScriptStats {
     void stop(daedalus::DaedalusVm& vm);
     void begin(std::string_view symbol);
     void end();
+    void record();
     void random(bool script, bool actor);
     std::string json() const;
     std::string source(bool script, bool actor) const;
