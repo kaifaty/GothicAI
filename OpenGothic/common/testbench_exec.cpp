@@ -38,6 +38,7 @@
 #include "world/aiqueue.h"
 #include "gothic.h"
 #include "marvin.h"
+#include "settings.h"
 
 using namespace Tempest;
 using namespace testbench_detail;
@@ -214,6 +215,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   if(c=="water-film" && waterFilmCommand(waterFilmContext(),a,w,pl)) return;
   else if(c=="cloth" && clothCommand(clothContext(),a,w,pl)) return;
   else if(c=="foliage" && foliageCommand(a,w)) return;
+  else if(c=="impostor" && a.size()==3 && a[1]=="probe" && (a[2]=="on" || a[2]=="off")) {
+    Settings::setI("INTERNAL","treeOcclusionProbe",a[2]=="on" ? 1 : 0);
+    }
   else if(c=="impostor" && a.size()==2) {
     if(a[1]=="force")
       VisualObjects::benchImpostors = VisualObjects::BenchImpostors::Force;
