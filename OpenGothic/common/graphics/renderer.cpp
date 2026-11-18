@@ -90,8 +90,12 @@ Renderer::Renderer() {
 
   settings.giMethod         = ::Settings::options().doGi;
   settings.vsmEnabled       = Shaders::options().doVirtualShadow;
-  if(const char* stats = std::getenv("OPENGOTHIC_VSM_STATS"))
-    settings.vsmStats = std::string_view(stats)=="1";
+  // OPENGOTHIC_VSM_STATS=frames: a line a frame of the bins of meshlet-page pairs (Renderer::logVsmFrame), without
+  // waiting for the GPU and without the lamp study the 5 s counters switch on, so the selection runs as without it
+  if(const char* stats = std::getenv("OPENGOTHIC_VSM_STATS")) {
+    settings.vsmStats       = std::string_view(stats)=="1";
+    settings.vsmStatsFrames = std::string_view(stats)=="frames";
+    }
   // OPENGOTHIC_VSM_LAMP=hard|flat: the lamp shadow filter for a study of its cost
   // (reports/render-features/2026-11-04-lamp-pcss/step-2c.md): one gather at the centre, or the same taps against
   // the receiver's depth without its plane; unset or pcss: the PCSS ([INTERNAL] vsmLampSoft does not change the study)
@@ -999,7 +1003,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   drawShadowMap(cmd, fId, wview);
   prepareEpipolar(cmd, wview);
 
-  drawVsm(cmd, wview);
+  drawVsm(cmd, fId, wview);
 
   { FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain); prepareIrradiance(cmd, wview); }
   prepareExposure(cmd, wview);

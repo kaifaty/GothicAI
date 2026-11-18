@@ -106,8 +106,10 @@ class Renderer final {
 
     void drawHiZ          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void buildHiZ         (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    void drawVsm          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
+    void drawVsm          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void logVsmStats      (const WorldView& view);
+    void logVsmFrame      (uint8_t fId);
+    void copyVsmFrame     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void drawGBuffer      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void drawGWater       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void drawShadowMap    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
@@ -227,6 +229,7 @@ class Renderer final {
 
       float          vsmMipBias         = 0.25; //TODO: set to lower, eventually
       bool           vsmStats           = false; // OPENGOTHIC_VSM_STATS=1: VSM counters to the log every 5 s
+      bool           vsmStatsFrames     = false; // OPENGOTHIC_VSM_STATS=frames: the bins of pairs of every frame
       uint32_t       vsmLampMode        = 0;     // OPENGOTHIC_VSM_LAMP: 0 pcss, 1 hard, 2 flat (lamp filter study)
       float          vsmLampNarrow      = -1;    // OPENGOTHIC_VSM_LAMP_NARROW: four-tap penumbra, texels; <0 the shader's
       // under TAA (light.frag, the frame-turned pattern): taps of the first and second blocker search, of a narrow
@@ -452,6 +455,14 @@ class Renderer final {
       Tempest::StorageImage     vsmDbg;
 
       uint64_t                  statsTime = 0; // last OPENGOTHIC_VSM_STATS line, ms
+      // OPENGOTHIC_VSM_STATS=frames: each frame slot's copy of VsmHeader, read when the slot comes round again (its
+      // fence waited for), and the frame's number; the bins drawn by the frame logged last, to check the hysteresis's
+      Tempest::StorageBuffer    frameStats[Resources::MaxFramesInFlight];
+      uint64_t                  frameStatsNo[Resources::MaxFramesInFlight] = {};
+      bool                      frameStatsWritten[Resources::MaxFramesInFlight] = {};
+      uint64_t                  frameNo = 0;
+      uint64_t                  frameLoggedNo = 0;
+      uint32_t                  frameLoggedAdmit[9] = {};
       Tempest::StorageBuffer    lampProbe;     // light_vsm_probe: one frame's lamp filter counters, a stamp per pixel
       uint32_t                  lampStamp  = 0; // the counted frame's stamp
       bool                      lampArmed  = false; // the next drawLights counts
