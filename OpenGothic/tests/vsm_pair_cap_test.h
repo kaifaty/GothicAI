@@ -368,9 +368,10 @@ void vsmEntryEdgeRecords(Tempest::Device& device) {
     auto depth = device.texture(depthPm, false);
 
     // vsm_clear.comp takes the bins the frame before drew from admitBits
-    std::vector<uint32_t> words(shaders.vsmClear.sizeofBuffer(0, Pool)/sizeof(uint32_t), 0);
     const size_t admitAt = 4 + 16 + 16*4 + 8; // VsmHeader: counts, pagePerMip, pageBbox, then 8 counters
-    std::copy(drawnBefore.begin(), drawnBefore.end(), words.begin()+ptrdiff_t(admitAt));
+    std::vector<uint32_t> words(std::max(shaders.vsmClear.sizeofBuffer(0, Pool)/sizeof(uint32_t), admitAt+18), 0u);
+    for(size_t i=0; i<drawnBefore.size(); ++i)
+      words[admitAt+i] = drawnBefore[i];
     auto pages = device.ssbo(words.data(), words.size()*sizeof(uint32_t));
 
     auto command = device.commandBuffer();
@@ -413,8 +414,10 @@ void vsmEntryEdgeRecords(Tempest::Device& device) {
     device.submit(command).wait();
 
     device.readBytes(pages, words.data(), words.size()*sizeof(uint32_t));
-    require(std::equal(drawnBefore.begin(), drawnBefore.end(), words.begin()+ptrdiff_t(admitAt+9)),
-            "vsm_clear.comp hands the bins drawn the frame before to the frame's passes");
+    bool handed = true;
+    for(size_t i=0; i<drawnBefore.size(); ++i)
+      handed &= words[admitAt+9+i]==drawnBefore[i];
+    require(handed, "vsm_clear.comp hands the bins drawn the frame before to the frame's passes");
     std::vector<Entry> ret;
     for(uint32_t i=0; i<words[0] && headerWords+i<words.size(); ++i) {
       const uint32_t p = words[headerWords+i];
