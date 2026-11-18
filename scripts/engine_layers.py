@@ -95,6 +95,7 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/daedalus/*", "gothic"),
     ("common/game/gamescript*", "gothic"),
     ("common/game/itemdefinitionruntime", "gothic"),
+    ("common/game/npcdefinitionruntime", "gothic"),
     ("common/game/routinedefinitionruntime", "gothic"),
     ("common/game/gamesession", "gothic"),
     ("common/game/definitions/*", "gothic"),
@@ -124,8 +125,10 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/dmusic/*", "gothic"),
     ("common/programdata", "gothic"),
     ("common/itemdefinitions", "rpg"),
+    ("common/npcdefinitions", "rpg"),
     ("common/routinedefinitions", "rpg"),
     ("common/itemloadprobe", "platform"),
+    ("common/npcloadprobe", "platform"),
     ("common/outputunits", "gothic"),
     # Our own GLB format reader and writer, independent of Gothic rules.
     ("common/gothicglb", "platform"),

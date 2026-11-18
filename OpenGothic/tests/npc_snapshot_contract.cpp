@@ -1,9 +1,11 @@
 #include "npcsnapshot.h"
+#include "npc_definition_fixture.h"
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
-#include "npcsnapshotfields.h"
 #include "programdata.h"
 #include "itemdefinitions.h"
+#include "npcdefinitions.h"
+#include "game/npcdefinitionruntime.h"
 #include "game/itemdefinitionruntime.h"
 #include "routinedefinitions.h"
 #include "game/routinedefinitionruntime.h"
@@ -429,6 +431,153 @@ void runtimeItems(const NpcSnapshot::Program& p,const fs::path& base) {
   check(fallback==library.uncaptured.size(),"every uncaptured item used its constructor");
   std::cout<<"Item runtime equality: "<<captured<<" captured, "<<fallback<<" VM fallback; every ItemRecord field and VM state match\n";
   }
+void npcDefinitions(const fs::path& dir) {
+  const auto program=NpcDefinitionFixture::program();
+  const auto base=dir/"npc-definitions",file=base/"definitions"/program.sha256/"npcs.json";
+  const auto counts=NpcSnapshot::writeNpcs(program,file);
+  check(counts.total==8,"all eight fixture NPC definitions are imported");
+  check(NpcSnapshot::verifyNpcs(program,file)==0,"NPC definitions verify independently from disk");
+  const auto library=NpcDefinitions::read(base,program.sha256);
+  for(const auto* refused:{"NPC_GLOBAL","NPC_WRITER","NPC_UNKNOWN"})
+    check(library.uncaptured.contains(refused),std::string(refused)+": refuses unsafe constructor");
+  check(library.uncaptured.contains("NPC_BAD_ITEM"),"NPC_BAD_ITEM: invalid item prototype retains its VM script error");
+  check(library.uncaptured.contains("NPC_ENGINE_READ") &&
+        library.uncaptured.at("NPC_ENGINE_READ").starts_with("engine_state_read: C_NPC.ATTRIBUTE[0]"),
+        "a constructor-body read after equipment has no safe helper boundary");
+  check(library.uncaptured.contains("NPC_INITIAL_READ") &&
+        library.uncaptured.at("NPC_INITIAL_READ")=="engine_state_read: C_NPC.ID[0] before assignment",
+        "a constructor reading the engine's initial field retains the VM fallback");
+  check(counts.captured==2 && library.uncaptured.size()==6,"two fixture NPCs are captured and six retain the VM fallback");
+  const auto& steps=library.npcs.at("NPC_NO_ID").steps;
+  check(std::any_of(steps.begin(),steps.end(),[](const auto& step) {
+    const auto* field=std::get_if<NpcDefinitions::Field>(&step);
+    return field && field->binding=="C_NPC.EXP_NEXT" && field->index==0 && field->value.integer==0;
+    }),"a constructor reading an untouched AIVAR element is captured with its zero default");
+  check(std::any_of(steps.begin(),steps.end(),[](const auto& step) {
+    const auto* call=std::get_if<NpcDefinitions::Call>(&step);
+    return call && call->function=="ADD_AFTER_EQUIP" && call->deferred;
+    }),"a helper reading an engine-modified field is deferred independently of its name");
+  auto invalid=read(file);
+  for(auto& record:invalid["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="NPC_BAD_ITEM") continue;
+    check(std::string_view(record["reason"].GetString())=="script_error","item allocation errors use the generic script_error reason");
+    check(std::string_view(record["detail"].GetString())=="Cannot init IT_NPC_PROTOTYPE: not an instance",
+          "item allocation preserves the original VM exception message");
+    record["status"].SetString("captured",invalid.GetAllocator());
+    record.RemoveMember("reason"); record.RemoveMember("detail");
+    }
+  write(file,invalid);
+  check(NpcSnapshot::verifyNpcs(program,file)>0,"verification independently rejects a captured NPC with an invalid item prototype");
+  NpcSnapshot::writeNpcs(program,file);
+  const auto second=dir/"npc-identical.json";
+  NpcSnapshot::writeNpcs(program,second);
+  std::ifstream a(file,std::ios::binary),b(second,std::ios::binary);
+  check(std::string(std::istreambuf_iterator<char>(a),{})==std::string(std::istreambuf_iterator<char>(b),{}),
+        "NPC definitions are byte-identical across fresh imports");
+  {
+    auto script=DaedalusScript::from_program(program.data);
+    INpc::register_(script); IItem::register_(script);
+    DaedalusVm vm(std::move(script));
+    const auto definitions=NpcDefinitionRuntime::resolve(library,vm);
+    auto npc=std::make_shared<INpc>();
+    check(!NpcDefinitionRuntime::initialize(vm,npc,vm.find_symbol_by_name("NPC_WRITER"),definitions),
+          "uncaptured NPC uses the same VM fallback as the game");
+    check(vm.find_symbol_by_name("CHAPTER")->get_int()==9,"fallback preserves constructor side effects");
+    }
+  auto changed=read(file);
+  for(auto& record:changed["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="NPC_NO_ID") continue;
+    for(auto& step:record["steps"].GetArray())
+      if(step.HasMember("field") && std::string_view(step["field"].GetString())=="C_NPC.ATTRIBUTE" &&
+         step["value"]["value"].GetInt()==10) step["value"]["value"].SetInt(999);
+    }
+  write(file,changed);
+  check(NpcSnapshot::verifyNpcs(program,file)>0,"fresh import verification rejects a changed NPC field on disk");
+  NpcSnapshot::writeNpcs(program,file);
+
+  auto instruction=[&](NpcSnapshot::Program& value,uint32_t pc,Op op,uint32_t operand) {
+    check(size_t(pc)+5<=value.data.bytecode.size(),"NPC fixture instruction is within bytecode");
+    value.data.bytecode[pc]=std::byte(op);
+    for(uint32_t i=0;i<4;++i) value.data.bytecode[pc+1+i]=std::byte((operand>>(8*i))&255);
+    };
+  auto encode=[](NpcSnapshot::Program& value) {
+    const auto encoded=ProgramData::encodeProgram(value.data);
+    value.name=encoded.name; value.sha256=encoded.sha256;
+    };
+  {
+    auto randomGlobal=program;
+    auto script=DaedalusScript::from_program(program.data);
+    const auto* helper=script.find_symbol_by_name("B_CREATEAMBIENTINV");
+    const auto* random=script.find_symbol_by_name("HLP_RANDOM");
+    const auto* global=script.find_symbol_by_name("CHAPTER");
+    bool changedBound=false;
+    for(auto pc=helper->address();;) {
+      const auto op=script.instruction_at(pc);
+      if(op.op==Op::RSR) break;
+      if(op.op==Op::PUSHI && op.immediate==7) {
+        const auto next=script.instruction_at(pc+op.size);
+        if(next.op==Op::BE && next.symbol==random->index()) {
+          instruction(randomGlobal,pc,Op::PUSHV,global->index());
+          changedBound=true; break;
+          }
+        }
+      pc+=op.size;
+      }
+    check(changedBound,"random helper fixture contains the expected random bound");
+    encode(randomGlobal);
+    const auto unsafeBase=dir/"npc-random-global";
+    NpcSnapshot::writeNpcs(randomGlobal,unsafeBase/"definitions"/randomGlobal.sha256/"npcs.json");
+    const auto unsafe=NpcDefinitions::read(unsafeBase,randomGlobal.sha256);
+    check(unsafe.uncaptured.contains("NPC_NO_ID") && unsafe.uncaptured.at("NPC_NO_ID")=="game_state: CHAPTER",
+          "a deferred random helper must not hide a mutable global read");
+    check(unsafe.npcs.contains("NPC_WITH_ID"),"an unreachable unsafe random helper does not reject another NPC");
+    }
+  {
+    auto malformed=program;
+    auto script=DaedalusScript::from_program(program.data);
+    auto pc=script.find_symbol_by_name("NPC_WITH_ID")->address();
+    pc+=script.instruction_at(pc).size; // The inherited constructor remains valid.
+    const auto field=pc+script.instruction_at(pc).size;
+    check(script.instruction_at(pc).op==Op::PUSHI && script.instruction_at(field).op==Op::PUSHV,
+          "NPC fixture contains its direct field assignment");
+    instruction(malformed,pc,Op::PUSHI,0x7fffffff);
+    instruction(malformed,field,Op::PUSHV,script.find_symbol_by_name("C_NPC.DAILY_ROUTINE")->index());
+    encode(malformed);
+    const auto broken=dir/"npc-invalid-reference.json";
+    std::string error;
+    try { NpcSnapshot::writeNpcs(malformed,broken); }
+    catch(const std::runtime_error& failure) { error=failure.what(); }
+    check(error=="NPC definitions: NPC_WITH_ID: invalid symbol reference 2147483647",
+          "a snapshot invariant aborts import with the NPC name instead of recording execution_error");
+    check(!fs::exists(broken),"an invariant failure does not publish a partial NPC section");
+    }
+
+  const auto* setting=std::getenv("OPENGOTHIC_NPC_RECORDS");
+  const bool present=setting!=nullptr;
+  const std::string previous=setting ? setting : "";
+  auto environment=[](const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("OPENGOTHIC_NPC_RECORDS",value ? value : "")==0,"set NPC records environment");
+#else
+    check((value ? setenv("OPENGOTHIC_NPC_RECORDS",value,1) : unsetenv("OPENGOTHIC_NPC_RECORDS"))==0,"set NPC records environment");
+#endif
+    };
+  try {
+    auto script=DaedalusScript::from_program(program.data);
+    environment(nullptr);
+    check(NpcDefinitionRuntime::enabled() && NpcDefinitionRuntime::load(base,script,program.sha256).npcs.size()==2,
+          "NPC records are enabled by default through the game's shared switch");
+    environment("0");
+    check(!NpcDefinitionRuntime::enabled() && NpcDefinitionRuntime::load(base/"absent",script,program.sha256).npcs.empty(),
+          "zero disables NPC records without reading the base");
+    environment("1");
+    check(NpcDefinitionRuntime::enabled() && NpcDefinitionRuntime::load(base,script,program.sha256).npcs.size()==2,
+          "nonzero enables NPC records");
+    }
+  catch(...) { environment(present ? previous.c_str() : nullptr); throw; }
+  environment(present ? previous.c_str() : nullptr);
+  }
+
 void itemDefinitions(const fs::path& dir) {
   auto p=itemProgram();
   const auto base=dir/"definitions-fixture";
@@ -838,6 +987,7 @@ void fixture(const fs::path& dir) {
   guildLayout();
   spellLayout();
   itemDefinitions(dir);
+  npcDefinitions(dir);
   itemSelection(dir);
   routineDefinitions(dir);
   routineSelection(dir);

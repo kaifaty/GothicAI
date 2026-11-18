@@ -75,7 +75,7 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/musicrecord dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
@@ -559,7 +559,8 @@ endif()
     tests/physics_contract_noise.cpp
     tests/physics_bonds_contract.cpp)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
-  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
+  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL
+    tests/placed_items_contract.cpp tests/npc_live_fixture.cpp)
   target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   # The society stand's world (docs/society-sim.md): runs gothic-body-runner --society-export twice on the
   # game's data (GOTHIC_DIR) and checks it against evals/npc-decisions/day_people.json and places.json.

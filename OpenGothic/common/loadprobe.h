@@ -23,6 +23,7 @@
 #include "resources.h"
 #include "itemloadprobe.h"
 #include "routineloadprobe.h"
+#include "npcloadprobe.h"
 #include <Tempest/LoadProbe>
 #if defined(__APPLE__)
 #include <mach/mach.h>
@@ -546,6 +547,7 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
     return;
   const double elapsed = msSince(origin());
   Routines::mark(stage);
+  Npcs::mark(stage);
   if(stage=="session_begin") {
     Items::constructors=0;
     Items::constructorNs=0;

@@ -8,14 +8,18 @@
 #include "settings.h"
 
 daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
-                                         RoutineDefinitionRuntime::Definitions& routines) {
+                                         RoutineDefinitionRuntime::Definitions& routines,
+                                         NpcDefinitionRuntime::Definitions& npcs) {
   const auto lang=Settings::getI("GAME", "language");
   std::string sha256;
   auto script=loadBaseProgram(gothic.defaultGameDatFile(),lang,&sha256);
   items=ItemDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
   routines=RoutineDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
+  npcs=NpcDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
   const auto flags=daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
-  return daedalus::DaedalusVm(std::move(script),flags);
+  daedalus::DaedalusVm vm(std::move(script),flags);
+  NpcDefinitionRuntime::observeCalls(vm,npcs,baseProgramIndex().dir.parent_path(),sha256);
+  return vm;
   }
 
 auto GameScript::createItemForQuery(size_t instance) -> std::shared_ptr<ItemRecord> {

@@ -21,6 +21,12 @@ struct ItemCounts {
 // The item-only definitions section used by base import, independent of the D1 corpus.
 ItemCounts writeItems(const Program& program, const std::filesystem::path& file);
 int verifyItems(const Program& program, const std::filesystem::path& file);
+struct NpcCounts {
+  size_t total = 0, captured = 0;
+  };
+// Assigned NPC member elements and ordered engine/deferred-script calls.
+NpcCounts writeNpcs(const Program& program, const std::filesystem::path& file);
+int verifyNpcs(const Program& program, const std::filesystem::path& file);
 struct RoutineCounts {
   size_t total = 0, captured = 0;
   };
