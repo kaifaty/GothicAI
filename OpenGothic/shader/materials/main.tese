@@ -12,8 +12,6 @@ layout(location = 1) in  Varyings  shInp[];
 
 layout(location = 0) out flat uint bucketIdOut;
 layout(location = 1) out Varyings  shOut;
-layout(location = MAT_CLUSTER_LEVEL_LOCATION) in  flat uint clusterLevelIn[];
-layout(location = MAT_CLUSTER_LEVEL_LOCATION) out flat uint clusterLevelOut;
 
 vec2 interpolate(vec2 v0, vec2 v1, vec2 v2) {
   return gl_TessCoord.x*v0 + gl_TessCoord.y*v1 + gl_TessCoord.z*v2;
@@ -39,9 +37,8 @@ void main() {
 
   vec4 pos           = interpolate(gl_in[0].gl_Position, gl_in[1].gl_Position, gl_in[2].gl_Position);
 
-  const uint bucketId = bucketIdIn[0];
-  bucketIdOut = bucketId;
-  clusterLevelOut = clusterLevelIn[0];
+  bucketIdOut = bucketIdIn[0];
+  const uint bucketId = bucketIdIn[0] & 0xffffu;
 
   const float waveMaxAmplitude = bucket[bucketId].waveMaxAmplitude;
 

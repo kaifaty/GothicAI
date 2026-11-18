@@ -15,8 +15,6 @@ layout(location = 1) in  Varyings  shInp[];
 
 layout(location = 0) out flat uint bucketId[];
 layout(location = 1) out Varyings  shOut[];
-layout(location = MAT_CLUSTER_LEVEL_LOCATION) in  flat uint clusterLevelIn[];
-layout(location = MAT_CLUSTER_LEVEL_LOCATION) out flat uint clusterLevelOut[];
 
 const int MAX_INNER = 16;
 const int MAX_OUTER = 16;
@@ -42,6 +40,17 @@ float tessInnerFactor(in vec4 a, in vec4 b, in vec4 c) {
   }
 
 void main() {
+  // The instanced draw pads short meshlets. Discard the whole patch before
+  // reading the padding vertices' unwritten material attributes.
+  if(all(equal(gl_in[0].gl_Position,MeshletPaddingPosition))) {
+    if(gl_InvocationID==0) {
+      gl_TessLevelOuter[0] = 0.0;
+      gl_TessLevelOuter[1] = 0.0;
+      gl_TessLevelOuter[2] = 0.0;
+      gl_TessLevelInner[0] = 0.0;
+      }
+    return;
+    }
   if(gl_InvocationID==0) {
     vec4 pos0 = gl_in[0].gl_Position;
     vec4 pos1 = gl_in[1].gl_Position;
@@ -55,7 +64,6 @@ void main() {
     }
 
   bucketId[gl_InvocationID]           = bucketIdIn[gl_InvocationID];
-  clusterLevelOut[gl_InvocationID]    = clusterLevelIn[gl_InvocationID];
 
   gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
   shOut[gl_InvocationID]              = shInp[gl_InvocationID];

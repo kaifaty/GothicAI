@@ -1,0 +1,100 @@
+# Start with [INTERNAL] clusterLod=0 and no OPENGOTHIC_CLUSTER_LOD override.
+world-check NEWWORLD.ZEN
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
+goto pos 36500 3900 -7577
+cam at 40000 4724 -1515 41250 3350 650
+streaming wait
+wait 500
+shot near-base
+wait 100
+rec fly-base
+cam fly 26500 12100 -29100 41250 3350 650 8000
+wait 8000
+stop
+cam at 26500 12100 -29100 41250 3350 650
+streaming wait
+shot far-base
+wait 100
+cluster-lod mask on
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
+goto pos 36500 3900 -7577
+cam at 40000 4724 -1515 41250 3350 650
+streaming wait
+wait 500
+rec mask-base
+cam fly 26500 12100 -29100 41250 3350 650 8000
+wait 8000
+stop
+cluster-lod mask off
+
+# Re-enter the same world so the streamer builds the graph geometry.
+cluster-lod source on
+world OLDWORLD.ZEN
+world-check OLDWORLD.ZEN
+world NEWWORLD.ZEN
+world-check NEWWORLD.ZEN
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
+goto pos 36500 3900 -7577
+cam at 40000 4724 -1515 41250 3350 650
+streaming wait
+wait 500
+shot near-cut
+wait 100
+rec fly-cut
+cam fly 26500 12100 -29100 41250 3350 650 8000
+wait 8000
+stop
+cam at 26500 12100 -29100 41250 3350 650
+streaming wait
+shot far-cut
+wait 100
+cluster-lod mask on
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
+goto pos 36500 3900 -7577
+cam at 40000 4724 -1515 41250 3350 650
+streaming wait
+wait 500
+rec mask-cut
+cam fly 26500 12100 -29100 41250 3350 650 8000
+wait 8000
+stop
+cluster-lod mask off
+cluster-lod levels
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
+goto pos 36500 3900 -7577
+cam at 40000 4724 -1515 41250 3350 650
+streaming wait
+wait 500
+shot near-levels
+wait 100
+rec fly-levels
+cam fly 26500 12100 -29100 41250 3350 650 8000
+wait 8000
+stop
+cam at 26500 12100 -29100 41250 3350 650
+streaming wait
+shot far-levels
+wait 100
+cluster-lod normal

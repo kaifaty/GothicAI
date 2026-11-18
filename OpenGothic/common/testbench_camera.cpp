@@ -754,10 +754,14 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
   else if(c=="cluster-lod") {
     if(a.size()==3 && a[1]=="mask" && (a[2]=="on" || a[2]=="off")) {
       Renderer::benchClusterLodMask = a[2]=="on";
+      } else if(a.size()==3 && a[1]=="source" && (a[2]=="on" || a[2]=="off")) {
+      // Streaming picks its geometry at world load. The environment override
+      // keeps precedence, as it does for ordinary launches.
+      Settings::setI("INTERNAL","clusterLod",a[2]=="on" ? 1 : 0);
       } else if(a.size()==2 && (a[1]=="base" || a[1]=="normal" || a[1]=="levels")) {
       ClusterLodRender::setBenchView(a[1]);
       } else {
-      arenaAbort("cluster-lod expects base, normal, levels or mask on/off");
+      arenaAbort("cluster-lod expects base, normal, levels, mask on/off or source on/off");
       }
     }
   else if(c=="cam") {

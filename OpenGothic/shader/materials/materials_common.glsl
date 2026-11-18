@@ -96,10 +96,12 @@ const uint L_VsmLights  = L_Shadow1;
 #define MAT_MOTION 1
 #endif
 
-// The visibility payload supplies level + 1 in the main view when LOD colors are enabled.
+// The main-view payload packs level + 1 above the 16-bit material bucket.
 #if (MESH_TYPE!=T_PFX) && !defined(DEPTH_ONLY)
-#define MAT_CLUSTER_LEVEL_LOCATION 8
+#define MAT_CLUSTER_LEVEL
 #endif
+
+const vec4 MeshletPaddingPosition = vec4(0.0, 0.0, 2.0, 1.0);
 
 #if defined(MAT_UV) || defined(MAT_NORMAL) || defined(MAT_POSITION) || defined(MAT_COLOR) || defined(MAT_MOTION)
 #define MAT_VARYINGS 1

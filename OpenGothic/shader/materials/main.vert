@@ -61,12 +61,6 @@ layout(location = 0) out flat uint bucketIdOut[]; //TODO: per-primitive
 layout(location = 1) out Varyings  shOut[];
 #endif
 
-#if defined(MAT_CLUSTER_LEVEL_LOCATION) && defined(GL_VERTEX_SHADER)
-layout(location = MAT_CLUSTER_LEVEL_LOCATION) out flat uint clusterLevelOut;
-#elif defined(MAT_CLUSTER_LEVEL_LOCATION)
-layout(location = MAT_CLUSTER_LEVEL_LOCATION) out flat uint clusterLevelOut[];
-#endif
-
 #if defined(GL_VERTEX_SHADER) && defined(VIRTUAL_SHADOW)
 layout(location = 3) out flat uint vsmMipIdOut;
 #elif defined(VIRTUAL_SHADOW)
@@ -256,17 +250,13 @@ void vertexShader(const uvec4 task, const uint materialRef) {
 
   const uint  laneID     = gl_VertexIndex/3;
   if(laneID>=primCount) {
-    gl_Position = vec4(uintBitsToFloat(0x7fc00000));
+    gl_Position = MeshletPaddingPosition;
     return;
     }
 
 #if defined(MAT_VARYINGS)
   bucketIdOut = materialRef;
 #endif
-#if defined(MAT_CLUSTER_LEVEL_LOCATION)
-  clusterLevelOut = task.w;
-#endif
-
   Varyings var;
   uint idx = processPrimitive(meshletId, bucketId, laneID)[gl_VertexIndex%3];
   vec4 pos = processVertex(var, instanceId, meshletId, bucketId, idx);
@@ -290,10 +280,6 @@ void meshShader(const uvec4 task, const uint materialRef) {
   // Alloc outputs
   SetMeshOutputsEXT(vertCount, primCount);
 
-#if defined(MAT_VARYINGS)
-  bucketIdOut[laneID] = materialRef;
-#endif
-
   Varyings var;
   uvec3 prim = uvec3(0);
   if(laneID<primCount) {
@@ -301,8 +287,8 @@ void meshShader(const uvec4 task, const uint materialRef) {
     gl_PrimitiveTriangleIndicesEXT[laneID] = prim;
     }
   if(laneID<vertCount) {
-#if defined(MAT_CLUSTER_LEVEL_LOCATION)
-    clusterLevelOut[laneID] = task.w;
+#if defined(MAT_VARYINGS)
+    bucketIdOut[laneID] = materialRef;
 #endif
     vec4 pos = processVertex(var, instanceId, meshletId, bucketId, laneID);
     gl_MeshVerticesEXT[laneID].gl_Position = pos;
@@ -386,6 +372,9 @@ void main() {
   const uint payloadId = workIndex + firstMeshlet;
   const uvec4 task     = payload[payloadId];
   uint materialRef     = task.z;
+#if defined(MAT_CLUSTER_LEVEL)
+  materialRef |= task.w << 16u;
+#endif
 #if defined(MAT_MOTION)
   // The probe uses the existing flat output to recover both the bucket and instance.
   if((scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u)
