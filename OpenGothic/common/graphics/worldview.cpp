@@ -868,6 +868,12 @@ LightGroup::Light WorldView::addLight(const asset::VLight& vob, const uint64_t t
   return l;
   }
 
+LightGroup::Light WorldView::addLight(const asset::LightPreset& preset, const uint64_t timeOffset) {
+  auto l = gLights.add(preset);
+  l.setTimeOffset(timeOffset);
+  return l;
+  }
+
 LightGroup::Light WorldView::addLight(std::string_view preset, const uint64_t timeOffset) {
   auto l = gLights.add(preset);
   l.setTimeOffset(timeOffset);

@@ -81,6 +81,7 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/navreward", "tools"),
     ("common/navsimpackage", "tools"),
     ("common/npcdayjournal", "tools"),
+    ("common/npcdaymeasurement", "tools"),
     ("common/game/*bench", "tools"),
     ("common/game/bodyarena*", "tools"),
     ("common/game/bodyreplay", "tools"),

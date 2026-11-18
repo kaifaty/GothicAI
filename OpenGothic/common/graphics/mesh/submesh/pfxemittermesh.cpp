@@ -44,9 +44,10 @@ PfxEmitterMesh::PfxEmitterMesh(const asset::ModelMesh& library) {
 
     for(size_t i=0;i<src.indices.size();i+=3) {
       Triangle t;
-      t.id[0] = src.indices[i+0];
-      t.id[1] = src.indices[i+1];
-      t.id[2] = src.indices[i+2];
+      // the indices are the submesh's own: without the offset every submesh after the first took the first one's points
+      t.id[0] = uint32_t(vert0) + src.indices[i+0];
+      t.id[1] = uint32_t(vert0) + src.indices[i+1];
+      t.id[2] = uint32_t(vert0) + src.indices[i+2];
       triangle.push_back(t);
     }
   }
@@ -57,6 +58,8 @@ PfxEmitterMesh::PfxEmitterMesh(const asset::ModelMesh& library) {
 Tempest::Vec3 PfxEmitterMesh::randCoord(float rnd, const Pose* pose, const Tempest::Matrix4x4* skin, size_t skinCount) const {
   if(triangle.size()==0)
     return Tempest::Vec3();
+  if(vertices.size()==0 && !posed.load() && (skin!=nullptr || pose!=nullptr))
+    mkPosedIndex(pose,skin,skinCount);
 
   rnd*=triangle.back().prefix;
 
@@ -146,6 +149,22 @@ float PfxEmitterMesh::area(float x1, float y1, float z1,
   float z = x1*y2 - y1*x2;
 
   return std::sqrt(x*x + y*y + z*z); //note: omnit 0.5
+  }
+
+void PfxEmitterMesh::mkPosedIndex(const Pose* pose, const Tempest::Matrix4x4* skin, size_t skinCount) const {
+  std::lock_guard<std::mutex> guard(posedSync);
+  if(posed.load())
+    return;
+  for(auto& t:triangle) {
+    Tempest::Vec3 p[3];
+    for(int i=0; i<3; ++i)
+      p[i] = skin!=nullptr ? animCoord(skin,skinCount,t.id[i]) : animCoord(*pose,t.id[i]);
+    t.sz     = area(p[0].x,p[0].y,p[0].z, p[1].x,p[1].y,p[1].z, p[2].x,p[2].y,p[2].z);
+    t.prefix = 0;
+    }
+  for(size_t i=1;i<triangle.size();++i)
+    triangle[i].prefix = triangle[i-1].prefix + triangle[i-1].sz;
+  posed.store(true);
   }
 
 void PfxEmitterMesh::mkIndex() {

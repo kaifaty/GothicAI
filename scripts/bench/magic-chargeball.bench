@@ -1,0 +1,40 @@
+# The charged fire ball in Coragon's tavern: the charge grows in the hands for 4.5 s (camera at the hero), then the
+# same cast again seen from behind the line of flight to the wall (reports/content/remaster/magic-fire/fireball.md).
+seed 73013
+cheat god
+set time 13 0
+overlay off
+ui off
+destruction setup fireball
+clear 3000
+stats mana 2000 circle 6
+equip ItRu_ChargeFireball
+tap spell
+wait 4000
+cam at 8050 250 1130 8227 235 1060
+wait 1200
+rec hand
+wait 300
+press action
+wait 600
+press forward
+wait 4500
+release forward
+wait 300
+release action
+wait 2500
+stop
+wait 1500
+cam at 8130 300 1480 8227 262 1950
+wait 1200
+rec hit
+wait 300
+press action
+wait 600
+press forward
+wait 4500
+release forward
+wait 300
+release action
+wait 4000
+stop

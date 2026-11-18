@@ -12,10 +12,13 @@ layout(binding = 0, std140) uniform          UboScene     { SceneDesc   scene;  
 layout(binding = 1, std430) readonly  buffer PayloadSrc   { uvec4       payloadSrc[];   };
 layout(binding = 2, std430) writeonly buffer PayloadDst   { uvec4       payload[];      };
 layout(binding = 3, std430) buffer           IndirectBuf  { IndirectCmd cmd[];          };
-layout(binding = 4, std430) readonly  buffer Pages        { VsmHeader   header; uint pageList[]; } vsm;
+layout(binding = 4, std430)           buffer Pages        { VsmHeader   header; uint pageList[]; } vsm;
 
 #if defined(PASS0)
 layout(binding = 5, std430) writeonly buffer Indirect     { uvec3       indirectCmd;    };
+#endif
+#if defined(PASS1)
+layout(push_constant, std430) uniform UboPush { uint pairCap; } push; // DrawCommands::vsmPairCap
 #endif
 
 shared uint partialSumm[gl_WorkGroupSize.x];
@@ -54,12 +57,15 @@ void mainCmd() {
 #endif
   }
 
+#if defined(PASS1)
 void mainClusters() {
   uint index = gl_GlobalInvocationID.x;
-  if(index>=min(vsm.header.meshletCount, VSM_MAX_MESHLETS))
+  if(index>=min(vsm.header.meshletCount, push.pairCap))
     return; // the counter runs on past the cap, the payload does not
 
   const uvec4 cluster    = payloadSrc[index];
+  if(cluster.w==VSM_PAIR_SKIP)
+    return; // a slot reserved past the cap (vsm_visibility_pass.comp)
   const uint  instanceId = cluster.x;
   const uint  meshletId  = cluster.y;
   const uint  commandId  = cluster.z & 0xFFFF;
@@ -68,9 +74,14 @@ void mainClusters() {
 
   uint writeOffset = cmd[commandId].writeOffset;
   uint at          = atomicAdd(cmd[commandId].instanceCount, 1);
+  // a pair past the range pass 0 laid out for its draw lands in the next draw's (vsm stats: spilled)
+  const uint end   = commandId+1<cmd.length() ? cmd[commandId+1].writeOffset : min(vsm.header.meshletCount, push.pairCap);
+  if(writeOffset + at >= end)
+    atomicAdd(vsm.header.pairSpill, 1);
   payload[writeOffset + at] = uvec4(instanceId, meshletId, bucketId, pageId);
   //payload[writeOffset + at] = uvec4(index+1);
   }
+#endif
 
 void main() {
 #if defined(PASS0)

@@ -1,0 +1,43 @@
+# The fire ball in the hand and in flight, from the side and at the camera: night, the market (reports/content/remaster/magic-fire).
+# The guards come running after two casts; the hit is filmed by magic-fireball-hit.bench.
+seed 73013
+cheat god
+stats mana 500 circle 6
+set time 0 0
+goto NW_CITY_MERCHANT_TRADE_04
+wait 5000
+set time 0 0
+watch player
+overlay off
+ui off
+equip ItRu_InstantFireball
+tap spell
+wait 2500
+cam look 120
+cam follow 220 120 60
+wait 1500
+rec hand
+wait 3000
+stop
+cam follow 420 140 90
+wait 1500
+rec cast-side
+wait 500
+press action
+wait 900
+tap forward
+wait 1500
+release action
+wait 1500
+stop
+cam follow 300 170 15
+wait 1500
+rec cast-back
+wait 500
+press action
+wait 900
+tap forward
+wait 1500
+release action
+wait 1500
+stop

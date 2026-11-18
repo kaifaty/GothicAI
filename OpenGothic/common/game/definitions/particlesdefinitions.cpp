@@ -82,6 +82,10 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
     p->plumeCm             = own.plumeHeight;
     p->plumeRise           = own.plumeRise*0.1f;              // m/s -> cm/ms
     p->plumeWind           = own.wind>0 ? own.plumeWind/own.wind : 0.f;
+    p->lightRange          = own.lightRange;
+    p->lightColor          = Tempest::Vec3(own.lightColor[0],own.lightColor[1],own.lightColor[2]);
+    p->lightKeys           = own.lightKeys;
+    p->lightFps            = own.lightFps;
     p->hdrFrom             = own.hdrFrom;
     p->hdrTo               = own.hdrTo;
     p->hdrEdge             = own.hdrEdge;

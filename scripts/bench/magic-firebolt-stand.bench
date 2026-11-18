@@ -1,0 +1,38 @@
+# The fire bolt hits a farmer standing 2.5 m in front of the hero on the big farm field; he burns standing, filmed
+# from behind and then from the side (reports/content/remaster/magic-fire/body-fire.md).
+seed 73013
+cheat god
+set time 13 0
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 5000
+set time 13 0
+overlay off
+ui off
+clear 3000
+insert BAU_904_BAUER
+wait 300
+put BAU_904_BAUER 250
+wait 300
+freeze BAU_904_BAUER
+immortal BAU_904_BAUER on
+wait 600
+where BAU_904_BAUER
+equip ItRu_FireBolt
+tap spell
+wait 2500
+watch player
+cam follow 520 170 90
+wait 1500
+press action
+wait 900
+tap forward
+wait 1500
+watch BAU_904_BAUER
+cam follow 330 110 180
+rec back
+wait 1900
+stop
+cam follow 330 110 90
+rec front
+wait 1900
+stop

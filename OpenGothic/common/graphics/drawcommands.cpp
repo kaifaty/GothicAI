@@ -2,6 +2,7 @@
 
 #include <Tempest/Log>
 #include <algorithm>
+#include <cstdlib>
 
 #include "graphics/mesh/submesh/animmesh.h"
 #include "graphics/mesh/submesh/staticmesh.h"
@@ -13,6 +14,17 @@
 #include "frameprofile.h"
 
 using namespace Tempest;
+
+// OPENGOTHIC_VSM_PAIRS=<n>: another cap of the VSM meshlet-page pairs, for a study (the demand of a scene without the
+// cap, an overflow without a forest); the buffers follow it
+uint32_t DrawCommands::vsmPairCap() {
+  static const uint32_t cap = [] {
+    const char* e = std::getenv("OPENGOTHIC_VSM_PAIRS");
+    const unsigned long v = (e!=nullptr && *e!='\0') ? std::strtoul(e, nullptr, 0) : 0;
+    return v==0 ? VsmMaxMeshlets : uint32_t(std::clamp<unsigned long>(v, 1024u, 16u*1024u*1024u));
+    }();
+  return cap;
+  }
 
 static void usesSsbo(StorageBuffer& b, const size_t desiredSz) {
   if(b.byteSize()<desiredSz || b.byteSize()>=2*desiredSz) {
@@ -440,13 +452,15 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   auto& shaders = Shaders::inst();
 
   auto& view = views[SceneGlobals::V_Vsm];
-  const size_t visClustersSz = size_t(VsmMaxMeshlets)*sizeof(uint32_t)*4;
+  const uint32_t cap = vsmPairCap();
+  const size_t visClustersSz = size_t(cap)*sizeof(uint32_t)*4;
 
   usesSsbo(view.vsmClusters, visClustersSz);
   usesSsbo(view.visClusters, visClustersSz);
 
-  struct Push { uint32_t meshletCount; } push = {};
+  struct Push { uint32_t meshletCount; uint32_t pairCap; } push = {};
   push.meshletCount = uint32_t(clusters.size());
+  push.pairCap      = cap;
 
   cmd.setBinding(T_Scene,    scene.uboGlobal[SceneGlobals::V_Vsm]);
   cmd.setBinding(T_Payload,  view.vsmClusters); //unsorted clusters
@@ -474,8 +488,9 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   cmd.setBinding(2, view.visClusters);
   cmd.setBinding(3, view.indirectCmd);
   cmd.setBinding(4, *scene.vsmPageList);
+  cmd.setPushData(&cap, sizeof(cap));
   cmd.setPipeline(shaders.vsmPackDraw1);
-  cmd.dispatch((VsmMaxMeshlets+127)/128); // vsm_pack_draws.comp: 128 threads; TODO: indirect
+  cmd.dispatch((cap+127)/128); // vsm_pack_draws.comp: 128 threads; TODO: indirect
   // cmd.dispatchIndirect(vsmIndirectCmd, 0);
   }
 

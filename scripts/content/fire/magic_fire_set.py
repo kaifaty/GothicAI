@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import shutil
 import sys
 
@@ -32,6 +33,11 @@ SMOKE_BOOK = {'cols': 8, 'rows': 8, 'frames': 64, 'fps': 10}
 ALL_AROUND = {'dirMode_S': 'DIR', 'dirFOR_S': 'WORLD', 'dirAngleHead': 0.0, 'dirAngleHeadVar': 179.0, 'dirAngleElev': 0.0,
               'dirAngleElevVar': 89.0}
 BURST = {'ppsScaleKeys_S': '', 'ppsIsLooping': 0, 'ppsIsSmooth': 0, 'ppsFPS': 0.0}
+# the spells' own atlases (explosion_atlas.py, Unity Labs CC0): texture name -> (place in the part, built file)
+ATLASES = {'OWN_EXPLOSION_FIRE.TGA': ('own-explosion-fire/albedo.dds', 'explosion-fire.dds'),
+           'OWN_EXPLOSION_SMOKE.TGA': ('own-explosion-smoke/albedo.dds', 'explosion-smoke.dds'),
+           'OWN_FIREBALL.TGA': ('own-fireball/albedo.dds', 'fireball-loop.dds')}
+BLAST_BOOK = {'cols': 8, 'rows': 4, 'frames': 25, 'fps': 16, 'once': True}
 TORCH = ROOT / 'reports/content/remaster/wall-torch-model/content/particles.d/wall-torch-fire.json'
 
 
@@ -115,6 +121,137 @@ def firebolt() -> list:
     ]
 
 
+def sz(k, *values) -> str:
+    """Sizes in cm scaled by k, as a C_PARTICLEFX string."""
+    return ' '.join(f'{round(v * k, 2):g}' for v in values)
+
+
+def blast(name, tag, k) -> list:
+    """A fire ball's explosion k times the plain one's size (fireball.md), one burst: a flash, the simulated burst
+    (explosion_atlas.py) played once by two particles at one place, the fire added and the cloud blended, tongues
+    thrown out and stopped by the air, sparks on arcs, smoke that stays, hot air, and its own light."""
+    return [
+        {'name': f'{tag}_FLASH', 'base': 'OWN_BOLT_HIT_FLASH',
+         'set': {'ppsValue': 3.0, 'lspPartAvg': 130.0, 'lspPartVar': 20.0, 'visSizeStart_S': sz(k, 120, 120),
+                 'shpDim_S': sz(k, 6)}},
+        {'name': f'{tag}_BLAST', 'base': 'OWN_HAND_LICKS', 'inherit': 0.0, 'flipbook': BLAST_BOOK,
+         'hdr': {'from': 1, 'to': 5, 'edge': 0.15},
+         'set': {**BURST, 'ppsValue': 1.0, 'shpType_S': 'POINT', 'shpDim_S': '0', 'shpOffsetVec_S': '0 0 0',
+                 'visName_S': 'OWN_EXPLOSION_FIRE.TGA', 'velAvg': 0.0, 'velVar': 0.0, 'flyGravity_S': '0 3e-05 0',
+                 'visSizeStart_S': sz(k, 160, 160), 'visSizeEndScale': 2.1, 'visAlphaStart': 255.0, 'visAlphaEnd': 255.0,
+                 'lspPartAvg': 1500.0, 'lspPartVar': 0.0}},
+        {'name': f'{tag}_CLOUD', 'base': 'OWN_BOLT_HIT_PUFF', 'flipbook': BLAST_BOOK,
+         'set': {'ppsValue': 1.0, 'shpType_S': 'POINT', 'shpIsVolume': 0, 'shpDim_S': '0', 'shpOffsetVec_S': '0 0 0',
+                 'visName_S': 'OWN_EXPLOSION_SMOKE.TGA', 'velAvg': 0.0, 'velVar': 0.0, 'flyGravity_S': '0 3e-05 0',
+                 'visSizeStart_S': sz(k, 160, 160), 'visSizeEndScale': 2.1, 'visAlphaStart': 255.0, 'visAlphaEnd': 130.0,
+                 'lspPartAvg': 1500.0, 'lspPartVar': 0.0}},
+        {'name': f'{tag}_SPARKS', 'base': 'OWN_BOLT_HIT_SPARKS',
+         'set': {'ppsValue': round(180.0 * k), 'shpDim_S': sz(k, 12), 'velAvg': round(0.75 * k ** 0.5, 3),
+                 'velVar': round(0.45 * k ** 0.5, 3), 'lspPartAvg': 1300.0, 'lspPartVar': 500.0,
+                 'visSizeStart_S': '0.8 0.8'}},
+        {'name': f'{tag}_SMOKE', 'base': 'OWN_BOLT_HIT_PUFF',
+         'set': {'ppsValue': round(9.0 * k), 'shpDim_S': sz(k, 45), 'visSizeStart_S': sz(k, 70, 70), 'visSizeEndScale': 2.8,
+                 'visAlphaStart': 80.0, 'lspPartAvg': 2800.0, 'lspPartVar': 500.0, 'velAvg': 0.05, 'velVar': 0.02,
+                 'flyGravity_S': '0 4e-05 0'}},
+        haze(f'{tag}_HEAT', 9.0, inherit=0.0, **BURST, ppsValue=5.0, lspPartAvg=600.0, lspPartVar=100.0,
+             shpDim_S=sz(k, 25), visSizeStart_S=sz(k, 160, 160), visSizeEndScale=1.8),
+        {'name': name, 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.0, 'drag': 3.5,
+         'with': [f'{tag}_CLOUD', f'{tag}_BLAST', f'{tag}_FLASH', f'{tag}_SPARKS', f'{tag}_SMOKE', f'{tag}_HEAT'],
+         'light': {'range': min(round(800 * k), 2000), 'color': [255, 170, 80], 'fps': 8.0,
+                   'keys': [1, 1, 0.85, 0.6, 0.4, 0.22, 0.1, 0]},
+         'set': {**BURST, 'ppsValue': round(60.0 * k), 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': sz(k, 14),
+                 'velAvg': round(0.8 * k ** 0.5, 3), 'velVar': 0.3, 'flyGravity_S': '0 0.0001 0',
+                 'visSizeStart_S': sz(k, 30, 42), 'visSizeEndScale': 1.9, 'lspPartAvg': 480.0, 'lspPartVar': 130.0,
+                 **ALL_AROUND}},
+    ]
+
+
+def charge_ball(name, tag, k) -> list:
+    """The charged fire ball at one level of its charge, k times the plain ball's size. The game shows one effect in
+    the hand while the charge grows and in flight, so it has no standing flame card: a core, a ball of the looping
+    fire, tongues that stay behind as its tail (and rise as a flame in a still hand), embers and hot air."""
+    return [
+        {'name': f'{tag}_CORE', 'base': 'OWN_BOLT_HEAD',
+         'set': {'ppsValue': 40.0, 'lspPartAvg': 120.0, 'lspPartVar': 25.0, 'visSizeStart_S': sz(k, 30, 30),
+                 'shpDim_S': sz(k, 3)}},
+        {'name': f'{tag}_FLAMES', 'base': 'OWN_BALL_FLAMES',
+         'set': {'shpDim_S': sz(k, 6), 'visSizeStart_S': sz(k, 62, 62)}},
+        {'name': f'{tag}_LICKS', 'base': 'OWN_BALL_LICKS',
+         'set': {'shpDim_S': sz(k, 16), 'visSizeStart_S': sz(k, 20, 28)}},
+        {'name': f'{tag}_EMBERS', 'base': 'OWN_BALL_EMBERS', 'set': {'ppsValue': round(160.0 * k), 'shpDim_S': sz(k, 12)}},
+        haze(f'{tag}_HEAT', 5.0, inherit=1.0, ppsValue=24.0, lspPartAvg=170.0, lspPartVar=40.0, shpDim_S=sz(k, 10),
+             visSizeStart_S=sz(k, 120, 120), visSizeEndScale=1.2),
+        {'name': name, 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.3,
+         'with': [f'{tag}_CORE', f'{tag}_FLAMES', f'{tag}_LICKS', f'{tag}_EMBERS', f'{tag}_HEAT'],
+         'set': {'ppsValue': 70.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': sz(k, 12),
+                 'visSizeStart_S': sz(k, 34, 48), 'visSizeEndScale': 0.5, 'lspPartAvg': 330.0, 'lspPartVar': 90.0,
+                 'velAvg': 0.02, 'velVar': 0.01}},
+    ]
+
+
+def charged_fireball() -> list:
+    """The charged fire ball (CHARGEFIREBALL): the ball and its explosion grow with each of the five levels."""
+    levels = [('MFX_CHARGEFB_CAST', 1, 0.8), ('MFX_CHARGEFB_CAST_L2', 2, 1.0), ('MFX_CHARGEFB_CAST_L3', 3, 1.25),
+              ('MFX_CHARGEFB_CAST_L4', 4, 1.5), ('MFX_CHARGEFB_CAST_L5', 5, 1.8)]
+    blasts = [('MFX_CHARGEFB_COLLIDE', 'OWN_CB_HIT0', 1.0), ('MFX_FIREBALL_COLLIDE2', 'OWN_CB_HIT2', 1.3),
+              ('MFX_FIREBALL_COLLIDE3', 'OWN_CB_HIT3', 1.6), ('MFX_FIREBALL_COLLIDE4', 'OWN_CB_HIT4', 2.0)]
+    effects = []
+    for name, level, k in levels:
+        effects += charge_ball(name, f'OWN_CB{level}', k)
+    for name, tag, k in blasts:
+        effects += blast(name, tag, k)
+    # a level of the charge gained: a short flash and a ring of sparks at the hand
+    effects += [
+        {'name': 'OWN_CB_STEP_SPARKS', 'base': 'OWN_BOLT_HIT_SPARKS', 'set': {'ppsValue': 40.0, 'velAvg': 0.3, 'velVar': 0.15}},
+        {'name': 'MFX_CHARGEFB_INVESTBLAST', 'base': 'OWN_BOLT_HIT_FLASH', 'replaces': True, 'with': ['OWN_CB_STEP_SPARKS'],
+         'set': {'ppsValue': 3.0, 'visSizeStart_S': '45 45'}},
+    ]
+    return effects
+
+
+def fireball() -> list:
+    """The fire ball (INSTANTFIREBALL; fireball.md): the bolt's fire, larger and round, and a real explosion."""
+    return [
+        # in the hand: a round white-hot core inside a flame twice the bolt's, so it reads as a ball and not a candle
+        {'name': 'OWN_BALL_HAND_CORE', 'base': 'OWN_BOLT_HEAD',
+         'set': {'ppsValue': 40.0, 'lspPartAvg': 160.0, 'lspPartVar': 30.0, 'visSizeStart_S': '20 20', 'visSizeEndScale': 0.7,
+                 'shpDim_S': '1.5'}},
+        {'name': 'OWN_BALL_HAND_LICKS', 'base': 'OWN_HAND_LICKS', 'inherit': 0.9,
+         'set': {'ppsValue': 30.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 0, 'shpDim_S': '7', 'visSizeStart_S': '9 13',
+                 'lspPartAvg': 320.0, 'lspPartVar': 80.0}},
+        {'name': 'MFX_FIREBALL_INIT', 'base': 'OWN_HAND_FLAME', 'replaces': True,
+         'with': ['OWN_BALL_HAND_CORE', 'OWN_BALL_HAND_LICKS'],
+         'set': {'visSizeStart_S': '20 26', **foot(20)}, 'lean': {'rise': 1.4, 'max_deg': 70, 'response': 0.1}},
+        # flying: the bolt's one body on one axis, twice as thick, with a ball of tongues at its head
+        {'name': 'OWN_BALL_HEAD', 'base': 'OWN_BOLT_HEAD',
+         'set': {'ppsValue': 40.0, 'lspPartAvg': 120.0, 'lspPartVar': 25.0, 'visSizeStart_S': '30 30', 'shpDim_S': '3'}},
+        {'name': 'OWN_BALL_FLAMES', 'base': 'OWN_HAND_LICKS', 'inherit': 0.9,
+         'flipbook': {'cols': 8, 'rows': 8, 'frames': 64, 'fps': 30}, 'hdr': {'from': 1, 'to': 3, 'edge': 0.3},
+         'set': {'ppsValue': 22.0, 'visAlphaStart': 170.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '6', 'visName_S': 'OWN_FIREBALL.TGA',
+                 'visSizeStart_S': '62 62', 'visSizeEndScale': 0.75, 'lspPartAvg': 200.0, 'lspPartVar': 40.0,
+                 'velAvg': 0.0, 'velVar': 0.0, 'flyGravity_S': '0 0 0'}},
+        {'name': 'OWN_BALL_LICKS', 'base': 'OWN_HAND_LICKS', 'inherit': 0.8,
+         'set': {'ppsValue': 90.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 0, 'shpDim_S': '16', 'visSizeStart_S': '20 28',
+                 'visSizeEndScale': 0.6, 'lspPartAvg': 260.0, 'lspPartVar': 70.0, 'velAvg': 0.02, 'velVar': 0.01}},
+        {'name': 'OWN_BALL_ROOT', 'base': 'OWN_BOLT_ROOT', 'set': {'visSizeStart_S': '70 90', **foot(90)}},
+        {'name': 'OWN_BALL_EMBERS', 'base': 'OWN_BOLT_EMBERS',
+         'set': {'ppsValue': 220.0, 'shpDim_S': '12', 'lspPartAvg': 1100.0, 'lspPartVar': 450.0}},
+        haze('OWN_BALL_HEAT', 5.0, inherit=1.0, ppsValue=24.0, lspPartAvg=170.0, lspPartVar=40.0, shpDim_S='10',
+             visSizeStart_S='120 120', visSizeEndScale=1.2),
+        haze('OWN_BALL_WAKE', 8.0, inherit=0.1, ppsValue=45.0, lspPartAvg=520.0, lspPartVar=100.0, shpDim_S='10',
+             visSizeStart_S='70 70', visSizeEndScale=2.0),
+        {'name': 'MFX_IFB_PFXTRAIL', 'base': 'OWN_HAND_FLAME', 'replaces': True,
+         'with': ['OWN_BALL_HEAD', 'OWN_BALL_FLAMES', 'OWN_BALL_LICKS', 'OWN_BALL_ROOT', 'OWN_BALL_EMBERS', 'OWN_BALL_HEAT', 'OWN_BALL_WAKE'],
+         'set': {'visSizeStart_S': '80 170', **foot(170)},
+         'lean': {'rise': 1.8, 'max_deg': 87, 'response': 0.03, 'along': 0.3, 'grow': 0.3, 'grow_from': 0.25}},
+        # the game's second trail (clouds of fire along the way to the target) would stand beside ours as another kind
+        # of fire: it becomes a thin second scatter of embers
+        {'name': 'MFX_IFB_CAST', 'base': 'OWN_BOLT_EMBERS', 'replaces': True,
+         'set': {'ppsValue': 40.0, 'shpDim_S': '14', 'lspPartAvg': 1300.0, 'lspPartVar': 500.0}},
+        *blast('MFX_FIREBALL_COLLIDE1', 'OWN_BALL_HIT', 1.0),
+    ]
+
+
 def body_fire() -> list:
     """The fire on a burning body (body-fire.md, concept A: the body burns like a wick).
 
@@ -129,7 +266,8 @@ def body_fire() -> list:
             'ppsIsLooping': 0, 'ppsIsSmooth': 1}
     return [
         # tall tongues: born on the mesh as the short ones, they rise higher and join over the shoulders into the plume
-        {'name': 'OWN_BODY_TALL', 'base': 'OWN_HAND_LICKS', 'inherit': 0.85,
+        # the wind's share is small: at the torch's 0.5 a breeze blew every tongue off to one side of the body
+        {'name': 'OWN_BODY_TALL', 'base': 'OWN_HAND_LICKS', 'inherit': 0.85, 'wind': 0.2,
          'set': {**burn, 'ppsValue': 9.0, 'shpType_S': 'MESH', 'shpIsVolume': 0, 'shpDim_S': '0 0 0',
                  'shpOffsetVec_S': '0 0 0', 'visSizeStart_S': '34 60', 'visSizeEndScale': 0.75, 'lspPartAvg': 560.0,
                  'lspPartVar': 140.0, 'velAvg': 0.05, 'velVar': 0.02, 'flyGravity_S': '0 0.00012 0'}},
@@ -143,9 +281,16 @@ def body_fire() -> list:
                  'visSizeStart_S': '0.6 0.6'}, inherit=0.2, minPixels=2.0),
         haze('OWN_BODY_HEAT', 5.0, inherit=0.3, **burn, ppsValue=1.0, lspPartAvg=600.0, lspPartVar=120.0, shpDim_S='10',
              **up, shpOffsetVec_S='0 50 0', visSizeStart_S='60 60', visSizeEndScale=1.5, flyGravity_S='0 0.0001 0'),
+        # the one effect on the root keeps the game's smoke and brings the body's light: the game's own is a point a
+        # metre wide at the belt that hardly reaches the ground. The range follows the fire's stages, with a flicker, and
+        # ends at 0: the keys play once, the smoke outlives the fire
+        {'name': 'MFX_MAGICFIRE_HUMANSMOKE', 'base': 'MFX_MAGICFIRE_HUMANSMOKE', 'replaces': True, 'set': {},
+         'light': {'range': 450, 'color': [255, 150, 60], 'fps': 6.0,
+                   'keys': [0.4, 0.8, 1, 0.94, 1.05, 0.97, 1.03, 0.93, 1, 1.06, 0.95, 1.02, 0.96, 1.04, 0.93, 1, 1.05,
+                            0.96, 1.02, 0.94, 1, 0.97, 1.03, 0.95, 0.8, 0.55, 0.3, 0.1, 0]}},
         # the short tongues on the clothes: born on the body's mesh, they rise and go out. Each of the seven emitters
         # brings a seventh of the smoke, the embers and the hot air, over its own bone
-        {'name': 'MFX_MAGICFIRE_HUMANBURN', 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.92,
+        {'name': 'MFX_MAGICFIRE_HUMANBURN', 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.92, 'wind': 0.1,
          'with': ['OWN_BODY_TALL', 'OWN_BODY_SMOKE', 'OWN_BODY_EMBERS', 'OWN_BODY_HEAT'],
          'set': {**burn, 'ppsValue': 30.0, 'shpType_S': 'MESH', 'shpIsVolume': 0, 'shpDim_S': '0 0 0', 'shpOffsetVec_S': '0 0 0',
                  'visSizeStart_S': '24 40', 'visSizeEndScale': 0.7, 'lspPartAvg': 380.0, 'lspPartVar': 100.0,
@@ -155,8 +300,8 @@ def body_fire() -> list:
 
 def cmd_build(_args) -> int:
     PARTICLES.parent.mkdir(parents=True, exist_ok=True)
-    PARTICLES.write_text(json.dumps({'format': 1, 'effects': firebolt() + body_fire()}, indent=1) + '\n')
-    print(f'{PARTICLES.relative_to(ROOT)}: {len(firebolt()) + len(body_fire())} effects')
+    PARTICLES.write_text(json.dumps({'format': 1, 'effects': firebolt() + fireball() + charged_fireball() + body_fire()}, indent=1) + '\n')
+    print(f'{PARTICLES.relative_to(ROOT)}: {len(firebolt()) + len(fireball()) + len(charged_fireball()) + len(body_fire())} effects')
     return 0
 
 
@@ -164,9 +309,18 @@ def cmd_pack(args) -> int:
     output = STAGING / args.set
     if output.exists():
         sys.exit(f'{output}: the staging set exists; choose a new name')
+    missing = [name for _, name in ATLASES.values() if not (args.atlases / name).is_file()]
+    if missing:
+        sys.exit(f'{args.atlases}: no {", ".join(missing)} (explosion_atlas.py)')
     target = output / PARTICLES.relative_to(CONTENT)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(PARTICLES, target)
+    index = {}
+    for texture, (rel, name) in ATLASES.items():
+        (output / 'materials' / rel).parent.mkdir(parents=True)
+        shutil.copyfile(args.atlases / name, output / 'materials' / rel)
+        index[texture] = {'albedo': rel}
+    (output / 'materials/materials.json').write_text(json.dumps(index, indent=2) + '\n')
     print(f'{output}: the spells\' fire as a part; it needs the effects of torch-model-* and fire-worlds-* and smoke-*')
     return 0
 
@@ -177,6 +331,7 @@ def main() -> int:
     sub.add_parser('build').set_defaults(func=cmd_build)
     pack = sub.add_parser('pack')
     pack.add_argument('--set', required=True)
+    pack.add_argument('--atlases', type=Path, required=True, help='the folder of explosion_atlas.py outputs')
     pack.set_defaults(func=cmd_pack)
     args = parser.parse_args()
     return args.func(args)

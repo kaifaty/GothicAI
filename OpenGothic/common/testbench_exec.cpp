@@ -331,7 +331,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     // bowgeom: the bow and the bow hand in the arrow's frame, as posed now
     say(pl.bowDump());
     }
-  else if((c=="stats" || c=="npcday" || c=="seed") && npcCommandsCommand(npcCommandsContext(),line,a,w,pl,ctrl)) return;
+  else if((c=="stats" || c=="npcday" || c=="npcday-save" || c=="seed") && npcCommandsCommand(npcCommandsContext(),line,a,w,pl,ctrl)) return;
   else if(npcSimCommand(bench.npcDuel,bench.npcTierTest,bench.npcSpeedTest,bench.pc,bench.prog,a,w,pl)) return;
   else if(bodyCommand(bodyContext(),a,w,pl)) return;
   else if(c=="knockdown-launch-equip") {
