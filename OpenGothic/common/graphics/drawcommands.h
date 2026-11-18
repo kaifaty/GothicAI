@@ -14,6 +14,7 @@ class DrawCommands {
   public:
     // Meshlet-page pairs the VSM visibility pass may emit a frame: VSM_MAX_MESHLETS in vsm_common.glsl
     static constexpr uint32_t VsmMaxMeshlets = 512*1024;
+    static uint32_t vsmPairCap(); // VsmMaxMeshlets, or OPENGOTHIC_VSM_PAIRS for a study
     // the sun's virtual shadow map for a forward-lit draw, or the 1x1x1 table that sends it to the cascades
     static void bindSunVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene,
                            uint32_t tblSlot, uint32_t atlasSlot);

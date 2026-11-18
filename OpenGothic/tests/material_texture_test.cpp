@@ -953,6 +953,7 @@ void trackRecords(Tempest::Device& device, const Fixture& fixture) {
           "a ground with a track or a border is asked no coarser than a repeat per the finest of its tiles");
   }
 #include "foliage_tree_test.h" // foliageTreeMaths, foliageTreeRecords
+#include "vsm_pair_cap_test.h" // vsmPairCapRecords
 
 // graphics/foliagewind.h: the processor's copy of the rule of shader/materials/foliage_wind.glsl
 void foliageWindMaths() {
@@ -3225,6 +3226,7 @@ int main(int argc, char** argv) {
     fringeRecords(device,fixture);
     foliageRecords(device,fixture);
     foliageTreeRecords(device,fixture);
+    vsmPairCapRecords(device);
     grassRecords(device,fixture);
     groundRecords(device,fixture);
     trackRecords(device,fixture);

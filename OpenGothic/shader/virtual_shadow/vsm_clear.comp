@@ -27,6 +27,7 @@ void main() {
   imageStore(pageTblDepth, at, uvec4(0xFFFFFFFF));
 
   if(at==ivec3(0)) {
+    header.pairSpill    = 0;
     header.pageCount    = 0;
     header.meshletCount = 0;
     header.counterM     = 0;

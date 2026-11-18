@@ -181,6 +181,7 @@ void Renderer::logVsmStats(const WorldView& wview) {
     uint32_t pagePerMip[16];
     int32_t  pageBbox[16][4];
     uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax;
+    uint32_t pairSpill;
     } h = {};
   uint32_t visibleLights = 0;
   auto& device = Resources::device();
@@ -193,8 +194,9 @@ void Renderer::logVsmStats(const WorldView& wview) {
   Log::i("vsm stats: pageCount = ", h.pageCount, "/", poolPages,
          ", entries = ", h.pageListCount, " (sun ", h.pageListCount-h.pageOmniCount, ", pageOmniCount ", h.pageOmniCount, ")",
          ", placed = ", h.pagePlaced, ", dropped = ", dropped,
-         ", meshletCount = ", h.meshletCount, "/", DrawCommands::VsmMaxMeshlets,
-         (h.meshletCount>DrawCommands::VsmMaxMeshlets ? " OVERFLOW" : ""),
+         ", meshletCount = ", h.meshletCount, "/", DrawCommands::vsmPairCap(),
+         (h.meshletCount>DrawCommands::vsmPairCap() ? " OVERFLOW" : ""),
+         ", spilled = ", h.pairSpill,
          ", lights = ", visibleLights, "/", uint32_t(wview.lights().size()),
          ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
 
