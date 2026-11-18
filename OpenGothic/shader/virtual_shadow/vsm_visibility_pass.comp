@@ -14,7 +14,9 @@ layout(local_size_x = 1024) in;
 const uint NumThreads = gl_WorkGroupSize.x*gl_WorkGroupSize.y*gl_WorkGroupSize.z;
 
 layout(push_constant, std430) uniform UboPush {
-  int meshletCount;
+  int  meshletCount;
+  uint pairCap;  // STUDY
+  uint study;    // STUDY: 1 sentinels in the unwritten tail, 2 coarse mips first
   } push;
 layout(binding = 0, std140) uniform UboScene    { SceneDesc   scene;         };
 layout(binding = 1, std430) buffer Payload      { uvec4       payload[];     };
@@ -129,8 +131,12 @@ int shadowMeshlets(const Cluster cluster) {
 
 bool emitCluster(const Cluster cluster, int meshletCount, uint page) {
   const uint at = atomicAdd(vsm.header.meshletCount, meshletCount);
-  if(at+meshletCount > VSM_MAX_MESHLETS)
+  if(at+meshletCount > push.pairCap) {
+    if((push.study & 1u)!=0u)
+      for(uint i=at; i<push.pairCap; ++i)
+        payload[i] = uvec4(0xFFFFFFFFu);
     return false;
+    }
   for(int i=0; i<meshletCount; ++i)
     payload[at+i] = uvec4(cluster.instanceId, cluster.firstMeshlet+i, cluster.bucketId_commandId, page);
 
@@ -377,5 +383,7 @@ void main() {
     mainOmniLights();
     return;
     }
-  mainSunLight(gl_GlobalInvocationID.y);
+  if((push.study & 2u)!=0u)
+    mainSunLight(VSM_PAGE_MIPS-1-gl_GlobalInvocationID.y); else
+    mainSunLight(gl_GlobalInvocationID.y);
   }

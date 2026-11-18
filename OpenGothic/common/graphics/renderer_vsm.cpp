@@ -193,8 +193,8 @@ void Renderer::logVsmStats(const WorldView& wview) {
   Log::i("vsm stats: pageCount = ", h.pageCount, "/", poolPages,
          ", entries = ", h.pageListCount, " (sun ", h.pageListCount-h.pageOmniCount, ", pageOmniCount ", h.pageOmniCount, ")",
          ", placed = ", h.pagePlaced, ", dropped = ", dropped,
-         ", meshletCount = ", h.meshletCount, "/", DrawCommands::VsmMaxMeshlets,
-         (h.meshletCount>DrawCommands::VsmMaxMeshlets ? " OVERFLOW" : ""),
+         ", meshletCount = ", h.meshletCount, "/", DrawCommands::vsmPairCap(),
+         (h.meshletCount>DrawCommands::vsmPairCap() ? " OVERFLOW" : ""),
          ", lights = ", visibleLights, "/", uint32_t(wview.lights().size()),
          ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
 

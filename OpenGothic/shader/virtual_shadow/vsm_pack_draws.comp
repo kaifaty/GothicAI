@@ -17,6 +17,9 @@ layout(binding = 4, std430) readonly  buffer Pages        { VsmHeader   header; 
 #if defined(PASS0)
 layout(binding = 5, std430) writeonly buffer Indirect     { uvec3       indirectCmd;    };
 #endif
+#if defined(PASS1)
+layout(push_constant, std430) uniform UboPush { uint pairCap; } push; // STUDY
+#endif
 
 shared uint partialSumm[gl_WorkGroupSize.x];
 
@@ -54,12 +57,15 @@ void mainCmd() {
 #endif
   }
 
+#if defined(PASS1)
 void mainClusters() {
   uint index = gl_GlobalInvocationID.x;
-  if(index>=min(vsm.header.meshletCount, VSM_MAX_MESHLETS))
+  if(index>=min(vsm.header.meshletCount, push.pairCap))
     return; // the counter runs on past the cap, the payload does not
 
   const uvec4 cluster    = payloadSrc[index];
+  if(cluster.w==0xFFFFFFFFu)
+    return; // STUDY sentinel
   const uint  instanceId = cluster.x;
   const uint  meshletId  = cluster.y;
   const uint  commandId  = cluster.z & 0xFFFF;
@@ -71,6 +77,7 @@ void mainClusters() {
   payload[writeOffset + at] = uvec4(instanceId, meshletId, bucketId, pageId);
   //payload[writeOffset + at] = uvec4(index+1);
   }
+#endif
 
 void main() {
 #if defined(PASS0)
