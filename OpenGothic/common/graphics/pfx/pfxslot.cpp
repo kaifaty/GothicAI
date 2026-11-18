@@ -146,6 +146,10 @@ void PfxSlot::setLooped(bool loop) {
     return;
   std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
   auto& v = bucket->get(id);
+  if(v.isLoop && !loop)
+    v.spent = true;
+  else if(loop)
+    v.spent = false;
   v.isLoop = loop;
   if(v.next!=nullptr)
     v.next->setLooped(loop);

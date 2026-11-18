@@ -53,6 +53,7 @@ class PfxBucket {
       bool          openAsked    = false;
       Tempest::Vec3 direction[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
       bool          isLoop       = false;
+      bool          spent        = false; // was looped and is not any more (a bolt that hit): its steady flame goes
 
       const ParticleTarget* targetNpc    = nullptr;
 
