@@ -60,3 +60,4 @@ wait 2000
 perf sample perf-cluster-lod/view-2-far
 wait 4000
 perf stop
+cadence wait
