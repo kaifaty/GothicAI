@@ -1,0 +1,56 @@
+# The fire storm and pyrokinesis in Coragon's tavern: the storm in the hands and its cast (camera at the hero; the
+# game casts both at once, without a charge), the same cast seen from behind the line of flight to the wall, then
+# pyrokinesis at the wall (reports/content/remaster/magic-fire/storm.md).
+seed 73013
+cheat god
+set time 13 0
+overlay off
+ui off
+destruction setup fireball
+clear 3000
+stats mana 3000 circle 6
+equip ItRu_Firestorm
+tap spell
+wait 4000
+cam at 8050 250 1130 8227 235 1060
+wait 1200
+rec hand
+wait 300
+press action
+wait 1800
+press forward
+wait 1500
+release forward
+wait 300
+release action
+wait 1000
+stop
+wait 1500
+cam at 8130 300 1480 8227 262 1950
+wait 1200
+rec hit
+wait 300
+press action
+wait 1200
+press forward
+wait 300
+release forward
+wait 300
+release action
+wait 3000
+stop
+disarm
+equip ItRu_Pyrokinesis
+tap spell
+wait 3000
+rec pyro
+wait 300
+press action
+wait 1200
+press forward
+wait 300
+release forward
+wait 300
+release action
+wait 3000
+stop
