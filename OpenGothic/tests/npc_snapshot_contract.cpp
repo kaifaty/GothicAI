@@ -450,6 +450,10 @@ void npcDefinitions(const fs::path& dir) {
   check(counts.captured==2 && library.uncaptured.size()==6,"two fixture NPCs are captured and six retain the VM fallback");
   const auto& steps=library.npcs.at("NPC_NO_ID").steps;
   check(std::any_of(steps.begin(),steps.end(),[](const auto& step) {
+    const auto* field=std::get_if<NpcDefinitions::Field>(&step);
+    return field && field->binding=="C_NPC.EXP_NEXT" && field->index==0 && field->value.integer==0;
+    }),"a constructor reading an untouched AIVAR element is captured with its zero default");
+  check(std::any_of(steps.begin(),steps.end(),[](const auto& step) {
     const auto* call=std::get_if<NpcDefinitions::Call>(&step);
     return call && call->function=="ADD_AFTER_EQUIP" && call->deferred;
     }),"a helper reading an engine-modified field is deferred independently of its name");

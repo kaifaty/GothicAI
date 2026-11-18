@@ -107,6 +107,8 @@ inline NpcSnapshot::Program program() {
   f.set(f.find("C_NPC.ATTRIBUTE"),10); f.set(f.find("C_NPC.GUILD"),2); f.op(Op::RSR);
   const auto npc=f.symbol("NPC_NO_ID",Type::INSTANCE,0,Flag::CONST,int32_t(prototype)); f.begin(npc);
   f.call(prototype);
+  // Untouched AIVAR elements have the same zero value in fresh NPCs and snapshots.
+  f.op(Op::PUSHV,f.find("C_NPC.AIVAR")); f.op(Op::PUSHV,f.find("C_NPC.EXP_NEXT")); f.op(Op::MOVI);
   f.op(Op::PUSHV,text); f.op(Op::PUSHV,f.find("C_NPC.NAME")); f.op(Op::MOVS);
   // A string argument must reuse its constant literal rather than alter VM scratch strings.
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,0); f.op(Op::PUSHI,0); f.op(Op::PUSHI,8); f.op(Op::PUSHI,0);

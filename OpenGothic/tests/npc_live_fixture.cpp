@@ -39,10 +39,11 @@ void write(const fs::path& file, const std::string& bytes) {
 
 struct Environment {
   std::vector<std::pair<std::string,std::optional<std::string>>> saved;
-  void set(const char* name, const std::string& value) {
+  void set(const char* name, const std::optional<std::string>& value) {
     const auto* previous=std::getenv(name);
     saved.emplace_back(name,previous ? std::optional<std::string>(previous) : std::nullopt);
-    setenv(name,value.c_str(),1);
+    if(value) setenv(name,value->c_str(),1);
+    else unsetenv(name);
     }
   ~Environment() {
     for(auto it=saved.rbegin();it!=saved.rend();++it) {
@@ -108,7 +109,7 @@ fs::path program(const fs::path& base) {
   return definitions/"npcs.json";
   }
 
-void mutations(const fs::path& file, World& world, void (*compare)(World&)) {
+void mutations(const fs::path& file, Gothic& gothic, void (*compare)(World&)) {
   std::ifstream input(file);
   const std::string original{std::istreambuf_iterator<char>(input),{}};
   struct Restore {
@@ -165,8 +166,10 @@ void mutations(const fs::path& file, World& world, void (*compare)(World&)) {
     rapidjson::Writer<rapidjson::StringBuffer> writer(bytes);
     if(!document.Accept(writer)) throw std::runtime_error("cannot encode synthetic NPC mutation");
     write(file,{bytes.GetString(),bytes.GetSize()});
+    gothic.clearGame().reset();
+    gothic.setGame(std::make_unique<GameSession>("NPC_CONTRACT.ZEN"));
     std::string error;
-    try { compare(world); }
+    try { compare(*gothic.world()); }
     catch(const std::exception& failure) { error=failure.what(); }
     const auto expected=mutation>=4 ? "game random generator differs" : "live NPC differs";
     if(error.find(expected)==std::string::npos)
@@ -202,9 +205,9 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&)) {
   environment.set("OPENGOTHIC_VIDEOS_FINGERPRINT","");
   environment.set("OPENGOTHIC_CONTENT","");
   environment.set("OPENGOTHIC_TEXTURES","");
-  environment.set("OPENGOTHIC_NPC_RECORDS","1");
-  environment.set("OPENGOTHIC_ITEM_RECORDS","1");
-  environment.set("OPENGOTHIC_ROUTINE_RECORDS","1");
+  environment.set("OPENGOTHIC_NPC_RECORDS",std::nullopt);
+  environment.set("OPENGOTHIC_ITEM_RECORDS",std::nullopt);
+  environment.set("OPENGOTHIC_ROUTINE_RECORDS",std::nullopt);
   const auto directory=game.string();
   const char* args[]={"gothic-placed-items-contract","-g",directory.c_str(),"-benchmark","ci"};
   CommandLine commandLine(5,args);
@@ -215,7 +218,7 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&)) {
   GameMusic music;
   gothic.setGame(std::make_unique<GameSession>("NPC_CONTRACT.ZEN"));
   compare(*gothic.world());
-  mutations(definitions,*gothic.world(),compare);
+  mutations(definitions,gothic,compare);
   gothic.clearGame().reset();
   environment.set("OPENGOTHIC_NPC_RECORDS","0");
   environment.set("OPENGOTHIC_ITEM_RECORDS","0");

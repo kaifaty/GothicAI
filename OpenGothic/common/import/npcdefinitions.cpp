@@ -192,10 +192,11 @@ class Runner {
         if(mutableGlobal(symbol,vm)) throw Stop("game_state",symbol.name());
         });
       vm.observe_member_reads([&](const DaedalusSymbol& symbol,uint16_t index,const DaedalusInstance* context) {
-        // The engine may supply any untouched field, including on a reused hero.
-        // An empty import instance cannot determine that constructor's result.
+        // Fresh NPCs receive id and wp from the engine before their constructor.
+        // Other untouched fields have the same zero defaults as this snapshot.
         if(!engineState) {
-          if(context!=npc.get() || !assigned.contains({symbol.name(),index}))
+          if(context!=npc.get() || ((symbol.name()=="C_NPC.ID" || symbol.name()=="C_NPC.WP") &&
+                                   !assigned.contains({symbol.name(),index})))
             throw Stop("engine_state_read",symbol.name()+"["+std::to_string(index)+"] before assignment");
           return;
           }

@@ -213,8 +213,8 @@ class GameScript final : public GameRules {
 
   private:
     friend struct NpcDefinitionContract;
-    void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance);
-    void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol);
+    void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);
+    void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
     bool startHotkeyPotion(Npc& pl, bool mana);
 
     template<typename T>

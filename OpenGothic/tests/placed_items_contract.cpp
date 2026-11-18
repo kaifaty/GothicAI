@@ -689,8 +689,28 @@ void npcDefinitions(World& world) {
   require(!gameRecords.empty(),"the game must load NPC definitions when records are enabled");
   require(gameRecords.size()==records.npcs.size(),"the game must load all captured NPC definitions");
   for(const auto& [symbol,steps]:records.npcs) {
-    (void)steps;
     require(gameRecords.contains(symbol),"the game must load each captured NPC definition");
+    require(gameRecords.at(symbol).size()==steps.size(),"the game's NPC definition step count must match its section");
+    }
+  const auto* itemSetting=std::getenv("OPENGOTHIC_ITEM_RECORDS");
+  if(itemSetting==nullptr || std::strcmp(itemSetting,"0")!=0) {
+    const auto items=ItemDefinitions::read(base,program.sha256);
+    const auto& gameItems=NpcDefinitionContract::items(script).items;
+    require(!gameItems.empty() && gameItems.size()==items.items.size(),"the game must load all captured item definitions");
+    for(const auto& [name,item]:items.items) {
+      (void)item;
+      require(gameItems.contains(vm.find_symbol_by_name(name)->index()),"the game must load each captured item definition");
+      }
+    }
+  const auto* routineSetting=std::getenv("OPENGOTHIC_ROUTINE_RECORDS");
+  if(routineSetting==nullptr || std::strcmp(routineSetting,"0")!=0) {
+    const auto& gameRoutines=NpcDefinitionContract::routines(script).routines;
+    require(!gameRoutines.empty() && gameRoutines.size()==routines.routines.size(),"the game must load all captured routine definitions");
+    for(const auto& [name,rows]:routines.routines) {
+      const auto symbol=vm.find_symbol_by_name(name)->index();
+      require(gameRoutines.contains(symbol) && gameRoutines.at(symbol).size()==rows.size(),
+              "the game's routine definitions must match their section");
+      }
     }
   auto loaded=std::move(NpcDefinitionContract::definitions(script));
   const auto random=NpcDefinitionContract::random(script);
@@ -820,6 +840,13 @@ void npcDefinitions(World& world) {
                      routineRecords ? "record" : "VM",routineInstructions==0 ? "record" : "VM");
         difference(name,"SELF restored","yes",vm.global_self()->get_instance()==oldSelf ? "yes" : "no");
         difference(name,"VM member context restored","yes",vm.unsafe_get_gi()==previousContext ? "yes" : "no");
+        if(name=="NPC_NO_ID") {
+          actual->handle().aivar[0]=73;
+          constructorInstructions=0;
+          require(actual->transformInto(symbol->index()),"the synthetic NPC must transform");
+          require(constructorInstructions>0,"transformation must execute its constructor in the game VM");
+          require(actual->handle().exp_next==73,"transformation must read the reused NPC's untouched field");
+          }
         }
       catch(const std::exception& error) { difference(name,"creation exception","none",error.what()); }
       vm.observe_instructions({});
