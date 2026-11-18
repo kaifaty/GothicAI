@@ -5,9 +5,8 @@
 # (BaseFormat.cmake): a runtime source or a flag must not change the base fingerprint.
 include(${CMAKE_CURRENT_LIST_DIR}/ClusterLod.cmake)
 target_link_libraries(gothic-base-runtime PRIVATE gothic-cluster-lod)
-# Edited GLBs can contain node transforms. Keep contraction off when decoding
-# the positions and attributes that are fed to the hierarchy builder.
-set_property(SOURCE "${BASE_ROOT}/common/worldchunksruntime.cpp" "${BASE_ROOT}/common/gltfmesh.cpp"
+# Keep contraction off in the chunk reader's position and attribute calculations.
+set_property(SOURCE "${BASE_ROOT}/common/worldchunksruntime.cpp"
   APPEND PROPERTY COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/fp:precise,-ffp-contract=off>")
 target_sources(gothic-base-runtime PRIVATE "${BASE_ROOT}/common/worldchunkmanifest.cpp"
   "${BASE_ROOT}/common/worldchunkbinary.cpp" "${BASE_ROOT}/common/worldchunkindex.cpp" "${BASE_ROOT}/common/worldchunkcook.cpp"
