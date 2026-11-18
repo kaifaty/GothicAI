@@ -56,8 +56,28 @@ void crownLightMaths() {
           "where the normal already faces that sky");
   }
 
+// graphics/hizoccluders.h: which materials the occluder pass leaves out and its switch
+// (reports/engine/2026-11-16-modern-trees/hiz-occluders.md)
+void hizOccluderRule() {
+  using namespace HiZOccluders;
+  using FoliageWind::Params;
+
+  require(parse("",true) && !parse("",false) && !parse("0",true) && parse("1",false),
+          "the crowns are out of the occluders by default; OPENGOTHIC_HIZ_SKIP_CROWNS wins over [INTERNAL] hizSkipCrowns");
+
+  Params bark, leaf, tuft;
+  bark.on = true; bark.anchor = FoliageWind::AnchorTree; bark.translucency = 0.f;
+  leaf.on = true; leaf.anchor = FoliageWind::AnchorTree;
+  tuft.on = true;
+  require(canopy(leaf,true) && !canopy(bark,false),
+          "a tree's alpha-tested leaves are no occluder, its solid bark stays one");
+  require(!canopy(leaf,false) && !canopy(tuft,true) && !canopy(Params(),true),
+          "a solid leaf, a tuft and the original's alpha-tested leaves (no `foliage`) stay occluders");
+  }
+
 void foliageTreeMaths() {
   crownLightMaths();
+  hizOccluderRule();
   using namespace FoliageTree;
   using FoliageWind::Both;
   using FoliageWind::Params;

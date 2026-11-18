@@ -2,6 +2,7 @@
 #include "graphics/foliagefront.h"
 #include "graphics/contactao.h"
 #include "graphics/grasscontact.h"
+#include "graphics/hizoccluders.h"
 #include "graphics/lampcontact.h"
 #include "settings.h"
 
@@ -198,7 +199,8 @@ void SceneGlobals::setTaaFrame(bool taa, bool lampTaa, uint32_t frame) {
   static const bool hairDebug = []{ const char* e = std::getenv("OPENGOTHIC_HAIR_DEBUG"); return e!=nullptr && e[0]=='1'; }();
   uboGlobalCpu.viewFlags = (taa ? VF_TAA : 0) | (hairDebug ? VF_HAIR_DEBUG : 0) | (LampContact::enabled() ? VF_LAMP_CONTACT : 0) |
                            (ContactAo::enabled() ? VF_CONTACT_AO : 0) | (grassDrawn && GrassContact::enabled() ? VF_GRASS_CONTACT : 0) |
-                           (CrownLight::mode()==CrownLight::Mask ? VF_CROWN_MASK : 0);
+                           (CrownLight::mode()==CrownLight::Mask ? VF_CROWN_MASK : 0) |
+                           (HiZOccluders::skipCrowns() ? VF_HIZ_NO_CANOPY : 0);
   }
 
 void SceneGlobals::setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip,

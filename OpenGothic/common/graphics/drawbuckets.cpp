@@ -11,6 +11,7 @@
 #include "graphics/crownlight.h"
 #include "graphics/eyeshader.h"
 #include "graphics/foliagetree.h"
+#include "graphics/hizoccluders.h"
 
 using namespace Tempest;
 
@@ -411,6 +412,10 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       }
     if(i.mat.alpha==Material::Solid)
       bx.flags |= BK_SOLID;
+    // A tree's alpha-tested leaves (graphics/hizoccluders.h): the occluder pass leaves them out while its switch is
+    // on; the counters of the main view tell them by this either way
+    if(i.staticMesh!=nullptr && HiZOccluders::canopy(i.mat.foliage, i.mat.alpha==Material::AlphaTest))
+      bx.flags |= BK_CANOPY;
     // Our glTF MASK (brows, lashes, hair cards): under TAA its edge averages to the texel's coverage. The original's
     // alpha test (foliage) keeps the fixed threshold
     if(i.mat.alpha==Material::AlphaTest && i.mat.isAlphaTestRequired() && CommandLine::inst().doHashedAlpha())

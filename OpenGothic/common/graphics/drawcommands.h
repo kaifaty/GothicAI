@@ -61,6 +61,7 @@ class DrawCommands {
     void     addClusters(uint16_t cmdId, uint32_t meshletCount);
 
     void     visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
+    void     visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void     visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void     drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -152,4 +153,10 @@ class DrawCommands {
     std::vector<uint32_t>    orderIds, orderNext;
     Tempest::StorageBuffer   orderSsbo;
     Tempest::StorageBuffer   vsmIndirectCmd;
+
+    // the frame profile's counters of the main view (visibility_stats.comp): the GPU's sums, and per frame slot their
+    // host-visible copy and whether it holds a frame not read yet
+    Tempest::StorageBuffer   statsSum;
+    Tempest::StorageBuffer   statsRead[Resources::MaxFramesInFlight];
+    bool                     statsWritten[Resources::MaxFramesInFlight] = {};
   };

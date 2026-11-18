@@ -758,6 +758,10 @@ void WorldView::visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, in
   visuals.visibilityPass(cmd, pass);
   }
 
+void WorldView::visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  visuals.visibilityStats(cmd, fId);
+  }
+
 void WorldView::visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   visuals.visibilityVsm(cmd);
   }

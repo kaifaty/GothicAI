@@ -56,7 +56,10 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   RtTlasBuilds, RtDirtySlots,
   // -gi 1 (Renderer::readGiStats): live probes, probes traced in a frame (new), of them allocated at the hits of other
   // probes' rays, and probes freed in the frame; of a frame slot one or two frames back
-  GiProbesLive, GiProbesTraced, GiProbesFromHits, GiProbesFreed, Count };
+  GiProbesLive, GiProbesTraced, GiProbesFromHits, GiProbesFreed,
+  // DrawCommands::visibilityStats: clusters and meshlets of the main view the visibility pass let through, and of them
+  // those of the crowns of trees (BK_CANOPY); of a frame slot one or two frames back
+  MainClusters, MainMeshlets, MainCanopyClusters, MainCanopyMeshlets, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };
