@@ -14,8 +14,8 @@ The fire bolt (round 2, firebolt-design.md: one body on one axis):
 - flying at 10 m/s: a white-hot head, one flame pressed to the way by the air behind it (the torch's flame card lying
   along the way, a short bright one inside it as its root), embers left behind that cool and sink, the air shimmers around the flame
   and in a wake behind it. No standing tongues, no second tail, no smoke;
-- hit: the game keeps the effect on for as long as the target burns, so it is a small fire, not a burst: tongues,
-  sparks on arcs and puffs of smoke that play their atlas once.
+- hit: one burst: a flash, the bolt's fire thrown apart as tongues, sparks on arcs, puffs of smoke that play their
+  atlas once and a gust of hot air. The bolt's own flame goes at the hit.
 """
 from __future__ import annotations
 
@@ -31,6 +31,7 @@ PARTICLES = CONTENT / 'particles.d/zz-magic-fire.json'
 SMOKE_BOOK = {'cols': 8, 'rows': 8, 'frames': 64, 'fps': 10}
 ALL_AROUND = {'dirMode_S': 'DIR', 'dirFOR_S': 'WORLD', 'dirAngleHead': 0.0, 'dirAngleHeadVar': 179.0, 'dirAngleElev': 0.0,
               'dirAngleElevVar': 89.0}
+BURST = {'ppsScaleKeys_S': '', 'ppsIsLooping': 0, 'ppsIsSmooth': 0, 'ppsFPS': 0.0}
 TORCH = ROOT / 'reports/content/remaster/wall-torch-model/content/particles.d/wall-torch-fire.json'
 
 
@@ -88,18 +89,28 @@ def firebolt() -> list:
          'with': ['OWN_BOLT_HEAD', 'OWN_BOLT_ROOT', 'OWN_BOLT_EMBERS', 'OWN_BOLT_HEAT', 'OWN_BOLT_WAKE'],
          'set': {'visSizeStart_S': '40 100', **foot(100)},
          'lean': {'rise': 1.8, 'max_deg': 87, 'response': 0.03, 'along': 0.2, 'grow': 0.3, 'grow_from': 0.16}},
-        # hit
+        # hit: one burst (an effect without emission keys that is not looped gives its ppsValue particles at once)
+        # the flash: the game's flare of the hit, a few large ones for a sixth of a second
+        {'name': 'OWN_BOLT_HIT_FLASH', 'base': 'MFX_FIREBOLT_COLLIDE',
+         'set': {'ppsValue': 6.0, 'lspPartAvg': 180.0, 'lspPartVar': 30.0, 'visSizeStart_S': '55 55', 'visSizeEndScale': 1.8,
+                 'visTexColorStart_S': '255 235 190', 'visTexColorEnd_S': '255 110 25', 'velAvg': 0.01, 'velVar': 0.005,
+                 'shpDim_S': '3'}},
         of_torch('OWN_TORCH_SPARKS', 'OWN_BOLT_HIT_SPARKS',
-                 {'ppsValue': 30.0, 'shpDim_S': '4', 'velAvg': 0.3, 'velVar': 0.15, 'flyGravity_S': '0 -0.0007 0',
-                 'lspPartAvg': 700.0, 'lspPartVar': 300.0, **ALL_AROUND}),
+                 {**BURST, 'ppsValue': 50.0, 'shpDim_S': '4', 'velAvg': 0.42, 'velVar': 0.26, 'flyGravity_S': '0 -0.0009 0',
+                 'lspPartAvg': 800.0, 'lspPartVar': 350.0, 'visSizeStart_S': '0.6 0.6',
+                 'visTexColorStart_S': '255 170 60', 'visTexColorEnd_S': '200 40 0', **ALL_AROUND}, drag=1.0, minPixels=2.0),
         of_torch('OWN_TORCH_SOOT', 'OWN_BOLT_HIT_PUFF',
-                 {'ppsValue': 3.0, 'ppsIsSmooth': 0, 'ppsScaleKeys_S': '', 'ppsFPS': 0.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '8',
+                 {**BURST, 'ppsValue': 3.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '8',
                  'visSizeStart_S': '22 22', 'visSizeEndScale': 2.6, 'visAlphaStart': 45.0, 'lspPartAvg': 1500.0,
-                 'lspPartVar': 300.0, 'velAvg': 0.03, 'velVar': 0.015, 'flyGravity_S': '0 2e-05 0', **ALL_AROUND}, flipbook={**SMOKE_BOOK, 'once': True}),
+                 'lspPartVar': 300.0, 'velAvg': 0.03, 'velVar': 0.015, 'flyGravity_S': '0 2e-05 0', **ALL_AROUND},
+                 flipbook={**SMOKE_BOOK, 'once': True}),
+        haze('OWN_BOLT_HIT_HEAT', 8.0, inherit=0.0, **BURST, ppsValue=3.0, lspPartAvg=380.0, lspPartVar=60.0, shpDim_S='6',
+             visSizeStart_S='55 55', visSizeEndScale=1.8),
+        # the splash: the bolt's fire thrown apart, tongues that the air stops within a hand's breadth and that rise
         {'name': 'MFX_FIREBOLT_COLLIDE', 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.0,
-         'with': ['OWN_BOLT_HIT_SPARKS', 'OWN_BOLT_HIT_PUFF'], 'drag': 5.0,
-         'set': {'ppsValue': 70.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '5', 'velAvg': 0.08,
-                 'velVar': 0.04, 'flyGravity_S': '0 5e-05 0', 'visSizeStart_S': '10 15', 'visSizeEndScale': 1.2,
+         'with': ['OWN_BOLT_HIT_FLASH', 'OWN_BOLT_HIT_SPARKS', 'OWN_BOLT_HIT_PUFF', 'OWN_BOLT_HIT_HEAT'], 'drag': 4.0,
+         'set': {**BURST, 'ppsValue': 45.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '5', 'velAvg': 0.3,
+                 'velVar': 0.12, 'flyGravity_S': '0 8e-05 0', 'visSizeStart_S': '13 18', 'visSizeEndScale': 1.5,
                  'lspPartAvg': 300.0, 'lspPartVar': 90.0, **ALL_AROUND}},
     ]
 

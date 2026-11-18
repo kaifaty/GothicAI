@@ -237,6 +237,7 @@ size_t PfxBucket::allocEmitter() {
       b.air     = {};
       b.airRate = {};
       b.grownMs = 0;
+      b.spent   = false;
       updateTextureDemand(i);
       return i;
       }
@@ -605,7 +606,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
         Log::i("flicker pfx seed=", emitter.flicker.seed, " t=", parent.now, " s=", p.flicker);
       }
 
-    if(decl.flipSteady && emitter.block!=size_t(-1) && (emitter.st!=S_Active || !nearby)) {
+    if(decl.flipSteady && emitter.block!=size_t(-1) && (emitter.st!=S_Active || !nearby || emitter.spent)) {
       // steady particles never die on their own: they go with their emitter or when it is out of view range
       auto& p = getBlock(emitter);
       for(size_t i=0;i<blockSize;++i)
@@ -708,7 +709,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
 
     if(emitter.st==S_Active && nearby) {
       auto& p = getBlock(emitter);
-      auto dE = decl.flipSteady ? (p.count==0 ? uint64_t(blockSize) : 0) : ppsDiff(decl,emitter.isLoop,p.timeTotal,p.timeTotal+dt);
+      auto dE = decl.flipSteady ? (p.count==0 && !emitter.spent ? uint64_t(blockSize) : 0) : ppsDiff(decl,emitter.isLoop,p.timeTotal,p.timeTotal+dt);
       tickEmit(p,emitter,dE);
       }
 
