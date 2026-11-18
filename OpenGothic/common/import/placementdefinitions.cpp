@@ -287,12 +287,15 @@ class Runner {
     const NpcSnapshot::Program& program;
   };
 
-std::vector<uint32_t> corpus(const NpcSnapshot::Program& program) {
+std::vector<uint32_t> corpus(const NpcSnapshot::Program& program,const fs::path& worldsDirectory) {
+  std::set<std::string> roots{"STARTUP_GLOBAL"};
+  for(const auto& world:fs::directory_iterator(worldsDirectory))
+    if(world.is_directory()) roots.insert("STARTUP_"+world.path().filename().string());
   std::vector<uint32_t> ids;
   for(uint32_t i=0;i<program.data.symbols.size();++i) {
     const auto& symbol=program.data.symbols[i];
     if(symbol.type==uint32_t(Type::FUNCTION) && !(symbol.flags&DaedalusSymbolFlag::EXTERNAL) &&
-       symbol.name.starts_with("STARTUP_")) ids.push_back(i);
+       roots.contains(symbol.name)) ids.push_back(i);
     }
   std::sort(ids.begin(),ids.end(),[&](uint32_t a,uint32_t b) { return program.data.symbols[a].name<program.data.symbols[b].name; });
   return ids;
@@ -371,7 +374,8 @@ void difference(const Json& expected,const Json& actual,const std::string& path,
   }
 }
 
-NpcSnapshot::PlacementCounts NpcSnapshot::writePlacements(const Program& program,const fs::path& file) {
+NpcSnapshot::PlacementCounts NpcSnapshot::writePlacements(const Program& program,const fs::path& file,
+                                                        const fs::path& worldsDirectory) {
   fs::create_directories(file.parent_path());
   rapidjson::Document storage;
   auto& allocator=storage.GetAllocator();
@@ -379,7 +383,7 @@ NpcSnapshot::PlacementCounts NpcSnapshot::writePlacements(const Program& program
   Json records(rapidjson::kArrayType);
   Runner runner(program);
   PlacementCounts counts;
-  for(auto id:corpus(program)) {
+  for(auto id:corpus(program,worldsDirectory)) {
     const auto capture=runner.run(id);
     ++counts.total;
     if(capture.reason.empty()) ++counts.captured;
@@ -406,7 +410,7 @@ NpcSnapshot::PlacementCounts NpcSnapshot::writePlacements(const Program& program
   return counts;
   }
 
-int NpcSnapshot::verifyPlacements(const Program& program,const fs::path& file) {
+int NpcSnapshot::verifyPlacements(const Program& program,const fs::path& file,const fs::path& worldsDirectory) {
   std::ifstream input(file,std::ios::binary);
   require(bool(input),"cannot read placement definitions: "+file.string());
   const std::string bytes{std::istreambuf_iterator<char>(input),{}};
@@ -422,7 +426,7 @@ int NpcSnapshot::verifyPlacements(const Program& program,const fs::path& file) {
     }
   require(json.HasMember("records") && json["records"].IsArray(),file.string()+": expected records array");
   const auto& records=json["records"];
-  const auto ids=corpus(program);
+  const auto ids=corpus(program,worldsDirectory);
   require(records.Size()==ids.size(),file.string()+": placement record count differs");
   Runner runner(program);
   for(size_t i=0;i<ids.size();++i) {
@@ -441,12 +445,12 @@ int BaseImport::convertPlacementDefinitions(const fs::path& base) {
     program.name=name;
     program.data=ProgramData::readProgram(index.dir/(name+".json"),&program.sha256);
     if(program.sha256!=sha) throw std::runtime_error("placement definitions: program SHA differs: "+name);
-    if(corpus(program).empty()) continue;
+    if(corpus(program,base/"worlds").empty()) continue;
     ++programs;
     const auto file=base/"definitions"/sha/"placement.json";
-    const auto counts=NpcSnapshot::writePlacements(program,file);
+    const auto counts=NpcSnapshot::writePlacements(program,file,base/"worlds");
     total+=counts.total; captured+=counts.captured; steps+=counts.steps; deferred+=counts.deferred;
-    if(NpcSnapshot::verifyPlacements(program,file)!=0)
+    if(NpcSnapshot::verifyPlacements(program,file,base/"worlds")!=0)
       throw std::runtime_error("placement definitions: fresh VM comparison failed: "+name);
     }
   const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();

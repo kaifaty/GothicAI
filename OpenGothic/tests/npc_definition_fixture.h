@@ -147,7 +147,7 @@ inline NpcSnapshot::Program program() {
   const auto insertItem=f.fn("WLD_INSERTITEM",{Type::INT,Type::STRING},true);
   const auto guild=f.fn("WLD_SETGUILDATTITUDE",{Type::INT,Type::INT,Type::INT},true);
   const auto mob=f.fn("WLD_SETMOBROUTINE",{Type::INT,Type::INT,Type::STRING,Type::INT},true);
-  const auto nested=f.fn("PLACE_NESTED"); f.begin(nested);
+  const auto nested=f.fn("STARTUP_TEST_PART_1"); f.begin(nested);
   f.op(Op::PUSHI,npc); f.op(Op::PUSHV,point); f.op(Op::BE,insertNpc);
   f.op(Op::PUSHI,item); f.op(Op::PUSHV,point); f.op(Op::BE,insertItem); f.op(Op::RSR);
   const auto dependentPlacement=f.fn("PLACE_DEPENDENT"); f.begin(dependentPlacement);

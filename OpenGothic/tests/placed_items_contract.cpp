@@ -1205,8 +1205,10 @@ std::vector<std::string> placementFirstWorld(Gothic& gothic) {
     for(const auto& [name,value]:expectedLocals)
       if(actualLocals.contains(name) && value!=actualLocals.at(name))
         std::printf("First-world placement VM local differs: %s\n",name.c_str());
-    std::printf("First-world NEWWORLD placement: %s NPCs, %s items; %zu saved/global state entries, %zu differences\n",
-                actual.at("NPC count").c_str(),actual.at("item count").c_str(),expected.size(),differences.size());
+    const auto* startup=gothic.world()->script().getVm().find_symbol_by_name("STARTUP_NEWWORLD");
+    std::printf("First-world NEWWORLD placement: %s NPCs, %s items; %zu saved/global state entries, %zu differences; STARTUP_NEWWORLD=%s\n",
+                actual.at("NPC count").c_str(),actual.at("item count").c_str(),expected.size(),differences.size(),
+                startup && NpcDefinitionContract::placements(gothic.world()->script()).placements.contains(startup->index()) ? "record" : "VM");
     }
   catch(...) {
     if(configuredBefore) setenv("OPENGOTHIC_PLACEMENT_RECORDS",previous.c_str(),1);

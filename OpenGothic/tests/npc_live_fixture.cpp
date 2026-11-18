@@ -94,6 +94,7 @@ void world(const fs::path& base) {
 
 fs::path program(const fs::path& base) {
   const auto value=NpcDefinitionFixture::program();
+  for(const char* name:{"TEST","ERROR_HELPER","MUTABLE_ROOT","ERROR_ROOT"}) fs::create_directories(base/"worlds"/name);
   fs::create_directories(base/"programs");
   std::string name;
   const auto sha=ProgramData::writeProgram(value.data,base/"programs",&name);
@@ -106,7 +107,7 @@ fs::path program(const fs::path& base) {
   NpcSnapshot::writeItems(value,definitions/"items.json");
   NpcSnapshot::writeRoutines(value,definitions/"routines.json");
   NpcSnapshot::writeNpcs(value,definitions/"npcs.json");
-  NpcSnapshot::writePlacements(value,definitions/"placement.json");
+  NpcSnapshot::writePlacements(value,definitions/"placement.json",base/"worlds");
   return definitions/"npcs.json";
   }
 

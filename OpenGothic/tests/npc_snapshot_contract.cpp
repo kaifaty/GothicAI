@@ -583,10 +583,14 @@ void npcDefinitions(const fs::path& dir) {
 void placementDefinitions(const fs::path& dir) {
   const auto program=NpcDefinitionFixture::program();
   const auto base=dir/"placement-definitions",file=base/"definitions"/program.sha256/"placement.json";
-  const auto counts=NpcSnapshot::writePlacements(program,file);
+  const auto worlds=base/"worlds";
+  for(const char* name:{"TEST","ERROR_HELPER","MUTABLE_ROOT","ERROR_ROOT"}) fs::create_directories(worlds/name);
+  const auto counts=NpcSnapshot::writePlacements(program,file,worlds);
   check(counts.total==5 && counts.captured==3,"placement corpus preserves captured and refused startup functions");
-  check(NpcSnapshot::verifyPlacements(program,file)==0,"every placement verifies from disk against a fresh VM");
+  check(NpcSnapshot::verifyPlacements(program,file,worlds)==0,"every placement verifies from disk against a fresh VM");
   const auto library=PlacementDefinitions::read(base,program.sha256);
+  check(!library.placements.contains("STARTUP_TEST_PART_1") && !library.uncaptured.contains("STARTUP_TEST_PART_1"),
+        "a nested STARTUP helper without its own world is expanded only in its caller");
   check(library.placements.at("STARTUP_GLOBAL").steps.size()==1 &&
         library.placements.at("STARTUP_GLOBAL").steps[0].function=="GAME_INITGERMAN",
         "an ignored external result at the void function boundary is captured");
@@ -608,7 +612,7 @@ void placementDefinitions(const fs::path& dir) {
   check(errorSteps.size()==3 && errorSteps[1].function=="PLACE_SCRIPT_ERROR" && errorSteps[1].deferred,
         "a lenient VM script error defers the helper without dropping adjacent calls");
   const auto second=dir/"placement-identical.json";
-  NpcSnapshot::writePlacements(program,second);
+  NpcSnapshot::writePlacements(program,second,worlds);
   std::ifstream a(file,std::ios::binary),b(second,std::ios::binary);
   check(std::string(std::istreambuf_iterator<char>(a),{})==std::string(std::istreambuf_iterator<char>(b),{}),
         "two placement imports are byte-identical");
@@ -617,7 +621,7 @@ void placementDefinitions(const fs::path& dir) {
     if(symbol.name=="POINT") symbol.string_values[0]="OTHER_WP";
   const auto encoded=ProgramData::encodeProgram(other.data);
   other.name=encoded.name; other.sha256=encoded.sha256;
-  NpcSnapshot::writePlacements(other,base/"definitions"/other.sha256/"placement.json");
+  NpcSnapshot::writePlacements(other,base/"definitions"/other.sha256/"placement.json",worlds);
 
   const auto* setting=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
   const bool present=setting!=nullptr;
