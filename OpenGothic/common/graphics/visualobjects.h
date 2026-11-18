@@ -192,6 +192,8 @@ class VisualObjects final {
       uint32_t            strandMeshlets = 0;    // strands: the first meshlets of the list that are drawn now; 0: not strands
       float               strandWider    = 1;    // ...and how much wider each strand is for the ones left out
       uint8_t             strandLevel    = 0;    // ...the level: 2^(-level/8) of the list
+      bool                tree           = false; // a tree in the wind: its sphere follows the wind's fade
+      uint16_t            treeFade       = 0;     // ...the fade its sphere is grown by now (preFrameUpdateTrees)
       bool                isGhost       = false;
       bool                visible       = true;
       Resources::TextureCategory textureCategory = Resources::TextureCategory::Dynamic;
@@ -226,6 +228,7 @@ class VisualObjects final {
     void     preFrameUpdateWind();
     void     preFrameUpdateMorph();
     void     preFrameUpdateStrands();
+    void     preFrameUpdateTrees();
 
     size_t   implAlloc();
     void     free(size_t id);
@@ -279,6 +282,7 @@ class VisualObjects final {
     std::unordered_set<size_t> objectsWind;
     std::unordered_set<size_t> objectsMorph;
     std::unordered_set<size_t> objectsStrand;
+    std::unordered_set<size_t> objectsTree;
     std::unordered_set<size_t> objectsFree;
     mutable std::recursive_mutex textureSync;
     ChunkResidency*            textureResidency = nullptr;

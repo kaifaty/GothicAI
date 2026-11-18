@@ -1,0 +1,125 @@
+#include "game/gamescript_daystats.h"
+#include "programdata.h"
+#include "world/npcactivityprobe.h"
+#include <rapidjson/document.h>
+#include <iostream>
+#include <stdexcept>
+
+namespace {
+using Type=daedalus::DaedalusDataType;
+using Op=daedalus::DaedalusOpcode;
+unsigned assertions=0;
+void check(bool value, const char* message) {
+  ++assertions;
+  if(!value) throw std::runtime_error(message);
+  }
+struct Sink final : NpcActivityProbe {
+  std::vector<AiQueue::AiAction> commands;
+  void phaseBegin(const Npc*,std::string_view) override {}
+  void phaseEnd(int) override {}
+  void random(const Npc*,uint32_t,uint32_t,bool) override {}
+  void queued(const Npc*,const AiQueue::AiAction& a) override {
+    commands.push_back(a);
+    }
+  void point(const Npc&,const WayPoint*,const WayPoint*) override {}
+  void mob(const Npc&,const Interactive&,bool) override {}
+  };
+std::string run() {
+  asset::ProgramRecord program;
+  program.version=50;
+  program.bytecode.push_back(std::byte(Op::RSR));
+  auto function=[&](const char* name,bool external=false) {
+    asset::ProgramSymbol symbol;
+    symbol.name=name;
+    symbol.type=uint32_t(Type::FUNCTION);
+    symbol.flags=daedalus::DaedalusSymbolFlag::CONST|(external ? daedalus::DaedalusSymbolFlag::EXTERNAL : 0);
+    symbol.return_type=uint32_t(Type::VOID);
+    program.symbols.push_back(std::move(symbol));
+    return uint32_t(program.symbols.size()-1);
+    };
+  auto op=[&](Op code) { program.bytecode.push_back(std::byte(code)); };
+  auto call=[&](Op code,uint32_t argument) {
+    op(code);
+    for(unsigned i=0;i<4;++i) program.bytecode.push_back(std::byte((argument>>(8*i))&255));
+    };
+  auto begin=[&](uint32_t id) { program.symbols[id].address=int32_t(program.bytecode.size()); };
+  const auto random=function("HLP_RANDOM",true);
+  const auto helper=function("HELPER");begin(helper);call(Op::BE,random);op(Op::RSR);
+  const auto a=function("ZS_A_LOOP");begin(a);call(Op::BL,uint32_t(program.symbols[helper].address));op(Op::RSR);
+  const auto b=function("ZS_B_LOOP");begin(b);call(Op::BL,uint32_t(program.symbols[helper].address));op(Op::RSR);
+  const auto outside=function("OUTSIDE");begin(outside);call(Op::BL,uint32_t(program.symbols[helper].address));op(Op::RSR);
+  daedalus::DaedalusVm vm(daedalus::DaedalusScript::from_program(std::move(program)));
+  unsigned previousCalls=0;
+  vm.observe_calls([&](const auto&) {++previousCalls;});
+  RoutineDefinitions::Library catalog;
+  catalog.routines["RTN_TEST"]={{8,0,20,0,"ZS_A","WP"},{20,0,8,0,"ZS_B","WP"}};
+  auto stats=DayScriptStats::attach(vm,catalog);
+  std::vector<std::string> sources;
+  vm.register_external("HLP_RANDOM",[&] {sources.push_back(stats->source(true,true)); stats->random(true,true);});
+  for(const auto name:{"ZS_A_LOOP","ZS_B_LOOP"}) {
+    stats->begin(name);
+    vm.call_function<void>(name);
+    stats->end();
+    }
+  stats->begin("ZS_A_LOOP");
+  for(const auto name:{"ZS_B_LOOP","OUTSIDE"}) {
+    stats->begin(name);
+    vm.call_function<void>(name);
+    stats->end();
+    }
+  stats->end();
+  vm.call_function<void>("OUTSIDE");
+  stats->random(false,true);
+  stats->random(false,false);
+  check(sources==std::vector<std::string>{"HLP_RANDOM/ZS_A/loop","HLP_RANDOM/ZS_B/loop","HLP_RANDOM/ZS_B/loop",
+                                        "HLP_RANDOM/outside/OUTSIDE","HLP_RANDOM/outside/OUTSIDE"},
+        "random ownership follows nested states and perceptions, then restores outside top-level");
+  const auto bytes=stats->json();
+  rapidjson::Document j;
+  j.Parse(bytes.c_str());
+  check(!j.HasParseError(),"valid counter JSON");
+  check(j["calls"].GetUint64()==10 && previousCalls==10,"all nested script calls and existing observer included");
+  check(j["states"]["ZS_A"]["phases"]["loop"]["engine"]==2,"engine phase entries counted separately from VM calls");
+  check(j["states"]["ZS_A"]["phases"]["loop"]["nested"]==1,"nested call belongs to phase");
+  check(j["states"]["ZS_A"]["phases"]["loop"]["instructions"]==4,"inclusive VM instruction count");
+  check(j["states"]["ZS_B"]["phases"]["loop"]["externals"]["HLP_RANDOM"]==2,"external attributed to the innermost state");
+  uint64_t total=0;
+  for(const auto& value:j["families"].GetObject()) total+=value.value.GetUint64();
+  check(total==j["calls"].GetUint64(),"family counts converge");
+  total=0;
+  for(const auto& value:j["random_sources"].GetObject()) total+=value.value.GetUint64();
+  check(total==7 && total==j["random"].GetUint64(),"all random sources converge");
+  stats->stop(vm);
+  vm.call_function<void>("OUTSIDE");
+  check(stats->json()==bytes && previousCalls==12,"stopped interval is inert, original observer retained");
+  return bytes;
+  }
+}
+int main() {
+  try {
+    check(NpcActivityProbe::instance==nullptr,"engine hooks disabled by default");
+    check(run()==run(),"repeated programs produce identical counter bytes");
+    Sink sink;
+    int actorToken=0;
+    auto* actor=reinterpret_cast<const Npc*>(&actorToken);
+    AiQueue queue;
+    NpcActivityProbe::instance=&sink;
+    queue.pushBack(AiQueue::aiUseMob("SMITH_ANVIL",1),actor);
+    NpcActivityProbe::instance=nullptr;
+    queue.pushBack(AiQueue::aiUseMob("SMITH_ANVIL",1),actor);
+    check(sink.commands.size()==1 && queue.size()==2,"engine enqueue trace observes every enabled command without changing queue");
+    check(sink.commands[0].act==AI_UseMob && sink.commands[0].s0=="SMITH_ANVIL" && sink.commands[0].i0==1,
+          "queue retains action arguments");
+    NpcActivityProbe::instance=&sink;
+    queue.pushBack(AiQueue::aiLookAtNpc(nullptr),actor);
+    queue.pushBack(AiQueue::aiLookAtNpc(const_cast<Npc*>(actor)),actor);
+    NpcActivityProbe::instance=nullptr;
+    check(sink.commands.size()==3 && queue.size()==3,"merged LookAtNpc commands are both traced");
+    check(sink.commands[1].act==AI_LookAtNpc && sink.commands[1].target==nullptr &&
+          sink.commands[2].act==AI_LookAtNpc && sink.commands[2].target==actor,
+          "merged LookAtNpc trace retains both original targets");
+    std::cout<<"NPC day contract passed: "<<assertions<<" assertions\n";
+    return 0;
+    }
+  catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
+  }

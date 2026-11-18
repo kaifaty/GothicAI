@@ -605,7 +605,7 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
   textFile(directory/"50-haze.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_HAZE","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"BLEND"},"haze":{"shift":3,"cell":5}},
     {"name":"OWN_TEST_LEAN","base":"OWN_TEST_FLIP","set":{},"lean":{"rise":1.8,"max_deg":45,"along":0.3,"grow":0.25,"grow_from":0.16},"wind":0.5},
-    {"name":"OWN_TEST_TAIL","base":"FIRE_SMOKE","set":{},"inherit":0.75,"drag":1,"wind":1,"plume":{"height":42,"rise":2.2,"wind":0.5}}]})");
+    {"name":"OWN_TEST_TAIL","base":"FIRE_SMOKE","set":{},"inherit":0.75,"drag":1,"wind":1,"plume":{"height":42,"rise":2.2,"wind":0.5},"light":{"range":450,"color":[255,150,60],"keys":[0.5,1,0],"fps":6}}]})");
   textFile(directory/"60-replace.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_PUFF","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":8,"rows":8,"frames":64,"fps":10,"once":true}},
     {"name":"FIRE_SPARKS","base":"OWN_TEST_SPARKS","replaces":true,"set":{"ppsValue":7.0},"with":["OWN_TEST_PUFF","OWN_TEST_TAIL"]}]})");
@@ -626,6 +626,9 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
           loaded.motions.at("OWN_TEST_TAIL").inherit==0.75f && lean.wind==0.5f &&
           loaded.motions.at("OWN_TEST_TAIL").wind==1.f && loaded.motions.at("OWN_TEST_TAIL").plumeHeight==42.f &&
           loaded.motions.at("OWN_TEST_TAIL").plumeRise==2.2f,"lean, inherit, wind and plume are read");
+  const auto& lit=loaded.motions.at("OWN_TEST_TAIL");
+  require(lit.lightRange==450.f && lit.lightColor[0]==255.f && lit.lightColor[1]==150.f && lit.lightColor[2]==60.f &&
+          lit.lightKeys==std::vector<float>({0.5f,1.f,0.f}) && lit.lightFps==6.f && lean.lightRange==0.f,"light is read");
   }
   require(loaded.flipbooks.at("OWN_TEST_PUFF").once && !loaded.flipbooks.at("OWN_TEST_FLIP").once &&
           loaded.effects.at("FIRE_SPARKS")->pps_value==7.f && loaded.motions.at("FIRE_SPARKS").drag==2.f &&
@@ -666,6 +669,9 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"lean-no-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"lean":{"rise":1.8}})"},
     {"lean-along",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"lean":{"rise":1.8,"along":0}})"},
     {"lean-grow",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"lean":{"rise":1.8,"grow":3}})"},
+    {"light-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":5,"color":[255,150,60]}})"},
+    {"light-color",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150]}})"},
+    {"light-fps",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150,60],"fps":6}})"},
     {"lean-no-rise",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"lean":{"max_deg":45}})"},
     {"inherit-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"inherit":0.5})"},
     {"replaces-none",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"replaces":true})"},

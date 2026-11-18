@@ -141,6 +141,11 @@ class ParticleFx final {
     // particles.d "haze": the shimmer of hot air, cm; hazeShift 0: off. Such an effect is Material::Ghost
     float         hazeShift = 0.f;
     float         hazeCell  = 0.f;
+    // particles.d "light" (ParticleContent::Motion): the light a spell effect of this one brings; lightRange 0: off
+    float         lightRange = 0.f;
+    Tempest::Vec3 lightColor;
+    KeyList       lightKeys;
+    float         lightFps   = 0.f;
 
     const Tempest::Texture2d* trlTexture = nullptr;
     float         trlFadeSpeed         = 0.f;

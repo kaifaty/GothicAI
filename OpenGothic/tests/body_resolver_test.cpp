@@ -348,28 +348,28 @@ void nativeCombatQueueProvenance() {
     auto action=AiQueue::aiAttack(); action.act=Action(ordinal); action.target=target;
     const bool replaceable=action.act==AI_Attack || action.act==AI_Wait ||
                            action.act==AI_GoToNpc || action.act==AI_TurnToNpc;
-    queue.pushBack(std::move(action));
+    queue.pushBack(std::move(action),nullptr);
     expect(!queue.nativeCombatOnly(target),"untagged script work cannot become native combat merely by action type");
     queue.clear();
     action=AiQueue::aiAttack(); action.act=Action(ordinal); action.target=target; action.nativeCombatTarget=target;
-    queue.pushBack(std::move(action));
+    queue.pushBack(std::move(action),nullptr);
     expect(queue.nativeCombatOnly(target)==replaceable,"native queue whitelist excludes output, animation, state and story work");
     expect(!queue.nativeCombatOnly(other),"native combat provenance is bound to the same target");
     queue.clear();
     }
   for(auto action:{AiQueue::aiAttack(),AiQueue::aiWait(200),AiQueue::aiGoToNpc(target),AiQueue::aiTurnToNpc(target)}) {
-    action.nativeCombatTarget=target; queue.pushBack(std::move(action));
+    action.nativeCombatTarget=target; queue.pushBack(std::move(action),nullptr);
     }
   const auto first=queue.front();
   for(unsigned repeat=0;repeat<32;++repeat)
     expect(queue.nativeCombatOnly(target) && queue.size()==4 && queue.front()==first,
            "native queue classification preserves every action and order");
   AiQueue::AiAction story; story.act=AI_Output; story.target=target; story.s0="story";
-  queue.pushBack(std::move(story));
+  queue.pushBack(std::move(story),nullptr);
   expect(!queue.nativeCombatOnly(target) && queue.size()==5,"one story action blocks the whole queue without clearing it");
   queue.clear();
   for(auto action:{AiQueue::aiGoToNpc(other),AiQueue::aiTurnToNpc(other)}) {
-    action.nativeCombatTarget=target; queue.pushBack(std::move(action));
+    action.nativeCombatTarget=target; queue.pushBack(std::move(action),nullptr);
     expect(!queue.nativeCombatOnly(target),"tagged navigation must still explicitly address the lease target");
     queue.clear();
     }

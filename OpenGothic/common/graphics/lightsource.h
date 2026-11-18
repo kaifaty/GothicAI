@@ -42,6 +42,7 @@ class LightSource final {
     void                 setFlicker(const PfxMotion::Flicker& f, float jitterCm, float swayHz = 0);
 
     void                 setTimeOffset(uint64_t t);
+    void                 setRangeOnce(bool once) { rangeOnce = once; }
 
     uint64_t             effectPrefferedTime() const;
 
@@ -63,6 +64,7 @@ class LightSource final {
     std::vector<float> rangeAniScale;
     uint64_t           rangeAniFPSInv = 0;
     bool               rangeSmooth = false;
+    bool               rangeOnce   = false; // the range keys play once and hold the last one (an own effect's fire)
 
     std::vector<Tempest::Vec3> colorAniList;
     uint64_t                   colorAniListFpsInv = 0;

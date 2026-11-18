@@ -1,4 +1,5 @@
 #include "npc_definition_fixture.h"
+#include "npcdaymeasurement.h"
 
 #include "baseidentity.h"
 #include "commandline.h"
@@ -7,6 +8,7 @@
 #include "gamemusic.h"
 #include "programdata.h"
 #include "resources.h"
+#include "world/objects/npc.h"
 #include "world/world.h"
 #include "worldchunks.h"
 #include "worlddata.h"
@@ -109,6 +111,56 @@ fs::path program(const fs::path& base) {
   NpcSnapshot::writeNpcs(value,definitions/"npcs.json");
   NpcSnapshot::writePlacements(value,definitions/"placement.json",base/"worlds");
   return definitions/"npcs.json";
+  }
+
+void npcDayRandom(World& world) {
+  const auto directory=std::filesystem::temp_directory_path()/("gothic-npc-day-live-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directories(directory);
+  const auto check=[](bool value,const char* message) { if(!value) throw std::runtime_error(message); };
+  auto& script=world.script();
+  auto* npc=world.addNpc(script.findSymbolIndex("NPC_NO_ID"),Tempest::Vec3{});
+  check(npc!=nullptr,"day trace NPC must exist");
+  std::string error;
+  if(!NpcDayMeasurement::start(world,directory.string(),0,false,{"NPC_NO_ID"},error)) throw std::runtime_error(error);
+  script.invokeState(npc,nullptr,nullptr,script.getVm().find_symbol_by_name("ZS_TEST")->index());
+  npc->aiPush(AiQueue::aiUseMob("SMITH_ANVIL",1));
+  npc->aiPush(AiQueue::aiOutputSvmOverlay(*npc,"TEST_OVERLAY",7));
+  NpcDayMeasurement::stop(world);
+  std::ifstream file(directory/"npc-day-script.json");
+  const std::string bytes{std::istreambuf_iterator<char>(file),{}};
+  rapidjson::Document document;
+  document.Parse(bytes.c_str());
+  check(!document.HasParseError(),"live day counters must be valid JSON");
+  const auto& stats=document["stats"];
+  const auto& phase=stats["states"]["ZS_TEST"]["phases"]["init"];
+  check(phase["engine"].GetUint64()==1 && phase["random"].GetUint64()==1,
+          "invokeState must attribute the real Hlp_Random draw to its phase");
+  const auto& sources=stats["random_sources"];
+  check(stats["random"].GetUint64()==1 && sources.HasMember("HLP_RANDOM/ZS_TEST/init") &&
+          sources["HLP_RANDOM/ZS_TEST/init"].GetUint64()==1,
+          "GameScript random origin must reach the measurement probe");
+  std::ifstream trace(directory/"npc-day-activity.jsonl");
+  unsigned commands=0;
+  for(std::string line;std::getline(trace,line);) {
+    document.Parse(line.c_str());
+    check(!document.HasParseError(),"live day activity must be valid JSONL");
+    if(std::string_view(document["kind"].GetString())!="queue") continue;
+    check(document["npc"].GetUint()==world.npcId(npc) && document["symbol"]=="NPC_NO_ID",
+          "queued command must retain its actor");
+    if(commands==0)
+      check(document["action"].GetInt()==AI_UseMob && document["action_name"]=="UseMob" &&
+            document["s0"]=="SMITH_ANVIL" && document["i0"]==1,"aiPush must write the mob command to JSONL");
+    else
+      check(document["action"].GetInt()==AI_OutputSvmOverlay && document["action_name"]=="OutputSvmOverlay" &&
+            document["s0"]=="TEST_OVERLAY" && document["i0"]==7 && document["target"]=="NPC_NO_ID",
+            "aiPush must write the overlay command to JSONL");
+    ++commands;
+    }
+  check(commands==2,"both regular and overlay aiPush commands must reach JSONL");
+  world.removeNpc(*npc);
+  std::filesystem::remove_all(directory);
+  std::puts("Live NPC day random: invokeState, VM Hlp_Random, engine rand and measurement attributed one draw");
+  std::puts("Live NPC day queue: regular and overlay aiPush commands reached JSONL with their arguments");
   }
 
 void mutations(const fs::path& file, Gothic& gothic, void (*compare)(World&)) {
@@ -222,6 +274,7 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
   GameMusic music;
   gothic.setGame(std::make_unique<GameSession>("NPC_CONTRACT.ZEN"));
   compare(*gothic.world());
+  npcDayRandom(*gothic.world());
   placement(*gothic.world());
   mutations(definitions,gothic,compare);
   gothic.clearGame().reset();

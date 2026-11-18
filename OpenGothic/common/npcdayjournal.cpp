@@ -1,4 +1,5 @@
 #include "npcdayjournal.h"
+#include "npcdaymeasurement.h"
 
 #include <Tempest/Log>
 
@@ -64,18 +65,6 @@ struct Journal {
 
 Journal& journal() { static Journal j; return j; }
 
-const char* actionName(uint32_t act) {
-  static const char* names[] = {
-    "None","LookAtNpc","StopLookAt","RemoveWeapon","TurnToNpc","GoToNpc","GoToNextFp","GoToPoint",
-    "StartState","PlayAnim","PlayAnimBs","Wait","StandUp","StandUpQuick","EquipArmor","EquipBestArmor",
-    "EquipMelee","EquipRange","UseMob","UseItem","UseItemToState","Teleport","DrawWeaponMelee",
-    "DrawWeaponRange","DrawSpell","Attack","Flee","Dodge","UnEquipWeapons","UnEquipArmor","Output",
-    "OutputSvm","OutputSvmOverlay","ProcessInfo","StopProcessInfo","ContinueRoutine","AlignToFp",
-    "AlignToWp","SetNpcsToState","SetWalkMode","FinishingMove","DrawWeapon","TakeItem","GotoItem",
-    "PointAtNpc","PointAt","StopPointAt","PrintScreen","LookAt","WhirlToNpc","TurnAway",
-    };
-  return act<sizeof(names)/sizeof(names[0]) ? names[act] : "?";
-  }
 
 std::string clean(std::string_view s) {
   std::string ret(s.empty() ? std::string_view("-") : s);
@@ -197,7 +186,7 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
     const auto* head = npc->aiQueueFront();
     std::string headText = "-";
     if(head!=nullptr) {
-      headText = actionName(uint32_t(head->act));
+      headText = AiQueue::actionName(uint32_t(head->act));
       if(head->point!=nullptr)
         headText += " "+clean(head->point->name);
       else if(head->target!=nullptr)
@@ -312,6 +301,7 @@ void writeHeader(World& w, Journal& j, const std::string& summary) {
   }
 
 void finish(World& w, Journal& j, const char* reason) {
+  NpcDayMeasurement::stop(w);
   const auto& s = w.npcSimTierStats();
   const double wall = std::chrono::duration<double>(Clock::now()-j.wallStart).count();
   const double fullMs = s.fullTickMsTotal-j.tiersAtStart.fullTickMsTotal;
@@ -407,6 +397,11 @@ bool NpcDayJournal::start(World& w, const Options& options, std::string& error) 
   if(j.arrivals!=nullptr)
     std::fprintf(j.arrivals,"t_min,key,world_tick_ms,start_tick_ms,start_t_min,start_observed,kind,destination,target_id,target_key,"
                             "target_x,target_y,target_z,x,y,z,zs,queue_head,body,executor\n");
+  if(options.scriptProbe && !NpcDayMeasurement::start(w,options.directory,options.seed,options.isolate,options.traceNpcs,error)) {
+    for(auto** f:{&j.samples,&j.events,&j.cost,&j.heights,&j.arrivals})
+      if(*f) { std::fclose(*f); *f=nullptr; }
+    return false;
+    }
   j.active       = true;
   j.startMs      = w.time().toInt();
   j.endMs        = j.startMs+int64_t(options.minutes)*60000;
@@ -456,6 +451,7 @@ void NpcDayJournal::tick(World& w) {
   auto& j = journal();
   if(!j.active)
     return;
+  NpcDayMeasurement::tick(w);
   ++j.tick;
   for(uint32_t i=0; i<w.npcCount(); ++i) {
     auto* npc = w.npcById(i);
@@ -554,7 +550,7 @@ void NpcDayJournal::arrived(const Npc& npc) {
                clean(goal.kind).c_str(),clean(goal.name).c_str(),targetId==uint32_t(-1) ? -1ll : (long long)targetId,
                targetKey.c_str(),double(goal.position.x),double(goal.position.y),double(goal.position.z),
                double(p.x),double(p.y),double(p.z),symbolName(w,npc.currentState().ptr).c_str(),
-               head!=nullptr ? actionName(uint32_t(head->act)) : "-",uint32_t(npc.bodyStateMasked()),
+               head!=nullptr ? AiQueue::actionName(uint32_t(head->act)) : "-",uint32_t(npc.bodyStateMasked()),
                npc.usesSimplifiedMovement() ? "graph" : "native");
   if(movement!=j.movements.end())
     j.movements.erase(movement);

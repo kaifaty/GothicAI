@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 class World;
 class Npc;
@@ -30,6 +31,8 @@ struct Options {
   // The streams are dropped when the journal finishes or stops. Do not combine
   // with BodyArena in one scenario: it isolates and clears streams itself.
   bool        isolate = true;
+  bool        scriptProbe = false;
+  std::vector<std::string> traceNpcs;
   };
 
 bool start(World& world, const Options& options, std::string& error);

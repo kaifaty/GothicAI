@@ -992,7 +992,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `npctier <npc> full\|simplified\|auto` | Override one NPC tier until reset or reload. Hero, training and arena actors stay Full. |
 | `npctier-test <npc> <start waypoint> <end waypoint>` | Verify 20 switches in each direction during movement and turns, unchanged remaining path/destination and every arrival. `npc-tier-transitions` runs the fixture on a fresh NEWWORLD. |
 | `npcspeed <start waypoint>` | Compare Sequence speed with Full and Simplified movement on one authored edge for human/orc/wolf in walk/run/sneak; appended to `npc-tier-transitions`. Removes ambient NPCs for calibration. |
-| `npcday <game minutes> [period 5] [shared]` | Journal every NPC over continuous game time ([NPC day parity](#npc-day-parity)); the scenario waits until the time has passed. Every NPC gets a private script random stream from the last `seed`; `shared` keeps the game's one shared stream. |
+| `npcday <game minutes> [period 5] [shared] [probe] [trace=id,name]` | Journal every NPC over continuous game time ([NPC day parity](#npc-day-parity)); the scenario waits until the time has passed. Every NPC gets a private script random stream from the last `seed`; `shared` keeps the game's one shared stream. |
 | `ui on\|off` | the interface in the captured frames, as the player sees it: subtitles, the input line, the deal window (off by default: only the world) |
 | `label <text>` | text on the overlay |
 | `ik on\|off`, `ik param <name> <value>`, `ik params` | foot IK and its parameters, without rebuilding; `ik off` on a four-legged creature brings back the old whole-body tilt |
@@ -1059,6 +1059,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `tree-wind-probe.bench` | the tree's wind on a probe: six rough spruces of 12 m on the meadow east of the tavern, built by `scripts/content/tree_wind_probe.py` (`OPENGOTHIC_CONTENT=<that set>`). Stills only, each timed with `foliage wait-gust`: `far` from 26 m at the peak of a gust and `far-lull` in the calm after it, `shade` from the east back at the spruces for their shadows on the slope, `near` from 5 m up into the lower tiers. Run it twice, with `OPENGOTHIC_FOLIAGE=0` and without, and put the halves side by side: the tops lean down the wind (+Z) and the shadows with them. `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen`; the cameras stand by `SPOTS` of the script ([note](../../reports/engine/2026-11-16-modern-trees/tree-wind.md#кадры-пробы)) |
 | `fir-probe.bench` | the modern spruce A on a probe: five spruces of 14 to 22 m along the north edge of the meadow east of the tavern, beside the original's firs, built by `scripts/content/fir_set.py probe` (`OPENGOTHIC_CONTENT=<that set>`). Stills only, at noon, each in the calm after a gust (`foliage wait-lull`): `row` and `far` from the meadow's south-west corner (`far` is 30 m from the 18 m spruce), `near` 5 m from its lower boughs, `close` 2 m from the skirt up into the lower tiers. The noon sun stands in the west, so the cameras look north-east; they stand by `PROBE` of the script. `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([note](../../reports/content/2026-11-trees/fir/README.md#модель)) |
 | `fir-wind.bench` | the wind on the modern spruce A, on the probe of `fir-probe.bench` (`OPENGOTHIC_CONTENT=<that set>`), at noon. Clips, not stills: three of 20 s, each from 3 s before the peak of a gust (`foliage wait-gust 3000 0`) through the gust and the calm after it: `wind-far` 30 m from the 18 m spruce, `wind-near` 5 m from its lower boughs, `wind-bough` 3 m from a bough in the sun. The world's wind blows along +Z, away from the cameras and to their left, so the windward side of the spruce is on the right. A motion is judged on the clip, two runs side by side. `TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen` ([note](../../reports/engine/2026-11-16-modern-trees/tree-wind.md#клипы-было-и-стало)) |
+| `fir-wind-fade.bench` | the fade of a tree's wind with the distance, on the modern spruce A of the probe of `fir-probe.bench` (`OPENGOTHIC_CONTENT=<that set>`), at noon. Six standing clips of 20 s on one line of sight, each from 3 s before the peak of a gust: `fade-15`, `fade-26`, `fade-45`, `fade-100`, `fade-140`, `fade-190` — the name is the camera's distance to the spruce's root in metres. At 1920x1080 the needles of this spruce fade from 20 to 32 m, its boughs from 76 to 127 m, its trunk from 110 to 175 m. Run it twice, with `OPENGOTHIC_TREE_WIND_FADE=0` and without: the gusts are the same tick for tick, so the clips go side by side. `TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen` ([note](../../reports/engine/2026-11-16-modern-trees/tree-wind.md#клипы-выключено-и-включено)) |
 | `crown-light.bench` | the light of a tree's crown away from the noon sun, on the probe of `fir-probe.bench` (set `fir-probe-4`): `dusk-far`, `dusk-near`, `dusk-close` at 21:15 with that scenario's cameras (the sun 2 degrees high behind the spruces, the sky lights the side the cameras see), then at night by a fire `lamp-far`, `lamp-near` (the lit boughs and the depth) and `lamp-through` (the boughs between the eye and the flame). The fire is one more file of the item layer: copy the set and put `reports/engine/2026-11-16-modern-trees/crown-light-lamp.json` into its `worlds/NEWWORLD/vobs.d/` (`OPENGOTHIC_CONTENT=<that copy>`). Pair a run with `OPENGOTHIC_CROWN_LIGHT=0`; the noon pair is `fir-probe.bench` run the same way, and `OPENGOTHIC_CROWN_LIGHT=mask` at noon paints the crown by its openness (the mask is wrong at dusk and at night). `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([note](../../reports/engine/2026-11-16-modern-trees/crown-light.md#как-повторить)) |
 | `perf-trees.bench` | the cost of a forest of the modern spruce A, place `trees` of `scripts/perf.sh`: sets of `scripts/content/fir_set.py forest` (64, 256 or 1 024 spruces 6.6 m apart in the basin of Akil's farm, full or thinned; `--count 0` is the control), `PERF_ENV='OPENGOTHIC_CONTENT=<path on the host> OPENGOTHIC_GPU_PASSES=1'`. Five samples at noon: `view-1` inside the block of 64, `view-2` 30 m from the edge (from the rock hill), `view-3` 100 m, `view-4` 300 m (70 m over the ground), `view-5` the hero runs 9 s through the forest; the views look over the basin's obstacles. All variants in one quiet job: `reports/engine/2026-11-16-modern-trees/tree-cost/run.sh` ([note](../../reports/engine/2026-11-16-modern-trees/tree-cost.md)) |
 | `tree-cost.bench` | spruce A alone on the top of the rock hill west of the forest of `perf-trees.bench` (`LONE` of `fir_set.py`), from the west at the height of the middle of its crown, from 24, 48, 97, 194 and 388 m: 800 to 50 px high at 2560x1440; each still in the calm after a gust. Run once per set of `fir_set.py forest` (the lone spruce is thinned with its set) and put the halves side by side. `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([note](../../reports/engine/2026-11-16-modern-trees/tree-cost.md#полная-или-упрощённая-силуэт)) |
@@ -1893,6 +1894,8 @@ explain the bounds and remaining combat/body work. `npcday` files:
 | `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag |
 | `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
 | `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
+| `npc-day-script.json` | Opt-in `probe`: deterministic script calls by symbol/family, per-state engine Init/Loop/End entries, nested calls, inclusive VM instruction counts, externals and RNG sources. Header records `npc` or `shared` random streams. |
+| `npc-day-activity.jsonl` | Opt-in `trace=ID,SYMBOL,display-name`: phase entry/result, engine queue commands with raw action arguments, RNG bound/result/source, FP and MOB occupancy, observed body-state changes. Numeric IDs are world-array NPC IDs; symbols select all matching instances. |
 | `npc-day-arrivals.csv` | Audit-only exact terminal arrivals, observed movement start, final goal identity, actor/target position, ZS, queue and executor; it adds no records to the strict samples/events files. |
 
 The society stand's core is checked against the same journal: `scripts/society_parity.py` compares its marks
@@ -1904,6 +1907,47 @@ keeps the game's single stream. The journal drops exactly the streams it registe
 stops, so commands after `npcday` use the shared stream again. Do not combine `npcday` with the body arena
 in one scenario: the arena isolates its actors and clears all streams on reset. `std::rand` (sound variants, gestures, parry variant) is not reseeded.
 States that start and end within one world tick are not seen by the event poll.
+
+`probe` and `trace=...` install measurement only for that journal interval; both are off by default.
+The original journal fields and event thresholds are unchanged. `trace=` implies `probe`.
+The instruction metric includes helpers and reentrant script work during the engine phase; it is
+not wall time. `engine` counts entries through `invokeState`, while `nested` excludes that entry.
+Family counts classify called symbols; per-state nested costs additionally attribute helpers to
+the executing phase. Summing families equals `calls`; summing `random_sources` equals `random`.
+Human routine membership and row counts come from the selected base's `routines.json`.
+Native draws with an actor are combat (all current native actor call sites are in fight tactics,
+damage, melee or ranged combat); actorless native draws are `native_other`. `std::rand` is a different
+stream and is not counted. Body state is a derived value: the trace observes it at phase boundaries,
+MOB changes and every journal tick. Occupancy and queue events are observed at the engine mutation.
+Queue `action` uses the `Action` enum in `game/rpgvocabulary.h`; `i0/i1/i2/s0/s1` retain its full arguments
+(wait duration in ms, animation or MOB scheme in `s0`, item symbol in `i0` for item-use actions).
+
+`npcday-save <npc> [minutes 60] [period 5] [shared]` waits up to one game day for an executed
+`ZS_SMITH_ANVIL_LOOP` on an occupied `BSANVIL`, writes `session-activity.sav`, then journals
+and traces the next hour. It leaves the actor's routine and position untouched. Load that save in a
+fresh process with a scenario with `cheat god` followed by `npcday 60 5 shared probe trace=<symbol>`.
+With explicit `SAVE=` and no `WORLD`, an opening `cheat god` followed immediately by `npcday`
+restores god mode and starts the journal at `dt=0`, before the first positive loaded-world step.
+This applies with measurement enabled or disabled. Fresh-world journals retain the normal command
+boundary after the first step. The trace header retains each scenario's last explicit `seed` as metadata;
+exclude only that header field when comparing a load, without reseeding the shared stream, and
+require equal start times and all other header fields. Use the same stream mode
+and compare the complete activity trace and strict sample/event files. A current-game save/load
+mismatch is reported as the first differing record, never corrected by this measuring step.
+The current checkpoint control verifies equal initial `world_ms`/native ticks before comparing
+records. It exposes a 1 ms trace shift from the restarted 30 FPS bench cadence and a recalculated
+transient NPC simulation tier; state timers and the game-time remainder are saved. The current
+boundaries, first differences and source analysis are in the
+[D4 baseline](../../reports/engine/2026-11-14-npc-data/d4-baseline.md#харад-и-загрузка-на-занятии).
+`npc-day-smith-save.bench` and `npc-day-smith-reload.bench` provide this fixture for Harad.
+`gothic-npc-day-contract` checks nested VM calls, random ownership, totals, repeated JSON bytes and
+actual engine queue observation on a synthetic program, without game data. The synthetic fixture of
+`gothic-placed-items-contract` additionally exercises `invokeState` through the real `Hlp_Random`,
+`GameScript::rand` and measurement probe, and verifies JSONL commands from both regular and overlay
+`Npc::aiPush` queues. The day contract also checks that merged `LookAtNpc` commands are both traced.
+Repeated probe intervals in one VM retain inactive call observer links and their collectors;
+removable VM observers are tracked in [#1550](https://github.com/kaifaty/GothicAI/issues/1550).
+
 
 `scripts/npc_day_parity.py` matches samples by time and key and leaves the hero out, with his events
 (`--min-hero-distance <m>` also leaves out NPCs near him). Completeness gates come first, because the metrics

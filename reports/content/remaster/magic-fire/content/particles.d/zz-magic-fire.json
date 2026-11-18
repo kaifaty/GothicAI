@@ -394,9 +394,1766 @@
    }
   },
   {
+   "name": "OWN_BALL_HAND_CORE",
+   "base": "OWN_BOLT_HEAD",
+   "set": {
+    "ppsValue": 40.0,
+    "lspPartAvg": 160.0,
+    "lspPartVar": 30.0,
+    "visSizeStart_S": "20 20",
+    "visSizeEndScale": 0.7,
+    "shpDim_S": "1.5"
+   }
+  },
+  {
+   "name": "OWN_BALL_HAND_LICKS",
+   "base": "OWN_HAND_LICKS",
+   "inherit": 0.9,
+   "set": {
+    "ppsValue": 30.0,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 0,
+    "shpDim_S": "7",
+    "visSizeStart_S": "9 13",
+    "lspPartAvg": 320.0,
+    "lspPartVar": 80.0
+   }
+  },
+  {
+   "name": "MFX_FIREBALL_INIT",
+   "base": "OWN_HAND_FLAME",
+   "replaces": true,
+   "with": [
+    "OWN_BALL_HAND_CORE",
+    "OWN_BALL_HAND_LICKS"
+   ],
+   "set": {
+    "visSizeStart_S": "20 26",
+    "shpFOR_S": "WORLD",
+    "shpOffsetVec_S": "0 10 0"
+   },
+   "lean": {
+    "rise": 1.4,
+    "max_deg": 70,
+    "response": 0.1
+   }
+  },
+  {
+   "name": "OWN_BALL_HEAD",
+   "base": "OWN_BOLT_HEAD",
+   "set": {
+    "ppsValue": 40.0,
+    "lspPartAvg": 120.0,
+    "lspPartVar": 25.0,
+    "visSizeStart_S": "30 30",
+    "shpDim_S": "3"
+   }
+  },
+  {
+   "name": "OWN_BALL_FLAMES",
+   "base": "OWN_HAND_LICKS",
+   "inherit": 0.9,
+   "flipbook": {
+    "cols": 8,
+    "rows": 8,
+    "frames": 64,
+    "fps": 30
+   },
+   "hdr": {
+    "from": 1,
+    "to": 3,
+    "edge": 0.3
+   },
+   "set": {
+    "ppsValue": 22.0,
+    "visAlphaStart": 170.0,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "6",
+    "visName_S": "OWN_FIREBALL.TGA",
+    "visSizeStart_S": "62 62",
+    "visSizeEndScale": 0.75,
+    "lspPartAvg": 200.0,
+    "lspPartVar": 40.0,
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 0 0"
+   }
+  },
+  {
+   "name": "OWN_BALL_LICKS",
+   "base": "OWN_HAND_LICKS",
+   "inherit": 0.8,
+   "set": {
+    "ppsValue": 90.0,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 0,
+    "shpDim_S": "16",
+    "visSizeStart_S": "20 28",
+    "visSizeEndScale": 0.6,
+    "lspPartAvg": 260.0,
+    "lspPartVar": 70.0,
+    "velAvg": 0.02,
+    "velVar": 0.01
+   }
+  },
+  {
+   "name": "OWN_BALL_ROOT",
+   "base": "OWN_BOLT_ROOT",
+   "set": {
+    "visSizeStart_S": "70 90",
+    "shpFOR_S": "WORLD",
+    "shpOffsetVec_S": "0 45 0"
+   }
+  },
+  {
+   "name": "OWN_BALL_EMBERS",
+   "base": "OWN_BOLT_EMBERS",
+   "set": {
+    "ppsValue": 220.0,
+    "shpDim_S": "12",
+    "lspPartAvg": 1100.0,
+    "lspPartVar": 450.0
+   }
+  },
+  {
+   "name": "OWN_BALL_HEAT",
+   "base": "LIGHTSMOKE",
+   "haze": {
+    "shift": 5.0,
+    "cell": 4.0
+   },
+   "inherit": 1.0,
+   "drag": 0.3,
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visAlphaFunc_S": "BLEND",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 0.0,
+    "visTexColorStart_S": "255 255 255",
+    "visTexColorEnd_S": "255 255 255",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 0 0",
+    "velAvg": 0.01,
+    "velVar": 0.005,
+    "flyGravity_S": "0 0 0",
+    "visOrientation_S": "NONE",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0,
+    "ppsValue": 24.0,
+    "lspPartAvg": 170.0,
+    "lspPartVar": 40.0,
+    "shpDim_S": "10",
+    "visSizeStart_S": "120 120",
+    "visSizeEndScale": 1.2
+   }
+  },
+  {
+   "name": "OWN_BALL_WAKE",
+   "base": "LIGHTSMOKE",
+   "haze": {
+    "shift": 8.0,
+    "cell": 4.0
+   },
+   "inherit": 0.1,
+   "drag": 0.3,
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visAlphaFunc_S": "BLEND",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 0.0,
+    "visTexColorStart_S": "255 255 255",
+    "visTexColorEnd_S": "255 255 255",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 0 0",
+    "velAvg": 0.01,
+    "velVar": 0.005,
+    "flyGravity_S": "0 0 0",
+    "visOrientation_S": "NONE",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0,
+    "ppsValue": 45.0,
+    "lspPartAvg": 520.0,
+    "lspPartVar": 100.0,
+    "shpDim_S": "10",
+    "visSizeStart_S": "70 70",
+    "visSizeEndScale": 2.0
+   }
+  },
+  {
+   "name": "MFX_IFB_PFXTRAIL",
+   "base": "OWN_HAND_FLAME",
+   "replaces": true,
+   "with": [
+    "OWN_BALL_HEAD",
+    "OWN_BALL_FLAMES",
+    "OWN_BALL_LICKS",
+    "OWN_BALL_ROOT",
+    "OWN_BALL_EMBERS",
+    "OWN_BALL_HEAT",
+    "OWN_BALL_WAKE"
+   ],
+   "set": {
+    "visSizeStart_S": "80 170",
+    "shpFOR_S": "WORLD",
+    "shpOffsetVec_S": "0 85 0"
+   },
+   "lean": {
+    "rise": 1.8,
+    "max_deg": 87,
+    "response": 0.03,
+    "along": 0.3,
+    "grow": 0.3,
+    "grow_from": 0.25
+   }
+  },
+  {
+   "name": "MFX_IFB_CAST",
+   "base": "OWN_BOLT_EMBERS",
+   "replaces": true,
+   "set": {
+    "ppsValue": 40.0,
+    "shpDim_S": "14",
+    "lspPartAvg": 1300.0,
+    "lspPartVar": 500.0
+   }
+  },
+  {
+   "name": "OWN_BALL_HIT_FLASH",
+   "base": "OWN_BOLT_HIT_FLASH",
+   "set": {
+    "ppsValue": 3.0,
+    "lspPartAvg": 130.0,
+    "lspPartVar": 20.0,
+    "visSizeStart_S": "120 120",
+    "shpDim_S": "6"
+   }
+  },
+  {
+   "name": "OWN_BALL_HIT_BLAST",
+   "base": "OWN_HAND_LICKS",
+   "inherit": 0.0,
+   "flipbook": {
+    "cols": 8,
+    "rows": 4,
+    "frames": 25,
+    "fps": 16,
+    "once": true
+   },
+   "hdr": {
+    "from": 1,
+    "to": 5,
+    "edge": 0.15
+   },
+   "set": {
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 1.0,
+    "shpType_S": "POINT",
+    "shpDim_S": "0",
+    "shpOffsetVec_S": "0 0 0",
+    "visName_S": "OWN_EXPLOSION_FIRE.TGA",
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 3e-05 0",
+    "visSizeStart_S": "160 160",
+    "visSizeEndScale": 2.1,
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 255.0,
+    "lspPartAvg": 1500.0,
+    "lspPartVar": 0.0
+   }
+  },
+  {
+   "name": "OWN_BALL_HIT_CLOUD",
+   "base": "OWN_BOLT_HIT_PUFF",
+   "flipbook": {
+    "cols": 8,
+    "rows": 4,
+    "frames": 25,
+    "fps": 16,
+    "once": true
+   },
+   "set": {
+    "ppsValue": 1.0,
+    "shpType_S": "POINT",
+    "shpIsVolume": 0,
+    "shpDim_S": "0",
+    "shpOffsetVec_S": "0 0 0",
+    "visName_S": "OWN_EXPLOSION_SMOKE.TGA",
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 3e-05 0",
+    "visSizeStart_S": "160 160",
+    "visSizeEndScale": 2.1,
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 130.0,
+    "lspPartAvg": 1500.0,
+    "lspPartVar": 0.0
+   }
+  },
+  {
+   "name": "OWN_BALL_HIT_SPARKS",
+   "base": "OWN_BOLT_HIT_SPARKS",
+   "set": {
+    "ppsValue": 180,
+    "shpDim_S": "12",
+    "velAvg": 0.75,
+    "velVar": 0.45,
+    "lspPartAvg": 1300.0,
+    "lspPartVar": 500.0,
+    "visSizeStart_S": "0.8 0.8"
+   }
+  },
+  {
+   "name": "OWN_BALL_HIT_SMOKE",
+   "base": "OWN_BOLT_HIT_PUFF",
+   "set": {
+    "ppsValue": 9,
+    "shpDim_S": "45",
+    "visSizeStart_S": "70 70",
+    "visSizeEndScale": 2.8,
+    "visAlphaStart": 80.0,
+    "lspPartAvg": 2800.0,
+    "lspPartVar": 500.0,
+    "velAvg": 0.05,
+    "velVar": 0.02,
+    "flyGravity_S": "0 4e-05 0"
+   }
+  },
+  {
+   "name": "OWN_BALL_HIT_HEAT",
+   "base": "LIGHTSMOKE",
+   "haze": {
+    "shift": 9.0,
+    "cell": 4.0
+   },
+   "inherit": 0.0,
+   "drag": 0.3,
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visAlphaFunc_S": "BLEND",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 0.0,
+    "visTexColorStart_S": "255 255 255",
+    "visTexColorEnd_S": "255 255 255",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 0 0",
+    "velAvg": 0.01,
+    "velVar": 0.005,
+    "flyGravity_S": "0 0 0",
+    "visOrientation_S": "NONE",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0,
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 5.0,
+    "lspPartAvg": 600.0,
+    "lspPartVar": 100.0,
+    "shpDim_S": "25",
+    "visSizeStart_S": "160 160",
+    "visSizeEndScale": 1.8
+   }
+  },
+  {
+   "name": "MFX_FIREBALL_COLLIDE1",
+   "base": "OWN_HAND_LICKS",
+   "replaces": true,
+   "inherit": 0.0,
+   "drag": 3.5,
+   "with": [
+    "OWN_BALL_HIT_CLOUD",
+    "OWN_BALL_HIT_BLAST",
+    "OWN_BALL_HIT_FLASH",
+    "OWN_BALL_HIT_SPARKS",
+    "OWN_BALL_HIT_SMOKE",
+    "OWN_BALL_HIT_HEAT"
+   ],
+   "light": {
+    "range": 800,
+    "color": [
+     255,
+     170,
+     80
+    ],
+    "fps": 8.0,
+    "keys": [
+     1,
+     1,
+     0.85,
+     0.6,
+     0.4,
+     0.22,
+     0.1,
+     0
+    ]
+   },
+   "set": {
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 60,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "14",
+    "velAvg": 0.8,
+    "velVar": 0.3,
+    "flyGravity_S": "0 0.0001 0",
+    "visSizeStart_S": "30 42",
+    "visSizeEndScale": 1.9,
+    "lspPartAvg": 480.0,
+    "lspPartVar": 130.0,
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0
+   }
+  },
+  {
+   "name": "OWN_CB1_CORE",
+   "base": "OWN_BOLT_HEAD",
+   "set": {
+    "ppsValue": 40.0,
+    "lspPartAvg": 120.0,
+    "lspPartVar": 25.0,
+    "visSizeStart_S": "24 24",
+    "shpDim_S": "2.4"
+   }
+  },
+  {
+   "name": "OWN_CB1_FLAMES",
+   "base": "OWN_BALL_FLAMES",
+   "set": {
+    "shpDim_S": "4.8",
+    "visSizeStart_S": "49.6 49.6"
+   }
+  },
+  {
+   "name": "OWN_CB1_LICKS",
+   "base": "OWN_BALL_LICKS",
+   "set": {
+    "shpDim_S": "12.8",
+    "visSizeStart_S": "16 22.4"
+   }
+  },
+  {
+   "name": "OWN_CB1_EMBERS",
+   "base": "OWN_BALL_EMBERS",
+   "set": {
+    "ppsValue": 128,
+    "shpDim_S": "9.6"
+   }
+  },
+  {
+   "name": "OWN_CB1_HEAT",
+   "base": "LIGHTSMOKE",
+   "haze": {
+    "shift": 5.0,
+    "cell": 4.0
+   },
+   "inherit": 1.0,
+   "drag": 0.3,
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visAlphaFunc_S": "BLEND",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 0.0,
+    "visTexColorStart_S": "255 255 255",
+    "visTexColorEnd_S": "255 255 255",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 0 0",
+    "velAvg": 0.01,
+    "velVar": 0.005,
+    "flyGravity_S": "0 0 0",
+    "visOrientation_S": "NONE",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0,
+    "ppsValue": 24.0,
+    "lspPartAvg": 170.0,
+    "lspPartVar": 40.0,
+    "shpDim_S": "8",
+    "visSizeStart_S": "96 96",
+    "visSizeEndScale": 1.2
+   }
+  },
+  {
+   "name": "MFX_CHARGEFB_CAST",
+   "base": "OWN_HAND_LICKS",
+   "replaces": true,
+   "inherit": 0.3,
+   "with": [
+    "OWN_CB1_CORE",
+    "OWN_CB1_FLAMES",
+    "OWN_CB1_LICKS",
+    "OWN_CB1_EMBERS",
+    "OWN_CB1_HEAT"
+   ],
+   "set": {
+    "ppsValue": 70.0,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "9.6",
+    "visSizeStart_S": "27.2 38.4",
+    "visSizeEndScale": 0.5,
+    "lspPartAvg": 330.0,
+    "lspPartVar": 90.0,
+    "velAvg": 0.02,
+    "velVar": 0.01
+   }
+  },
+  {
+   "name": "OWN_CB2_CORE",
+   "base": "OWN_BOLT_HEAD",
+   "set": {
+    "ppsValue": 40.0,
+    "lspPartAvg": 120.0,
+    "lspPartVar": 25.0,
+    "visSizeStart_S": "30 30",
+    "shpDim_S": "3"
+   }
+  },
+  {
+   "name": "OWN_CB2_FLAMES",
+   "base": "OWN_BALL_FLAMES",
+   "set": {
+    "shpDim_S": "6",
+    "visSizeStart_S": "62 62"
+   }
+  },
+  {
+   "name": "OWN_CB2_LICKS",
+   "base": "OWN_BALL_LICKS",
+   "set": {
+    "shpDim_S": "16",
+    "visSizeStart_S": "20 28"
+   }
+  },
+  {
+   "name": "OWN_CB2_EMBERS",
+   "base": "OWN_BALL_EMBERS",
+   "set": {
+    "ppsValue": 160,
+    "shpDim_S": "12"
+   }
+  },
+  {
+   "name": "OWN_CB2_HEAT",
+   "base": "LIGHTSMOKE",
+   "haze": {
+    "shift": 5.0,
+    "cell": 4.0
+   },
+   "inherit": 1.0,
+   "drag": 0.3,
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visAlphaFunc_S": "BLEND",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 0.0,
+    "visTexColorStart_S": "255 255 255",
+    "visTexColorEnd_S": "255 255 255",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 0 0",
+    "velAvg": 0.01,
+    "velVar": 0.005,
+    "flyGravity_S": "0 0 0",
+    "visOrientation_S": "NONE",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0,
+    "ppsValue": 24.0,
+    "lspPartAvg": 170.0,
+    "lspPartVar": 40.0,
+    "shpDim_S": "10",
+    "visSizeStart_S": "120 120",
+    "visSizeEndScale": 1.2
+   }
+  },
+  {
+   "name": "MFX_CHARGEFB_CAST_L2",
+   "base": "OWN_HAND_LICKS",
+   "replaces": true,
+   "inherit": 0.3,
+   "with": [
+    "OWN_CB2_CORE",
+    "OWN_CB2_FLAMES",
+    "OWN_CB2_LICKS",
+    "OWN_CB2_EMBERS",
+    "OWN_CB2_HEAT"
+   ],
+   "set": {
+    "ppsValue": 70.0,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "12",
+    "visSizeStart_S": "34 48",
+    "visSizeEndScale": 0.5,
+    "lspPartAvg": 330.0,
+    "lspPartVar": 90.0,
+    "velAvg": 0.02,
+    "velVar": 0.01
+   }
+  },
+  {
+   "name": "OWN_CB3_CORE",
+   "base": "OWN_BOLT_HEAD",
+   "set": {
+    "ppsValue": 40.0,
+    "lspPartAvg": 120.0,
+    "lspPartVar": 25.0,
+    "visSizeStart_S": "37.5 37.5",
+    "shpDim_S": "3.75"
+   }
+  },
+  {
+   "name": "OWN_CB3_FLAMES",
+   "base": "OWN_BALL_FLAMES",
+   "set": {
+    "shpDim_S": "7.5",
+    "visSizeStart_S": "77.5 77.5"
+   }
+  },
+  {
+   "name": "OWN_CB3_LICKS",
+   "base": "OWN_BALL_LICKS",
+   "set": {
+    "shpDim_S": "20",
+    "visSizeStart_S": "25 35"
+   }
+  },
+  {
+   "name": "OWN_CB3_EMBERS",
+   "base": "OWN_BALL_EMBERS",
+   "set": {
+    "ppsValue": 200,
+    "shpDim_S": "15"
+   }
+  },
+  {
+   "name": "OWN_CB3_HEAT",
+   "base": "LIGHTSMOKE",
+   "haze": {
+    "shift": 5.0,
+    "cell": 4.0
+   },
+   "inherit": 1.0,
+   "drag": 0.3,
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visAlphaFunc_S": "BLEND",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 0.0,
+    "visTexColorStart_S": "255 255 255",
+    "visTexColorEnd_S": "255 255 255",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 0 0",
+    "velAvg": 0.01,
+    "velVar": 0.005,
+    "flyGravity_S": "0 0 0",
+    "visOrientation_S": "NONE",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0,
+    "ppsValue": 24.0,
+    "lspPartAvg": 170.0,
+    "lspPartVar": 40.0,
+    "shpDim_S": "12.5",
+    "visSizeStart_S": "150 150",
+    "visSizeEndScale": 1.2
+   }
+  },
+  {
+   "name": "MFX_CHARGEFB_CAST_L3",
+   "base": "OWN_HAND_LICKS",
+   "replaces": true,
+   "inherit": 0.3,
+   "with": [
+    "OWN_CB3_CORE",
+    "OWN_CB3_FLAMES",
+    "OWN_CB3_LICKS",
+    "OWN_CB3_EMBERS",
+    "OWN_CB3_HEAT"
+   ],
+   "set": {
+    "ppsValue": 70.0,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "15",
+    "visSizeStart_S": "42.5 60",
+    "visSizeEndScale": 0.5,
+    "lspPartAvg": 330.0,
+    "lspPartVar": 90.0,
+    "velAvg": 0.02,
+    "velVar": 0.01
+   }
+  },
+  {
+   "name": "OWN_CB4_CORE",
+   "base": "OWN_BOLT_HEAD",
+   "set": {
+    "ppsValue": 40.0,
+    "lspPartAvg": 120.0,
+    "lspPartVar": 25.0,
+    "visSizeStart_S": "45 45",
+    "shpDim_S": "4.5"
+   }
+  },
+  {
+   "name": "OWN_CB4_FLAMES",
+   "base": "OWN_BALL_FLAMES",
+   "set": {
+    "shpDim_S": "9",
+    "visSizeStart_S": "93 93"
+   }
+  },
+  {
+   "name": "OWN_CB4_LICKS",
+   "base": "OWN_BALL_LICKS",
+   "set": {
+    "shpDim_S": "24",
+    "visSizeStart_S": "30 42"
+   }
+  },
+  {
+   "name": "OWN_CB4_EMBERS",
+   "base": "OWN_BALL_EMBERS",
+   "set": {
+    "ppsValue": 240,
+    "shpDim_S": "18"
+   }
+  },
+  {
+   "name": "OWN_CB4_HEAT",
+   "base": "LIGHTSMOKE",
+   "haze": {
+    "shift": 5.0,
+    "cell": 4.0
+   },
+   "inherit": 1.0,
+   "drag": 0.3,
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visAlphaFunc_S": "BLEND",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 0.0,
+    "visTexColorStart_S": "255 255 255",
+    "visTexColorEnd_S": "255 255 255",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 0 0",
+    "velAvg": 0.01,
+    "velVar": 0.005,
+    "flyGravity_S": "0 0 0",
+    "visOrientation_S": "NONE",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0,
+    "ppsValue": 24.0,
+    "lspPartAvg": 170.0,
+    "lspPartVar": 40.0,
+    "shpDim_S": "15",
+    "visSizeStart_S": "180 180",
+    "visSizeEndScale": 1.2
+   }
+  },
+  {
+   "name": "MFX_CHARGEFB_CAST_L4",
+   "base": "OWN_HAND_LICKS",
+   "replaces": true,
+   "inherit": 0.3,
+   "with": [
+    "OWN_CB4_CORE",
+    "OWN_CB4_FLAMES",
+    "OWN_CB4_LICKS",
+    "OWN_CB4_EMBERS",
+    "OWN_CB4_HEAT"
+   ],
+   "set": {
+    "ppsValue": 70.0,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "18",
+    "visSizeStart_S": "51 72",
+    "visSizeEndScale": 0.5,
+    "lspPartAvg": 330.0,
+    "lspPartVar": 90.0,
+    "velAvg": 0.02,
+    "velVar": 0.01
+   }
+  },
+  {
+   "name": "OWN_CB5_CORE",
+   "base": "OWN_BOLT_HEAD",
+   "set": {
+    "ppsValue": 40.0,
+    "lspPartAvg": 120.0,
+    "lspPartVar": 25.0,
+    "visSizeStart_S": "54 54",
+    "shpDim_S": "5.4"
+   }
+  },
+  {
+   "name": "OWN_CB5_FLAMES",
+   "base": "OWN_BALL_FLAMES",
+   "set": {
+    "shpDim_S": "10.8",
+    "visSizeStart_S": "111.6 111.6"
+   }
+  },
+  {
+   "name": "OWN_CB5_LICKS",
+   "base": "OWN_BALL_LICKS",
+   "set": {
+    "shpDim_S": "28.8",
+    "visSizeStart_S": "36 50.4"
+   }
+  },
+  {
+   "name": "OWN_CB5_EMBERS",
+   "base": "OWN_BALL_EMBERS",
+   "set": {
+    "ppsValue": 288,
+    "shpDim_S": "21.6"
+   }
+  },
+  {
+   "name": "OWN_CB5_HEAT",
+   "base": "LIGHTSMOKE",
+   "haze": {
+    "shift": 5.0,
+    "cell": 4.0
+   },
+   "inherit": 1.0,
+   "drag": 0.3,
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visAlphaFunc_S": "BLEND",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 0.0,
+    "visTexColorStart_S": "255 255 255",
+    "visTexColorEnd_S": "255 255 255",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 0 0",
+    "velAvg": 0.01,
+    "velVar": 0.005,
+    "flyGravity_S": "0 0 0",
+    "visOrientation_S": "NONE",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0,
+    "ppsValue": 24.0,
+    "lspPartAvg": 170.0,
+    "lspPartVar": 40.0,
+    "shpDim_S": "18",
+    "visSizeStart_S": "216 216",
+    "visSizeEndScale": 1.2
+   }
+  },
+  {
+   "name": "MFX_CHARGEFB_CAST_L5",
+   "base": "OWN_HAND_LICKS",
+   "replaces": true,
+   "inherit": 0.3,
+   "with": [
+    "OWN_CB5_CORE",
+    "OWN_CB5_FLAMES",
+    "OWN_CB5_LICKS",
+    "OWN_CB5_EMBERS",
+    "OWN_CB5_HEAT"
+   ],
+   "set": {
+    "ppsValue": 70.0,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "21.6",
+    "visSizeStart_S": "61.2 86.4",
+    "visSizeEndScale": 0.5,
+    "lspPartAvg": 330.0,
+    "lspPartVar": 90.0,
+    "velAvg": 0.02,
+    "velVar": 0.01
+   }
+  },
+  {
+   "name": "OWN_CB_HIT0_FLASH",
+   "base": "OWN_BOLT_HIT_FLASH",
+   "set": {
+    "ppsValue": 3.0,
+    "lspPartAvg": 130.0,
+    "lspPartVar": 20.0,
+    "visSizeStart_S": "120 120",
+    "shpDim_S": "6"
+   }
+  },
+  {
+   "name": "OWN_CB_HIT0_BLAST",
+   "base": "OWN_HAND_LICKS",
+   "inherit": 0.0,
+   "flipbook": {
+    "cols": 8,
+    "rows": 4,
+    "frames": 25,
+    "fps": 16,
+    "once": true
+   },
+   "hdr": {
+    "from": 1,
+    "to": 5,
+    "edge": 0.15
+   },
+   "set": {
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 1.0,
+    "shpType_S": "POINT",
+    "shpDim_S": "0",
+    "shpOffsetVec_S": "0 0 0",
+    "visName_S": "OWN_EXPLOSION_FIRE.TGA",
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 3e-05 0",
+    "visSizeStart_S": "160 160",
+    "visSizeEndScale": 2.1,
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 255.0,
+    "lspPartAvg": 1500.0,
+    "lspPartVar": 0.0
+   }
+  },
+  {
+   "name": "OWN_CB_HIT0_CLOUD",
+   "base": "OWN_BOLT_HIT_PUFF",
+   "flipbook": {
+    "cols": 8,
+    "rows": 4,
+    "frames": 25,
+    "fps": 16,
+    "once": true
+   },
+   "set": {
+    "ppsValue": 1.0,
+    "shpType_S": "POINT",
+    "shpIsVolume": 0,
+    "shpDim_S": "0",
+    "shpOffsetVec_S": "0 0 0",
+    "visName_S": "OWN_EXPLOSION_SMOKE.TGA",
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 3e-05 0",
+    "visSizeStart_S": "160 160",
+    "visSizeEndScale": 2.1,
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 130.0,
+    "lspPartAvg": 1500.0,
+    "lspPartVar": 0.0
+   }
+  },
+  {
+   "name": "OWN_CB_HIT0_SPARKS",
+   "base": "OWN_BOLT_HIT_SPARKS",
+   "set": {
+    "ppsValue": 180,
+    "shpDim_S": "12",
+    "velAvg": 0.75,
+    "velVar": 0.45,
+    "lspPartAvg": 1300.0,
+    "lspPartVar": 500.0,
+    "visSizeStart_S": "0.8 0.8"
+   }
+  },
+  {
+   "name": "OWN_CB_HIT0_SMOKE",
+   "base": "OWN_BOLT_HIT_PUFF",
+   "set": {
+    "ppsValue": 9,
+    "shpDim_S": "45",
+    "visSizeStart_S": "70 70",
+    "visSizeEndScale": 2.8,
+    "visAlphaStart": 80.0,
+    "lspPartAvg": 2800.0,
+    "lspPartVar": 500.0,
+    "velAvg": 0.05,
+    "velVar": 0.02,
+    "flyGravity_S": "0 4e-05 0"
+   }
+  },
+  {
+   "name": "OWN_CB_HIT0_HEAT",
+   "base": "LIGHTSMOKE",
+   "haze": {
+    "shift": 9.0,
+    "cell": 4.0
+   },
+   "inherit": 0.0,
+   "drag": 0.3,
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visAlphaFunc_S": "BLEND",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 0.0,
+    "visTexColorStart_S": "255 255 255",
+    "visTexColorEnd_S": "255 255 255",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 0 0",
+    "velAvg": 0.01,
+    "velVar": 0.005,
+    "flyGravity_S": "0 0 0",
+    "visOrientation_S": "NONE",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0,
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 5.0,
+    "lspPartAvg": 600.0,
+    "lspPartVar": 100.0,
+    "shpDim_S": "25",
+    "visSizeStart_S": "160 160",
+    "visSizeEndScale": 1.8
+   }
+  },
+  {
+   "name": "MFX_CHARGEFB_COLLIDE",
+   "base": "OWN_HAND_LICKS",
+   "replaces": true,
+   "inherit": 0.0,
+   "drag": 3.5,
+   "with": [
+    "OWN_CB_HIT0_CLOUD",
+    "OWN_CB_HIT0_BLAST",
+    "OWN_CB_HIT0_FLASH",
+    "OWN_CB_HIT0_SPARKS",
+    "OWN_CB_HIT0_SMOKE",
+    "OWN_CB_HIT0_HEAT"
+   ],
+   "light": {
+    "range": 800,
+    "color": [
+     255,
+     170,
+     80
+    ],
+    "fps": 8.0,
+    "keys": [
+     1,
+     1,
+     0.85,
+     0.6,
+     0.4,
+     0.22,
+     0.1,
+     0
+    ]
+   },
+   "set": {
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 60,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "14",
+    "velAvg": 0.8,
+    "velVar": 0.3,
+    "flyGravity_S": "0 0.0001 0",
+    "visSizeStart_S": "30 42",
+    "visSizeEndScale": 1.9,
+    "lspPartAvg": 480.0,
+    "lspPartVar": 130.0,
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0
+   }
+  },
+  {
+   "name": "OWN_CB_HIT2_FLASH",
+   "base": "OWN_BOLT_HIT_FLASH",
+   "set": {
+    "ppsValue": 3.0,
+    "lspPartAvg": 130.0,
+    "lspPartVar": 20.0,
+    "visSizeStart_S": "156 156",
+    "shpDim_S": "7.8"
+   }
+  },
+  {
+   "name": "OWN_CB_HIT2_BLAST",
+   "base": "OWN_HAND_LICKS",
+   "inherit": 0.0,
+   "flipbook": {
+    "cols": 8,
+    "rows": 4,
+    "frames": 25,
+    "fps": 16,
+    "once": true
+   },
+   "hdr": {
+    "from": 1,
+    "to": 5,
+    "edge": 0.15
+   },
+   "set": {
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 1.0,
+    "shpType_S": "POINT",
+    "shpDim_S": "0",
+    "shpOffsetVec_S": "0 0 0",
+    "visName_S": "OWN_EXPLOSION_FIRE.TGA",
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 3e-05 0",
+    "visSizeStart_S": "208 208",
+    "visSizeEndScale": 2.1,
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 255.0,
+    "lspPartAvg": 1500.0,
+    "lspPartVar": 0.0
+   }
+  },
+  {
+   "name": "OWN_CB_HIT2_CLOUD",
+   "base": "OWN_BOLT_HIT_PUFF",
+   "flipbook": {
+    "cols": 8,
+    "rows": 4,
+    "frames": 25,
+    "fps": 16,
+    "once": true
+   },
+   "set": {
+    "ppsValue": 1.0,
+    "shpType_S": "POINT",
+    "shpIsVolume": 0,
+    "shpDim_S": "0",
+    "shpOffsetVec_S": "0 0 0",
+    "visName_S": "OWN_EXPLOSION_SMOKE.TGA",
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 3e-05 0",
+    "visSizeStart_S": "208 208",
+    "visSizeEndScale": 2.1,
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 130.0,
+    "lspPartAvg": 1500.0,
+    "lspPartVar": 0.0
+   }
+  },
+  {
+   "name": "OWN_CB_HIT2_SPARKS",
+   "base": "OWN_BOLT_HIT_SPARKS",
+   "set": {
+    "ppsValue": 234,
+    "shpDim_S": "15.6",
+    "velAvg": 0.855,
+    "velVar": 0.513,
+    "lspPartAvg": 1300.0,
+    "lspPartVar": 500.0,
+    "visSizeStart_S": "0.8 0.8"
+   }
+  },
+  {
+   "name": "OWN_CB_HIT2_SMOKE",
+   "base": "OWN_BOLT_HIT_PUFF",
+   "set": {
+    "ppsValue": 12,
+    "shpDim_S": "58.5",
+    "visSizeStart_S": "91 91",
+    "visSizeEndScale": 2.8,
+    "visAlphaStart": 80.0,
+    "lspPartAvg": 2800.0,
+    "lspPartVar": 500.0,
+    "velAvg": 0.05,
+    "velVar": 0.02,
+    "flyGravity_S": "0 4e-05 0"
+   }
+  },
+  {
+   "name": "OWN_CB_HIT2_HEAT",
+   "base": "LIGHTSMOKE",
+   "haze": {
+    "shift": 9.0,
+    "cell": 4.0
+   },
+   "inherit": 0.0,
+   "drag": 0.3,
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visAlphaFunc_S": "BLEND",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 0.0,
+    "visTexColorStart_S": "255 255 255",
+    "visTexColorEnd_S": "255 255 255",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 0 0",
+    "velAvg": 0.01,
+    "velVar": 0.005,
+    "flyGravity_S": "0 0 0",
+    "visOrientation_S": "NONE",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0,
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 5.0,
+    "lspPartAvg": 600.0,
+    "lspPartVar": 100.0,
+    "shpDim_S": "32.5",
+    "visSizeStart_S": "208 208",
+    "visSizeEndScale": 1.8
+   }
+  },
+  {
+   "name": "MFX_FIREBALL_COLLIDE2",
+   "base": "OWN_HAND_LICKS",
+   "replaces": true,
+   "inherit": 0.0,
+   "drag": 3.5,
+   "with": [
+    "OWN_CB_HIT2_CLOUD",
+    "OWN_CB_HIT2_BLAST",
+    "OWN_CB_HIT2_FLASH",
+    "OWN_CB_HIT2_SPARKS",
+    "OWN_CB_HIT2_SMOKE",
+    "OWN_CB_HIT2_HEAT"
+   ],
+   "light": {
+    "range": 1040,
+    "color": [
+     255,
+     170,
+     80
+    ],
+    "fps": 8.0,
+    "keys": [
+     1,
+     1,
+     0.85,
+     0.6,
+     0.4,
+     0.22,
+     0.1,
+     0
+    ]
+   },
+   "set": {
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 78,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "18.2",
+    "velAvg": 0.912,
+    "velVar": 0.3,
+    "flyGravity_S": "0 0.0001 0",
+    "visSizeStart_S": "39 54.6",
+    "visSizeEndScale": 1.9,
+    "lspPartAvg": 480.0,
+    "lspPartVar": 130.0,
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0
+   }
+  },
+  {
+   "name": "OWN_CB_HIT3_FLASH",
+   "base": "OWN_BOLT_HIT_FLASH",
+   "set": {
+    "ppsValue": 3.0,
+    "lspPartAvg": 130.0,
+    "lspPartVar": 20.0,
+    "visSizeStart_S": "192 192",
+    "shpDim_S": "9.6"
+   }
+  },
+  {
+   "name": "OWN_CB_HIT3_BLAST",
+   "base": "OWN_HAND_LICKS",
+   "inherit": 0.0,
+   "flipbook": {
+    "cols": 8,
+    "rows": 4,
+    "frames": 25,
+    "fps": 16,
+    "once": true
+   },
+   "hdr": {
+    "from": 1,
+    "to": 5,
+    "edge": 0.15
+   },
+   "set": {
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 1.0,
+    "shpType_S": "POINT",
+    "shpDim_S": "0",
+    "shpOffsetVec_S": "0 0 0",
+    "visName_S": "OWN_EXPLOSION_FIRE.TGA",
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 3e-05 0",
+    "visSizeStart_S": "256 256",
+    "visSizeEndScale": 2.1,
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 255.0,
+    "lspPartAvg": 1500.0,
+    "lspPartVar": 0.0
+   }
+  },
+  {
+   "name": "OWN_CB_HIT3_CLOUD",
+   "base": "OWN_BOLT_HIT_PUFF",
+   "flipbook": {
+    "cols": 8,
+    "rows": 4,
+    "frames": 25,
+    "fps": 16,
+    "once": true
+   },
+   "set": {
+    "ppsValue": 1.0,
+    "shpType_S": "POINT",
+    "shpIsVolume": 0,
+    "shpDim_S": "0",
+    "shpOffsetVec_S": "0 0 0",
+    "visName_S": "OWN_EXPLOSION_SMOKE.TGA",
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 3e-05 0",
+    "visSizeStart_S": "256 256",
+    "visSizeEndScale": 2.1,
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 130.0,
+    "lspPartAvg": 1500.0,
+    "lspPartVar": 0.0
+   }
+  },
+  {
+   "name": "OWN_CB_HIT3_SPARKS",
+   "base": "OWN_BOLT_HIT_SPARKS",
+   "set": {
+    "ppsValue": 288,
+    "shpDim_S": "19.2",
+    "velAvg": 0.949,
+    "velVar": 0.569,
+    "lspPartAvg": 1300.0,
+    "lspPartVar": 500.0,
+    "visSizeStart_S": "0.8 0.8"
+   }
+  },
+  {
+   "name": "OWN_CB_HIT3_SMOKE",
+   "base": "OWN_BOLT_HIT_PUFF",
+   "set": {
+    "ppsValue": 14,
+    "shpDim_S": "72",
+    "visSizeStart_S": "112 112",
+    "visSizeEndScale": 2.8,
+    "visAlphaStart": 80.0,
+    "lspPartAvg": 2800.0,
+    "lspPartVar": 500.0,
+    "velAvg": 0.05,
+    "velVar": 0.02,
+    "flyGravity_S": "0 4e-05 0"
+   }
+  },
+  {
+   "name": "OWN_CB_HIT3_HEAT",
+   "base": "LIGHTSMOKE",
+   "haze": {
+    "shift": 9.0,
+    "cell": 4.0
+   },
+   "inherit": 0.0,
+   "drag": 0.3,
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visAlphaFunc_S": "BLEND",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 0.0,
+    "visTexColorStart_S": "255 255 255",
+    "visTexColorEnd_S": "255 255 255",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 0 0",
+    "velAvg": 0.01,
+    "velVar": 0.005,
+    "flyGravity_S": "0 0 0",
+    "visOrientation_S": "NONE",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0,
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 5.0,
+    "lspPartAvg": 600.0,
+    "lspPartVar": 100.0,
+    "shpDim_S": "40",
+    "visSizeStart_S": "256 256",
+    "visSizeEndScale": 1.8
+   }
+  },
+  {
+   "name": "MFX_FIREBALL_COLLIDE3",
+   "base": "OWN_HAND_LICKS",
+   "replaces": true,
+   "inherit": 0.0,
+   "drag": 3.5,
+   "with": [
+    "OWN_CB_HIT3_CLOUD",
+    "OWN_CB_HIT3_BLAST",
+    "OWN_CB_HIT3_FLASH",
+    "OWN_CB_HIT3_SPARKS",
+    "OWN_CB_HIT3_SMOKE",
+    "OWN_CB_HIT3_HEAT"
+   ],
+   "light": {
+    "range": 1280,
+    "color": [
+     255,
+     170,
+     80
+    ],
+    "fps": 8.0,
+    "keys": [
+     1,
+     1,
+     0.85,
+     0.6,
+     0.4,
+     0.22,
+     0.1,
+     0
+    ]
+   },
+   "set": {
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 96,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "22.4",
+    "velAvg": 1.012,
+    "velVar": 0.3,
+    "flyGravity_S": "0 0.0001 0",
+    "visSizeStart_S": "48 67.2",
+    "visSizeEndScale": 1.9,
+    "lspPartAvg": 480.0,
+    "lspPartVar": 130.0,
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0
+   }
+  },
+  {
+   "name": "OWN_CB_HIT4_FLASH",
+   "base": "OWN_BOLT_HIT_FLASH",
+   "set": {
+    "ppsValue": 3.0,
+    "lspPartAvg": 130.0,
+    "lspPartVar": 20.0,
+    "visSizeStart_S": "240 240",
+    "shpDim_S": "12"
+   }
+  },
+  {
+   "name": "OWN_CB_HIT4_BLAST",
+   "base": "OWN_HAND_LICKS",
+   "inherit": 0.0,
+   "flipbook": {
+    "cols": 8,
+    "rows": 4,
+    "frames": 25,
+    "fps": 16,
+    "once": true
+   },
+   "hdr": {
+    "from": 1,
+    "to": 5,
+    "edge": 0.15
+   },
+   "set": {
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 1.0,
+    "shpType_S": "POINT",
+    "shpDim_S": "0",
+    "shpOffsetVec_S": "0 0 0",
+    "visName_S": "OWN_EXPLOSION_FIRE.TGA",
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 3e-05 0",
+    "visSizeStart_S": "320 320",
+    "visSizeEndScale": 2.1,
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 255.0,
+    "lspPartAvg": 1500.0,
+    "lspPartVar": 0.0
+   }
+  },
+  {
+   "name": "OWN_CB_HIT4_CLOUD",
+   "base": "OWN_BOLT_HIT_PUFF",
+   "flipbook": {
+    "cols": 8,
+    "rows": 4,
+    "frames": 25,
+    "fps": 16,
+    "once": true
+   },
+   "set": {
+    "ppsValue": 1.0,
+    "shpType_S": "POINT",
+    "shpIsVolume": 0,
+    "shpDim_S": "0",
+    "shpOffsetVec_S": "0 0 0",
+    "visName_S": "OWN_EXPLOSION_SMOKE.TGA",
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 3e-05 0",
+    "visSizeStart_S": "320 320",
+    "visSizeEndScale": 2.1,
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 130.0,
+    "lspPartAvg": 1500.0,
+    "lspPartVar": 0.0
+   }
+  },
+  {
+   "name": "OWN_CB_HIT4_SPARKS",
+   "base": "OWN_BOLT_HIT_SPARKS",
+   "set": {
+    "ppsValue": 360,
+    "shpDim_S": "24",
+    "velAvg": 1.061,
+    "velVar": 0.636,
+    "lspPartAvg": 1300.0,
+    "lspPartVar": 500.0,
+    "visSizeStart_S": "0.8 0.8"
+   }
+  },
+  {
+   "name": "OWN_CB_HIT4_SMOKE",
+   "base": "OWN_BOLT_HIT_PUFF",
+   "set": {
+    "ppsValue": 18,
+    "shpDim_S": "90",
+    "visSizeStart_S": "140 140",
+    "visSizeEndScale": 2.8,
+    "visAlphaStart": 80.0,
+    "lspPartAvg": 2800.0,
+    "lspPartVar": 500.0,
+    "velAvg": 0.05,
+    "velVar": 0.02,
+    "flyGravity_S": "0 4e-05 0"
+   }
+  },
+  {
+   "name": "OWN_CB_HIT4_HEAT",
+   "base": "LIGHTSMOKE",
+   "haze": {
+    "shift": 9.0,
+    "cell": 4.0
+   },
+   "inherit": 0.0,
+   "drag": 0.3,
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visAlphaFunc_S": "BLEND",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 0.0,
+    "visTexColorStart_S": "255 255 255",
+    "visTexColorEnd_S": "255 255 255",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 0 0",
+    "velAvg": 0.01,
+    "velVar": 0.005,
+    "flyGravity_S": "0 0 0",
+    "visOrientation_S": "NONE",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0,
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 5.0,
+    "lspPartAvg": 600.0,
+    "lspPartVar": 100.0,
+    "shpDim_S": "50",
+    "visSizeStart_S": "320 320",
+    "visSizeEndScale": 1.8
+   }
+  },
+  {
+   "name": "MFX_FIREBALL_COLLIDE4",
+   "base": "OWN_HAND_LICKS",
+   "replaces": true,
+   "inherit": 0.0,
+   "drag": 3.5,
+   "with": [
+    "OWN_CB_HIT4_CLOUD",
+    "OWN_CB_HIT4_BLAST",
+    "OWN_CB_HIT4_FLASH",
+    "OWN_CB_HIT4_SPARKS",
+    "OWN_CB_HIT4_SMOKE",
+    "OWN_CB_HIT4_HEAT"
+   ],
+   "light": {
+    "range": 1600,
+    "color": [
+     255,
+     170,
+     80
+    ],
+    "fps": 8.0,
+    "keys": [
+     1,
+     1,
+     0.85,
+     0.6,
+     0.4,
+     0.22,
+     0.1,
+     0
+    ]
+   },
+   "set": {
+    "ppsScaleKeys_S": "",
+    "ppsIsLooping": 0,
+    "ppsIsSmooth": 0,
+    "ppsFPS": 0.0,
+    "ppsValue": 120,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "28",
+    "velAvg": 1.131,
+    "velVar": 0.3,
+    "flyGravity_S": "0 0.0001 0",
+    "visSizeStart_S": "60 84",
+    "visSizeEndScale": 1.9,
+    "lspPartAvg": 480.0,
+    "lspPartVar": 130.0,
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 0.0,
+    "dirAngleElevVar": 89.0
+   }
+  },
+  {
+   "name": "OWN_CB_STEP_SPARKS",
+   "base": "OWN_BOLT_HIT_SPARKS",
+   "set": {
+    "ppsValue": 40.0,
+    "velAvg": 0.3,
+    "velVar": 0.15
+   }
+  },
+  {
+   "name": "MFX_CHARGEFB_INVESTBLAST",
+   "base": "OWN_BOLT_HIT_FLASH",
+   "replaces": true,
+   "with": [
+    "OWN_CB_STEP_SPARKS"
+   ],
+   "set": {
+    "ppsValue": 3.0,
+    "visSizeStart_S": "45 45"
+   }
+  },
+  {
    "name": "OWN_BODY_TALL",
    "base": "OWN_HAND_LICKS",
    "inherit": 0.85,
+   "wind": 0.2,
    "set": {
     "ppsScaleKeys_S": "0.3 0.7 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0.9 0.7 0.5 0.3",
     "ppsFPS": 6.0,
@@ -553,10 +2310,57 @@
    }
   },
   {
+   "name": "MFX_MAGICFIRE_HUMANSMOKE",
+   "base": "MFX_MAGICFIRE_HUMANSMOKE",
+   "replaces": true,
+   "set": {},
+   "light": {
+    "range": 450,
+    "color": [
+     255,
+     150,
+     60
+    ],
+    "fps": 6.0,
+    "keys": [
+     0.4,
+     0.8,
+     1,
+     0.94,
+     1.05,
+     0.97,
+     1.03,
+     0.93,
+     1,
+     1.06,
+     0.95,
+     1.02,
+     0.96,
+     1.04,
+     0.93,
+     1,
+     1.05,
+     0.96,
+     1.02,
+     0.94,
+     1,
+     0.97,
+     1.03,
+     0.95,
+     0.8,
+     0.55,
+     0.3,
+     0.1,
+     0
+    ]
+   }
+  },
+  {
    "name": "MFX_MAGICFIRE_HUMANBURN",
    "base": "OWN_HAND_LICKS",
    "replaces": true,
    "inherit": 0.92,
+   "wind": 0.1,
    "with": [
     "OWN_BODY_TALL",
     "OWN_BODY_SMOKE",

@@ -102,7 +102,8 @@ inline NpcSnapshot::Program program() {
   f.op(Op::PUSHV,count); f.op(Op::MOVI);
   f.op(Op::PUSHV,ambient+1); f.op(Op::PUSHI,ambientItem); f.op(Op::PUSHV,count); f.op(Op::BE,create); f.op(Op::RSR);
   const auto point=f.symbol("POINT",Type::STRING,1,Flag::CONST); f.p.symbols[point].string_values[0]="TEST_WP";
-  const auto state=f.fn("ZS_TEST"); f.begin(state); f.op(Op::RSR);
+  const auto state=f.fn("ZS_TEST"); f.begin(state);
+  f.op(Op::PUSHI,7); f.op(Op::BE,random); f.op(Op::RSR);
   const auto routine=f.fn("RTN_START_123"); f.begin(routine);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,8); f.op(Op::PUSHI,0); f.op(Op::PUSHI,20); f.op(Op::PUSHI,0);
   f.op(Op::PUSHI,state); f.op(Op::PUSHV,point); f.op(Op::BE,ta); f.op(Op::RSR);
