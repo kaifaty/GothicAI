@@ -134,6 +134,17 @@ void Shaders::compileShaders() noexcept {
 
   bloodDecal       = bloodDecalShader(opts.doMaterialMaps);
   bloodDecalAlbedo = bloodDecalShader(false);
+  {
+    RenderState state;
+    state.setCullFaceMode(RenderState::CullMode::NoCull);
+    state.setZTestMode(RenderState::ZTestMode::LEqual);
+    state.setZWriteEnabled(true);
+    auto sh = GothicShader::get("impostor.vert.sprv");
+    auto vs = device.shader(sh.data, sh.len);
+    sh      = GothicShader::get(string_frm("impostor", materialMaps, ".frag.sprv"));
+    auto fs = device.shader(sh.data, sh.len);
+    impostor = device.pipeline(Triangles, state, vs, fs);
+    }
   if(opts.doMaterialMaps) {
     // Grass (graphics/grass/grassfield.h): the main pass' depth test; a blade is seen from both sides
     RenderState state;

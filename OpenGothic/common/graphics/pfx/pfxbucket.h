@@ -152,6 +152,7 @@ class PfxBucket {
     struct ParState final {
       uint16_t      life=0, maxLife=1;
       Tempest::Vec3 pos, dir;
+      bool          landed = false; // met the ground (particles.d "land"): stays, no sprite, its trail draws in
 
       std::vector<Trail> trail;
 

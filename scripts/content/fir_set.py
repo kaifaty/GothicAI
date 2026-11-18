@@ -514,9 +514,11 @@ def main() -> int:
     for builder in (probe_command, command):
         levels = builder.add_mutually_exclusive_group()
         levels.add_argument('--levels', action='store_const', const='designed', dest='levels',
-                            help='with detail levels configured in fir.json')
+                            help='with detail levels configured in fir.json. Bake impostors for the new set '
+                                 'with impostor_bake.py')
         levels.add_argument('--random-levels', action='store_const', const='random', dest='levels',
-                            help='with random detail levels from the cost stand')
+                            help='with random detail levels from the cost stand. Bake impostors for the new set '
+                                 'with impostor_bake.py')
     args = parser.parse_args()
     return dict(textures=textures, probe=probe, forest=forest)[args.command](args)
 

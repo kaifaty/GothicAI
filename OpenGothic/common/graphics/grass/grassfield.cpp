@@ -729,6 +729,7 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId) {
         wc.minY   = min.y;
         wc.maxY   = max.y;
         wc.pad    = pad;
+        wc.dist   = c.dist;
         Grass::countWaste(st.waste, fr, cam, rule, wc, std::span<const Grass::Blade>(c.cpu.data()+b.first, count), links);
         }
       if(dr.count==0) {

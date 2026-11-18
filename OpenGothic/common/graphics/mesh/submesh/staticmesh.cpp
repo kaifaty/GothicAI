@@ -6,6 +6,7 @@
 #include <atomic>
 
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/meshlevels.h"
 #include "graphics/shaders.h"
 
 struct LandscapePages::State {
@@ -209,6 +210,7 @@ StaticMesh& StaticMesh::operator=(StaticMesh&& other) {
   bbox=other.bbox;
   drawn=other.drawn;
   levels=std::move(other.levels);
+  impostor=std::move(other.impostor);
   meshletSpheres=std::move(other.meshletSpheres);
   pageRange=std::move(other.pageRange);
   return *this;
@@ -301,6 +303,17 @@ std::pair<uint32_t,uint32_t> StaticMesh::levelMeshlets(size_t iboOffset, size_t 
         break;
         }
   return {uint32_t(slice.first/PackedMesh::MaxInd), uint32_t(slice.second/PackedMesh::MaxInd)};
+  }
+
+MeshLevels::Selection StaticMesh::pickLevel(uint8_t previous, float height, bool allowImpostor) const {
+  const size_t glbs = std::min(levels.size(), MeshLevels::MaxLevels);
+  const bool card = allowImpostor && glbs>0 && impostor.px>0.f;
+  float px[MeshLevels::MaxLevels+1] = {};
+  for(size_t i=0; i<glbs; ++i)
+    px[i] = levels[i].px;
+  px[glbs] = impostor.px;
+  const auto stage = MeshLevels::pick(px, glbs+size_t(card), previous, height);
+  return {stage, uint8_t(std::min<size_t>(stage, glbs))};
   }
 
 std::pair<size_t,size_t> StaticMesh::rtSlice(size_t iboOffset, size_t iboLen) const {

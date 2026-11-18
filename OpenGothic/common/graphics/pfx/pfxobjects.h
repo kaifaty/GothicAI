@@ -8,6 +8,7 @@
 #include <list>
 
 #include "graphics/visualobjects.h"
+#include "graphics/pfx/pfxslot.h"
 
 class SceneGlobals;
 class ParticleFx;
@@ -25,6 +26,9 @@ class PfxObjects final {
     // the world's wind this frame, cm/ms, and how open a place is to it (0..1; nullptr: open) - particles.d "wind"
     void       setWind(const Tempest::Vec3& wind);
     void       setShelter(std::function<float(const Tempest::Vec3& at, const Tempest::Vec3& wind)> open);
+    // where the way from one point to another first meets the world's static geometry (particles.d "land");
+    // nullptr: particles meet nothing
+    void       setGround(std::function<bool(const Tempest::Vec3& from, const Tempest::Vec3& to, Tempest::Vec3& hit)> ray);
 
     void       resetTicks();
     void       tick(uint64_t ticks);
@@ -61,6 +65,17 @@ class PfxObjects final {
     Tempest::Vec3                 viewerPos={};
     Tempest::Vec3                 wind={};
     std::function<float(const Tempest::Vec3&,const Tempest::Vec3&)> shelter;
+    std::function<bool(const Tempest::Vec3&,const Tempest::Vec3&,Tempest::Vec3&)> ground;
+
+    // particles.d "land": a particle that met the ground asks for its effect there; the effects are put after the
+    // tick of all buckets, and their emitters go when they have emitted (their particles live on)
+    struct Landing {
+      PfxSlot  slot;
+      uint64_t until = 0;
+      };
+    std::vector<std::pair<const ParticleFx*,Tempest::Vec3>> landAsked;
+    std::vector<Landing>          landings;
+    void       putLandings();
     uint64_t                      lastUpdate=0;
     uint64_t                      now=0;  // the world tick of the update: the curl field's clock and the flicker's
 

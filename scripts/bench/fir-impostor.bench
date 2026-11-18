@@ -1,0 +1,80 @@
+# Spruce A at noon, in the forest from fir_set.py and on its own at LONE (48500,6383.1,500).
+# The lone spruce's 18.47 m bounds, 67.5 degree vertical FOV and 1080 render lines give 99.6 and 49.8 px.
+# Each lone view captures the mesh followed by the impostor at the same camera.
+# Forest cameras follow perf-trees.bench from the rock hill through its 300 m view to about 400 m.
+# Both `forest-300-*` samples hold the same view and switch only the representation.
+# @timeout 360
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+set time 12 0
+
+goto pos 43700 3000 500
+clear 3000
+deterministic on
+impostor probe on
+impostor off
+cam at 33500 7267 500 48500 7267 500
+streaming wait
+foliage wait-lull 1500 500
+wait 1500
+shot lone-100px
+wait 200
+impostor force
+wait 300
+shot lone-100px-on
+wait 200
+impostor off
+
+cam at 18500 7267 500 48500 7267 500
+streaming wait
+foliage wait-lull 1500 500
+wait 1500
+shot lone-50px
+wait 200
+impostor force
+wait 300
+shot lone-50px-on
+wait 200
+impostor probe off
+impostor auto
+deterministic off
+
+goto pos 42364 1700 -8973
+clear 5000
+cam at 48765 6679 -3156 54140 2490 -10780
+streaming wait
+grass wait
+wait 5000
+rec forest-fly
+wait 500
+cam fly 23216 11160 -8618 54140 2490 -10780 5500
+wait 5500
+cam fly 13140 13985 -7910 54140 2490 -10780 2500
+wait 2500
+wait 500
+stop
+wait 500
+
+cam at 23216 11160 -8618 54140 2490 -10780
+streaming wait
+grass wait
+wait 5000
+cadence normal
+impostor off
+wait 1000
+perf sample forest-300-off
+wait 2000
+perf stop
+shot forest-300-off
+wait 200
+impostor auto
+wait 1000
+perf sample forest-300-on
+wait 2000
+perf stop
+shot forest-300-on
+wait 200
+cadence wait

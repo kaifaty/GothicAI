@@ -309,6 +309,60 @@ def firestorm() -> list:
     return effects
 
 
+def firerain() -> list:
+    """The fire rain (FIRERAIN; rain.md): burning gobs of the ball's fire fall from 10 m over a circle of 10 m around
+    the caster, each with a streak of fire behind it; where one lands (particles.d "land") its fire splashes, throws
+    sparks, burns on the ground for a second and a half and smokes. The engine's zone of the rain's damage is the
+    emitter's circle (CollisionZone), so the record keeps the game's circle of 1000, its one key and its emission keys
+    (80 a second for 2.5 s, then down over 4 s)."""
+    up = {'dirMode_S': 'DIR', 'dirFOR_S': 'WORLD', 'dirAngleHead': 0.0, 'dirAngleHeadVar': 179.0, 'dirAngleElev': 40.0,
+          'dirAngleElevVar': 45.0}
+    return [
+        # in the hand: the bolt's small flame on the palm, burning drops falling from it
+        {'name': 'OWN_FR_HAND_DRIPS', 'base': 'OWN_BOLT_EMBERS', 'inherit': 0.3,
+         'set': {'ppsValue': 18.0, 'shpDim_S': '3', 'dirMode_S': 'DIR', 'dirFOR_S': 'WORLD', 'dirAngleHead': 0.0,
+                 'dirAngleHeadVar': 179.0, 'dirAngleElev': -90.0, 'dirAngleElevVar': 10.0, 'velAvg': 0.04,
+                 'velVar': 0.02, 'flyGravity_S': '0 -0.00098 0', 'lspPartAvg': 500.0, 'lspPartVar': 150.0,
+                 'visSizeStart_S': '1.2 1.2', 'visSizeEndScale': 0.6, 'visTexColorStart_S': '255 190 90',
+                 'visTexColorEnd_S': '200 50 0'}},
+        {'name': 'MFX_FIRERAIN_INIT', 'base': 'OWN_HAND_FLAME', 'replaces': True,
+         'with': ['OWN_BOLT_HAND_LICKS', 'OWN_FR_HAND_DRIPS'],
+         'set': {'visSizeStart_S': '14 19', **foot(19)}, 'lean': {'rise': 1.4, 'max_deg': 70, 'response': 0.1}},
+        # where a gob lands: its fire splashes (tongues stopped by the air), a short flash, sparks thrown up, the ground
+        # burns for a second and a half and goes down, a puff of smoke rises
+        {'name': 'OWN_FR_LAND_FLASH', 'base': 'OWN_BOLT_HIT_FLASH',
+         'set': {'ppsValue': 2.0, 'visSizeStart_S': '45 45', 'lspPartAvg': 140.0, 'lspPartVar': 30.0}},
+        {'name': 'OWN_FR_LAND_SPARKS', 'base': 'OWN_BOLT_HIT_SPARKS',
+         'set': {'ppsValue': 14.0, 'velAvg': 0.3, 'velVar': 0.15, 'lspPartAvg': 600.0, 'lspPartVar': 250.0, **up}},
+        {'name': 'OWN_FR_LAND_FIRE', 'base': 'OWN_HAND_LICKS', 'inherit': 0.0,
+         'set': {'ppsValue': 26.0, 'ppsScaleKeys_S': '1 1 0.9 0.7 0.5 0.3', 'ppsFPS': 4.0, 'ppsIsLooping': 0,
+                 'ppsIsSmooth': 1, 'shpType_S': 'CIRCLE', 'shpFOR_S': 'WORLD', 'shpIsVolume': 1, 'shpDim_S': '18',
+                 'shpOffsetVec_S': '0 8 0', 'visSizeStart_S': '26 40', 'visSizeEndScale': 0.6, 'lspPartAvg': 380.0,
+                 'lspPartVar': 100.0, 'velAvg': 0.03, 'velVar': 0.01}},
+        {'name': 'OWN_FR_LAND_SMOKE', 'base': 'OWN_BOLT_HIT_PUFF',
+         'set': {'ppsValue': 1.0, 'shpDim_S': '6', 'shpOffsetVec_S': '0 25 0', 'visSizeStart_S': '30 30',
+                 'visSizeEndScale': 3.0, 'visAlphaStart': 55.0, 'lspPartAvg': 2200.0, 'lspPartVar': 400.0}},
+        {'name': 'OWN_FR_LAND', 'base': 'OWN_HAND_LICKS', 'inherit': 0.0, 'drag': 4.0,
+         'with': ['OWN_FR_LAND_FLASH', 'OWN_FR_LAND_SPARKS', 'OWN_FR_LAND_FIRE', 'OWN_FR_LAND_SMOKE'],
+         'set': {**BURST, 'ppsValue': 10.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '5', 'velAvg': 0.25,
+                 'velVar': 0.1, 'flyGravity_S': '0 8e-05 0', 'visSizeStart_S': '16 22', 'visSizeEndScale': 1.4,
+                 'lspPartAvg': 280.0, 'lspPartVar': 80.0, **up}},
+        # the gobs: the looping fire of the ball, 42 cm, thrown down at 3 m/s from 10 m and falling freely (they land
+        # at about 15 m/s after 1.25 s), each with a streak of fire about 5 m long that draws into the place it landed
+        # (at 30 cm and 3 m the gobs read as white sparks from 18 m: the game's streaks are 7 m)
+        {'name': 'MFX_FIRERAIN_RAIN', 'base': 'OWN_BALL_FLAMES', 'replaces': True, 'inherit': 0.0, 'land': 'OWN_FR_LAND',
+         'set': {'ppsValue': 80.0, 'ppsScaleKeys_S': '1 1 1 1 1 0.8 0.7 0.6 0.5 0.4 0.3 0.2 0.1', 'ppsFPS': 2.0,
+                 'ppsIsLooping': 0, 'ppsIsSmooth': 0, 'useEmittersFOR': 0,
+                 'shpType_S': 'CIRCLE', 'shpFOR_S': 'WORLD', 'shpIsVolume': 1, 'shpDim_S': '1000', 'shpScaleKeys_S': '1',
+                 'shpOffsetVec_S': '0 1000 0', 'dirMode_S': 'DIR', 'dirFOR_S': 'WORLD', 'dirAngleHead': 10.0,
+                 'dirAngleHeadVar': 20.0, 'dirAngleElev': -84.0, 'dirAngleElevVar': 5.0, 'velAvg': 0.3,
+                 'velVar': 0.15, 'flyGravity_S': '0 -0.00098 0', 'visSizeStart_S': '42 42', 'visSizeEndScale': 0.85,
+                 'visAlphaStart': 230.0, 'visTexColorStart_S': '255 165 85', 'visTexColorEnd_S': '255 105 30',
+                 'lspPartAvg': 2500.0, 'lspPartVar': 300.0,
+                 'trlTexture_S': 'OWN_FIRE_TRAIL.TGA', 'trlWidth': 24.0, 'trlFadeSpeed': 0.35}},
+    ]
+
+
 def body_fire() -> list:
     """The fire on a burning body (body-fire.md, concept A: the body burns like a wick).
 
@@ -357,7 +411,7 @@ def body_fire() -> list:
 
 def cmd_build(_args) -> int:
     PARTICLES.parent.mkdir(parents=True, exist_ok=True)
-    effects = firebolt() + fireball() + charged_fireball() + firestorm() + body_fire()
+    effects = firebolt() + fireball() + charged_fireball() + firestorm() + firerain() + body_fire()
     PARTICLES.write_text(json.dumps({'format': 1, 'effects': effects}, indent=1) + '\n')
     print(f'{PARTICLES.relative_to(ROOT)}: {len(effects)} effects')
     return 0
