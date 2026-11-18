@@ -573,25 +573,14 @@ asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replace
   return {};
   }
 
-std::vector<Resources::MeshLevel> Resources::implLoadMeshLevels(std::string_view name, const asset::StaticMesh& main,
+std::vector<Resources::MeshLevel> Resources::implLoadMeshLevels(std::string_view key, const MeshOverride& source,
+                                                                const asset::StaticMesh& main,
                                                                 bool colored) {
-  std::lock_guard<std::recursive_mutex> guard(sync);
-  auto original = std::string(name);
-  FileExt::exchangeExt(original,"3DS","MRM");
-  if(!FileExt::hasExt(original,"MRM"))
-    return {};
-  auto key = original.substr(0,original.size()-4);
-  for(auto& c:key)
-    c = char(std::toupper(uint8_t(c)));
-  const auto it = meshOverrides.find(key);
-  if(it==meshOverrides.end() || it->second.levels.empty() || !MeshLevels::enabled())
-    return {};
-
   std::vector<MeshLevel> ret;
   std::string summary;
   try {
-    for(size_t i=0; i<it->second.levels.size(); ++i) {
-      const auto& [file,px] = it->second.levels[i];
+    for(size_t i=0; i<source.levels.size(); ++i) {
+      const auto& [file,px] = source.levels[i];
       const auto  level     = "level "+std::to_string(i+1)+" \""+file.string()+"\": ";
       std::vector<uint8_t> bytes;
       asset::StaticMesh mesh;
@@ -657,6 +646,43 @@ std::vector<Resources::MeshLevel> Resources::implLoadMeshLevels(std::string_view
     }
   Log::i("meshes: \"",key,"\" levels of detail: ",summary);
   return ret;
+  }
+
+void Resources::implLoadMeshImpostor(std::string_view key, const MeshImpostor& source, StaticMesh& mesh) {
+  try {
+    for(const auto& sub:mesh.sub) {
+      const auto& mat = sub.material;
+      if((mat.alpha!=Material::Solid && mat.alpha!=Material::AlphaTest) || mat.hasFrameAnimation() ||
+         mat.hasUvAnimation() || mat.hasProjection() || mat.antitile!=Material::Antitile::Off ||
+         mat.emissive>0.f || mat.hair || mat.strand || mat.eye)
+        throw std::runtime_error("unsupported material "+sub.texName);
+      }
+    const bool graphics = hasGraphicsDevice();
+    if(graphics && !device().properties().hasSamplerFormat(TextureFormat::DXT5))
+      throw std::runtime_error("the graphics device cannot sample DXT5 atlases");
+    StaticMesh::Impostor stage;
+    for(size_t i=0; i<source.files.size(); ++i) {
+      const auto& file = source.files[i];
+      try {
+        Pixmap pixmap(file.u16string());
+        if(pixmap.format()!=TextureFormat::DXT5 || pixmap.w()!=MeshLevels::ImpostorAtlasSize ||
+           pixmap.h()!=MeshLevels::ImpostorAtlasSize || pixmap.mipCount()!=MeshLevels::ImpostorMipCount)
+          throw std::runtime_error("expected a 1536 x 1536 DXT5 DDS with five mip levels");
+        if(graphics)
+          stage.textures[i] = device().texture(pixmap);
+        }
+      catch(const std::exception& error) {
+        throw std::runtime_error(file.string()+": "+error.what());
+        }
+      }
+    stage.px = source.px;
+    mesh.impostor = std::move(stage);
+    }
+  catch(const std::exception& error) {
+    Log::e("meshes: the impostor of \"",key,"\" is not used: ",error.what());
+    return;
+    }
+  Log::i("meshes: \"",key,"\" impostor under ",source.px," px");
   }
 
 ProtoMesh* Resources::implLoadMesh(std::string_view name) {
@@ -823,10 +849,24 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
       return nullptr;
 
     PackedMesh packed(zmsh,PackedMesh::PK_Visual,replaced,colors.empty() ? nullptr : &colors);
-    if(replaced)
-      for(auto& level:implLoadMeshLevels(name,zmsh,!colors.empty()))
-        packed.addLevel(level.mesh,level.px,level.colors.empty() ? nullptr : &level.colors);
-    return std::unique_ptr<ProtoMesh>{new ProtoMesh(std::move(packed),name)};
+    const MeshOverride* source = nullptr;
+    std::string key;
+    if(replaced) {
+      key = name.substr(0,name.size()-4);
+      for(auto& c:key)
+        c = char(std::toupper(uint8_t(c)));
+      const auto it = meshOverrides.find(key);
+      if(it!=meshOverrides.end() && !it->second.levels.empty() && MeshLevels::enabled()) {
+        source = &it->second;
+        for(auto& level:implLoadMeshLevels(key,*source,zmsh,!colors.empty()))
+          packed.addLevel(level.mesh,level.px,level.colors.empty() ? nullptr : &level.colors);
+        }
+      }
+    auto ret = std::make_unique<ProtoMesh>(std::move(packed),name);
+    auto& mesh = ret->attach[0];
+    if(source!=nullptr && !mesh.levels.empty() && source->impostor.px>0.f && MeshLevels::impostorsEnabled())
+      implLoadMeshImpostor(key,source->impostor,mesh);
+    return ret;
     }
 
   if(FileExt::hasExt(name,"MMS") || FileExt::hasExt(name,"MMB")) {

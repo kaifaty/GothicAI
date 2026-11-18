@@ -209,6 +209,7 @@ StaticMesh& StaticMesh::operator=(StaticMesh&& other) {
   bbox=other.bbox;
   drawn=other.drawn;
   levels=std::move(other.levels);
+  impostor=std::move(other.impostor);
   meshletSpheres=std::move(other.meshletSpheres);
   pageRange=std::move(other.pageRange);
   return *this;

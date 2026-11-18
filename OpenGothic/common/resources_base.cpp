@@ -498,7 +498,7 @@ Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
   }
 
 // "levels" of a record of meshes.json (graphics/meshlevels.h): up to MaxLevels {"glb": <path>, "px": <pixels>}, px
-// falling, each GLB a file. Any fault: no levels and the reason in `error`
+// falling, each GLB a file. A fault in those records discards the GLB levels. The optional last stage is read separately.
 static std::vector<std::pair<std::filesystem::path,float>> meshLevelFiles(const rapidjson::Value& value,
                                                                          const std::filesystem::path& root,
                                                                          std::string& error) {
@@ -507,12 +507,18 @@ static std::vector<std::pair<std::filesystem::path,float>> meshLevelFiles(const 
     error = "expected a list of {\"glb\": <path>, \"px\": <pixels>}";
     return {};
     }
-  if(value.Size()>MeshLevels::MaxLevels) {
-    error = std::to_string(value.Size())+" levels, at most "+std::to_string(MeshLevels::MaxLevels);
+  const auto impostorOnly = [](const rapidjson::Value& level) {
+    return level.IsObject() && level.HasMember("impostor") && !level.HasMember("glb");
+    };
+  const auto count = std::count_if(value.Begin(),value.End(),[&](const auto& level) { return !impostorOnly(level); });
+  if(count>ptrdiff_t(MeshLevels::MaxLevels)) {
+    error = std::to_string(count)+" levels, at most "+std::to_string(MeshLevels::MaxLevels);
     return {};
     }
   for(rapidjson::SizeType i=0; i<value.Size(); ++i) {
     const auto& v    = value[i];
+    if(impostorOnly(v))
+      continue;
     const auto  name = "level "+std::to_string(i+1)+": ";
     if(!v.IsObject() || !v.HasMember("glb") || !v["glb"].IsString() || !v.HasMember("px")) {
       error = name+"expected {\"glb\": <path>, \"px\": <pixels>}";
@@ -542,6 +548,40 @@ static std::vector<std::pair<std::filesystem::path,float>> meshLevelFiles(const 
     levels.emplace_back(file,float(px));
     }
   return levels;
+  }
+
+static float meshImpostorFiles(const rapidjson::Value& levels, const std::filesystem::path& root, float previous,
+                               std::array<std::filesystem::path,3>& files, std::string& error) {
+  for(auto it=levels.Begin(); it!=levels.End(); ++it) {
+    if(!it->IsObject() || !it->HasMember("impostor"))
+      continue;
+    if(it+1!=levels.End() || it->HasMember("glb") || previous<=0.f) {
+      error = "expected one impostor after the last GLB level";
+      return 0.f;
+      }
+    const auto& maps = (*it)["impostor"];
+    const float px = it->HasMember("px") && (*it)["px"].IsNumber() ? (*it)["px"].GetFloat() : 0.f;
+    if(!(px>0.f && px<previous)) {
+      error = "px must be positive and less than the last GLB level's px";
+      return 0.f;
+      }
+    constexpr const char* names[] = {"albedo","surface","orm"};
+    for(size_t i=0; i<files.size(); ++i) {
+      if(!maps.IsObject() || !maps.HasMember(names[i]) || !maps[names[i]].IsString()) {
+        error = std::string("expected a DDS path for ")+names[i];
+        return 0.f;
+        }
+      const auto& field = maps[names[i]];
+      const std::string path(field.GetString(),field.GetStringLength());
+      if(!contentPath(path,"DDS")) {
+        error = "invalid DDS path \""+path+"\"";
+        return 0.f;
+        }
+      files[i] = (root/path).lexically_normal();
+      }
+    return px;
+    }
+  return 0.f;
   }
 
 void Resources::indexMeshOverrides() {
@@ -591,9 +631,16 @@ void Resources::indexMeshOverrides() {
       };
     if(entry.value.HasMember("levels")) {
       std::string error;
-      mesh.levels = meshLevelFiles(entry.value["levels"],root,error);
+      const auto& levels = entry.value["levels"];
+      mesh.levels = meshLevelFiles(levels,root,error);
       if(!error.empty())
         Log::e("meshes: the levels of \"",key,"\" are not used: ",error);
+      else {
+        mesh.impostor.px = meshImpostorFiles(levels,root,mesh.levels.empty() ? 0.f : mesh.levels.back().second,
+                                            mesh.impostor.files,error);
+        if(!error.empty())
+          Log::e("meshes: the impostor of \"",key,"\" is not used: ",error);
+        }
       }
     meshOverrides[std::move(key)] = std::move(mesh);
     }

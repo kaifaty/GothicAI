@@ -5,6 +5,7 @@
 #include <Tempest/Device>
 #include <Tempest/AccelerationStructure>
 
+#include <array>
 #include <vector>
 #include <memory>
 
@@ -73,6 +74,11 @@ class StaticMesh {
       std::vector<std::pair<size_t,size_t>> sub;
       };
 
+    struct Impostor {
+      float                              px = 0;
+      std::array<Tempest::Texture2d,3>     textures; // albedo/coverage, normal/depth, ORM
+      };
+
     struct Morph {
       std::string            name;
       size_t                 numFrames       = 0;
@@ -126,6 +132,7 @@ class StaticMesh {
     // bbox itself is the mesh's, as a tree's height for the wind is. The same as bbox without levels
     Bounds                          drawn;
     std::vector<Level>              levels;
+    Impostor                        impostor;
     float                           strandWidth = 0; // PackedMesh::strandWidth
     // the sphere of each meshlet in the mesh's space (centre, radius), levels included: the shadow pages take an
     // object's meshlets by them (graphics/meshletspheres.h); empty for the landscape and meshes without them

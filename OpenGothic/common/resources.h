@@ -744,6 +744,10 @@ class Resources final {
     const MaterialMapFiles*                                           groundOf(const std::string& key) const;
     TextureCache                                                     materialTextureCache;
     bool                                                             materialMapsPresent = false;
+    struct MeshImpostor {
+      std::array<std::filesystem::path,3> files;
+      float                              px = 0;
+      };
     struct MeshOverride {
       std::filesystem::path file;
       std::string replacement;
@@ -753,6 +757,7 @@ class Resources final {
       uint32_t sourceCrc32 = 0;
       // "levels" of the record (graphics/meshlevels.h): coarser GLBs and the pixels under which each is drawn
       std::vector<std::pair<std::filesystem::path,float>> levels;
+      MeshImpostor impostor;
       };
     // A level of detail of an own static mesh, its submeshes in the order of the mesh's (PackedMesh::addLevel)
     struct MeshLevel {
@@ -763,9 +768,13 @@ class Resources final {
     // The levels of the record of `name` whose GLB `main` is (with COLOR_0 when `colored`): none while they are off
     // (MeshLevels::enabled), without the field, and when one of them does not load or has other materials or vertex
     // colours than the mesh — then the reason goes to the log and the mesh is drawn alone
-    std::vector<MeshLevel>                                           implLoadMeshLevels(std::string_view name,
+    std::vector<MeshLevel>                                           implLoadMeshLevels(std::string_view key,
+                                                                                        const MeshOverride& source,
                                                                                         const asset::StaticMesh& main,
                                                                                         bool colored);
+    void                                                             implLoadMeshImpostor(std::string_view key,
+                                                                                          const MeshImpostor& source,
+                                                                                          StaticMesh& mesh);
     std::unordered_map<std::string,MeshOverride>                     meshOverrides;
     struct CharacterHead {
       std::filesystem::path file;

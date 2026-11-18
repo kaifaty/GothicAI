@@ -1437,34 +1437,45 @@ void indexCases(const Fixture& fixture) {
   resourcePaths(fixture,true);
   }
 
-// The switch of the levels of detail off, in a process of this test of its own (MeshLevels::enabled() is read once):
-// mode `env` by OPENGOTHIC_MESH_LEVELS=0, mode `ini` by [INTERNAL] meshLevels=0 of the game's settings. A record with
-// levels must load the mesh alone, its rays the mesh's own triangles. Returns the exit code
+void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool dxt5 = false,
+                  uint32_t side = 4, uint32_t mips = 1);
+
+constexpr std::string_view impostorLevel = R"({"impostor":{"albedo":"test/atlas.dds","surface":"test/atlas.dds","orm":"test/atlas.dds"},"px":49})";
+
+// The two switches are read once, so their settings and environment cases need fresh processes.
 int levelSwitchChild(std::string_view mode) {
   Fixture fixture;
   const auto root=fixture.root.string();
   const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str(),"-rt","0"};
   CommandLine commandLine(5,args);
   std::unique_ptr<Settings> settings;
-  if(mode=="ini") {
+  const bool impostorOnly = mode.starts_with("impostor-");
+  if(mode.ends_with("-ini") || mode=="ini") {
     textFile(fixture.root/"system.ini","");
-    textFile(fixture.root/"user.ini","[INTERNAL]\nmeshLevels=0\n");
+    textFile(fixture.root/"user.ini",impostorOnly ? "[INTERNAL]\nimpostors=0\n" : "[INTERNAL]\nmeshLevels=0\n");
     settings=std::make_unique<Settings>();
     settings->load((fixture.root/"system.ini").u16string(),(fixture.root/"user.ini").u16string());
     }
   glbFile(fixture.root/"meshes/test/lod1.glb");
-  fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400}]}})");
+  alphaDdsFile(fixture.root/"meshes/test/atlas.dds",false,true,MeshLevels::ImpostorAtlasSize,MeshLevels::ImpostorMipCount);
+  fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400},)"+
+                std::string(impostorLevel)+"]}}");
   Resources resources;
   fixture.mount();
   const auto* proto = Resources::loadMesh("own_mesh.3ds");
-  require(!MeshLevels::enabled(),"the switch must be off: "+std::string(mode));
+  require(MeshLevels::enabled()==impostorOnly,"mesh levels switch has the wrong state: "+std::string(mode));
+  if(impostorOnly)
+    require(!MeshLevels::impostorsEnabled(),"the impostor switch must be off: "+std::string(mode));
   require(proto!=nullptr && proto->attach.size()==1 && proto->attach[0].sub.size()==1,"the mesh must load");
   const auto& mesh = proto->attach[0];
   const auto& sub  = mesh.sub[0];
-  require(mesh.levels.empty() && mesh.rtSlice(sub.iboOffset,sub.iboLength)==std::pair(sub.iboOffset,sub.iboLength) &&
-          mesh.levelMeshlets(sub.iboOffset,sub.iboLength,1)==std::pair(uint32_t(0),uint32_t(1)),
-          "levels switched off must leave the mesh itself, in the rays too: "+std::string(mode));
-  std::cout << "mesh levels off by " << mode << ": the mesh alone\n";
+  require(mesh.impostor.px==0.f,"the impostor must be absent when switched off");
+  const auto expected = impostorOnly ? std::pair(sub.iboOffset+sub.iboLength,sub.iboLength) :
+                                       std::pair(sub.iboOffset,sub.iboLength);
+  require(mesh.levels.size()==size_t(impostorOnly) && mesh.rtSlice(sub.iboOffset,sub.iboLength)==expected &&
+          mesh.levelMeshlets(sub.iboOffset,sub.iboLength,1)==std::pair(uint32_t(impostorOnly),1u),
+          "switching off the impostor must preserve the 3D levels and their ray geometry when enabled: "+std::string(mode));
+  std::cout << "mesh detail switch " << mode << " leaves " << mesh.levels.size() << " 3D levels\n";
   return 0;
   }
 
@@ -1476,12 +1487,15 @@ void levelSwitchCase(std::string_view mode) {
   std::vector<std::string> env;
   for(char** e=environ; *e!=nullptr; ++e) {
     const std::string_view v(*e);
-    if(!v.starts_with("OPENGOTHIC_MESH_LEVELS=") && !v.starts_with("GOTHIC_MESH_LEVELS_CHILD="))
+    if(!v.starts_with("OPENGOTHIC_MESH_LEVELS=") && !v.starts_with("OPENGOTHIC_IMPOSTORS=") &&
+       !v.starts_with("GOTHIC_MESH_LEVELS_CHILD="))
       env.emplace_back(v);
     }
   env.push_back("GOTHIC_MESH_LEVELS_CHILD="+std::string(mode));
   if(mode=="env")
     env.push_back("OPENGOTHIC_MESH_LEVELS=0");
+  if(mode=="impostor-env")
+    env.push_back("OPENGOTHIC_IMPOSTORS=0");
   std::vector<char*> envp;
   for(auto& v:env)
     envp.push_back(v.data());
@@ -1497,7 +1511,7 @@ void levelSwitchCase(std::string_view mode) {
     }
   int status = 0;
   require(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0,
-          "levels switched off by "+std::string(mode)+" must draw and trace the mesh alone");
+          "the mesh detail switch must be respected: "+std::string(mode));
   }
 
 // Levels of detail of an own mesh (graphics/meshlevels.h): the switch, the choice by the height on screen, the field
@@ -1507,6 +1521,8 @@ void levelCases(const Fixture& fixture) {
           MeshLevels::parse("1",false),"OPENGOTHIC_MESH_LEVELS must win over [INTERNAL] meshLevels, 0 is off");
   levelSwitchCase("env");
   levelSwitchCase("ini");
+  levelSwitchCase("impostor-env");
+  levelSwitchCase("impostor-ini");
 
   // Spruce A, 18 m, at 1920x1080 and 67.5 degrees: 400, 200, 100 and 50 px at 36, 73, 145 and 291 m
   const float px[] = {400,200,100,50};
@@ -1543,6 +1559,12 @@ void levelCases(const Fixture& fixture) {
   require(MeshLevels::pick(px,count,0,49)==4 && MeshLevels::pick(px,count,4,1000)==0,"a jump must cross every threshold at once");
   require(MeshLevels::pick(px,0,0,1)==0 && MeshLevels::pick(px,1,0,50)==1,
           "a record without levels must draw the mesh at any height; one level must be the last");
+  const float impostorPx[] = {400,200,100,50,49};
+  constexpr auto stageCount = std::size(impostorPx);
+  require(MeshLevels::pick(impostorPx,stageCount,4,49.f)==4 && MeshLevels::pick(impostorPx,stageCount,4,48.9f)==5 &&
+          MeshLevels::pick(impostorPx,stageCount,5,53.8f)==5 &&
+          MeshLevels::pick(impostorPx,stageCount,5,49.f * MeshLevels::Hysteresis)==4,
+          "the impostor must enter below its threshold and return to the last GLB after hysteresis");
 
   // the field
   const auto root = fixture.root/"meshes/test";
@@ -1564,6 +1586,7 @@ void levelCases(const Fixture& fixture) {
     require(proto!=nullptr && proto->attach.size()==1,"a mesh with levels must load");
     const auto& mesh = proto->attach[0];
     require(mesh.levels.size()==expectedLevels,"the mesh must keep exactly the declared levels");
+    require(mesh.impostor.px==0.f,"a GLB-only record must not have an impostor");
     require(mesh.sub.size()==1 && mesh.sub[0].iboOffset==0,"the test mesh must begin with one submesh");
     const auto& sub = mesh.sub[0];
     // what VisualObjects gives the object's cluster at each level (drawnMeshlets)
@@ -1596,6 +1619,33 @@ void levelCases(const Fixture& fixture) {
     for(const auto& point:mesh.hullVertices)
       require(point.x<=-100.f && point.x>=-400.f && point.y<=600.f,"the hull must have no vertex of a level");
   }
+
+  const std::string four = firstTwo+R"(,{"glb":"test/lod1.glb","px":100},{"glb":"test/lod1.glb","px":50})";
+  const auto atlas = root/"atlas.dds";
+  alphaDdsFile(atlas,false,true,MeshLevels::ImpostorAtlasSize,MeshLevels::ImpostorMipCount);
+  const auto loadImpostor = [&](std::string_view entries, size_t expectedLevels, float expectedPx) {
+    record(entries);
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1,"the impostor entry must not affect mesh loading");
+    const auto& mesh = proto->attach[0];
+    require(mesh.levels.size()==expectedLevels && mesh.impostor.px==expectedPx,
+            "the terminal impostor must be loaded independently of the GLBs");
+    if(!mesh.levels.empty()) {
+      const auto& sub = mesh.sub[0];
+      require(mesh.rtSlice(sub.iboOffset,sub.iboLength)==mesh.levels.back().sub[0],
+              "rays must still use the last 3D level");
+      }
+    };
+  const std::string tail = ","+std::string(impostorLevel)+"]";
+  loadImpostor(four+tail,4,49.f);
+  loadImpostor(four+R"(,{"impostor":{"albedo":"../atlas.dds"},"px":49}])",4,0.f);
+  loadImpostor("["+std::string(impostorLevel)+R"(,{"glb":"test/lod1.glb","px":50}])",1,0.f);
+  loadImpostor("["+std::string(impostorLevel)+"]",0,0.f);
+  alphaDdsFile(atlas,false,true); // valid DDS, incompatible atlas dimensions and mip chain
+  loadImpostor(four+tail,4,0.f);
+  std::filesystem::remove(atlas);
 
   // a wrong field: the reason in the log, the mesh drawn alone
   const auto alone = [&](std::string_view what) {
@@ -1880,7 +1930,7 @@ void fractureCache(const Fixture& fixture) {
   glbFile(glb);
   }
 
-void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool dxt5 = false) {
+void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool dxt5, uint32_t side, uint32_t mips) {
   std::array<uint8_t,144> bytes{};
   auto field = [&](size_t at, uint32_t value) {
     for(size_t i=0;i<4;++i)
@@ -1888,15 +1938,17 @@ void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool d
     };
   field(0,0x20534444); // DDS
   field(1,124);
-  field(2,0x81007);
-  field(3,4);
-  field(4,4);
-  field(5,dxt5 ? 16 : 8);
-  field(7,1);
+  const uint32_t blockBytes = dxt5 ? 16 : 8;
+  const auto levelBytes = [blockBytes](uint32_t size) { return ((size+3)/4)*((size+3)/4)*blockBytes; };
+  field(2,mips>1 ? 0xa1007 : 0x81007);
+  field(3,side);
+  field(4,side);
+  field(5,levelBytes(side));
+  field(7,mips);
   field(19,32);
   field(20,4);
   field(21,dxt5 ? 0x35545844 : 0x31545844); // DXT5 / DXT1
-  field(27,0x1000);
+  field(27,mips>1 ? 0x401008 : 0x1000);
   if(dxt5) {
     bytes[128] = 255; // Opaque alpha endpoint, all alpha indices zero.
     bytes[136] = 255;
@@ -1917,6 +1969,13 @@ void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool d
     }
   std::ofstream out(path,std::ios::binary);
   out.write(reinterpret_cast<const char*>(bytes.data()),dxt5 ? 144 : 136);
+  if(side>4 || mips>1) {
+    uint32_t length = 128;
+    for(uint32_t mip=0; mip<mips; ++mip)
+      length += levelBytes(std::max(1u,side>>mip));
+    out.seekp(length-1);
+    out.put('\0');
+    }
   if(!out)
     throw std::runtime_error("unable to write mesh alpha DDS fixture");
   }

@@ -19,13 +19,16 @@
 // px falling. The levels are packed after the mesh into its own buffers (PackedMesh::addLevel): a level is a slice of
 // meshlets of each submesh, so an object draws one by its cluster's range, and every pass that reads the cluster —
 // the main view, the occluders, the shadows — draws that level. The level is picked on the processor once a frame by
-// the main view (VisualObjects::preFrameUpdateLevels), with no blend: the switch is hard. The ray scene takes the
-// coarsest level once, at any distance; collision, hit zones and fracture take the mesh itself.
+// the main view (VisualObjects::preFrameUpdateLevels), with no blend: the switch is hard. An optional impostor
+// follows the last GLB. Only the main view draws its card. The ray scene takes the coarsest GLB at any distance;
+// collision, hit zones and fracture take the mesh itself.
 // [INTERNAL] meshLevels=0|1; OPENGOTHIC_MESH_LEVELS=0|1 wins. Off: the levels are not loaded, the mesh is drawn and
 // traced as it was without them. Read once
 namespace MeshLevels {
 
 constexpr size_t MaxLevels  = 4;
+constexpr uint32_t ImpostorAtlasSize = 12*128;
+constexpr uint32_t ImpostorMipCount  = 5;
 // A level gives way to the finer one only at this many times its pixels: a height on a threshold does not switch the
 // level back and forth
 constexpr float  Hysteresis = 1.1f;
@@ -43,6 +46,19 @@ inline bool enabled() {
     const bool  v   = parse(set ? std::string_view(env) : std::string_view(), ini);
     Tempest::Log::i("render: mesh levels of detail = ", v ? "1" : "0",
                     set ? " by OPENGOTHIC_MESH_LEVELS" : " by [INTERNAL] meshLevels");
+    return v;
+    }();
+  return on;
+  }
+
+inline bool impostorsEnabled() {
+  static const bool on = [] {
+    const char* env = std::getenv("OPENGOTHIC_IMPOSTORS");
+    const bool  set = env!=nullptr && *env!='\0';
+    const bool  ini = !::Settings::exists() || ::Settings::getI("INTERNAL","impostors")!=0;
+    const bool  v   = parse(set ? std::string_view(env) : std::string_view(), ini);
+    Tempest::Log::i("render: impostors = ", v ? "1" : "0",
+                    set ? " by OPENGOTHIC_IMPOSTORS" : " by [INTERNAL] impostors");
     return v;
     }();
   return on;
