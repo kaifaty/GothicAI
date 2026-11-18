@@ -5,8 +5,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <limits>
 #include <stdexcept>
 
@@ -537,21 +537,28 @@ CookedChunk CookedChunk::read(const std::filesystem::path& path, bool readHierar
     }
 
   const auto name = path.string();
-  std::ifstream file;
-  file.rdbuf()->pubsetbuf(nullptr,0);
-  file.open(path,std::ios::binary | std::ios::ate);
+#ifdef _WIN32
+  const std::unique_ptr<std::FILE,decltype(&std::fclose)> file(_wfopen(path.c_str(),L"rb"),std::fclose);
+#else
+  const std::unique_ptr<std::FILE,decltype(&std::fclose)> file(std::fopen(path.c_str(),"rb"),std::fclose);
+#endif
   if(!file)
     wcb::reject(what,name,"header","cannot open the file");
-  const auto end = file.tellg();
-  if(end<0 || uint64_t(end)>std::numeric_limits<size_t>::max())
+  // Use bulk reads without buffering past the end of the base section prefix.
+  std::setvbuf(file.get(),nullptr,_IONBF,0);
+#ifdef _WIN32
+  const auto end = _fseeki64(file.get(),0,SEEK_END)==0 ? _ftelli64(file.get()) : -1;
+#else
+  const auto end = fseeko(file.get(),0,SEEK_END)==0 ? ftello(file.get()) : -1;
+#endif
+  if(end<0 || uint64_t(end)>std::numeric_limits<size_t>::max() || std::fseek(file.get(),0,SEEK_SET)!=0)
     wcb::reject(what,name,"header","cannot determine the file size");
   const auto fileSize = size_t(end);
-  file.seekg(0);
   auto bytes = std::make_shared<std::vector<uint8_t>>();
   const auto extend = [&](size_t size, const char* part) {
     const auto start = bytes->size();
     bytes->resize(size);
-    if(size>start && !file.read(reinterpret_cast<char*>(bytes->data()+start),std::streamsize(size-start)))
+    if(size>start && std::fread(bytes->data()+start,1,size-start,file.get())!=size-start)
       wcb::reject(what,name,part,"cannot read the requested bytes");
     };
   extend(std::min(fileSize,size_t(wcb::HeaderSize)),"header");
