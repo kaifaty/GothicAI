@@ -442,11 +442,42 @@
    "name": "OWN_BALL_HEAD",
    "base": "OWN_BOLT_HEAD",
    "set": {
-    "ppsValue": 80.0,
+    "ppsValue": 40.0,
     "lspPartAvg": 120.0,
     "lspPartVar": 25.0,
-    "visSizeStart_S": "48 48",
-    "shpDim_S": "4"
+    "visSizeStart_S": "30 30",
+    "shpDim_S": "3"
+   }
+  },
+  {
+   "name": "OWN_BALL_FLAMES",
+   "base": "OWN_HAND_LICKS",
+   "inherit": 0.9,
+   "flipbook": {
+    "cols": 8,
+    "rows": 8,
+    "frames": 64,
+    "fps": 30
+   },
+   "hdr": {
+    "from": 1,
+    "to": 3,
+    "edge": 0.3
+   },
+   "set": {
+    "ppsValue": 22.0,
+    "visAlphaStart": 170.0,
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "6",
+    "visName_S": "OWN_FIREBALL.TGA",
+    "visSizeStart_S": "62 62",
+    "visSizeEndScale": 0.75,
+    "lspPartAvg": 200.0,
+    "lspPartVar": 40.0,
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 0 0"
    }
   },
   {
@@ -565,6 +596,7 @@
    "replaces": true,
    "with": [
     "OWN_BALL_HEAD",
+    "OWN_BALL_FLAMES",
     "OWN_BALL_LICKS",
     "OWN_BALL_ROOT",
     "OWN_BALL_EMBERS",
@@ -600,40 +632,76 @@
    "name": "OWN_BALL_HIT_FLASH",
    "base": "OWN_BOLT_HIT_FLASH",
    "set": {
-    "ppsValue": 8.0,
-    "lspPartAvg": 200.0,
-    "lspPartVar": 30.0,
-    "visSizeStart_S": "150 150",
-    "shpDim_S": "10"
+    "ppsValue": 3.0,
+    "lspPartAvg": 130.0,
+    "lspPartVar": 20.0,
+    "visSizeStart_S": "120 120",
+    "shpDim_S": "6"
    }
   },
   {
-   "name": "OWN_BALL_HIT_ROLL",
+   "name": "OWN_BALL_HIT_BLAST",
    "base": "OWN_HAND_LICKS",
    "inherit": 0.0,
-   "drag": 2.0,
+   "flipbook": {
+    "cols": 8,
+    "rows": 4,
+    "frames": 25,
+    "fps": 16,
+    "once": true
+   },
+   "hdr": {
+    "from": 1,
+    "to": 5,
+    "edge": 0.15
+   },
    "set": {
     "ppsScaleKeys_S": "",
     "ppsIsLooping": 0,
     "ppsIsSmooth": 0,
     "ppsFPS": 0.0,
-    "ppsValue": 30.0,
-    "shpType_S": "SPHERE",
-    "shpIsVolume": 1,
-    "shpDim_S": "35",
-    "velAvg": 0.22,
-    "velVar": 0.1,
-    "flyGravity_S": "0 0.0003 0",
-    "visSizeStart_S": "60 80",
-    "visSizeEndScale": 1.5,
-    "lspPartAvg": 750.0,
-    "lspPartVar": 200.0,
-    "dirMode_S": "DIR",
-    "dirFOR_S": "WORLD",
-    "dirAngleHead": 0.0,
-    "dirAngleHeadVar": 179.0,
-    "dirAngleElev": 0.0,
-    "dirAngleElevVar": 89.0
+    "ppsValue": 1.0,
+    "shpType_S": "POINT",
+    "shpDim_S": "0",
+    "shpOffsetVec_S": "0 0 0",
+    "visName_S": "OWN_EXPLOSION_FIRE.TGA",
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 3e-05 0",
+    "visSizeStart_S": "160 160",
+    "visSizeEndScale": 2.1,
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 255.0,
+    "lspPartAvg": 1500.0,
+    "lspPartVar": 0.0
+   }
+  },
+  {
+   "name": "OWN_BALL_HIT_CLOUD",
+   "base": "OWN_BOLT_HIT_PUFF",
+   "flipbook": {
+    "cols": 8,
+    "rows": 4,
+    "frames": 25,
+    "fps": 16,
+    "once": true
+   },
+   "set": {
+    "ppsValue": 1.0,
+    "shpType_S": "POINT",
+    "shpIsVolume": 0,
+    "shpDim_S": "0",
+    "shpOffsetVec_S": "0 0 0",
+    "visName_S": "OWN_EXPLOSION_SMOKE.TGA",
+    "velAvg": 0.0,
+    "velVar": 0.0,
+    "flyGravity_S": "0 3e-05 0",
+    "visSizeStart_S": "160 160",
+    "visSizeEndScale": 2.1,
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 130.0,
+    "lspPartAvg": 1500.0,
+    "lspPartVar": 0.0
    }
   },
   {
@@ -713,8 +781,9 @@
    "inherit": 0.0,
    "drag": 3.5,
    "with": [
+    "OWN_BALL_HIT_CLOUD",
+    "OWN_BALL_HIT_BLAST",
     "OWN_BALL_HIT_FLASH",
-    "OWN_BALL_HIT_ROLL",
     "OWN_BALL_HIT_SPARKS",
     "OWN_BALL_HIT_SMOKE",
     "OWN_BALL_HIT_HEAT"
@@ -743,7 +812,7 @@
     "ppsIsLooping": 0,
     "ppsIsSmooth": 0,
     "ppsFPS": 0.0,
-    "ppsValue": 150.0,
+    "ppsValue": 60.0,
     "shpType_S": "SPHERE",
     "shpIsVolume": 1,
     "shpDim_S": "14",

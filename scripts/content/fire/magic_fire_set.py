@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import shutil
 import sys
 
@@ -32,6 +33,11 @@ SMOKE_BOOK = {'cols': 8, 'rows': 8, 'frames': 64, 'fps': 10}
 ALL_AROUND = {'dirMode_S': 'DIR', 'dirFOR_S': 'WORLD', 'dirAngleHead': 0.0, 'dirAngleHeadVar': 179.0, 'dirAngleElev': 0.0,
               'dirAngleElevVar': 89.0}
 BURST = {'ppsScaleKeys_S': '', 'ppsIsLooping': 0, 'ppsIsSmooth': 0, 'ppsFPS': 0.0}
+# the spells' own atlases (explosion_atlas.py, Unity Labs CC0): texture name -> (place in the part, built file)
+ATLASES = {'OWN_EXPLOSION_FIRE.TGA': ('own-explosion-fire/albedo.dds', 'explosion-fire.dds'),
+           'OWN_EXPLOSION_SMOKE.TGA': ('own-explosion-smoke/albedo.dds', 'explosion-smoke.dds'),
+           'OWN_FIREBALL.TGA': ('own-fireball/albedo.dds', 'fireball-loop.dds')}
+BLAST_BOOK = {'cols': 8, 'rows': 4, 'frames': 25, 'fps': 16, 'once': True}
 TORCH = ROOT / 'reports/content/remaster/wall-torch-model/content/particles.d/wall-torch-fire.json'
 
 
@@ -130,7 +136,12 @@ def fireball() -> list:
          'set': {'visSizeStart_S': '20 26', **foot(20)}, 'lean': {'rise': 1.4, 'max_deg': 70, 'response': 0.1}},
         # flying: the bolt's one body on one axis, twice as thick, with a ball of tongues at its head
         {'name': 'OWN_BALL_HEAD', 'base': 'OWN_BOLT_HEAD',
-         'set': {'ppsValue': 80.0, 'lspPartAvg': 120.0, 'lspPartVar': 25.0, 'visSizeStart_S': '48 48', 'shpDim_S': '4'}},
+         'set': {'ppsValue': 40.0, 'lspPartAvg': 120.0, 'lspPartVar': 25.0, 'visSizeStart_S': '30 30', 'shpDim_S': '3'}},
+        {'name': 'OWN_BALL_FLAMES', 'base': 'OWN_HAND_LICKS', 'inherit': 0.9,
+         'flipbook': {'cols': 8, 'rows': 8, 'frames': 64, 'fps': 30}, 'hdr': {'from': 1, 'to': 3, 'edge': 0.3},
+         'set': {'ppsValue': 22.0, 'visAlphaStart': 170.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '6', 'visName_S': 'OWN_FIREBALL.TGA',
+                 'visSizeStart_S': '62 62', 'visSizeEndScale': 0.75, 'lspPartAvg': 200.0, 'lspPartVar': 40.0,
+                 'velAvg': 0.0, 'velVar': 0.0, 'flyGravity_S': '0 0 0'}},
         {'name': 'OWN_BALL_LICKS', 'base': 'OWN_HAND_LICKS', 'inherit': 0.8,
          'set': {'ppsValue': 90.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 0, 'shpDim_S': '16', 'visSizeStart_S': '20 28',
                  'visSizeEndScale': 0.6, 'lspPartAvg': 260.0, 'lspPartVar': 70.0, 'velAvg': 0.02, 'velVar': 0.01}},
@@ -142,7 +153,7 @@ def fireball() -> list:
         haze('OWN_BALL_WAKE', 8.0, inherit=0.1, ppsValue=45.0, lspPartAvg=520.0, lspPartVar=100.0, shpDim_S='10',
              visSizeStart_S='70 70', visSizeEndScale=2.0),
         {'name': 'MFX_IFB_PFXTRAIL', 'base': 'OWN_HAND_FLAME', 'replaces': True,
-         'with': ['OWN_BALL_HEAD', 'OWN_BALL_LICKS', 'OWN_BALL_ROOT', 'OWN_BALL_EMBERS', 'OWN_BALL_HEAT', 'OWN_BALL_WAKE'],
+         'with': ['OWN_BALL_HEAD', 'OWN_BALL_FLAMES', 'OWN_BALL_LICKS', 'OWN_BALL_ROOT', 'OWN_BALL_EMBERS', 'OWN_BALL_HEAT', 'OWN_BALL_WAKE'],
          'set': {'visSizeStart_S': '80 170', **foot(170)},
          'lean': {'rise': 1.8, 'max_deg': 87, 'response': 0.03, 'along': 0.3, 'grow': 0.3, 'grow_from': 0.25}},
         # the game's second trail (clouds of fire along the way to the target) would stand beside ours as another kind
@@ -152,11 +163,20 @@ def fireball() -> list:
         # the explosion, one burst (README, "Взрыв огненного шара"): a flash, a ball of fire thrown out and stopped by
         # the air, a second slower one that rolls up, sparks on arcs, smoke that stays, hot air, and its own light
         {'name': 'OWN_BALL_HIT_FLASH', 'base': 'OWN_BOLT_HIT_FLASH',
-         'set': {'ppsValue': 8.0, 'lspPartAvg': 200.0, 'lspPartVar': 30.0, 'visSizeStart_S': '150 150', 'shpDim_S': '10'}},
-        {'name': 'OWN_BALL_HIT_ROLL', 'base': 'OWN_HAND_LICKS', 'inherit': 0.0, 'drag': 2.0,
-         'set': {**BURST, 'ppsValue': 30.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '35', 'velAvg': 0.22,
-                 'velVar': 0.1, 'flyGravity_S': '0 0.0003 0', 'visSizeStart_S': '60 80', 'visSizeEndScale': 1.5,
-                 'lspPartAvg': 750.0, 'lspPartVar': 200.0, **ALL_AROUND}},
+         'set': {'ppsValue': 3.0, 'lspPartAvg': 130.0, 'lspPartVar': 20.0, 'visSizeStart_S': '120 120', 'shpDim_S': '6'}},
+        # the burst itself: one simulated explosion (explosion_atlas.py) played once by two particles at one place,
+        # the fire added and the cloud blended, so the ball of fire tears and ends as a dark cloud that drifts up
+        {'name': 'OWN_BALL_HIT_BLAST', 'base': 'OWN_HAND_LICKS', 'inherit': 0.0, 'flipbook': BLAST_BOOK,
+         'hdr': {'from': 1, 'to': 5, 'edge': 0.15},
+         'set': {**BURST, 'ppsValue': 1.0, 'shpType_S': 'POINT', 'shpDim_S': '0', 'shpOffsetVec_S': '0 0 0',
+                 'visName_S': 'OWN_EXPLOSION_FIRE.TGA', 'velAvg': 0.0, 'velVar': 0.0, 'flyGravity_S': '0 3e-05 0',
+                 'visSizeStart_S': '160 160', 'visSizeEndScale': 2.1, 'visAlphaStart': 255.0, 'visAlphaEnd': 255.0,
+                 'lspPartAvg': 1500.0, 'lspPartVar': 0.0}},
+        {'name': 'OWN_BALL_HIT_CLOUD', 'base': 'OWN_BOLT_HIT_PUFF', 'flipbook': BLAST_BOOK,
+         'set': {'ppsValue': 1.0, 'shpType_S': 'POINT', 'shpIsVolume': 0, 'shpDim_S': '0', 'shpOffsetVec_S': '0 0 0',
+                 'visName_S': 'OWN_EXPLOSION_SMOKE.TGA', 'velAvg': 0.0, 'velVar': 0.0, 'flyGravity_S': '0 3e-05 0',
+                 'visSizeStart_S': '160 160', 'visSizeEndScale': 2.1, 'visAlphaStart': 255.0, 'visAlphaEnd': 130.0,
+                 'lspPartAvg': 1500.0, 'lspPartVar': 0.0}},
         {'name': 'OWN_BALL_HIT_SPARKS', 'base': 'OWN_BOLT_HIT_SPARKS',
          'set': {'ppsValue': 180.0, 'shpDim_S': '12', 'velAvg': 0.75, 'velVar': 0.45, 'lspPartAvg': 1300.0,
                  'lspPartVar': 500.0, 'visSizeStart_S': '0.8 0.8'}},
@@ -166,9 +186,10 @@ def fireball() -> list:
         haze('OWN_BALL_HIT_HEAT', 9.0, inherit=0.0, **BURST, ppsValue=5.0, lspPartAvg=600.0, lspPartVar=100.0, shpDim_S='25',
              visSizeStart_S='160 160', visSizeEndScale=1.8),
         {'name': 'MFX_FIREBALL_COLLIDE1', 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.0, 'drag': 3.5,
-         'with': ['OWN_BALL_HIT_FLASH', 'OWN_BALL_HIT_ROLL', 'OWN_BALL_HIT_SPARKS', 'OWN_BALL_HIT_SMOKE', 'OWN_BALL_HIT_HEAT'],
+         'with': ['OWN_BALL_HIT_CLOUD', 'OWN_BALL_HIT_BLAST', 'OWN_BALL_HIT_FLASH', 'OWN_BALL_HIT_SPARKS', 'OWN_BALL_HIT_SMOKE',
+                  'OWN_BALL_HIT_HEAT'],
          'light': {'range': 800, 'color': [255, 170, 80], 'fps': 8.0, 'keys': [1, 1, 0.85, 0.6, 0.4, 0.22, 0.1, 0]},
-         'set': {**BURST, 'ppsValue': 150.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '14', 'velAvg': 0.8,
+         'set': {**BURST, 'ppsValue': 60.0, 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '14', 'velAvg': 0.8,
                  'velVar': 0.3, 'flyGravity_S': '0 0.0001 0', 'visSizeStart_S': '30 42', 'visSizeEndScale': 1.9,
                  'lspPartAvg': 480.0, 'lspPartVar': 130.0, **ALL_AROUND}},
     ]
@@ -231,9 +252,18 @@ def cmd_pack(args) -> int:
     output = STAGING / args.set
     if output.exists():
         sys.exit(f'{output}: the staging set exists; choose a new name')
+    missing = [name for _, name in ATLASES.values() if not (args.atlases / name).is_file()]
+    if missing:
+        sys.exit(f'{args.atlases}: no {", ".join(missing)} (explosion_atlas.py)')
     target = output / PARTICLES.relative_to(CONTENT)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(PARTICLES, target)
+    index = {}
+    for texture, (rel, name) in ATLASES.items():
+        (output / 'materials' / rel).parent.mkdir(parents=True)
+        shutil.copyfile(args.atlases / name, output / 'materials' / rel)
+        index[texture] = {'albedo': rel}
+    (output / 'materials/materials.json').write_text(json.dumps(index, indent=2) + '\n')
     print(f'{output}: the spells\' fire as a part; it needs the effects of torch-model-* and fire-worlds-* and smoke-*')
     return 0
 
@@ -244,6 +274,7 @@ def main() -> int:
     sub.add_parser('build').set_defaults(func=cmd_build)
     pack = sub.add_parser('pack')
     pack.add_argument('--set', required=True)
+    pack.add_argument('--atlases', type=Path, required=True, help='the folder of explosion_atlas.py outputs')
     pack.set_defaults(func=cmd_pack)
     args = parser.parse_args()
     return args.func(args)
