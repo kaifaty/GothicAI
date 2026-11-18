@@ -456,13 +456,15 @@ class Renderer final {
 
       uint64_t                  statsTime = 0; // last OPENGOTHIC_VSM_STATS line, ms
       // OPENGOTHIC_VSM_STATS=frames: each frame slot's copy of VsmHeader, read when the slot comes round again (its
-      // fence waited for), and the frame's number; the bins drawn by the frame logged last, to check the hysteresis's
+      // fence waited for, or the bench's shot waited for the GPU), and the frame's number; the bins drawn by the
+      // frames logged last, by number, to check the frame before's that the hysteresis takes
       Tempest::StorageBuffer    frameStats[Resources::MaxFramesInFlight];
       uint64_t                  frameStatsNo[Resources::MaxFramesInFlight] = {};
       bool                      frameStatsWritten[Resources::MaxFramesInFlight] = {};
       uint64_t                  frameNo = 0;
-      uint64_t                  frameLoggedNo = 0;
-      uint32_t                  frameLoggedAdmit[9] = {};
+      uint64_t                  frameLoggedNo[4] = {};
+      uint32_t                  frameLoggedAdmit[4][9] = {};
+      uint32_t                  frameLoggedPrev[4][9] = {};
       Tempest::StorageBuffer    lampProbe;     // light_vsm_probe: one frame's lamp filter counters, a stamp per pixel
       uint32_t                  lampStamp  = 0; // the counted frame's stamp
       bool                      lampArmed  = false; // the next drawLights counts

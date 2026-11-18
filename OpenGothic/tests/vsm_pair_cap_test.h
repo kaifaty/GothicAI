@@ -300,3 +300,192 @@ void vsmPairCapRecords(Tempest::Device& device) {
   require(admitted(exact)==prefix(Sun2) && exact.header.meshletCount==17 && exact.header.pairSpill==0,
           ("a bin drawn the frame before goes in up to the cap and exactly at it"+demand(exact)).c_str());
   }
+
+// The entries of the sun's pages at the edge of the bins drawn the frame before (shadow-flicker.md, «Третий круг»):
+// the engine's own vsm_clear.comp, vsm_mark_pages.comp, vsm_clump_pages.comp, vsm_list_pages.comp,
+// vsm_alloc_pages.comp and vsm_merge_pages.comp on a screen of 32x32 pixels, a pixel marking a cell of mip 0's page
+// table. An entry takes the bin of its farthest page (vsmSunBin). Quads and stripes went across that edge before, and
+// which side a page near it fell on followed the grid of the quads - the marks of TAA's jittered frame moved it, and a
+// shadow at the edge came and went in the jitter's rhythm with the camera still. Now no entry holds pages of both
+// sides: a page is drawn or left out by its own ring, however the grid falls. With no edge the pages merge as before.
+void vsmEntryEdgeRecords(Tempest::Device& device) {
+  Resources resources(device);
+  Shaders   shaders;
+  shaders.waitCompiler();
+  if(!Shaders::isVsmSupported()) {
+    std::cout << "vsm entry edge: skipped, no virtual shadow maps on this device\n";
+    return;
+    }
+
+  constexpr int      Tbl  = 32;      // VSM_PAGE_TBL_SIZE
+  constexpr uint32_t Pool = 64*64;   // the pool's pages, as the game's 8192x8192
+  constexpr uint32_t Sun0 = 16;      // the bin of mip 0's centre ring: the lamps' 16 bins come first
+  const size_t headerWords = shaders.vsmClear.sizeofBuffer(0, 0)/sizeof(uint32_t);
+  const auto ring = [](int x, int y) { // vsmSunBin's ring of a page: the square around the table's centre
+    return std::max(std::max(x-Tbl/2, Tbl/2-1-x), std::max(y-Tbl/2, Tbl/2-1-y));
+    };
+  const auto prefix = [](uint32_t bins) {
+    std::array<uint32_t,9> ret = {};
+    for(uint32_t b=0; b<bins; ++b)
+      ret[b/32] |= 1u << (b%32);
+    return ret;
+    };
+  struct Entry { int x, y, mip, w, h; };
+
+  // the screen is the page table: the camera's and the sun's views are the same, lifted 100 above the planet's
+  // surface so the planet does not hide the sun; a pixel's derivatives are a texel of mip 0
+  SceneGlobals::UboGlobal ubo;
+  ubo.viewProjectLwcInv = Tempest::Matrix4x4::mkIdentity();
+  ubo.viewProjectLwcInv.translate(0, 100, 0);
+  ubo.viewVirtualShadowLwc = Tempest::Matrix4x4::mkIdentity();
+  ubo.viewVirtualShadowLwc.translate(0, -100, 0);
+  ubo.vsmDdx       = Tempest::Vec4(1.f/4096.f, 0, 0, 0);
+  ubo.vsmDdy       = Tempest::Vec4(0, 1.f/4096.f, 0, 0);
+  ubo.sunDir       = Tempest::Vec3(0, 0.6f, 0.8f); // the normal of a zero G-buffer texel is (0,0,1)
+  ubo.screenResInv = Tempest::Vec2(1.f/Tbl, 1.f/Tbl);
+  auto sceneUbo = device.ssbo(&ubo, sizeof(ubo));
+
+  Tempest::Pixmap diffusePm(Tbl, Tbl, Tempest::TextureFormat::RGBA8);
+  Tempest::Pixmap normalPm (Tbl, Tbl, Tempest::TextureFormat::R32U);
+  std::memset(diffusePm.data(), 0, diffusePm.dataSize());
+  std::memset(normalPm.data(),  0, normalPm.dataSize());
+  auto diffuse = device.texture(diffusePm, false);
+  auto normal  = device.texture(normalPm,  false);
+  auto pageTbl = device.image3d(Tempest::TextureFormat::R32U, Tbl, Tbl, 16);
+  auto pageHiZ = device.image3d(Tempest::TextureFormat::R32U, Tbl, Tbl, 16);
+  const std::vector<uint32_t> noFaces(6, 0u); // a lamp's six faces, none marked
+  auto omni    = device.ssbo(noFaces.data(), noFaces.size()*sizeof(uint32_t));
+  auto pageTmp = device.ssbo(Tempest::Uninitialized, shaders.vsmAllocPages.sizeofBuffer(3, Pool));
+  auto dbg     = device.image2d(Tempest::TextureFormat::R32U, 64, 64);
+
+  // a frame of renderer_vsm.cpp from the marks to the merged entries, with the bins the frame before drew
+  const auto frame = [&](const std::vector<std::pair<int,int>>& marks, const std::array<uint32_t,9>& drawnBefore) {
+    Tempest::Pixmap depthPm(Tbl, Tbl, Tempest::TextureFormat::R32F);
+    auto* z = reinterpret_cast<float*>(depthPm.data());
+    std::fill(z, z+Tbl*Tbl, 1.f); // the sky marks nothing
+    for(auto [x, y] : marks)
+      z[y*Tbl + x] = 0.5f;
+    auto depth = device.texture(depthPm, false);
+
+    // vsm_clear.comp takes the bins the frame before drew from admitBits
+    std::vector<uint32_t> words(shaders.vsmClear.sizeofBuffer(0, Pool)/sizeof(uint32_t), 0);
+    const size_t admitAt = 4 + 16 + 16*4 + 8; // VsmHeader: counts, pagePerMip, pageBbox, then 8 counters
+    std::copy(drawnBefore.begin(), drawnBefore.end(), words.begin()+ptrdiff_t(admitAt));
+    auto pages = device.ssbo(words.data(), words.size()*sizeof(uint32_t));
+
+    auto command = device.commandBuffer();
+    {
+    auto enc = command.startEncoding(device);
+    enc.setBinding(0, pages);
+    enc.setBinding(1, pageTbl);
+    enc.setBinding(2, pageHiZ);
+    enc.setPipeline(shaders.vsmClear);
+    enc.dispatchThreads(Tbl, Tbl, 16);
+
+    const float mipBias = 0;
+    enc.setBinding(0, sceneUbo);
+    enc.setBinding(1, diffuse, Tempest::Sampler::nearest());
+    enc.setBinding(2, normal,  Tempest::Sampler::nearest());
+    enc.setBinding(3, depth,   Tempest::Sampler::nearest());
+    enc.setBinding(4, pageTbl);
+    enc.setBinding(5, pageHiZ);
+    enc.setPushData(&mipBias, sizeof(mipBias));
+    enc.setPipeline(shaders.vsmMarkPages);
+    enc.dispatchThreads(Tbl, Tbl);
+
+    enc.setBinding(0, pages);
+    enc.setBinding(1, pageTbl);
+    enc.setPipeline(shaders.vsmClumpPages);
+    enc.dispatchThreads(Tbl, Tbl, 16);
+
+    enc.setBinding(0, pages);
+    enc.setBinding(1, pageTbl);
+    enc.setBinding(2, omni);
+    enc.setBinding(3, pageTmp);
+    enc.setBinding(4, dbg);
+    enc.setPipeline(shaders.vsmListPages);
+    enc.dispatch(16+1); // the last group lists the lamps' faces and counts the entries
+    enc.setPipeline(shaders.vsmAllocPages);
+    enc.dispatch(1);
+    enc.setPipeline(shaders.vsmMergePages);
+    enc.dispatch(1);
+    }
+    device.submit(command).wait();
+
+    device.readBytes(pages, words.data(), words.size()*sizeof(uint32_t));
+    require(std::equal(drawnBefore.begin(), drawnBefore.end(), words.begin()+ptrdiff_t(admitAt+9)),
+            "vsm_clear.comp hands the bins drawn the frame before to the frame's passes");
+    std::vector<Entry> ret;
+    for(uint32_t i=0; i<words[0] && headerWords+i<words.size(); ++i) {
+      const uint32_t p = words[headerWords+i];
+      if(p==0 || (p & 1u)!=0 || ((p >> 24) & 0xF)==0)
+        continue; // none, a lamp's face, or a page of a block placed with its first one
+      ret.push_back(Entry{int((p >> 1) & 0xFF), int((p >> 9) & 0xFF), int((p >> 17) & 0x7F),
+                          int((p >> 24) & 0xF), int((p >> 28) & 0xF)});
+      }
+    return ret;
+    };
+  const auto text = [](const std::vector<Entry>& es) {
+    std::string ret;
+    for(auto& e : es)
+      ret += " (" + std::to_string(e.x) + "," + std::to_string(e.y) + " " + std::to_string(e.w) + "x" + std::to_string(e.h) + ")";
+    return ret;
+    };
+  const auto has = [](const std::vector<Entry>& es, Entry e) {
+    return std::any_of(es.begin(), es.end(), [&](const Entry& a) {
+      return a.x==e.x && a.y==e.y && a.mip==e.mip && a.w==e.w && a.h==e.h;
+      });
+    };
+
+  // a row through the centre, x 10..21 of y 16 (rings 5..0..5), and a block of 4x4 pages at x 17..20, y 12..15
+  // (rings 1..4): the block is a quad of the grid that starts at the marks' first column; one more mark at (16,12)
+  // moves that grid by a page, as the jitter moves the marks at a mip's edges
+  std::vector<std::pair<int,int>> marks;
+  for(int x=10; x<=21; ++x)
+    marks.push_back({x, 16});
+  for(int x=17; x<=20; ++x)
+    for(int y=12; y<=15; ++y)
+      marks.push_back({x, y});
+  std::vector<std::pair<int,int>> shifted = marks;
+  shifted.push_back({16, 12});
+
+  // all bins drawn the frame before, no edge: the row is one stripe and the block one quad, as before
+  const auto whole = frame(marks, prefix(16+16*16));
+  require(has(whole, {10, 16, 0, 12, 1}) && has(whole, {17, 12, 0, 4, 4}),
+          ("with no edge the pages merge as before:"+text(whole)).c_str());
+
+  // the frame before drew the lamps and mip 0's rings 0..2: no entry holds pages of both sides of that edge, each
+  // marked page is in one entry, and an entry with a page drawn the frame before has its bin among the drawn
+  const auto drawn = [&](int x, int y) { return ring(x, y)<=2; };
+  for(auto* m : {&marks, &shifted}) {
+    const auto es = frame(*m, prefix(Sun0+3));
+    for(auto& e : es) {
+      bool any = false, all = true;
+      int  far = 0;
+      for(int x=e.x; x<e.x+e.w; ++x)
+        for(int y=e.y; y<e.y+e.h; ++y) {
+          any |= drawn(x, y);
+          all &= drawn(x, y);
+          far  = std::max(far, ring(x, y));
+          }
+      require(e.mip==0 && any==all,
+              ("an entry holds the pages of one side of the bins drawn the frame before:"+text(es)).c_str());
+      require(!any || far<=2, "an entry of pages drawn the frame before keeps its bin among the drawn");
+      }
+    for(auto [x, y] : *m) {
+      const auto n = std::count_if(es.begin(), es.end(), [x=x, y=y](const Entry& e) {
+        return e.x<=x && x<e.x+e.w && e.y<=y && y<e.y+e.h;
+        });
+      require(n==1, ("each marked page is in one entry:"+text(es)).c_str());
+      }
+    if(m==&marks)
+      require(has(es, {10, 16, 0, 3, 1}) && has(es, {13, 16, 0, 6, 1}) && has(es, {19, 16, 0, 3, 1}),
+              ("the row's stripe starts anew where the drawn bins end:"+text(es)).c_str());
+    }
+  }
+
+// the records of this header, one call of material_texture_test.cpp
+void vsmRecords(Tempest::Device& device) {
+  vsmPairCapRecords(device);
+  vsmEntryEdgeRecords(device);
+  }

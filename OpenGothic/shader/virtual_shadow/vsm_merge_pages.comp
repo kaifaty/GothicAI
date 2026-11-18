@@ -92,8 +92,8 @@ void main() {
     const ivec3 at1  = unpackVsmPageInfo(p1);
     if(sz.y!=sz1.y || at+uvec3(size,0,0)!=at1 || om1)
       break;
-    if(size+sz.x>=16) {
-      // restart stripe
+    if(size+sz.x>=16 || vsmDrawnBefore(vsm.header.admitPrevBits, at1)!=vsmDrawnBefore(vsm.header.admitPrevBits, at)) {
+      // restart stripe: at 16 pages, or where the bins drawn the frame before end (vsmDrawnBefore)
       vsm.pageList[pId] = packVsmPageInfo(at, ivec2(size, sz.y));
       pId  = pId1;
       sz   = sz1;

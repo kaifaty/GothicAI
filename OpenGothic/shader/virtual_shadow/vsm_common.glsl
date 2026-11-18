@@ -69,6 +69,16 @@ uint vsmSunBin(const ivec3 page, const ivec2 sz) {
   return uint(VSM_LAMP_BINS + page.z*VSM_RING_BINS + clamp(max(rx, ry), 0, VSM_RING_BINS-1));
   }
 
+// Whether the bins drawn the frame before (VsmHeader::admitPrevBits) took a sun's page by its own bin, its ring alone.
+// An entry holds the pages of one side only (vsm_clump_pages.comp, vsm_merge_pages.comp): its bin is its farthest
+// page's, so an entry across the edge of the bins drawn left its near pages out with it or drew its far ones, as the
+// pages happened to merge - and they merge after the marks of the jittered frame, which turn with TAA's eight phases.
+// A shadow at the edge came and went in that rhythm with the camera still (shadow-flicker.md, «Третий круг»)
+bool vsmDrawnBefore(const uint admitPrev[VSM_BIN_WORDS], const ivec3 page) {
+  const uint bin = vsmSunBin(page, ivec2(1));
+  return (admitPrev[bin/32] & (1u << (bin%32)))!=0u;
+  }
+
 uint packVsmPageInfo(ivec3 at, ivec2 size) {
   // 1 : 8 : 8 : 7 : 4 : 4
   return ((at.x & 0xFF) << 1) | ((at.y & 0xFF) << 9) | ((at.z & 0x7F) << 17) | ((size.x & 0xF) << 24) | ((size.y & 0xF) << 28);

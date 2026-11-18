@@ -308,7 +308,7 @@ void Renderer::logVsmFrame(uint8_t fId) {
   // OPENGOTHIC_VSM_STATS=frames: a line for the frame this slot drew last time - its fence has been waited for, so
   // nothing waits for the GPU. The bins of pairs (vsm_cull_meshlets.comp, admit()): the demand of each, drawn (+) or
   // left out (-); the selection admit() makes of this demand and of the bins of the frame before, made again here
-  // (gpu==cpu), and whether the frame before is the one logged last (prev==last)
+  // (gpu==cpu), and whether the bins it took for the frame before's are the ones that frame drew (prev==last)
   if(!settings.vsmStatsFrames || !vsm.frameStatsWritten[fId] || vsm.frameStats[fId].isEmpty())
     return;
   vsm.frameStatsWritten[fId] = false;
@@ -342,17 +342,27 @@ void Renderer::logVsmFrame(uint8_t fId) {
     if(d>0)
       bins += " " + vsmBinName(bin) + (in ? "+" : "-") + std::to_string(d);
     }
-  const bool sameCpu  = std::equal(std::begin(cpu), std::end(cpu), std::begin(h.admitBits));
-  const bool hasLast  = vsm.frameLoggedNo!=0 && vsm.frameLoggedNo+1==no;
-  const bool sameLast = std::equal(std::begin(vsm.frameLoggedAdmit), std::end(vsm.frameLoggedAdmit), std::begin(h.admitPrevBits));
+  // a bench's shot draws a second frame through the same slot, so a frame may come before the one ahead of it: the
+  // pair is checked by whichever of the two comes second
+  const size_t   last     = size_t(no-1)%4;
+  const size_t   next     = size_t(no+1)%4;
+  const bool     sameCpu  = std::equal(std::begin(cpu), std::end(cpu), std::begin(h.admitBits));
+  const bool     hasLast  = no>1 && vsm.frameLoggedNo[last]==no-1;
+  const bool     sameLast = std::equal(std::begin(vsm.frameLoggedAdmit[last]), std::end(vsm.frameLoggedAdmit[last]),
+                                       std::begin(h.admitPrevBits));
+  const bool     hasNext  = vsm.frameLoggedNo[next]==no+1;
+  const bool     sameNext = std::equal(std::begin(vsm.frameLoggedPrev[next]), std::end(vsm.frameLoggedPrev[next]),
+                                       std::begin(h.admitBits));
   std::string cutText = vsmBinName(cut);
   if(cut<VsmPairBins)
     cutText += " " + std::to_string(h.pairDemand[cut]) + (vsmBinSet(h.admitPrevBits, cut) ? " drawn before" : " left out before");
   Log::i("vsm frame ", no, ": candidates ", h.candidateCount, (h.candidateCount>cap ? " LOST" : ""),
          ", entries ", h.pageListCount, " (omni ", h.pageOmniCount, "), drawn ", h.meshletCount, ", demand ", demand,
          ", admitted ", admitted, ", cut ", cutText, ", ", (sameCpu ? "gpu==cpu" : "GPU!=CPU"),
-         ", ", (!hasLast ? "prev ?" : (sameLast ? "prev==last" : "PREV!=LAST")), ", spilled ", h.pairSpill,
+         ", ", (!hasLast ? "prev ?" : (sameLast ? "prev==last" : "PREV!=LAST")),
+         (!hasNext ? "" : (sameNext ? ", next's prev==this" : ", NEXT'S PREV!=THIS")), ", spilled ", h.pairSpill,
          ", admit ", vsmBitsHex(h.admitBits), ", prev ", vsmBitsHex(h.admitPrevBits), ", bins", bins);
-  vsm.frameLoggedNo = no;
-  std::copy(std::begin(h.admitBits), std::end(h.admitBits), std::begin(vsm.frameLoggedAdmit));
+  vsm.frameLoggedNo[no%4] = no;
+  std::copy(std::begin(h.admitBits),     std::end(h.admitBits),     std::begin(vsm.frameLoggedAdmit[no%4]));
+  std::copy(std::begin(h.admitPrevBits), std::end(h.admitPrevBits), std::begin(vsm.frameLoggedPrev[no%4]));
   }

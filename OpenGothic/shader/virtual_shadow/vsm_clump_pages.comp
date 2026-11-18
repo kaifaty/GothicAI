@@ -75,6 +75,18 @@ void storePageTable() {
     }
   }
 
+// the n x n pages from `at` all on one side of the bins drawn the frame before (vsmDrawnBefore): a quad across that
+// edge is not made
+bool oneSide(const ivec3 at, const int n) {
+  const uint prev[VSM_BIN_WORDS] = vsm.header.admitPrevBits;
+  const bool drawn = vsmDrawnBefore(prev, at);
+  for(int x=0; x<n; ++x)
+    for(int y=0; y<n; ++y)
+      if(vsmDrawnBefore(prev, at+ivec3(x,y,0))!=drawn)
+        return false;
+  return true;
+  }
+
 void main() {
   const ivec3 size = imageSize(pageTbl);
   const ivec3 at   = ivec3(gl_GlobalInvocationID);
@@ -141,7 +153,7 @@ void main() {
     uint s = (a+b+c+d);
 
     bool denie = (a==0 && b==0) || (c==0 && d==0); // horizontal-only patterns
-    if(!denie && s >= mergeQ) {
+    if(!denie && s >= mergeQ && oneSide(at, 4)) {
       data[at.x+0][at.y+0] = packPage(s, uvec2(4));
       data[at.x+2][at.y+0] = packPage(0, uvec2(0));
       data[at.x+0][at.y+2] = packPage(0, uvec2(0));
@@ -168,7 +180,7 @@ void main() {
     uint s = (a+b+c+d);
 
     bool denie = (a==0 && b==0) || (c==0 && d==0); // horizontal-only patterns
-    if(q==2 && (denie || s<2)) {
+    if(q==2 && (denie || s<2 || !oneSide(at, 2))) {
       data[at.x+0][at.y+0] = packPage(1, uvec2(a), a);
       data[at.x+1][at.y+0] = packPage(1, uvec2(b), b);
       data[at.x+1][at.y+1] = packPage(1, uvec2(c), c);
