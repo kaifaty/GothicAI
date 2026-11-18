@@ -50,7 +50,8 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   auto& pageData = usesZBuffer(vsm.pageData, shadowFormat,        8192, 8192);
 
   auto  pageCount   = uint32_t(vsm.pageData.w()/VSM_PAGE_SIZE) * uint32_t(vsm.pageData.h()/VSM_PAGE_SIZE);
-  auto& pageList    = usesSsbo(vsm.pageList,    shaders.vsmClear.sizeofBuffer(0, pageCount));
+  // zeroed when made: vsm_clear.comp takes the bins drawn the frame before from it (admitBits), none on the first
+  auto& pageList    = usesSsboInit(vsm.pageList, shaders.vsmClear.sizeofBuffer(0, pageCount));
   auto& pageListTmp = usesSsbo(vsm.pageListTmp, shaders.vsmAllocPages.sizeofBuffer(3, pageCount));
 
   const uint32_t lightsTotal  = omniLights ? uint32_t(wview.lights().size()) : 0;
