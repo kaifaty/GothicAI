@@ -22,10 +22,12 @@ REMOTE_OUT="$TASK/runs/$RUN"
 ssh "$HOST" "mkdir -p '$REMOTE_OUT' '$CONTENT'"
 rsync -a "$SET/" "$HOST:$CONTENT/"
 
-declare -A SRC FP ENVS
-for name in fix main; do
-  root="$ROOT"
-  [[ "$name" == main ]] && root="$MAIN"
+# 0: this checkout, 1: main (bash 3 of macOS: no associative arrays)
+NAMES=(fix main)
+ROOTS=("$ROOT" "$MAIN")
+SRC=() ENVS=()
+for i in 0 1; do
+  name="${NAMES[$i]}" root="${ROOTS[$i]}"
   fingerprint="$(ROOT="$root" source_fingerprint)"
   source="$HOME_R/gothic-ai/perf-stand/$(perf_checkout "$root")/source"
   ssh "$HOST" "mkdir -p '$source/OpenGothic' '$source/scripts/bench'"
@@ -34,24 +36,23 @@ for name in fix main; do
   rsync -a "$root"/scripts/{ryzen-build.sh,perf.sh,perf_report.py,base-ensure.sh,ryzen_game.py} "$HOST:$source/scripts/"
   rsync -a --delete --exclude='/build*/' "$root/scripts/convert/" "$HOST:$source/scripts/convert/"
   rsync -a "$root"/scripts/bench/perf-*.bench "$HOST:$source/scripts/bench/"
-  SRC[$name]="$source"
-  FP[$name]="$fingerprint"
-  ENVS[$name]="PERF_REMOTE=1 PERF_VID_RES=0 PERF_INI= PERF_WINDOW=2560x1440 PERF_REPEAT=1 PERF_WAIT=600 PERF_ARGS= \
+  SRC[$i]="$source"
+  ENVS[$i]="PERF_REMOTE=1 PERF_VID_RES=0 PERF_INI= PERF_WINDOW=2560x1440 PERF_REPEAT=1 PERF_WAIT=600 PERF_ARGS= \
 PERF_COMMIT=$(git -C "$root" rev-parse HEAD) PERF_DIRTY=$(git -C "$root" status --porcelain | wc -l | tr -d ' ') \
 PERF_SOURCE_FINGERPRINT=$fingerprint"
   echo "price: $name $(git -C "$root" rev-parse --short HEAD) -> $source"
   if [[ -z "${NO_BUILD:-}" ]]; then
     # shellcheck disable=SC2086
     "$ROOT/scripts/gq" --host "$HOST" run --class quick --threads 8 --mem 12G --max 30m --wait-max 7200 \
-      --name "build shadow-flicker price $name" -- env ${ENVS[$name]} PERF_ENV= RYZEN_JOBS=8 \
+      --name "build shadow-flicker price $name" -- env ${ENVS[$i]} PERF_ENV= RYZEN_JOBS=8 \
       bash "$source/scripts/perf.sh" __build "$REMOTE_OUT/build-$name"
   fi
 done
 
 JOB="set -u"$'\n'
-for run in fix-1:fix main:main fix-2:fix; do
-  label="${run%%:*}" name="${run#*:}"
-  JOB+="echo \"price: $label\"; env ${ENVS[$name]} NO_BUILD=1 PERF_ENV='OPENGOTHIC_CONTENT=$CONTENT OPENGOTHIC_GPU_PASSES=1' bash ${SRC[$name]}/scripts/perf.sh __run $REMOTE_OUT/$label trees || echo \"price: $label FAILED\""$'\n'
+for run in fix-1:0 main:1 fix-2:0; do
+  label="${run%%:*}" i="${run#*:}"
+  JOB+="echo \"price: $label\"; env ${ENVS[$i]} NO_BUILD=1 PERF_ENV='OPENGOTHIC_CONTENT=$CONTENT OPENGOTHIC_GPU_PASSES=1' bash ${SRC[$i]}/scripts/perf.sh __run $REMOTE_OUT/$label trees || echo \"price: $label FAILED\""$'\n'
 done
 "$ROOT/scripts/gq" --host "$HOST" run --class quiet --threads 4 --mem 5G --gpu-mem 4G --display --max 45m \
   --wait-max 10800 --name 'shadow-flicker price runs' --archive "$REMOTE_OUT" -- bash -c "$JOB" 2>&1 | tee "$OUT.log"
