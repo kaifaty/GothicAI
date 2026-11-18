@@ -1,0 +1,66 @@
+# The cost of a forest of the modern spruce A (reports/engine/2026-11-16-modern-trees/tree-cost.md): the sets of
+# `scripts/content/fir_set.py forest` put 64, 256 or 1 024 spruces, full or thinned, in a grid 6.6 m apart east of
+# the meadow east of the tavern, x 515 to 726 m, z -161 to 51 m; `--count 0` is the control. Run with the set in
+# PERF_ENV='OPENGOTHIC_CONTENT=<path on the host> OPENGOTHIC_GPU_PASSES=1'. The forests nest at the middle of the
+# west edge (z -55 m), and every view looks at the centre of the block of 64 (x 541.4 m), from the west, at noon:
+# the sun stands behind the camera.
+#   view-1  inside the block of 64, 1.7 m over the ground between four trunks, east along the forest;
+#   view-2  30 m west of the edge, 1.7 m over the ground;
+#   view-3  100 m west of the edge, 1.7 m over the ground;
+#   view-4  300 m west-south-west of the edge, 48 m over the ground: lower, the hills by the tavern hide the forest;
+#   view-5  the hero runs east from 10 m before the edge into the forest, the game's camera.
+# The cameras stand by X0, Z0 and STEP of fir_set.py: change both together.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+walkmode run
+watch player
+goto pos 54140 1760 -5500
+clear 3000
+cam at 54140 1899 -5500 60000 2199 -5500
+# Twenty real seconds after the teleport for loading and native simulation, as perf-meadow.bench
+wait 20000
+perf sample perf-trees/view-1
+wait 8000
+perf stop
+shot inside
+wait 200
+goto pos 48640 2120 -5500
+cam at 48640 2263 -5500 54140 2629 -5500
+wait 20000
+perf sample perf-trees/view-2
+wait 8000
+perf stop
+shot edge-30
+wait 200
+goto pos 41640 4540 -5500
+cam at 41640 4683 -5500 54140 2629 -5500
+wait 20000
+perf sample perf-trees/view-3
+wait 8000
+perf stop
+shot edge-100
+wait 200
+goto pos 21641 3580 -11230
+cam at 21641 8323 -11230 54140 2629 -5500
+wait 20000
+perf sample perf-trees/view-4
+wait 8000
+perf stop
+shot edge-300
+wait 200
+# the pass: the spruces have no collision, the hero runs straight through them
+cam game
+goto pos 50500 2050 -5500
+face 0
+wait 15000
+press forward
+wait 500
+perf sample perf-trees/view-5
+wait 9000
+perf stop
+release forward
