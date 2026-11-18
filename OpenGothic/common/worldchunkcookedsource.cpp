@@ -54,8 +54,8 @@ WorldChunkMesh build(const CookedChunk& chunk, const CookedIndex& index, size_t 
   const auto triangles = chunk.triangles();
   const auto vertexIds   = stitchedIds(positions,index.vertexExceptions(cell),world.vertices,"position",name);
   const auto featureIds  = stitchedIds(features,index.featureExceptions(cell),world.features,"feature",name);
-  const auto materialIds = stitchedIds(chunk.materials(),index.materialExceptions(cell),world.materials.size(),
-                                       "material",name);
+  auto materialIds = stitchedIds(chunk.materials(),index.materialExceptions(cell),world.materials.size(),
+                                 "material",name);
   for(size_t local=0;local<materialIds.size();++local) {
     const auto record = chunk.material(local);
     if(!gothicglb::sameMaterial(world.materials[materialIds[local]],record))
@@ -102,6 +102,11 @@ WorldChunkMesh build(const CookedChunk& chunk, const CookedIndex& index, size_t 
       q.vertex_indices.push_back(v);
       q.feature_indices.push_back(f);
       }
+    }
+  if(!chunk.hierarchy().clusters.empty()) {
+    out.clusterMaterialIds = std::move(materialIds);
+    if(sources.size()!=triangles.size())
+      out.clusterTriangleSources.assign(sources.begin(),sources.end());
     }
   return out;
   }
@@ -238,7 +243,7 @@ void CookedChunkSource::loadCatalogue(CookedIndex validated, CookedSet loaded, c
 void CookedChunkSource::configureClusterLod(bool enabled) const {
   const auto* value = std::getenv("OPENGOTHIC_CLUSTER_LOD");
   const std::string_view flag = value!=nullptr ? value : "";
-  readHierarchy = flag=="1" || (flag!="0" && enabled);
+  readHierarchy = flag=="1" || flag=="levels" || (flag!="0" && enabled);
   residentHierarchies.resize(readHierarchy ? cells.size() : 0);
   }
 

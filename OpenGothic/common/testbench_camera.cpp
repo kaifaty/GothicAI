@@ -15,6 +15,7 @@
 #include "game/playercontrol.h"
 #include "gothic.h"
 #include "settings.h"
+#include "graphics/clusterlodrender.h"
 #include "graphics/drawcommands.h"
 #include "graphics/renderer.h"
 #include "graphics/mesh/footik.h"
@@ -170,7 +171,11 @@ void updateCamera(const CameraContext& ctx,World& w, Npc& pl) {
     }
   if(ctx.camera.cam==C_Fly) {
     // cam fly: the position and the target go along straight lines in game time; TAA keeps its history
-    const float t   = std::min(1.f,float(ctx.time-ctx.camera.flyStart)/float(std::max<uint64_t>(ctx.camera.flyDuration,1)));
+    float elapsed = float(ctx.time-ctx.camera.flyStart);
+    // Pair mask frames by camera pose despite the 33/34 ms phase of the fixed-step clock.
+    if(Renderer::benchClusterLodMask)
+      elapsed = std::round(elapsed*Fps/1000.f)*1000.f/Fps;
+    const float t   = std::min(1.f,elapsed/float(std::max<uint64_t>(ctx.camera.flyDuration,1)));
     const Vec3  org = ctx.camera.flyFrom      +(ctx.camera.flyTo      -ctx.camera.flyFrom      )*t;
     const Vec3  tgt = ctx.camera.flyFromTarget+(ctx.camera.flyToTarget-ctx.camera.flyFromTarget)*t;
     lookFrom(ctx,org,tgt);
@@ -745,6 +750,15 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
       ",\"minute\":"+std::to_string(w.time().minute())+",\"hero_cm\":"+ragdollVector(ctx.monster.monsterCharacterHeroStart)+",\"actors\":"+actors+"]");
     monsterCharacterRenderProof(ctx,w,*watched,"followed");
     }
+  else if(c=="cluster-lod") {
+    if(a.size()==3 && a[1]=="mask" && (a[2]=="on" || a[2]=="off")) {
+      Renderer::benchClusterLodMask = a[2]=="on";
+      } else if(a.size()==2 && (a[1]=="base" || a[1]=="normal" || a[1]=="levels")) {
+      ClusterLodRender::setBenchView(a[1]);
+      } else {
+      arenaAbort("cluster-lod expects base, normal, levels or mask on/off");
+      }
+    }
   else if(c=="cam") {
     const std::string m = a.size()>1 ? a[1] : "";
     ctx.camera.camAuto = false;
@@ -1090,6 +1104,21 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
   }
 
 void capture(const CameraContext& ctx,Pixmap& frame, float uiScale) {
+  if(Renderer::benchClusterLodMask && ctx.camera.rec && ctx.camera.recVideo) {
+    if(frame.isEmpty()) {
+      arenaAbort("cluster-lod mask capture returned no pixels");
+      return;
+      }
+    const auto dir = std::filesystem::path(outDir)/ctx.camera.recName;
+    if(ctx.camera.recFrame==0)
+      std::filesystem::create_directories(dir);
+    const auto name = (dir/(std::to_string(ctx.camera.recFrame)+".png")).string();
+    frame.save(name.c_str());
+    event("cluster_lod_mask", "\"camera_cm\":"+ragdollVector(ctx.camera.camPos)+
+          ",\"view_projection\":"+ragdollMatrix(Gothic::inst().camera()->viewProj()));
+    ++ctx.camera.recFrame;
+    return;
+    }
   const auto waterFilmFraming=ctx.waterFilmFraming;
   ctx.overlay.uiScale = uiScale;
   Pixmap pm;

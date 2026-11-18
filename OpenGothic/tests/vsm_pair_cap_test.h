@@ -94,6 +94,10 @@ void vsmPairCapRecords(Tempest::Device& device) {
   auto instanceBuf = device.ssbo(instance.data(), instance.size()*sizeof(float));
   auto sphereBuf   = device.ssbo(spheres.data(), spheres.size()*sizeof(float));
   auto lightBuf    = device.ssbo(&light, sizeof(light));
+  const uint32_t noLod[2] = {};
+  const uint32_t lodRecord[12] = {};
+  auto lodIndices  = device.ssbo(noLod, sizeof(noLod));
+  auto lodRecords  = device.ssbo(lodRecord, sizeof(lodRecord));
   auto candidates  = device.ssbo(Tempest::Uninitialized, size_t(Slots)*4*sizeof(uint32_t));
   auto payloadDst  = device.ssbo(Tempest::Uninitialized, size_t(Slots)*4*sizeof(uint32_t));
   auto indirect    = device.ssbo(Tempest::Uninitialized, 16);
@@ -133,7 +137,12 @@ void vsmPairCapRecords(Tempest::Device& device) {
       enc.setPipeline(shaders.vsmClear);
       enc.dispatchThreads(32, 32, 16);
 
-      struct Push { uint32_t meshletCount, candidateCap; } push = {2, cap};
+      struct Push {
+        uint32_t meshletCount, candidateCap, padding[2];
+        float lodPx, lodProjection, lodHeight;
+        uint32_t lodDebug;
+        float lodCamera[4];
+        } push = {2, cap, {}, 0.f, 0.f, 0.f, 0, {}};
       enc.setBinding(0, sceneUbo);
       enc.setBinding(1, candidates);
       enc.setBinding(2, instanceBuf);
@@ -143,6 +152,8 @@ void vsmPairCapRecords(Tempest::Device& device) {
       enc.setBinding(7, pageHiZ);
       enc.setBinding(8, pageBuf);
       enc.setBinding(9, dbg);
+      enc.setBinding(10, lodIndices);
+      enc.setBinding(11, lodRecords);
       enc.setPushData(&push, sizeof(push));
       enc.setPipeline(shaders.vsmVisibilityPass);
       enc.dispatchThreads(2, 17);

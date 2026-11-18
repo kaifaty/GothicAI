@@ -4,16 +4,29 @@
 // whatever other cells and overrides the set holds (the override question of
 // docs/landscape-plan.md, Д3, tasks 2 and 2b); a second cook rewrites nothing
 // unchanged, and two cooks into the same files at once both finish; v3
-// hierarchies verify byte for byte, v2 still reads, and malformed, stale and
-// mismatched files are rejected. Needs GOTHIC_DIR and a ready base for NEWWORLD.
+// hierarchies verify byte for byte, their visibility cuts match selectCut, v2
+// still reads, and malformed, stale and mismatched files are rejected.
+// Needs GOTHIC_DIR and a ready base for NEWWORLD.
 
 #include "commandline.h"
 #include "gothicglb.h"
+#include "graphics/drawclusters.h"
+#include "graphics/sceneglobals.h"
 #include "resources.h"
+#include "shader.h"
 #include "worldchunkcook.h"
 #include "worldchunk_fixtures.h"
 #include "worldchunk_strip.h"
 #include "worldchunks.h"
+
+#include <Tempest/Device>
+#include <Tempest/Fence>
+#include <Tempest/Pixmap>
+#ifdef __APPLE__
+#include <Tempest/MetalApi>
+#else
+#include <Tempest/VulkanApi>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -26,6 +39,8 @@
 #include <filesystem>
 #include <functional>
 #include <limits>
+#include <numeric>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -41,6 +56,11 @@
 namespace {
 namespace fs = std::filesystem;
 using namespace WorldChunkFixtures;
+#ifdef __APPLE__
+using GraphicsApi = Tempest::MetalApi;
+#else
+using GraphicsApi = Tempest::VulkanApi;
+#endif
 
 void require(bool condition, const std::string& message) {
   if(!condition)
@@ -470,6 +490,181 @@ uint64_t get64(const std::vector<uint8_t>& bytes, size_t at) {
   return uint64_t(get32(bytes,at)) | (uint64_t(get32(bytes,at+4))<<32);
   }
 
+// CPU mirror of the visibility shader. It walks the same cluster order and
+// uses both transition records before any frustum or occlusion test.
+std::vector<uint32_t> visibilityCut(wcb::HierarchyView hierarchy, const ClusterLod::View& view, float thresholdPx) {
+  constexpr float infinity=std::numeric_limits<float>::infinity();
+  const float projectionScale=0.5f*view.verticalProjection*view.viewportHeight;
+  const auto errorPx=[&](const ClusterLod::Group& transition) {
+    const auto& center=transition.bounds.center;
+    const float x=center[0]-view.camera[0], y=center[1]-view.camera[1], z=center[2]-view.camera[2];
+    const float nearDistance=std::max(std::sqrt(x*x+y*y+z*z)-transition.bounds.radius,1.f);
+    return transition.errorCm/nearDistance*projectionScale;
+    };
+  std::vector<uint32_t> selected;
+  for(uint32_t i=0;i<hierarchy.clusters.size();++i) {
+    const auto& cluster=hierarchy.clusters[i];
+    const auto& parent=hierarchy.groups[cluster.parentGroup];
+    const bool leaf=cluster.level==0;
+    const bool terminal=parent.errorCm==infinity;
+    if(thresholdPx<=0.f ? leaf : thresholdPx==infinity ? terminal :
+       (leaf || errorPx(hierarchy.groups[cluster.refinedGroup])<=thresholdPx) &&
+       (terminal || errorPx(parent)>thresholdPx))
+      selected.push_back(i);
+    }
+  return selected;
+  }
+
+// Drive the same three visibility pipelines as a deterministic game frame
+// without a window. A permissive frustum and an empty HiZ isolate the cut.
+class GpuVisibilityCut {
+  public:
+    GpuVisibilityCut(Tempest::Device& device, wcb::HierarchyView hierarchy) : device(device) {
+      constexpr const char* names[] = {"visibility_pass_ordered.comp.sprv", "visibility_pass_hiz_ordered.comp.sprv",
+                                       "visibility_pass_hiz_cr_ordered.comp.sprv"};
+      for(size_t i=0;i<pipelines.size();++i) {
+        const auto code=GothicShader::get(names[i]);
+        pipelines[i]=device.pipeline(device.shader(code.data,code.len));
+        require(pipelines[i].sizeofBuffer(9, 1)==sizeof(PackedMesh::ClusterLevel),"visibility shader level record stride");
+        }
+
+      std::vector<DrawClusters::Cluster> clusters(hierarchy.clusters.size());
+      std::vector<uint32_t> order(clusters.size()), levelIndex(clusters.size());
+      std::vector<PackedMesh::ClusterLevel> levels;
+      levels.reserve(clusters.size());
+      std::iota(order.begin(),order.end(),0u);
+      std::iota(levelIndex.begin(),levelIndex.end(),1u);
+      const auto sphere=[](const ClusterLod::Sphere& s) {
+        return Tempest::Vec4{s.center[0],s.center[1],s.center[2],s.radius};
+        };
+      for(size_t i=0;i<clusters.size();++i) {
+        const auto& cluster=hierarchy.clusters[i];
+        const auto& parent=hierarchy.groups[cluster.parentGroup];
+        const auto own=cluster.level==0 ? ClusterLod::Group{} : hierarchy.groups[cluster.refinedGroup];
+        levels.push_back({sphere(own.bounds),sphere(parent.bounds),own.errorCm,parent.errorCm,cluster.level,1});
+        clusters[i].r=1.f;
+        clusters[i].firstMeshlet=uint32_t(i);
+        clusters[i].meshletCount=1;
+        clusters[i].instanceId=0xFFFFFFFFu;
+        }
+
+      const SceneGlobals::UboGlobal globals{};
+      const uint32_t blank[36]{};
+      scene=device.ssbo(&globals,sizeof(globals));
+      dummy=device.ssbo(blank,sizeof(blank));
+      hiZ=device.texture(Tempest::Pixmap(1,1,Tempest::TextureFormat::RGBA8),false);
+      indirect=device.ssbo(Tempest::Uninitialized,sizeof(Indirect));
+      clusterBuf=device.ssbo(clusters);
+      orderBuf=device.ssbo(order);
+      levelIndices=device.ssbo(levelIndex);
+      records=device.ssbo(levels);
+      payload=device.ssbo(Tempest::Uninitialized,clusters.size()*sizeof(Payload));
+      count=uint32_t(clusters.size());
+      }
+
+    void compare(const ClusterLod::View& view, float thresholdPx, const std::vector<uint32_t>& expected) {
+      struct Push {
+        uint32_t firstMeshlet, meshletCount;
+        float znear;
+        uint32_t pad;
+        float lodPx, lodProjection, lodHeight;
+        uint32_t lodDebug;
+        float lodCamera[4];
+        };
+      const Push push={0,count,1.f,0,thresholdPx,view.verticalProjection,view.viewportHeight,0,
+                       {view.camera[0],view.camera[1],view.camera[2],0.f}};
+      for(size_t pass=0;pass<pipelines.size();++pass) {
+        Indirect draw{};
+        indirect.update(&draw,0,sizeof(draw));
+        auto command=device.commandBuffer();
+        {
+          auto encoder=command.startEncoding(device);
+          encoder.setBinding(0,scene);
+          encoder.setBinding(1,payload);
+          encoder.setBinding(2,dummy);
+          encoder.setBinding(3,dummy);
+          encoder.setBinding(4,indirect);
+          encoder.setBinding(5,clusterBuf);
+          encoder.setBinding(6,orderBuf);
+          encoder.setBinding(7,hiZ);
+          encoder.setBinding(8,levelIndices);
+          encoder.setBinding(9,records);
+          encoder.setPipeline(pipelines[pass]);
+          encoder.setPushData(push);
+          encoder.dispatchThreads(1);
+        }
+        device.submit(command).wait();
+        device.readBytes(indirect,&draw,sizeof(draw));
+        constexpr const char* names[] = {"shadow", "main", "HiZ"};
+        const auto label=std::string("GPU ")+names[pass]+" visibility at "+std::to_string(thresholdPx)+" px";
+        require(draw.instanceCount==expected.size(),label+": expected "+std::to_string(expected.size())+
+                " clusters, got "+std::to_string(draw.instanceCount));
+        if(expected.empty())
+          continue;
+        std::vector<Payload> visible(draw.instanceCount);
+        device.readBytes(payload,visible.data(),visible.size()*sizeof(Payload));
+        require(std::ranges::equal(visible,expected,{},&Payload::meshlet),label+": cluster IDs differ from selectCut");
+        }
+      }
+
+  private:
+    struct Indirect {
+      uint32_t vertexCount,instanceCount,firstVertex,firstInstance,writeOffset;
+      };
+    struct Payload {
+      uint32_t instance,meshlet,bucket,flags;
+      };
+    Tempest::Device& device;
+    std::array<Tempest::ComputePipeline,3> pipelines;
+    Tempest::StorageBuffer scene,dummy,indirect,clusterBuf,orderBuf,levelIndices,records,payload;
+    Tempest::Texture2d hiZ;
+    uint32_t count=0;
+  };
+
+size_t checkVisibilityCuts(const CookedChunk& chunk, const fs::path& path, Tempest::Device* device=nullptr) {
+  const auto hierarchy=chunk.hierarchy();
+  ClusterLod::Graph graph;
+  graph.clusters.assign(hierarchy.clusters.begin(),hierarchy.clusters.end());
+  graph.groups.assign(hierarchy.groups.begin(),hierarchy.groups.end());
+  const auto& lo=chunk.header().min;
+  const auto& hi=chunk.header().max;
+  const float x=(lo.x+hi.x)*0.5f, y=(lo.y+hi.y)*0.5f, z=(lo.z+hi.z)*0.5f;
+  const ClusterLod::View views[] = {
+    {{x,y,z},1440.f,1.496606f}, {{x+3200.f,y+800.f,z-6400.f},1080.f,1.496606f},
+    {{x-16400.f,y+7500.f,z+32000.f},1440.f,2.414214f}, {{x+200000.f,y+30000.f,z+600000.f},720.f,1.191754f},
+    };
+  constexpr float infinity=std::numeric_limits<float>::infinity();
+  size_t samples=0;
+  std::optional<GpuVisibilityCut> gpu;
+  if(device!=nullptr)
+    gpu.emplace(*device,hierarchy);
+  const auto compare=[&](const ClusterLod::View& view, float thresholdPx) {
+    const auto actual=visibilityCut(hierarchy,view,thresholdPx);
+    const auto expected=ClusterLod::selectCut(graph,view,thresholdPx);
+    require(actual==expected,path.string()+": visibility cut differs from selectCut in sample "+
+            std::to_string(samples)+" at "+std::to_string(thresholdPx)+" px");
+    if(gpu)
+      gpu->compare(view,thresholdPx,expected);
+    ++samples;
+    };
+  for(const auto& view:views)
+    for(float threshold:{0.f,1.f,8.f,infinity})
+      compare(view,threshold);
+
+  // On a finite transition, equality must keep the replacement and exclude
+  // the clusters it replaces. Check the immediately adjacent thresholds too.
+  const auto transition=std::ranges::find_if(graph.groups,[](const ClusterLod::Group& group) {
+    return group.errorCm>0.f && std::isfinite(group.errorCm);
+    });
+  if(transition!=graph.groups.end()) {
+    const ClusterLod::View view={transition->bounds.center,1440.f,1.496606f};
+    const float threshold=ClusterLod::projectError(*transition,view);
+    for(float nearby:{std::nextafter(threshold,0.f),threshold,std::nextafter(threshold,infinity)})
+      compare(view,nearby);
+    }
+  return samples;
+  }
+
 void hierarchyRoundTrip(const fs::path& root) {
   const auto dir=root/"hierarchy";
   writeWorldChunks(selectionMesh(),fixtureSource,dir);
@@ -482,6 +677,7 @@ void hierarchyRoundTrip(const fs::path& root) {
   require(hierarchy.vertices.size()==3 && hierarchy.clusters.size()==1 && hierarchy.groups.size()==1 &&
           hierarchy.vertexIndices.size()==3 && hierarchy.indices.size()==3,"a single triangle's cooked hierarchy");
   require(verifyCookedWorld(dir,{},{},true).empty(),"the v3 hierarchy must match a fresh build");
+  checkVisibilityCuts(chunk,path);
 
   constexpr size_t baseSections=5, hierarchyDirectory=baseSections*wcb::EntrySize;
   constexpr size_t strings=wcb::HeaderSize+4*wcb::EntrySize, clusters=wcb::HeaderSize+5*wcb::EntrySize,
@@ -785,9 +981,10 @@ void manifestCases(const fs::path& root) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
   TemporaryDirectory temporary;
   try {
+    require(argc==1 || (argc==2 && std::string_view(argv[1])=="--gpu"),"usage: gothic-wcb-contract [--gpu]");
     fs::create_directories(temporary.path);
     selectionFixtures(temporary.path);
     chunkFixtures(temporary.path);
@@ -813,6 +1010,34 @@ int main() {
     require(again.written==0 && again.left==again.cells && !again.indexWritten,
             label+": a second cook of the unchanged world must write nothing");
     printCooked(label,again);
+    std::optional<GraphicsApi> api;
+    std::optional<Tempest::Device> device;
+    if(argc==2) {
+      api.emplace();
+      device.emplace(*api);
+      }
+    size_t samples=0, gpuCells=0;
+    for(const auto& file:readWorldChunkManifest(world).chunks) {
+      auto path=out/file;
+      path.replace_extension(".wcb");
+      const auto chunk=CookedChunk::read(path,true);
+      if(device && gpuCells<3 && std::ranges::any_of(chunk.hierarchy().groups,[](const ClusterLod::Group& group) {
+         return group.errorCm>0.f && std::isfinite(group.errorCm);
+         })) {
+        const auto gpuSamples=checkVisibilityCuts(chunk,path,&*device);
+        std::printf("GPU visibility cut: %zu comparisons per pipeline (main, HiZ and shadow) on %s\n",
+                    gpuSamples,path.filename().string().c_str());
+        samples+=gpuSamples;
+        ++gpuCells;
+        }
+      else {
+        samples+=checkVisibilityCuts(chunk,path);
+        }
+      }
+    require(argc==1 || gpuCells==3,"GPU visibility cut requires three cooked chunks with finite transitions");
+    require(samples>again.cells*16,"NEWWORLD visibility cut must exercise finite transitions");
+    std::printf("Visibility cut: %zu camera/threshold comparisons with selectCut across %zu cooked NEWWORLD cells\n",
+                samples,again.cells);
     std::puts("Cooked chunk contract passed");
     return EXIT_SUCCESS;
     }

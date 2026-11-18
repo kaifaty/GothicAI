@@ -96,6 +96,7 @@ class SceneGlobals final {
     const Tempest::Vec3       clipInfo() const;
     // the eye of the main view and the size of the frame it is drawn into (the levels of strands, VisualObjects)
     Tempest::Vec3             camPos()    const { return uboGlobalCpu.camPos;    }
+    float                     verticalProjection() const { return uboGlobalCpu.project[1][1]; }
     // SceneDesc::foliageFade.x of the frame (commitUbo): the scale of the tree's wind fade, 0 without it
     float                     foliageFade() const { return uboGlobalCpu.foliageFade.x; }
     // SceneDesc::grassRing: the field of grass says where its blades end (GrassField); zero without it

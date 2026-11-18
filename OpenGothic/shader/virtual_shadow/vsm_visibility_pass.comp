@@ -17,6 +17,11 @@ const uint NumThreads = gl_WorkGroupSize.x*gl_WorkGroupSize.y*gl_WorkGroupSize.z
 layout(push_constant, std430) uniform UboPush {
   int  meshletCount;
   uint candidateCap;  // DrawCommands::vsmPairCap
+  layout(offset = 16) float lodPx;
+  float lodProjection;
+  float lodHeight;
+  uint lodDebug;
+  vec4 lodCamera;
   } push;
 layout(binding = 0, std140) uniform UboScene    { SceneDesc   scene;         };
 // a cluster and the page entry its sphere touches (vsm_cull_meshlets.comp takes its meshlets): the cluster's id, the
@@ -59,6 +64,10 @@ Instance pullInstance(uint i) {
   ret.animPtr   = instanceMem[i+13];
   return ret;
   }
+
+const uint L_ClusterLevelIndex = 10;
+const uint L_ClusterLevel = 11;
+#include "materials/cluster_lod.glsl"
 
 bool frustrumTest(const vec4 sphere) {
   if(sphere.w<0.f)
@@ -217,8 +226,12 @@ bool pageHiZTest(ivec4 iaabb, float depthMax, const ivec3 at, const ivec2 sz) {
 
 void runCluster(const uint clusterId, const uint mip) {
   const Cluster cluster = clusters[clusterId];
-  if(cluster.sphere.w<=0.f)
+  if(cluster.sphere.w<=0.f || cluster.meshletCount<=0)
     return; // disabled or deleted
+
+  uint level;
+  if(!clusterLodVisible(clusterId, cluster.instanceId, level))
+    return;
 
   if(frustrumTest(cluster.sphere)) {
     if(gl_GlobalInvocationID.y==0)
@@ -233,9 +246,6 @@ void runCluster(const uint clusterId, const uint mip) {
     return;
 
   aabb = vsmPageTableBox(aabb, mip);
-
-  if(cluster.meshletCount<=0)
-    return; // hidden
 
   ivec4 iaabb = ivec4(ivec2(aabb.xy), ivec2(aabb.zw)+1);
   iaabb.xy = max(iaabb.xy, ivec2(0));
@@ -277,6 +287,10 @@ void runClusterOmni(const uint clusterId) {
   const Cluster cluster = clusters[clusterId];
   if(cluster.sphere.w<=0.f || cluster.meshletCount<=0)
     return; // disabled, deleted or hidden
+
+  uint level;
+  if(!clusterLodVisible(clusterId, cluster.instanceId, level))
+    return;
 
   for(uint ix=0; ix<pageListSize; ++ix) {
     const uint  i    = pageList[ix];

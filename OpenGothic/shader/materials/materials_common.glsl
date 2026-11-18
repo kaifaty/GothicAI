@@ -96,6 +96,11 @@ const uint L_VsmLights  = L_Shadow1;
 #define MAT_MOTION 1
 #endif
 
+// The visibility payload supplies level + 1 in the main view when LOD colors are enabled.
+#if (MESH_TYPE!=T_PFX) && !defined(DEPTH_ONLY)
+#define MAT_CLUSTER_LEVEL_LOCATION 8
+#endif
+
 #if defined(MAT_UV) || defined(MAT_NORMAL) || defined(MAT_POSITION) || defined(MAT_COLOR) || defined(MAT_MOTION)
 #define MAT_VARYINGS 1
 #endif

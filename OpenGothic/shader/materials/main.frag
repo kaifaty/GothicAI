@@ -32,6 +32,9 @@ layout(location = 0) in flat uint bucketId;
 #if defined(MAT_VARYINGS)
 layout(location = 1) in Varyings  shInp;
 #endif
+#if defined(MAT_CLUSTER_LEVEL_LOCATION)
+layout(location = MAT_CLUSTER_LEVEL_LOCATION) in flat uint clusterLevel;
+#endif
 
 #if defined(VIRTUAL_SHADOW)
 layout(location = 3) in flat uint vsmMipId;
@@ -1136,6 +1139,20 @@ void main() {
   mainEmissive(t);
 #elif defined(GHOST) && !defined(DEPTH_ONLY)
   mainGhost(t);
+#endif
+
+#if defined(MAT_CLUSTER_LEVEL_LOCATION)
+  if(clusterLevel != 0u) {
+    const vec3 color = debugColors[(clusterLevel - 1u) % uint(debugColors.length())];
+#if defined(GBUFFER)
+    outDiffuse.rgb = color;
+#else
+    outColor.rgb = color * scene.exposure;
+#if defined(WATER)
+    outDiffuse.rgb = color;
+#endif
+#endif
+    }
 #endif
 
 #if DEBUG_DRAW && !defined(GBUFFER) && !defined(DEPTH_ONLY)

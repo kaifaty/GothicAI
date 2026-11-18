@@ -61,6 +61,12 @@ layout(location = 0) out flat uint bucketIdOut[]; //TODO: per-primitive
 layout(location = 1) out Varyings  shOut[];
 #endif
 
+#if defined(MAT_CLUSTER_LEVEL_LOCATION) && defined(GL_VERTEX_SHADER)
+layout(location = MAT_CLUSTER_LEVEL_LOCATION) out flat uint clusterLevelOut;
+#elif defined(MAT_CLUSTER_LEVEL_LOCATION)
+layout(location = MAT_CLUSTER_LEVEL_LOCATION) out flat uint clusterLevelOut[];
+#endif
+
 #if defined(GL_VERTEX_SHADER) && defined(VIRTUAL_SHADOW)
 layout(location = 3) out flat uint vsmMipIdOut;
 #elif defined(VIRTUAL_SHADOW)
@@ -257,6 +263,9 @@ void vertexShader(const uvec4 task, const uint materialRef) {
 #if defined(MAT_VARYINGS)
   bucketIdOut = materialRef;
 #endif
+#if defined(MAT_CLUSTER_LEVEL_LOCATION)
+  clusterLevelOut = task.w;
+#endif
 
   Varyings var;
   uint idx = processPrimitive(meshletId, bucketId, laneID)[gl_VertexIndex%3];
@@ -292,6 +301,9 @@ void meshShader(const uvec4 task, const uint materialRef) {
     gl_PrimitiveTriangleIndicesEXT[laneID] = prim;
     }
   if(laneID<vertCount) {
+#if defined(MAT_CLUSTER_LEVEL_LOCATION)
+    clusterLevelOut[laneID] = task.w;
+#endif
     vec4 pos = processVertex(var, instanceId, meshletId, bucketId, laneID);
     gl_MeshVerticesEXT[laneID].gl_Position = pos;
 #if defined(VIRTUAL_SHADOW)

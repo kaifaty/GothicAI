@@ -92,7 +92,8 @@ class VisualObjects final {
     Item   get(const AnimMesh& mesh,   const Material& mat, size_t iboOff, size_t iboLen, const InstanceStorage::Id& anim);
     // texturePosition: a landscape package's chunk; texel: its triangles' UV density and world bounds
     Item   get(const StaticMesh& mesh, const Material& mat, size_t iboOff, size_t iboLen, const PackedMesh::Cluster* cluster, DrawCommands::Type type,
-               const Tempest::Vec3* texturePosition = nullptr, const TexelDensity* texel = nullptr);
+               const Tempest::Vec3* texturePosition = nullptr, const TexelDensity* texel = nullptr,
+               std::span<const PackedMesh::ClusterLevel> levels = {});
     // All Items referencing the mesh must have been released first.
     void   invalidate(const StaticMesh& mesh);
     void   setTextureResidency(ChunkResidency* residency);
@@ -263,7 +264,8 @@ class VisualObjects final {
     void     scheduleTexture(Object& object, size_t id, double expiry);
     void     unscheduleTexture(Object& object);
 
-    uint32_t clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
+    uint32_t clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId,
+                       uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels);
     uint32_t clusterId(const DrawBuckets::Bucket& bucket, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
 
     void     startMMAnim(size_t i, std::string_view animName, float intensity, uint64_t timeUntil, bool freeOnly);

@@ -3,14 +3,20 @@
 
 #include <Tempest/Application>
 #include <Tempest/Log>
+#include <array>
+#include <bit>
 #include <cassert>
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <map>
 #include <numeric>
 #include <stdexcept>
 
 #include "game/compatibility/phoenix.h"
+#include "worldchunkbinary.h"
+#include "worldchunksruntime.h"
 
 using namespace Tempest;
 
@@ -457,6 +463,164 @@ PackedMesh::PackedMesh(const asset::WorldMesh& mesh, std::span<const uint32_t> t
   computeBbox();
   // A chunk package: one texture owner per material, measured here on the packing thread.
   measureTexels();
+  }
+
+namespace {
+
+// The hierarchy can merge two local position/feature pairs with identical values.
+using CornerKey = std::array<uint32_t,9>;
+using TriangleKey = std::pair<uint32_t,std::array<CornerKey,3>>;
+
+CornerKey cornerKey(const CookedChunk& chunk, uint32_t position, uint32_t feature) {
+  const auto& p = chunk.positions()[position];
+  const auto& f = chunk.features()[feature];
+  std::array<float,8> values = {p.x,p.y,p.z,f.nx,f.ny,f.nz,f.u,f.v};
+  CornerKey key;
+  for(size_t i=0; i<values.size(); ++i)
+    key[i] = std::bit_cast<uint32_t>(values[i]);
+  key.back() = f.light;
+  return key;
+  }
+
+TriangleKey triangleKey(uint32_t material, std::array<CornerKey,3> corners) {
+  // A cyclic rotation has the same assembled triangle, including winding.
+  const std::array<CornerKey,3> next = {corners[1],corners[2],corners[0]};
+  const std::array<CornerKey,3> last = {corners[2],corners[0],corners[1]};
+  return {material,std::min({corners,next,last})};
+  }
+
+}
+
+PackedMesh::PackedMesh(const WorldChunkMesh& source, std::span<const uint32_t> materialMap) {
+  static_assert(MaxVert==ClusterLod::MaxVertices && MaxPrim==ClusterLod::MaxTriangles);
+  const auto& chunk = *source.clusterHierarchy;
+  const auto hierarchy = chunk.hierarchy();
+  const auto ref = [&](const auto& cluster, uint8_t index) -> const wcb::VertexRef& {
+    return hierarchy.vertices[hierarchy.vertexIndices[cluster.vertexOffset+index]];
+    };
+
+  std::vector<uint64_t> excluded;
+  std::vector<bool> blocked(hierarchy.groups.size());
+  if(source.mesh.polygons.material_indices.size()!=chunk.triangles().size()) {
+    excluded.resize(hierarchy.clusters.size());
+    std::vector<bool> present(chunk.triangles().size());
+    for(const auto i:source.clusterTriangleSources)
+      present[i] = true;
+    std::map<TriangleKey,size_t> missing;
+    for(size_t i=0; i<present.size(); ++i) {
+      if(present[i])
+        continue;
+      const auto& triangle = chunk.triangles()[i];
+      std::array<CornerKey,3> corners;
+      for(size_t c=0; c<corners.size(); ++c)
+        corners[c] = cornerKey(chunk,triangle.vertex[c],triangle.feature[c]);
+      ++missing[triangleKey(triangle.material,corners)];
+      }
+    for(size_t i=0; i<hierarchy.clusters.size() && !missing.empty(); ++i) {
+      const auto& c = hierarchy.clusters[i];
+      if(c.level!=0)
+        continue;
+      for(size_t t=0; t<c.triangleCount; ++t) {
+        std::array<CornerKey,3> corners;
+        for(size_t k=0; k<corners.size(); ++k) {
+          const auto& v = ref(c,hierarchy.indices[c.indexOffset+t*3+k]);
+          corners[k] = cornerKey(chunk,v.position,v.feature);
+          }
+        auto found = missing.find(triangleKey(c.material,corners));
+        if(found==missing.end())
+          continue;
+        excluded[i] |= uint64_t(1)<<t;
+        blocked[c.parentGroup] = true;
+        if(--found->second==0)
+          missing.erase(found);
+        }
+      }
+    if(!missing.empty())
+      throw std::runtime_error("LOD 0 does not contain every triangle extracted into cloth");
+
+    // A replacement of any excluded triangle could put cloth back. Walk the
+    // transitions from children to parents using the validated group indices.
+    std::vector<std::pair<uint32_t,uint32_t>> parents;
+    for(const auto& c:hierarchy.clusters)
+      if(c.level!=0)
+        parents.emplace_back(c.refinedGroup,c.parentGroup);
+    std::sort(parents.begin(),parents.end());
+    for(const auto& [child,parent]:parents)
+      if(blocked[child])
+        blocked[parent] = true;
+    }
+
+  // Reuse the landscape packer's vertex layout, winding and both index encodings.
+  asset::WorldMesh geometry;
+  geometry.vertices.reserve(chunk.positions().size());
+  for(const auto& p:chunk.positions())
+    geometry.vertices.push_back({p.x,p.y,p.z});
+  geometry.features.reserve(chunk.features().size());
+  for(const auto& f:chunk.features())
+    geometry.features.push_back({{f.u,f.v},f.light,{f.nx,f.ny,f.nz}});
+
+  std::map<uint32_t,std::vector<size_t>> byMaterial;
+  for(size_t i=0; i<hierarchy.clusters.size(); ++i) {
+    const auto& c = hierarchy.clusters[i];
+    if(c.level!=0 && blocked[c.refinedGroup])
+      continue;
+    byMaterial[materialMap[source.clusterMaterialIds[c.material]]].push_back(i);
+    }
+  const auto toVec = [](const ClusterLod::Sphere& s) {
+    return Vec4(s.center[0],s.center[1],s.center[2],s.radius);
+    };
+  const auto append = [&](size_t i) {
+    const auto& c = hierarchy.clusters[i];
+    Meshlet meshlet;
+    meshlet.vertSz = uint8_t(c.vertexCount);
+    meshlet.bounds.pos = {c.bounds.center[0],c.bounds.center[1],c.bounds.center[2]};
+    meshlet.bounds.r = c.bounds.radius;
+    for(uint8_t j=0; j<meshlet.vertSz; ++j) {
+      const auto& v = ref(c,j);
+      meshlet.vert[j] = {v.position,v.feature};
+      }
+    const uint64_t skip = excluded.empty() ? 0 : excluded[i];
+    for(size_t t=0; t<c.triangleCount; ++t) {
+      if((skip & (uint64_t(1)<<t))!=0)
+        continue;
+      std::copy_n(hierarchy.indices.data()+c.indexOffset+t*3,3,meshlet.indexes+meshlet.indSz);
+      meshlet.indSz += 3;
+      }
+    if(meshlet.indSz==0)
+      return;
+    meshlet.flush(vertices,indices,indices8,meshletBounds,geometry);
+    ClusterLevel level;
+    level.level = c.level;
+    level.flags = 1;
+    if(c.level!=0) {
+      const auto& own = hierarchy.groups[c.refinedGroup];
+      level.bounds = toVec(own.bounds);
+      level.errorCm = own.errorCm;
+      }
+    const auto& parent = hierarchy.groups[c.parentGroup];
+    level.parentBounds = toVec(parent.bounds);
+    level.parentErrorCm = blocked[c.parentGroup] ? std::numeric_limits<float>::infinity() : parent.errorCm;
+    clusterLevels.push_back(level);
+    };
+
+  for(const auto& [material,ids]:byMaterial) {
+    SubMesh sub;
+    sub.iboOffset = indices.size();
+    for(const auto i:ids)
+      if(hierarchy.clusters[i].level==0)
+        append(i);
+    sub.landscapeL0Length = indices.size()-sub.iboOffset;
+    for(const auto i:ids)
+      if(hierarchy.clusters[i].level!=0)
+        append(i);
+    sub.iboLength = indices.size()-sub.iboOffset;
+    if(sub.iboLength==0)
+      continue;
+    sub.material = source.mesh.materials[material];
+    sub.texel = TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),sub.iboOffset,sub.landscapeL0Length);
+    subMeshes.push_back(std::move(sub));
+    }
+  computeBbox();
   }
 
 PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest,

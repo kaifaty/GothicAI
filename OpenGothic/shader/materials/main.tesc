@@ -15,6 +15,8 @@ layout(location = 1) in  Varyings  shInp[];
 
 layout(location = 0) out flat uint bucketId[];
 layout(location = 1) out Varyings  shOut[];
+layout(location = MAT_CLUSTER_LEVEL_LOCATION) in  flat uint clusterLevelIn[];
+layout(location = MAT_CLUSTER_LEVEL_LOCATION) out flat uint clusterLevelOut[];
 
 const int MAX_INNER = 16;
 const int MAX_OUTER = 16;
@@ -53,6 +55,7 @@ void main() {
     }
 
   bucketId[gl_InvocationID]           = bucketIdIn[gl_InvocationID];
+  clusterLevelOut[gl_InvocationID]    = clusterLevelIn[gl_InvocationID];
 
   gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
   shOut[gl_InvocationID]              = shInp[gl_InvocationID];

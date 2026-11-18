@@ -26,6 +26,11 @@ layout(push_constant, std430) uniform UboPush {
   uint      firstMeshlet;
   int       meshletCount;
   float     znear;
+  layout(offset = 16) float lodPx;
+  float     lodProjection;
+  float     lodHeight;
+  uint      lodDebug;
+  vec4      lodCamera;
   } push;
 
 Instance pullInstance(uint i) {
@@ -49,6 +54,10 @@ Instance pullInstance(uint i) {
   ret.deformCount = instanceMem[i+15];
   return ret;
   }
+
+const uint L_ClusterLevelIndex = 8;
+const uint L_ClusterLevel = 9;
+#include "materials/cluster_lod.glsl"
 
 float hiZFetch(in sampler2D hiZ, in ivec2 ibbox[2]) {
   if(ibbox[0]==ibbox[1])
@@ -190,10 +199,14 @@ bool frustrumTest(const vec4 sphere) {
 
 void runCluster(const uint clusterId) {
   const Cluster cluster = clusters[clusterId];
-  if(cluster.sphere.w<=0.f)
+  if(cluster.sphere.w<=0.f || cluster.meshletCount<=0)
     return; // disabled or deleted
 
   if(!frustrumTest(cluster.sphere))
+    return;
+
+  uint level;
+  if(!clusterLodVisible(clusterId, cluster.instanceId, level))
     return;
 
 #if defined(MAIN_VIEW)
@@ -238,8 +251,13 @@ void runCluster(const uint clusterId) {
 
   uint writeOffset = cmd[commandId].writeOffset;
   writeOffset      += atomicAdd(cmd[commandId].instanceCount, meshletCount);
+#if defined(MAIN_VIEW) && !defined(LARGE)
+  const uint debugLevel = push.lodDebug != 0u ? level : 0u;
+#else
+  const uint debugLevel = 0u;
+#endif
   for(int i=0; i<meshletCount; ++i)
-    payload[writeOffset+i] = uvec4(instanceId, meshletId+i, bucketId, 0);
+    payload[writeOffset+i] = uvec4(instanceId, meshletId+i, bucketId, debugLevel);
   }
 
 void main() {

@@ -30,30 +30,36 @@ void Landscape::init(const PackedMesh& packed, bool wholeWorld, const Vec3* text
 
   std::vector<RtGeometry>        rtBuild[2];
   std::vector<RtScene::Geometry> rtGeom[2];
+  const bool hierarchy = !packed.clusterLevels.empty();
   blocks.reserve(packed.subMeshes.size());
   for(size_t i=0; i<packed.subMeshes.size(); ++i) {
     auto& sub      = packed.subMeshes[i];
     auto  id       = uint32_t(sub.iboOffset/PackedMesh::MaxInd);
     auto  material = Resources::loadMaterial(sub.material,true);
-
     if(material.alpha==Material::AdditiveLight || sub.iboLength==0) {
       continue;
       }
 
+    const auto levels = hierarchy ? std::span(packed.clusterLevels).subspan(id,sub.iboLength/PackedMesh::MaxInd) :
+                                    std::span<const PackedMesh::ClusterLevel>();
     Block b;
     b.mesh = visual.get(mesh,material,sub.iboOffset,sub.iboLength,&packed.meshletBounds[id],DrawCommands::Landscape,texturePosition,
-                        &sub.texel);
+                        &sub.texel,levels);
     b.mesh.setObjMatrix(Matrix4x4::mkIdentity());
+    if(!b.mesh.isEmpty())
+      levelRecords += levels.size();
 
-    if(inRays && !b.mesh.isEmpty()) {
+    const auto rtLength = hierarchy ? sub.landscapeL0Length : sub.iboLength;
+    if(inRays && !b.mesh.isEmpty() && rtLength>0) {
       if(RtScene::isMergedLandscape(material,RtScene::Landscape)) {
         const size_t k = material.alpha==Material::Solid ? 0 : 1;
-        rtBuild[k].push_back(mesh.rtGeometry(sub.iboOffset,sub.iboLength));
-        rtGeom [k].push_back({material.tex,&mesh.vboBuffer(),&mesh.rtIbo(),mesh.rtFirstIndex(sub.iboOffset),sub.iboLength});
+        rtBuild[k].push_back(mesh.rtGeometry(sub.iboOffset,rtLength));
+        rtGeom [k].push_back({material.tex,&mesh.vboBuffer(),&mesh.rtIbo(),mesh.rtFirstIndex(sub.iboOffset),rtLength});
         }
       else if(RtScene::isSupported(material,RtScene::Landscape)) {
         // water: a slot of its own, its object finds the BLAS by the submesh's slice
-        mesh.sub[i].blas = device.blas({mesh.rtGeometry(sub.iboOffset,sub.iboLength)});
+        mesh.sub[i].rtLength = rtLength;
+        mesh.sub[i].blas = device.blas({mesh.rtGeometry(sub.iboOffset,rtLength)});
         }
       }
     blocks.emplace_back(std::move(b));
