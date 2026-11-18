@@ -44,6 +44,7 @@ void check(size_t attempts, size_t expectedRows, size_t overflow) {
       FrameProfile::sample("segment-"+std::to_string(i/4096),i);
       FrameProfile::Scope scope(FrameProfile::Zone::Tick);
       scope.add(FrameProfile::Amount::DrawCalls,i);
+      FrameProfile::add(FrameProfile::Amount::MeshLevel4,i+1);
       attempt.outcome(FrameProfile::Outcome::Submitted);
       auto* record=FrameProfile::gpuSubmitted();
       require((record!=nullptr)==(i<expectedRows),"attempt capacity mismatch");
@@ -77,6 +78,7 @@ void check(size_t attempts, size_t expectedRows, size_t overflow) {
       };
     const auto gpu=column("gpu_ns"), done=column("gpu_done"), tick=column("tick_calls");
     const auto draws=column("draw_calls"), triangles=column("triangles"), geometryDone=column("geometry_done");
+    const auto meshLevel4=column("mesh_level4");
     size_t rows=0;
     for(std::string line;std::getline(csv,line);++rows) {
       const auto cells=columns(line);
@@ -87,6 +89,7 @@ void check(size_t attempts, size_t expectedRows, size_t overflow) {
       require(number(8)==unsigned(FrameProfile::Outcome::Submitted),"wrong attempt outcome");
       require(number(10)==overflow,"wrong overflow count");
       require(number(tick)==1 && number(draws)==rows,"scope recorded in wrong attempt");
+      require(number(meshLevel4)==rows+1,"mesh level 4 count recorded in wrong attempt or column");
       require(number(done)==1 && number(gpu)==(rows==0 ? 123456789 : 100+rows),"GPU callback recorded in wrong attempt");
       require(number(triangles)==(rows==0 ? 42u : 0u) && number(geometryDone)==(rows==0 ? 1u : 0u),
               "geometry callback recorded in wrong attempt");

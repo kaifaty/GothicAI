@@ -1554,27 +1554,28 @@ void levelCases(const Fixture& fixture) {
   const auto record = [&](std::string_view levels) {
     fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":)"+std::string(levels)+"}}");
     };
-  record(R"([{"glb":"test/lod1.glb","px":400},{"glb":"test/lod2.glb","px":200.5},)"
-         R"({"glb":"test/lod1.glb","px":100},{"glb":"test/lod1.glb","px":50}])");
-  {
+  const std::string firstTwo = R"([{"glb":"test/lod1.glb","px":400},{"glb":"test/lod2.glb","px":200.5})";
+  const float fieldPx[] = {400,200.5f,100,50};
+  for(size_t expectedLevels:{2u,4u}) {
+    record(firstTwo+(expectedLevels==2 ? "]" : R"(,{"glb":"test/lod1.glb","px":100},{"glb":"test/lod1.glb","px":50}])"));
     Resources resources;
     fixture.mount();
     const auto* proto = Resources::loadMesh("own_mesh.3ds");
     require(proto!=nullptr && proto->attach.size()==1,"a mesh with levels must load");
     const auto& mesh = proto->attach[0];
-    require(mesh.levels.size()==4 && mesh.levels[0].px==400.f && mesh.levels[1].px==200.5f &&
-            mesh.levels[2].px==100.f && mesh.levels[3].px==50.f,
-            "the levels must keep their order and px");
+    require(mesh.levels.size()==expectedLevels,"the mesh must keep exactly the declared levels");
     require(mesh.sub.size()==1 && mesh.sub[0].iboOffset==0,"the test mesh must begin with one submesh");
     const auto& sub = mesh.sub[0];
     // what VisualObjects gives the object's cluster at each level (drawnMeshlets)
     using Range = std::pair<uint32_t,uint32_t>;
     const auto itself = Range(uint32_t(sub.iboOffset/PackedMesh::MaxInd),uint32_t(sub.iboLength/PackedMesh::MaxInd));
-    require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,0)==itself &&
-            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,5)==itself,
-            "a cluster must draw the mesh's meshlets at 0 and at an undeclared level");
+    require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,0)==itself,"level 0 must draw the mesh itself");
+    for(size_t undeclared=expectedLevels+1; undeclared<=MeshLevels::MaxLevels+1; ++undeclared)
+      require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,undeclared)==itself,
+              "an undeclared level must draw the mesh itself");
     size_t offset = sub.iboOffset+sub.iboLength;
     for(size_t i=0; i<mesh.levels.size(); ++i) {
+      require(mesh.levels[i].px==fieldPx[i],"the levels must keep their order and px");
       const auto& slices = mesh.levels[i].sub;
       require(slices.size()==1 && slices[0].first==offset && slices[0].second==PackedMesh::MaxInd,
               "each level must have one meshlet packed after the previous one");
@@ -1582,7 +1583,7 @@ void levelCases(const Fixture& fixture) {
               "a cluster must use the meshlets of its declared level");
       offset += slices[0].second;
       }
-    require(mesh.rtSlice(sub.iboOffset,sub.iboLength)==mesh.levels[3].sub[0],"the ray scene must take the fourth level");
+    require(mesh.rtSlice(sub.iboOffset,sub.iboLength)==mesh.levels.back().sub[0],"the ray scene must take the last declared level");
     require(close(mesh.bbox.bbox[0].x,-400.f) && close(mesh.bbox.bbox[1].y,600.f),
             "the mesh's own box (the wind's height) must not take the levels in");
     const auto& own = mesh.bbox.bbox;
