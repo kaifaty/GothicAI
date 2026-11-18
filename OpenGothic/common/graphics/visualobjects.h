@@ -132,7 +132,8 @@ class VisualObjects final {
     void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    static bool benchImpostors; // force the last representation for paired views
     void drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int layer);
     void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -186,6 +187,7 @@ class VisualObjects final {
       uint32_t            animPtr   = 0;
       DrawBuckets::Id     bucketId;
       uint16_t            cmdId     = uint16_t(-1);
+      uint16_t            impostorShadowCmd = uint16_t(-1);
       uint32_t            clusterId = 0;
       uint64_t            timeShift = 0;
 
@@ -237,6 +239,8 @@ class VisualObjects final {
     void     preFrameUpdateStrands();
     void     preFrameUpdateTrees();
     void     preFrameUpdateLevels();
+    void     setImpostorShadow(Object& obj, bool enable);
+    void     drawImpostors(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     // the meshlets the object's cluster draws while visible: [first, first+count) of its bucket's mesh
     std::pair<uint32_t,uint32_t> drawnMeshlets(Object& obj);
 
@@ -294,6 +298,14 @@ class VisualObjects final {
     std::unordered_set<size_t> objectsStrand;
     std::unordered_set<size_t> objectsTree;
     std::unordered_set<size_t> objectsLevels;
+    struct ImpostorInstance {
+      float    transform[16];
+      uint32_t info[4] = {};
+      };
+    static_assert(sizeof(ImpostorInstance)==80);
+    std::vector<size_t>           impostorDraws;
+    std::vector<ImpostorInstance> impostorInstances;
+    Tempest::StorageBuffer       impostorBuffer[Resources::MaxFramesInFlight];
     std::unordered_set<size_t> objectsFree;
     mutable std::recursive_mutex textureSync;
     ChunkResidency*            textureResidency = nullptr;

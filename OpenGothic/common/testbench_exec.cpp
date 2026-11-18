@@ -30,6 +30,7 @@
 #include "graphics/mesh/animsample.h"
 #include "graphics/mesh/bowdraw.h"
 #include "graphics/mesh/flinch.h"
+#include "graphics/visualobjects.h"
 #include "physics/ragdoll_brace.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
@@ -213,6 +214,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   if(c=="water-film" && waterFilmCommand(waterFilmContext(),a,w,pl)) return;
   else if(c=="cloth" && clothCommand(clothContext(),a,w,pl)) return;
   else if(c=="foliage" && foliageCommand(a,w)) return;
+  else if(c=="impostor" && a.size()==2 && (a[1]=="force" || a[1]=="auto")) {
+    VisualObjects::benchImpostors = (a[1]=="force");
+    }
   else if(c=="grass" && grassCommand(a,w)) return;
   else if(waterCommand(bench.water,waterContext(),a,w,pl,ctrl)) return;
   else if(c=="item-save" && a.size()==2 && a[1]=="initial") {
