@@ -4,6 +4,7 @@
     uv run --no-project --with numpy --with pillow --with opencv-python-headless \
         python scripts/content/fire/explosion_atlas.py explosion Explosion02HD_5x5.tga FIRE.dds SMOKE.dds
     ... explosion_atlas.py loop FireBall01_8x8.tga BALL.dds
+    ... explosion_atlas.py trail TRAIL.dds
 
 reports/content/remaster/magic-fire/fireball.md. `explosion`: the set's atlas is 5 x 5 cells of 409.6 px, 25 frames
 of one burst: a white ball that tears into fire and ends as a dark cloud. The engine lights a blended sprite as a
@@ -69,9 +70,39 @@ def loop(source: Path, out: Path) -> None:
     print(f'{out}: {rgba.shape[1]}x{rgba.shape[0]}, alpha mean {rgba[..., 3].mean():.3f}')
 
 
+def trail(out: Path, seed: int = 7) -> None:
+    """A streak of fire behind a flying gob (storm.md), drawn, not taken from the set: a particle's trail maps u
+    across its width and v along its age, the head at the top (pfx.vert). A white-hot thread in a ragged orange
+    sheath that reddens and frays towards the tail; the engine fades it further by age."""
+    w, h = 64, 256
+    rng = np.random.default_rng(seed)
+    v = (np.arange(h, dtype=np.float32) + 0.5)[:, None] / h
+    u = (np.arange(w, dtype=np.float32) + 0.5)[None, :] / w
+
+    def wave(scale):
+        # smooth noise along the streak: a sum of a few random sines
+        return sum(np.sin(2 * np.pi * (f * v + rng.random())) / f for f in rng.uniform(scale, 3 * scale, 4)) / 2
+
+    centre = 0.5 + 0.06 * wave(3) * smoothstep(0.0, 0.6, v)
+    width = (0.2 + 0.05 * wave(5)) * (1 - 0.45 * v)
+    across = np.exp(-((u - centre) / width) ** 2)
+    thread = np.exp(-((u - centre) / (0.3 * width)) ** 2) * (1 - smoothstep(0.1, 0.5, v))
+    lumps = 0.8 + 0.35 * np.clip(wave(6) + 0.5 * wave(13), -1, 1) * smoothstep(0.15, 0.5, v)
+    body = across * lumps * smoothstep(0.0, 0.06, v) * (1 - smoothstep(0.55, 1.0, v))
+    heat = np.clip(1.15 - 1.3 * v, 0, 1)[..., None]
+    hot, warm, dull = np.array([1.0, 0.82, 0.52]), np.array([1.0, 0.45, 0.1]), np.array([0.5, 0.11, 0.02])
+    colour = np.where(heat > 0.5, warm + (hot - warm) * (heat - 0.5) * 2, dull + (warm - dull) * heat * 2)
+    rgb = colour * body[..., None] + np.array([1.0, 0.95, 0.85]) * (thread * 0.6)[..., None]
+    rgb = np.clip(rgb, 0, 1).astype(np.float32)
+    rgba = np.concatenate([rgb, rgb.max(axis=2, keepdims=True)], axis=2)
+    atlas.write_dxt5(out, rgba)
+    print(f'{out}: {w}x{h}, alpha mean {rgba[..., 3].mean():.3f}')
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest='command', required=True)
+    sub.add_parser('trail').add_argument('out', type=Path)
     one = sub.add_parser('explosion')
     one.add_argument('source', type=Path)
     one.add_argument('fire', type=Path)
@@ -82,6 +113,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == 'explosion':
         explosion(args.source, args.fire, args.smoke)
+    elif args.command == 'trail':
+        trail(args.out)
     else:
         loop(args.source, args.out)
     return 0
