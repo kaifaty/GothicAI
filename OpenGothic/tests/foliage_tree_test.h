@@ -213,6 +213,7 @@ void foliageTreeFadeMaths() {
           travel(leafBits,h,Fade{1.f,0.f,0.f})<travel(leafBits,h) && travel(leafBits,h,Fade{0.f,0.f,0.f})==0.f,
           "the bounds of a tree with all of its wind are what they were; a tuft's do not read the fade");
   }
+  }
 
 void foliageTreeMaths() {
   crownLightMaths();
