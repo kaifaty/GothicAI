@@ -113,7 +113,7 @@ constexpr uint8_t MaxSegments = 4;
 
 // OPENGOTHIC_GRASS_LINKS sets the three distances in cm where broad blades lose a link.
 inline uint8_t broadLinks(float dist) {
-  static constexpr std::array<uint32_t, MaxSegments-1> defaults = {1000, 2500, 4500};
+  static constexpr std::array<uint32_t, MaxSegments-1> defaults = {800, 1200, 2400};
   static const auto thresholds = [] {
     const char* e = std::getenv("OPENGOTHIC_GRASS_LINKS");
     if(e==nullptr)
