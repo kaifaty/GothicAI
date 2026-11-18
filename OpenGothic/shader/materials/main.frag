@@ -23,8 +23,13 @@
 #include "virtual_shadow/vsm_sun_shadow.glsl"
 #endif
 
-#if defined(MAT_VARYINGS)
+#if defined(MAT_MOTION)
+layout(location = 0) in flat uint materialRef;
+uint bucketId;
+#elif defined(MAT_VARYINGS)
 layout(location = 0) in flat uint bucketId;
+#endif
+#if defined(MAT_VARYINGS)
 layout(location = 1) in Varyings  shInp;
 #endif
 
@@ -34,10 +39,6 @@ layout(location = 3) in flat uint vsmMipId;
 
 #if DEBUG_DRAW
 layout(location = DEBUG_DRAW_LOC) in flat uint debugId;
-#endif
-
-#if defined(GBUFFER) && defined(MAT_MOTION)
-layout(location = PROBE_INSTANCE_LOC) flat in uint probeInstance;
 #endif
 
 #if defined(GBUFFER)
@@ -1053,6 +1054,19 @@ float alphaThreshold() {
   }
 
 void main() {
+#if defined(GBUFFER)
+  const bool treeProbe = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u;
+#endif
+#if defined(MAT_MOTION)
+  bucketId = materialRef;
+  uint probeInstance = 0u;
+  if(treeProbe) {
+    const uvec4 task = payload[materialRef];
+    bucketId = task.z;
+    probeInstance = task.x;
+    }
+#endif
+
 #if defined(MAT_UV)
 #if defined(ANTITILE_MATERIAL)
   MaterialSampling maps;
@@ -1105,7 +1119,7 @@ void main() {
   if(alphaTest<alphaThreshold())
     discard;
 #endif
-  if((scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u) {
+  if(treeProbe) {
 #if defined(MAT_MOTION)
     outNormal = probeInstance + 1u;
 #elif defined(FLAT_NORMAL)

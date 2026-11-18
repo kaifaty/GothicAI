@@ -55,10 +55,21 @@ def test_tree_occlusion_probe_detects_clear_depth_outside_the_projected_box():
 
     helper = fir_set.HERE.parents[1] / 'reports/engine/2026-11-16-modern-trees/tree-hidden.py'
     Depth = runpy.run_path(str(helper))['Depth']
-    depth = np.full((16, 16), 0.97, dtype=np.float32)
+    depth = np.full((32, 32), 0.97, dtype=np.float32)
     depth[4, 4] = 1
-    pyramid = Depth(depth, (4, 4))
-    projected_box = np.array([[1, 1], [4, 1]], dtype=np.float32) / 16
+    depth[8, 16] = 1
+    pyramid = Depth(depth, (8, 8))
 
+    single_tile = np.array([[1, 1], [3, 3]], dtype=np.float32) / 32
+    assert pyramid.test(single_tile, 0.98) == (False, 0)
+
+    projected_box = np.array([[1, 1], [4, 1]], dtype=np.float32) / 32
     assert pyramid.test(projected_box, 0.98) == (True, 0)
     assert pyramid.test(projected_box, 0.98, 'neighbors') == (False, 0)
+
+    three_tiles = np.array([[17, 1], [24, 1]], dtype=np.float32) / 32
+    assert pyramid.test(three_tiles, 0.98) == (True, 1)
+    assert pyramid.test(three_tiles, 0.98, 'tight_mip') == (False, 1)
+
+    # At the bottom of pack_depth's range, the HiZ bias adds two R16 steps.
+    assert Depth.encode(np.float32(0.95)) == 2
