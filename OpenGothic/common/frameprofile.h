@@ -61,8 +61,8 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   // those of the crowns of trees (BK_CANOPY); of a frame slot one or two frames back
   MainClusters, MainMeshlets, MainCanopyClusters, MainCanopyMeshlets,
   // VisualObjects::preFrameUpdateLevels: objects of meshes with levels of detail (graphics/meshlevels.h) drawn at the
-  // mesh itself and at its levels 1, 2 and 3 in the frame, an object once by its first submesh
-  MeshLevel0, MeshLevel1, MeshLevel2, MeshLevel3, Count };
+  // mesh itself and at its levels 1 through 4 in the frame, an object once by its first submesh
+  MeshLevel0, MeshLevel1, MeshLevel2, MeshLevel3, MeshLevel4, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };

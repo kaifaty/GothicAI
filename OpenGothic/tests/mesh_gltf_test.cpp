@@ -1508,36 +1508,39 @@ void levelCases(const Fixture& fixture) {
   levelSwitchCase("env");
   levelSwitchCase("ini");
 
-  // spruce A, 18 m, at 1920x1080 and 67.5 degrees: the levels of 400, 200 and 100 px come at 36, 73 and 145 m
-  const float px[3] = {400,200,100};
+  // Spruce A, 18 m, at 1920x1080 and 67.5 degrees: 400, 200, 100 and 50 px at 36, 73, 145 and 291 m
+  const float px[] = {400,200,100,50};
+  const auto  count = std::size(px);
   const auto  at    = [](float metres) { return MeshLevels::screenHeight(1800,metres*100,1.f/std::tan(0.589f),1080); };
-  require(std::abs(at(36.37f)-400)<1 && std::abs(at(145.5f)-100)<1,"the height on screen must go as height/distance");
+  require(std::abs(at(36.37f)-400)<1 && std::abs(at(291.f)-50)<1,"the height on screen must go as height/distance");
   uint8_t level = 0;
   std::vector<uint8_t> seen;
-  for(float metres=10; metres<=300; metres+=.5f) {
-    const auto next = MeshLevels::pick(px,3,level,at(metres));
+  for(float metres=10; metres<=400; metres+=.5f) {
+    const auto next = MeshLevels::pick(px,count,level,at(metres));
     require(next>=level,"a farther object must never get a finer level");
     if(next!=level)
       seen.push_back(next);
     level = next;
     }
-  require(seen==std::vector<uint8_t>{1,2,3} && level==3,"going away the levels must come one by one, in their order");
+  require(seen==std::vector<uint8_t>{1,2,3,4} && level==4,"going away the levels must come one by one, in their order");
   seen.clear();
-  for(float metres=300; metres>=10; metres-=.5f) {
-    const auto next = MeshLevels::pick(px,3,level,at(metres));
+  for(float metres=400; metres>=10; metres-=.5f) {
+    const auto next = MeshLevels::pick(px,count,level,at(metres));
     require(next<=level,"a nearer object must never get a coarser level");
     if(next!=level)
       seen.push_back(next);
     level = next;
     }
-  require(seen==std::vector<uint8_t>{2,1,0} && level==0,"coming near the levels must go one by one back to the mesh");
-  require(MeshLevels::pick(px,3,0,399)==1 && MeshLevels::pick(px,3,0,400)==0 && MeshLevels::pick(px,3,0,420)==0,
+  require(seen==std::vector<uint8_t>{3,2,1,0} && level==0,"coming near the levels must go one by one back to the mesh");
+  require(MeshLevels::pick(px,count,0,399)==1 && MeshLevels::pick(px,count,0,400)==0 && MeshLevels::pick(px,count,0,420)==0,
           "a level must come under its px, not on it");
   for(float h:{399.f,401.f,420.f,439.f,400.f,438.f})
-    require(MeshLevels::pick(px,3,1,h)==1,"a height between px and 1.1 px must keep the level it has: no flicker");
-  require(MeshLevels::pick(px,3,1,440)==0 && MeshLevels::pick(px,3,3,109)==3 && MeshLevels::pick(px,3,3,110)==2,
+    require(MeshLevels::pick(px,count,1,h)==1,"a height between px and 1.1 px must keep the level it has: no flicker");
+  require(MeshLevels::pick(px,count,1,440)==0 && MeshLevels::pick(px,count,3,109)==3 && MeshLevels::pick(px,count,3,110)==2,
           "a level must give way to the finer one at 1.1 of its px");
-  require(MeshLevels::pick(px,3,0,50)==3 && MeshLevels::pick(px,3,3,1000)==0,"a jump must cross every threshold at once");
+  require(MeshLevels::pick(px,count,3,50)==3 && MeshLevels::pick(px,count,4,54)==4 && MeshLevels::pick(px,count,4,55)==3,
+          "the fourth level must have a 50 to 55 px hysteresis band");
+  require(MeshLevels::pick(px,count,0,49)==4 && MeshLevels::pick(px,count,4,1000)==0,"a jump must cross every threshold at once");
   require(MeshLevels::pick(px,0,0,1)==0 && MeshLevels::pick(px,1,0,50)==1,
           "a record without levels must draw the mesh at any height; one level must be the last");
 
@@ -1551,31 +1554,35 @@ void levelCases(const Fixture& fixture) {
   const auto record = [&](std::string_view levels) {
     fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":)"+std::string(levels)+"}}");
     };
-  record(R"([{"glb":"test/lod1.glb","px":400},{"glb":"test/lod2.glb","px":200.5}])");
+  record(R"([{"glb":"test/lod1.glb","px":400},{"glb":"test/lod2.glb","px":200.5},)"
+         R"({"glb":"test/lod1.glb","px":100},{"glb":"test/lod1.glb","px":50}])");
   {
     Resources resources;
     fixture.mount();
     const auto* proto = Resources::loadMesh("own_mesh.3ds");
     require(proto!=nullptr && proto->attach.size()==1,"a mesh with levels must load");
     const auto& mesh = proto->attach[0];
-    require(mesh.levels.size()==2 && mesh.levels[0].px==400.f && mesh.levels[1].px==200.5f,
+    require(mesh.levels.size()==4 && mesh.levels[0].px==400.f && mesh.levels[1].px==200.5f &&
+            mesh.levels[2].px==100.f && mesh.levels[3].px==50.f,
             "the levels must keep their order and px");
-    require(mesh.sub.size()==1 && mesh.levels[0].sub.size()==1 && mesh.levels[1].sub.size()==1,
-            "a level must have a slice for each submesh of the mesh, and no submesh of its own");
+    require(mesh.sub.size()==1 && mesh.sub[0].iboOffset==0,"the test mesh must begin with one submesh");
     const auto& sub = mesh.sub[0];
-    const auto  lv1 = mesh.levels[0].sub[0], lv2 = mesh.levels[1].sub[0];
-    require(sub.iboOffset==0 && lv1.first==sub.iboOffset+sub.iboLength && lv2.first==lv1.first+lv1.second &&
-            lv1.second==PackedMesh::MaxInd && lv2.second==PackedMesh::MaxInd,
-            "the levels must be packed after the mesh in its buffers, a meshlet each");
-    require(mesh.rtSlice(sub.iboOffset,sub.iboLength)==lv2,"the ray scene must take the coarsest level");
     // what VisualObjects gives the object's cluster at each level (drawnMeshlets)
     using Range = std::pair<uint32_t,uint32_t>;
     const auto itself = Range(uint32_t(sub.iboOffset/PackedMesh::MaxInd),uint32_t(sub.iboLength/PackedMesh::MaxInd));
     require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,0)==itself &&
-            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,1)==Range(uint32_t(lv1.first/PackedMesh::MaxInd),1) &&
-            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,2)==Range(uint32_t(lv2.first/PackedMesh::MaxInd),1) &&
-            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,3)==itself,
-            "a cluster must draw the meshlets of its level: the mesh's at 0 and at a level the mesh has not");
+            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,5)==itself,
+            "a cluster must draw the mesh's meshlets at 0 and at an undeclared level");
+    size_t offset = sub.iboOffset+sub.iboLength;
+    for(size_t i=0; i<mesh.levels.size(); ++i) {
+      const auto& slices = mesh.levels[i].sub;
+      require(slices.size()==1 && slices[0].first==offset && slices[0].second==PackedMesh::MaxInd,
+              "each level must have one meshlet packed after the previous one");
+      require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,i+1)==Range(uint32_t(offset/PackedMesh::MaxInd),1),
+              "a cluster must use the meshlets of its declared level");
+      offset += slices[0].second;
+      }
+    require(mesh.rtSlice(sub.iboOffset,sub.iboLength)==mesh.levels[3].sub[0],"the ray scene must take the fourth level");
     require(close(mesh.bbox.bbox[0].x,-400.f) && close(mesh.bbox.bbox[1].y,600.f),
             "the mesh's own box (the wind's height) must not take the levels in");
     const auto& own = mesh.bbox.bbox;
@@ -1603,9 +1610,19 @@ void levelCases(const Fixture& fixture) {
     };
   fixture.index();
   alone("no field");
+  {
+    record(R"([{"glb":"test/lod1.glb","px":400},{"glb":"test/lod1.glb","px":200},)"
+           R"({"glb":"test/lod1.glb","px":100},{"glb":"test/lod1.glb","px":50},{"glb":"test/lod1.glb","px":25}])");
+    bool tooMany = false;
+    Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+      if(mode==Tempest::Log::Error && std::string_view(text).find("5 levels, at most 4")!=std::string_view::npos)
+        tooMany = true;
+      });
+    struct LogReset { ~LogReset() { Tempest::Log::setOutputCallback({}); } } reset;
+    alone("five levels");
+    require(tooMany,"a fifth level must be rejected for exceeding the level limit");
+  }
   for(const auto* levels:{R"({"glb":"test/lod1.glb","px":400})",
-                          R"([{"glb":"test/lod1.glb","px":400},{"glb":"test/lod1.glb","px":300},)"
-                          R"({"glb":"test/lod1.glb","px":200},{"glb":"test/lod1.glb","px":100}])",
                           R"([{"glb":"test/lod1.glb","px":200},{"glb":"test/lod2.glb","px":200}])",
                           R"([{"glb":"test/lod1.glb","px":200},{"glb":"test/lod2.glb","px":400}])",
                           R"([{"glb":"test/lod1.glb","px":0}])",

@@ -41,7 +41,7 @@ const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_cal
   "npc_anim_deferred","npc_anim_catchup","npc_anim_sync_on_read","npc_tail_shadow","npc_tail_logic","npc_tail_full",
   "rt_tlas_builds","rt_dirty_slots","gi_probes_live","gi_probes_traced","gi_probes_from_hits","gi_probes_freed",
   "main_clusters","main_meshlets","main_canopy_clusters","main_canopy_meshlets",
-  "mesh_level0","mesh_level1","mesh_level2","mesh_level3"};
+  "mesh_level0","mesh_level1","mesh_level2","mesh_level3","mesh_level4"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }
