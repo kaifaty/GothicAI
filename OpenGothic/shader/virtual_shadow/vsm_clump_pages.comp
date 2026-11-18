@@ -75,14 +75,14 @@ void storePageTable() {
     }
   }
 
-// the n x n pages from `at` all on one side of the bins drawn the frame before (vsmDrawnBefore): a quad across that
-// edge is not made
-bool oneSide(const ivec3 at, const int n) {
-  const uint prev[VSM_BIN_WORDS] = vsm.header.admitPrevBits;
-  const bool drawn = vsmDrawnBefore(prev, at);
+// the n x n pages from `at` in one ring of the mip of the cut (vsmCutMip): there a quad across two rings is not made
+bool oneRing(const ivec3 at, const int n, const int cutMip) {
+  if(at.z!=cutMip)
+    return true;
+  const uint ring = vsmSunBin(at, ivec2(1));
   for(int x=0; x<n; ++x)
     for(int y=0; y<n; ++y)
-      if(vsmDrawnBefore(prev, at+ivec3(x,y,0))!=drawn)
+      if(vsmSunBin(at+ivec3(x,y,0), ivec2(1))!=ring)
         return false;
   return true;
   }
@@ -92,6 +92,7 @@ void main() {
   const ivec3 at   = ivec3(gl_GlobalInvocationID);
   const ivec3 id   = ivec3(gl_LocalInvocationID);
   const uint  lane = gl_LocalInvocationIndex;
+  const int   cut  = vsmCutMip(vsm.header.admitPrevBits);
 
   poolPageTable();
 #if 0
@@ -153,7 +154,7 @@ void main() {
     uint s = (a+b+c+d);
 
     bool denie = (a==0 && b==0) || (c==0 && d==0); // horizontal-only patterns
-    if(!denie && s >= mergeQ && oneSide(at, 4)) {
+    if(!denie && s >= mergeQ && oneRing(at, 4, cut)) {
       data[at.x+0][at.y+0] = packPage(s, uvec2(4));
       data[at.x+2][at.y+0] = packPage(0, uvec2(0));
       data[at.x+0][at.y+2] = packPage(0, uvec2(0));
@@ -180,7 +181,7 @@ void main() {
     uint s = (a+b+c+d);
 
     bool denie = (a==0 && b==0) || (c==0 && d==0); // horizontal-only patterns
-    if(q==2 && (denie || s<2 || !oneSide(at, 2))) {
+    if(q==2 && (denie || s<2 || !oneRing(at, 2, cut))) {
       data[at.x+0][at.y+0] = packPage(1, uvec2(a), a);
       data[at.x+1][at.y+0] = packPage(1, uvec2(b), b);
       data[at.x+1][at.y+1] = packPage(1, uvec2(c), c);

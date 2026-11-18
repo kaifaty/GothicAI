@@ -301,19 +301,21 @@ void vsmPairCapRecords(Tempest::Device& device) {
           ("a bin drawn the frame before goes in up to the cap and exactly at it"+demand(exact)).c_str());
   }
 
-// The entries of the sun's pages at the edge of the bins drawn the frame before (shadow-flicker.md, «Третий круг»):
-// the engine's own vsm_clear.comp, vsm_mark_pages.comp, vsm_clump_pages.comp, vsm_list_pages.comp,
-// vsm_alloc_pages.comp and vsm_merge_pages.comp on a screen of 32x32 pixels, a pixel marking a cell of mip 0's page
-// table. An entry takes the bin of its farthest page (vsmSunBin). Quads and stripes went across that edge before, and
-// which side a page near it fell on followed the grid of the quads - the marks of TAA's jittered frame moved it, and a
-// shadow at the edge came and went in the jitter's rhythm with the camera still. Now no entry holds pages of both
-// sides: a page is drawn or left out by its own ring, however the grid falls. With no edge the pages merge as before.
-void vsmEntryEdgeRecords(Tempest::Device& device) {
+// The entries of the sun's pages in the mip of the cut (shadow-flicker.md, «Третий круг»): the engine's own
+// vsm_clear.comp, vsm_mark_pages.comp, vsm_clump_pages.comp, vsm_list_pages.comp, vsm_alloc_pages.comp and
+// vsm_merge_pages.comp on a screen of 32x32 pixels, a pixel marking a cell of mip 0's page table. An entry takes the bin
+// of its farthest page (vsmSunBin). Quads and stripes went across the rings before, and which side of the cut a page
+// fell on followed the grid of the quads - the marks of TAA's jittered frame moved it, and a shadow at the cut came and
+// went in the jitter's rhythm with the camera still. Now in the mip where the frame before cut the bins no entry holds
+// two rings, whichever ring the cut is at, so a page is drawn or left out by its own ring; elsewhere, and with no cut,
+// the pages merge as before. Entries split at the cut's edge alone made the ring before it ask more with the split, and
+// the cut swung between two rings from frame to frame.
+void vsmCutMipRecords(Tempest::Device& device) {
   Resources resources(device);
   Shaders   shaders;
   shaders.waitCompiler();
   if(!Shaders::isVsmSupported()) {
-    std::cout << "vsm entry edge: skipped, no virtual shadow maps on this device\n";
+    std::cout << "vsm cut mip: skipped, no virtual shadow maps on this device\n";
     return;
     }
 
@@ -452,43 +454,50 @@ void vsmEntryEdgeRecords(Tempest::Device& device) {
   std::vector<std::pair<int,int>> shifted = marks;
   shifted.push_back({16, 12});
 
-  // all bins drawn the frame before, no edge: the row is one stripe and the block one quad, as before
-  const auto whole = frame(marks, prefix(16+16*16));
-  require(has(whole, {10, 16, 0, 12, 1}) && has(whole, {17, 12, 0, 4, 4}),
-          ("with no edge the pages merge as before:"+text(whole)).c_str());
+  // all bins drawn the frame before, no cut: the row is one stripe and the block one quad, as before; the same with the
+  // cut in mip 1, mip 0 drawn whole
+  for(auto drawnBefore : {prefix(16+16*16), prefix(Sun0+16+2)}) {
+    const auto es = frame(marks, drawnBefore);
+    require(has(es, {10, 16, 0, 12, 1}) && has(es, {17, 12, 0, 4, 4}),
+            ("out of the mip of the cut the pages merge as before:"+text(es)).c_str());
+    }
 
-  // the frame before drew the lamps and mip 0's rings 0..2: no entry holds pages of both sides of that edge, each
-  // marked page is in one entry, and an entry with a page drawn the frame before has its bin among the drawn
-  const auto drawn = [&](int x, int y) { return ring(x, y)<=2; };
+  // the frame before cut mip 0 at ring 3, or at ring 1: in that mip no entry holds two rings, each marked page is in
+  // one entry, and the entries are the same wherever in the mip the cut is
   for(auto* m : {&marks, &shifted}) {
-    const auto es = frame(*m, prefix(Sun0+3));
-    for(auto& e : es) {
-      bool any = false, all = true;
-      int  far = 0;
-      for(int x=e.x; x<e.x+e.w; ++x)
-        for(int y=e.y; y<e.y+e.h; ++y) {
-          any |= drawn(x, y);
-          all &= drawn(x, y);
-          far  = std::max(far, ring(x, y));
-          }
-      require(e.mip==0 && any==all,
-              ("an entry holds the pages of one side of the bins drawn the frame before:"+text(es)).c_str());
-      require(!any || far<=2, "an entry of pages drawn the frame before keeps its bin among the drawn");
-      }
-    for(auto [x, y] : *m) {
-      const auto n = std::count_if(es.begin(), es.end(), [x=x, y=y](const Entry& e) {
-        return e.x<=x && x<e.x+e.w && e.y<=y && y<e.y+e.h;
-        });
-      require(n==1, ("each marked page is in one entry:"+text(es)).c_str());
+    std::vector<Entry> first;
+    for(uint32_t cutRing : {3u, 1u}) {
+      const auto es = frame(*m, prefix(Sun0+cutRing));
+      for(auto& e : es) {
+        bool one = e.mip==0;
+        for(int x=e.x; x<e.x+e.w; ++x)
+          for(int y=e.y; y<e.y+e.h; ++y)
+            one &= ring(x, y)==ring(e.x, e.y);
+        require(one, ("in the mip of the cut an entry holds the pages of one ring:"+text(es)).c_str());
+        }
+      for(auto [x, y] : *m) {
+        const auto n = std::count_if(es.begin(), es.end(), [x=x, y=y](const Entry& e) {
+          return e.x<=x && x<e.x+e.w && e.y<=y && y<e.y+e.h;
+          });
+        require(n==1, ("each marked page is in one entry:"+text(es)).c_str());
+        }
+      if(first.empty()) {
+        first = es;
+        continue;
+        }
+      bool same = first.size()==es.size();
+      for(auto& e : es)
+        same &= has(first, e);
+      require(same, ("the entries of the mip of the cut do not follow the ring of the cut:"+text(first)+" |"+text(es)).c_str());
       }
     if(m==&marks)
-      require(has(es, {10, 16, 0, 3, 1}) && has(es, {13, 16, 0, 6, 1}) && has(es, {19, 16, 0, 3, 1}),
-              ("the row's stripe starts anew where the drawn bins end:"+text(es)).c_str());
+      require(has(first, {15, 16, 0, 2, 1}) && has(first, {10, 16, 0, 1, 1}) && has(first, {21, 16, 0, 1, 1}),
+              ("the row's stripe starts anew at each ring:"+text(first)).c_str());
     }
   }
 
 // the records of this header, one call of material_texture_test.cpp
 void vsmRecords(Tempest::Device& device) {
   vsmPairCapRecords(device);
-  vsmEntryEdgeRecords(device);
+  vsmCutMipRecords(device);
   }
