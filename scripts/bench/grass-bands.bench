@@ -3,7 +3,8 @@
 # 2560x1440 with OPENGOTHIC_GRASS_WASTE=1 and the meadow's content,
 #   OPENGOTHIC_GRASS_WASTE=1 TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_CONTENT=<set> scripts/bench.sh grass-bands <out>
 # `grass stats` writes `waste.bands`; each view is shot as it is, with the ground painted by the bands between the
-# blades (`grass parts 512`), and the whole ground painted without the blades (`grass parts 640`).
+# blades (`grass parts 512`), and the whole ground painted without the blades (`grass parts 640`). A shot takes the
+# frame after the commands that follow it in the same tick, hence the wait after each one.
 seed 73013
 cheat god
 set time 12 0
@@ -22,12 +23,15 @@ grass wait
 wait 2000
 grass stats
 shot view-1
+wait 300
 grass parts 512
 wait 1000
 shot view-1-bands
+wait 300
 grass parts 640
 wait 1000
 shot view-1-bands-all
+wait 300
 grass parts 0
 # view 2: `stone`, 70 cm over the ground among the clumps, to the east
 goto pos 40003 3790 -1503
@@ -37,12 +41,15 @@ grass wait
 wait 2000
 grass stats
 shot view-2
+wait 300
 grass parts 512
 wait 1000
 shot view-2-bands
+wait 300
 grass parts 640
 wait 1000
 shot view-2-bands-all
+wait 300
 grass parts 0
 # view 3: `far`, the whole meadow from afar and above
 goto NW_TAVERNE_TROLLAREA_04
@@ -52,12 +59,15 @@ grass wait
 wait 2000
 grass stats
 shot view-3
+wait 300
 grass parts 512
 wait 1000
 shot view-3-bands
+wait 300
 grass parts 640
 wait 1000
 shot view-3-bands-all
+wait 300
 grass parts 0
 # view 4: the start of the walk of `meadow-walk`, the game's camera
 cam game
@@ -69,12 +79,15 @@ grass wait
 wait 2000
 grass stats
 shot view-4
+wait 300
 grass parts 512
 wait 1000
 shot view-4-bands
+wait 300
 grass parts 640
 wait 1000
 shot view-4-bands-all
+wait 300
 grass parts 0
 # view 5: standing on the track, the game's camera along it up the slope
 walkmode run
@@ -85,10 +98,13 @@ grass wait
 wait 2000
 grass stats
 shot view-5
+wait 300
 grass parts 512
 wait 1000
 shot view-5-bands
+wait 300
 grass parts 640
 wait 1000
 shot view-5-bands-all
+wait 300
 grass parts 0

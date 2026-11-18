@@ -7,6 +7,9 @@ Reads the frames of scripts/bench/landscape-meadow.bench and landscape-meadow-pa
   tone    <mask.png> <frame>...          the mean luminance (of the light) and luma (of the coded values) and the
                                          colour of that area in each frame, against the first
   cover   <paint.png> <bands.png>        the share of the ground the blades cover, by the band of the distance
+  farbands <frame>...                    the pixels of the ground of the grass in the bands of grassPaintFarBand
+                                         (scripts/bench/grass-bands.bench, `grass parts 512` and 640): what a layer
+                                         over the far ground would shade (reports/engine/2026-11-18-grass-volume)
   blades  <mask.png> <paint.png> <frame> <ground>
                                          the colour of the blades (red in the paint, inside the mask) in the frame
                                          against the ground under them, in the frame without blades
@@ -156,6 +159,39 @@ def cmd_cover(a: argparse.Namespace) -> int:
         seen = int((bands[name] & paint[name]).sum())
         row[name] = {"covered": round(1.0 - seen/total, 3), "pixels": total}
     print(json.dumps(row, ensure_ascii=False))
+    return 0
+
+
+# grassPaintFarBand of shader/grass/grass_common.glsl (`grass parts 512`, with the blades hidden 640): the hue of
+# each band's paint, its half width and the least saturation, degrees. By the hue, not by the channels: the paint in
+# shade takes some sky in its other channels, and sunlit straw passes a test of channels for the yellow
+FAR_BANDS = {"0-10 m": (300, 22, 0.7), "10-24 m": (0, 14, 0.75), "24-48 m": (241, 10, 0.75), "48-64 m": (120, 20, 0.75),
+             "64-100 m": (180, 14, 0.75), "100+ m": (60, 8, 0.88)}
+
+
+def far_band_masks(rgb: np.ndarray) -> dict[str, np.ndarray]:
+    x = rgb.astype(np.float64)
+    top, low = x.max(axis=2), x.min(axis=2)
+    span = top - low
+    sat = span/np.maximum(top, 1.0)
+    r, g, b = x[..., 0], x[..., 1], x[..., 2]
+    c = np.maximum(span, 1e-6)
+    hue = np.where(top == r, ((g - b)/c) % 6, np.where(top == g, (b - r)/c + 2, (r - g)/c + 4))*60
+    out = {}
+    for name, (centre, half, least) in FAR_BANDS.items():
+        off = np.abs((hue - centre + 180) % 360 - 180)
+        out[name] = (off <= half) & (sat >= least) & (top >= 6) & (span >= 5)
+    return out
+
+
+def cmd_farbands(a: argparse.Namespace) -> int:
+    rows = {}
+    for path in a.frames:
+        rgb = read_image(path)
+        total = rgb.shape[0]*rgb.shape[1]
+        rows[path] = {name: {"pixels": int(m.sum()), "share": round(float(m.sum())/total, 4)}
+                      for name, m in far_band_masks(rgb).items()}
+    print(json.dumps(rows, ensure_ascii=False))
     return 0
 
 
@@ -368,6 +404,7 @@ def main() -> int:
     p = sub.add_parser("mask"); p.add_argument("frame"); p.add_argument("out"); p.set_defaults(fn=cmd_mask)
     p = sub.add_parser("tone"); p.add_argument("mask"); p.add_argument("frames", nargs="+"); p.set_defaults(fn=cmd_tone)
     p = sub.add_parser("cover"); p.add_argument("paint"); p.add_argument("bands"); p.set_defaults(fn=cmd_cover)
+    p = sub.add_parser("farbands"); p.add_argument("frames", nargs="+"); p.set_defaults(fn=cmd_farbands)
     p = sub.add_parser("blades"); p.add_argument("mask"); p.add_argument("paint"); p.add_argument("frame")
     p.add_argument("ground"); p.set_defaults(fn=cmd_blades)
     p = sub.add_parser("variety"); p.add_argument("mask"); p.add_argument("cells"); p.add_argument("--light"); p.add_argument("frames", nargs="+")
