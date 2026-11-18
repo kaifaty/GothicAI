@@ -1,15 +1,66 @@
 #include "graphics/mesh/clusterlod.h"
 
+#undef meshopt_simplifyWithAbsoluteAttributes
+#include "meshoptimizer.h"
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstring>
 #include <iostream>
 #include <map>
+#include <numbers>
 #include <random>
 #include <set>
 #include <stdexcept>
 #include <string>
+
+namespace {
+
+enum class SimplifierFault { None, MixedMaterialWedge, OpenBoundary };
+SimplifierFault simplifierFault = SimplifierFault::None;
+
+}
+
+// The test target routes the builder's simplifier call here. Every other call
+// uses the real simplifier result unchanged.
+extern "C" size_t clusterLodTestSimplifyWithAbsoluteAttributes(
+    unsigned int* destination, const unsigned int* indices, size_t indexCount,
+    const float* positions, size_t vertexCount, size_t positionStride,
+    const float* attributes, size_t attributeStride, const float* weights, size_t attributeCount,
+    const unsigned char* locks, const unsigned int* tags, size_t targetIndexCount,
+    unsigned int options, float* resultError, float* positionError) {
+  const auto count = meshopt_simplifyWithAbsoluteAttributes(destination,indices,indexCount,
+                        positions,vertexCount,positionStride,attributes,attributeStride,weights,attributeCount,
+                        locks,tags,targetIndexCount,options,resultError,positionError);
+  if(simplifierFault==SimplifierFault::OpenBoundary && count>=6 && count*100<=indexCount*85) {
+    simplifierFault = SimplifierFault::None;
+    return count-3;
+    }
+  if(simplifierFault!=SimplifierFault::MixedMaterialWedge || !tags || count*100>indexCount*85)
+    return count;
+
+  const auto position = [&](unsigned int vertex) {
+    const auto bytes = reinterpret_cast<const char*>(positions) + size_t(vertex)*positionStride;
+    return std::span(reinterpret_cast<const float*>(bytes),3);
+    };
+  const auto simplified = std::span(destination,count);
+  for(size_t i=0; i<count; ++i) {
+    const auto wedge = simplified[i];
+    // Keep the triangle's leading material, position topology and both
+    // materials' sets of surviving positions unchanged.
+    if(i%3==0 || std::ranges::count(simplified,wedge)<2)
+      continue;
+    for(const auto other : simplified) {
+      if(tags[wedge]!=tags[other] && std::ranges::equal(position(wedge),position(other))) {
+        simplified[i] = other;
+        simplifierFault = SimplifierFault::None;
+        return count;
+        }
+      }
+    }
+  return count;
+  }
 
 namespace {
 
@@ -22,13 +73,14 @@ constexpr std::array<uint32_t, 4> MaterialCuts = {0,13,27,GridSize};
 constexpr std::array<uint32_t, 5> ChartCuts = {0,10,20,30,GridSize};
 constexpr float MaterialBendZ = 2400.f;
 
-enum class Model { Flat, Hill, Seams, Overhang };
+enum class Model { Flat, Hill, Seams, Overhang, FinishedBranch };
 
 struct Fixture {
   Model                 model;
   std::vector<Vertex>   vertices;
   std::vector<Triangle> triangles;
   std::vector<uint8_t>  boundary;
+  Point                 contact{};
   };
 
 void require(bool condition, const char* message) {
@@ -54,11 +106,12 @@ void addQuad(Fixture& mesh, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint
 
 float materialCut(size_t material, float z) {
   const float bend = std::abs(z-MaterialBendZ)*0.125f;
+  const float raster = std::abs(std::remainder(z,2.f*CellCm))*0.25f;
   const float x = float(MaterialCuts[material])*CellCm;
   if(material==1)
-    return x+bend;
+    return x+bend+raster;
   if(material==2)
-    return x-bend;
+    return x-bend-raster;
   return x;
   }
 
@@ -113,6 +166,32 @@ Fixture makeFixture(Model model) {
       }
     mesh.boundary.resize(mesh.vertices.size());
     }
+  else if(model==Model::FinishedBranch) {
+    addGround(mesh,0,GridSize,0,GridSize,0,0);
+    constexpr uint32_t ContactX = 24, ContactZ = 21, PatchRadius = 14;
+    mesh.vertices[ContactZ*(GridSize+1)+ContactX].position[1] = 16.f;
+    const Point point = mesh.vertices[ContactZ*(GridSize+1)+ContactX].position;
+    mesh.contact = point;
+
+    // This frozen sheet stops while the ground continues to simplify. Its only
+    // contact with the ground is interior to both sheets, away from any open edge.
+    const auto start = uint32_t(mesh.vertices.size());
+    constexpr uint32_t PatchWidth = PatchRadius*2+1;
+    for(uint32_t z=0; z<PatchWidth; ++z)
+      for(uint32_t x=0; x<PatchWidth; ++x) {
+        const float dx = float(x)-float(PatchRadius), dz = float(z)-float(PatchRadius);
+        const float y = std::hypot(dx,dz)*80.f;
+        auto vertex = groundVertex(Model::Flat,point[0]+dx*68.f,point[2]+dz*68.f,0);
+        vertex.position[1] = point[1]+y;
+        mesh.vertices.push_back(vertex);
+        mesh.boundary.push_back(uint8_t(x!=PatchRadius || z!=PatchRadius));
+        }
+    for(uint32_t z=0; z+1<PatchWidth; ++z)
+      for(uint32_t x=0; x+1<PatchWidth; ++x) {
+        const uint32_t a = start+z*PatchWidth+x;
+        addQuad(mesh,a,a+PatchWidth,a+PatchWidth+1,a+1,1);
+        }
+    }
   else {
     addGround(mesh,0,GridSize,0,GridSize,0,0);
     }
@@ -128,39 +207,91 @@ float distance(const Point& a, const Point& b) {
   return std::sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
   }
 
+float dot(const Point& a, const Point& b) {
+  return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+  }
+
+Point cross(const Point& a, const Point& b) {
+  return {a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]};
+  }
+
+Point along(const Point& a, const Point& direction, float t) {
+  return {a[0]+t*direction[0],a[1]+t*direction[1],a[2]+t*direction[2]};
+  }
+
+Point closestOnEdge(const Point& p, const Point& a, const Point& b) {
+  const auto ab = difference(b,a);
+  return along(a,ab,std::clamp(dot(difference(p,a),ab)/dot(ab,ab),0.f,1.f));
+  }
+
+Point closestOnTriangle(const Point& p, const std::array<Point,3>& triangle) {
+  const auto& [a,b,c] = triangle;
+  const auto ab = difference(b,a), bc = difference(c,b), ca = difference(a,c);
+  const auto normal = cross(ab,bc);
+  if(dot(cross(ab,difference(p,a)),normal)>=0.f && dot(cross(bc,difference(p,b)),normal)>=0.f &&
+     dot(cross(ca,difference(p,c)),normal)>=0.f)
+    return along(p,normal,-dot(difference(p,a),normal)/dot(normal,normal));
+  const auto candidates = {closestOnEdge(p,a,b),closestOnEdge(p,b,c),closestOnEdge(p,c,a)};
+  return *std::ranges::min_element(candidates,{},[&](const Point& q){ return distance(p,q); });
+  }
+
 using PositionBits = std::array<uint32_t, 3>;
-using WedgeBits = std::array<uint32_t, 9>;
 using Edge = std::array<PositionBits, 2>;
+using Segment = std::array<Point, 2>;
 
 struct EdgeUse {
-  std::array<WedgeBits, 2> wedges{};
-  uint32_t material = 0;
+  std::array<uint32_t, 2> materials{NoGroup,NoGroup};
+  double hillAreaFlux = 0.0;
   int balance = 0, count = 0;
-  bool operator==(const EdgeUse&) const = default;
+  bool materialInterface() const { return count==2 && materials[0]!=materials[1]; }
+  };
+
+struct Face {
+  std::array<Point, 3> vertices;
+  Point min, max;
+  uint32_t material;
+
+  bool within(const Point& point, float radius) const {
+    for(size_t k=0; k<3; ++k)
+      if(point[k]<min[k]-radius || point[k]>max[k]+radius)
+        return false;
+    return true;
+    }
   };
 
 struct Surface {
   std::map<Edge, EdgeUse> edges;
-  std::set<WedgeBits>     vertices;
+  std::set<PositionBits>  vertices;
+  std::vector<Face>      faces;
   std::array<double, 3>  area{};
+  std::array<bool, 2>    touches{};
+  double                hillHeightScale = 1.0;
+  double                hillProjectedPerimeter = 0.0;
+  double                hillBackfaceArea = 0.0;
+  size_t                hillBackfaces = 0;
+  bool                  hillHasVerticalFace = false;
 
   void add(const Fixture& fixture, const Vertex& a, const Vertex& b, const Vertex& c, uint32_t material) {
     const std::array<Vertex, 3> triangle = {a,b,c};
-    const auto ab = difference(b.position,a.position), ac = difference(c.position,a.position);
-    const float nx = ab[1]*ac[2]-ab[2]*ac[1], ny = ab[2]*ac[0]-ab[0]*ac[2], nz = ab[0]*ac[1]-ab[1]*ac[0];
-    const double faceArea = std::hypot(double(nx),double(ny),double(nz))*0.5;
+    const auto [nx,ny,nz] = cross(difference(b.position,a.position),difference(c.position,a.position));
+    const double twiceArea = std::hypot(double(nx),double(ny),double(nz));
+    const double faceArea = twiceArea*0.5;
     require(faceArea>0.0,"degenerate triangle in a cut");
+    if(fixture.model==Model::Hill) {
+      if(ny>0.f)
+        hillHeightScale = std::max(hillHeightScale,twiceArea/double(ny));
+      if(ny<0.f) {
+        hillBackfaceArea -= double(ny)*0.5;
+        ++hillBackfaces;
+        }
+      hillHasVerticalFace |= ny==0.f;
+      }
     if(fixture.model==Model::Seams) {
-      const float x = (a.position[0]+b.position[0]+c.position[0])/3.f;
       const float z = (a.position[2]+b.position[2]+c.position[2])/3.f;
-      const size_t m = size_t(x>=materialCut(1,z)) + size_t(x>=materialCut(2,z));
       const size_t chart = size_t(z>=float(ChartCuts[1])*CellCm) + size_t(z>=float(ChartCuts[2])*CellCm)
                          + size_t(z>=float(ChartCuts[3])*CellCm);
-      require(material==m,"wrong material for this triangle's location");
       for(const auto& vertex : triangle) {
         const auto& p = vertex.position;
-        require(p[0]>=materialCut(m,p[2]) && p[0]<=materialCut(m+1,p[2]),
-                "triangle crosses a material seam");
         require(p[2]>=float(ChartCuts[chart])*CellCm && p[2]<=float(ChartCuts[chart+1])*CellCm,
                 "triangle crosses an attribute seam");
         const auto expected = groundVertex(fixture.model,p[0],p[2],chart);
@@ -168,29 +299,133 @@ struct Surface {
                 "triangle lost UV, normal or color at a seam");
         }
       }
+    else if(fixture.model==Model::FinishedBranch) {
+      require(material<touches.size(),"wrong material on one of the touching sheets");
+      for(const auto& vertex : triangle)
+        touches[material] |= vertex.position==fixture.contact;
+      }
     else {
       require(material==0,"wrong material on a single-material surface");
       if(fixture.model==Model::Overhang)
         require(a.normal==b.normal && b.normal==c.normal && ny*a.normal[1]+nz*a.normal[2]>0.f,
                 "overhang face crossed a fold or lost its winding");
       }
-    area[material] += faceArea;
+    area.at(material) += faceArea;
 
-    const std::array<WedgeBits, 3> wedges = {std::bit_cast<WedgeBits>(a),std::bit_cast<WedgeBits>(b),std::bit_cast<WedgeBits>(c)};
     for(size_t i=0; i<3; ++i) {
-      vertices.insert(wedges[i]);
       const size_t j = (i+1)%3;
       const auto from = std::bit_cast<PositionBits>(triangle[i].position);
       const auto to   = std::bit_cast<PositionBits>(triangle[j].position);
+      vertices.insert(from);
       const bool forward = from<to;
       auto& use = edges[forward ? Edge{from,to} : Edge{to,from}];
-      if(use.count==0) {
-        use.wedges = forward ? std::array{wedges[i],wedges[j]} : std::array{wedges[j],wedges[i]};
-        use.material = material;
+      if(fixture.model==Model::Hill) {
+        const auto delta = difference(triangle[j].position,triangle[i].position);
+        use.hillAreaFlux += (double(nx)*delta[2]-double(nz)*delta[0])/twiceArea;
+        hillProjectedPerimeter += std::hypot(double(delta[0]),double(delta[2]));
         }
+      if(use.count<2)
+        use.materials[size_t(use.count)] = material;
       ++use.count;
       use.balance += forward ? 1 : -1;
       }
+    }
+
+  double hillAreaVariation() const {
+    double sum = 0.0;
+    for(const auto& [edge,use] : edges)
+      if(use.count==2)
+        sum += std::abs(use.hillAreaFlux);
+    return sum;
+    }
+
+  double hillInteriorLength() const {
+    double sum = 0.0;
+    for(const auto& [edge,use] : edges) {
+      if(use.count!=2)
+        continue;
+      const auto delta = difference(std::bit_cast<Point>(edge[1]),std::bit_cast<Point>(edge[0]));
+      sum += std::hypot(double(delta[0]),double(delta[2]));
+      }
+    return sum;
+    }
+  void addReferenceFace(const Vertex& a, const Vertex& b, const Vertex& c, uint32_t material) {
+    Face face{{a.position,b.position,c.position},{},{},material};
+    for(size_t k=0; k<3; ++k) {
+      face.min[k] = std::min({a.position[k],b.position[k],c.position[k]});
+      face.max[k] = std::max({a.position[k],b.position[k],c.position[k]});
+      }
+    faces.push_back(face);
+    }
+  };
+
+struct Reference {
+  struct Material {
+    double contourLength = 0;
+    size_t contourComponents = 0;
+    };
+  std::array<Material,3> materials;
+  std::vector<Segment> interfaces;
+
+  explicit Reference(const Surface& surface) {
+    std::array<std::map<PositionBits,std::vector<PositionBits>>,3> contours;
+    for(const auto& [edge,use] : surface.edges) {
+      if(!use.materialInterface())
+        continue;
+      const auto [a,b] = edge;
+      const Segment segment = {std::bit_cast<Point>(a),std::bit_cast<Point>(b)};
+      interfaces.push_back(segment);
+      const double length = distance(segment[0],segment[1]);
+      for(uint32_t material : use.materials) {
+        materials.at(material).contourLength += length;
+        contours.at(material)[a].push_back(b);
+        contours.at(material)[b].push_back(a);
+        }
+      }
+    for(size_t m=0; m<contours.size(); ++m) {
+      auto& contour = contours[m];
+      while(!contour.empty()) {
+        ++materials[m].contourComponents;
+        std::vector<PositionBits> component = {contour.begin()->first};
+        while(!component.empty()) {
+          const auto position = component.back();
+          component.pop_back();
+          auto at = contour.find(position);
+          if(at==contour.end())
+            continue;
+          component.insert(component.end(),at->second.begin(),at->second.end());
+          contour.erase(at);
+          }
+        }
+      }
+    }
+
+  float interfaceDistance(const Point& point) const {
+    float best = Infinity;
+    for(const auto& [a,b] : interfaces)
+      best = std::min(best,distance(point,closestOnEdge(point,a,b)));
+    return best;
+    }
+
+  void checkMaterial(const Surface& source, const Point& center, uint32_t material, float errorCm) const {
+    constexpr float RoundoffCm = 0.005f;
+    float best = Infinity;
+    uint32_t nearestMaterial = NoGroup;
+    Point nearest{};
+    for(const auto& face : source.faces) {
+      if(!face.within(center,best+RoundoffCm))
+        continue;
+      const auto point = closestOnTriangle(center,face.vertices);
+      const float toCenter = distance(center,point);
+      if(toCenter < best || (toCenter == best && material == face.material)) {
+        best = toCenter;
+        nearest = point;
+        nearestMaterial = face.material;
+        }
+      }
+    require(nearestMaterial!=NoGroup,"missing reference surface");
+    require(nearestMaterial==material || interfaceDistance(nearest)<=errorCm+RoundoffCm,
+            "triangle material disagrees with level zero outside the transition error band");
     }
   };
 
@@ -215,41 +450,89 @@ void checkJunctions(const Surface& surface) {
     }
   }
 
-void checkSurface(const Fixture& fixture, const Surface& source, const std::set<PositionBits>& frozen,
-                  const Graph& graph, const std::vector<uint32_t>& cut) {
+bool checkSurface(const Fixture& fixture, const Surface& source, const Reference& reference,
+                  const std::set<PositionBits>& frozen, const Graph& graph, const std::vector<uint32_t>& cut,
+                  std::vector<bool>& checkedLocation) {
   Surface surface;
+  double cutError = 0;
   for(const auto id : cut) {
     const auto& cluster = graph.clusters.at(id);
+    const float errorCm = cluster.refinedGroup==NoGroup ? 0.f : graph.groups[cluster.refinedGroup].errorCm;
+    cutError = std::max(cutError,double(errorCm));
     for(size_t i=0; i<cluster.triangleCount; ++i) {
       const auto vertex = [&](size_t corner) -> const Vertex& {
         const auto local = graph.indices.at(cluster.indexOffset+i*3+corner);
         require(local<cluster.vertexCount,"index exceeds its meshlet");
         return graph.vertices.at(graph.vertexIndices.at(cluster.vertexOffset+local));
         };
-      surface.add(fixture,vertex(0),vertex(1),vertex(2),cluster.material);
+      const auto& a = vertex(0);
+      const auto& b = vertex(1);
+      const auto& c = vertex(2);
+      if(fixture.model==Model::Seams && !checkedLocation[id]) {
+        const Point center = {(a.position[0]+b.position[0]+c.position[0])/3.f,
+                              (a.position[1]+b.position[1]+c.position[1])/3.f,
+                              (a.position[2]+b.position[2]+c.position[2])/3.f};
+        reference.checkMaterial(source,center,cluster.material,errorCm);
+        }
+      surface.add(fixture,a,b,c,cluster.material);
       }
+    checkedLocation[id] = true;
     }
+  if(fixture.model==Model::FinishedBranch)
+    require(surface.touches[0] && surface.touches[1],"a replacement detached the earlier finished branch");
+  bool movedInterface = false;
   for(const auto& [edge,use] : surface.edges) {
     require(use.count==1 || (use.count==2 && use.balance==0),"unpaired interior edge or overlapping triangles");
     if(use.count==1) {
       const auto original = source.edges.find(edge);
-      require(original!=source.edges.end() && original->second==use,"open edge changed or crack appeared in a cut");
+      require(original!=source.edges.end() && original->second.count==1 && original->second.balance==use.balance,
+              "open edge changed or crack appeared in a cut");
+      }
+    if(fixture.model==Model::Seams && use.materialInterface()) {
+      const auto a = std::bit_cast<Point>(edge[0]), b = std::bit_cast<Point>(edge[1]);
+      const float shift = reference.interfaceDistance(along(a,difference(b,a),0.5f));
+      require(shift<=cutError+0.005,"the material interface moved beyond the transition error");
+      movedInterface |= shift>0.005f;
       }
     }
   for(const auto& [edge,use] : source.edges) {
-    if(use.count==1 || (frozen.contains(edge[0]) && frozen.contains(edge[1]))) {
+    if(use.count==1) {
       const auto at = surface.edges.find(edge);
-      require(at!=surface.edges.end() && at->second.count==use.count,"frozen edge changed in a cut");
+      require(at!=surface.edges.end() && at->second.count==1,"open edge disappeared in a cut");
       }
     }
-  for(const auto& wedge : source.vertices)
-    if(frozen.contains({wedge[0],wedge[1],wedge[2]}))
-      require(surface.vertices.contains(wedge),"frozen vertex changed or disappeared in a cut");
+  for(const auto& point : frozen)
+    require(surface.vertices.contains(point),"frozen vertex changed or disappeared in a cut");
 
-  const double tolerance = fixture.model==Model::Hill ? 0.04 : 0.005;
-  for(size_t m=0; m<source.area.size(); ++m)
-    require(std::abs(surface.area[m]-source.area[m])<=tolerance*source.area[m],"material area changed beyond tolerance");
+  double hillTolerance = 0.0;
+  if(fixture.model==Model::Hill) {
+    require(!source.hillHasVerticalFace && source.hillBackfaces==0,"the reference hill must be an upward height field");
+    const double heightError = cutError*source.hillHeightScale;
+    if(surface.hillHasVerticalFace || surface.hillBackfaces!=0) {
+      // Project vertically onto L0. Negative crossings add a pair of sheets.
+      const double crossings = 1.0 + 2.0*double(surface.hillBackfaces);
+      const double perimeter = surface.hillProjectedPerimeter + 2.0*crossings*source.hillInteriorLength();
+      hillTolerance = heightError*perimeter + 2.0*source.hillHeightScale*surface.hillBackfaceArea;
+      }
+    else {
+      // Convexity bounds the area change by the first variation on the larger surface.
+      const auto& larger = source.area[0]>=surface.area[0] ? source : surface;
+      hillTolerance = heightError*larger.hillAreaVariation();
+      }
+    }
+  for(size_t m=0; m<source.area.size(); ++m) {
+    const auto [length,components] = reference.materials[m];
+    const double tubeArea = 2*cutError*length + std::numbers::pi*cutError*cutError*double(components);
+    const double roundoff = source.area[m]*16*std::numeric_limits<float>::epsilon();
+    double tolerance = source.area[m]*0.005;
+    if(fixture.model==Model::Seams)
+      tolerance = tubeArea + roundoff;
+    if(fixture.model==Model::Hill)
+      tolerance = hillTolerance + roundoff;
+    require(std::abs(surface.area[m]-source.area[m])<=tolerance,"material area changed beyond tolerance");
+    }
   checkJunctions(surface);
+  return movedInterface;
   }
 
 template<class T>
@@ -273,7 +556,10 @@ size_t checkFixture(Model model) {
   for(const auto& triangle : fixture.triangles) {
     const auto& v = triangle.vertices;
     source.add(fixture,fixture.vertices[v[0]],fixture.vertices[v[1]],fixture.vertices[v[2]],triangle.material);
+    if(model==Model::Seams)
+      source.addReferenceFace(fixture.vertices[v[0]],fixture.vertices[v[1]],fixture.vertices[v[2]],triangle.material);
     }
+  const Reference reference(source);
 
   const View view{{-2000.f,1400.f,850.f},1080.f,1.6f};
   std::vector<uint32_t> leaves, tops;
@@ -323,6 +609,14 @@ size_t checkFixture(Model model) {
                              std::to_string(leafTriangles)+" input triangles at the top, expected at most 25%");
   require(selectCut(graph,view,0.f)==leaves,"zero threshold must select exactly level zero");
   require(selectCut(graph,view,Infinity)==tops,"infinite threshold must select exactly the branch tops");
+  if(model==Model::FinishedBranch)
+    require(std::ranges::any_of(tops,[&](uint32_t id){
+      const auto& cluster = graph.clusters[id];
+      return cluster.material==1 && cluster.level+1<maxLevel;
+      }),"touching branch did not stop early enough to exercise later replacements");
+
+  std::vector<bool> checkedLocation(graph.clusters.size());
+  bool movedInterface = false;
 
   // A whole level keeps the tops of any branches that ended in earlier rounds.
   for(uint32_t level=0; level<=maxLevel; ++level) {
@@ -333,7 +627,7 @@ size_t checkFixture(Model model) {
         cut.push_back(id);
       }
     try {
-      checkSurface(fixture,source,frozen,graph,cut);
+      movedInterface |= checkSurface(fixture,source,reference,frozen,graph,cut,checkedLocation);
       }
     catch(const std::exception& error) {
       throw std::runtime_error("level "+std::to_string(level)+": "+error.what());
@@ -369,7 +663,7 @@ size_t checkFixture(Model model) {
     if(cut!=tops && std::ranges::any_of(cut,[&](uint32_t id){ return graph.clusters[id].level!=level; }))
       ++mixedCuts;
     try {
-      checkSurface(fixture,source,frozen,graph,cut);
+      movedInterface |= checkSurface(fixture,source,reference,frozen,graph,cut,checkedLocation);
       }
     catch(const std::exception& error) {
       const auto& p = sample.camera;
@@ -377,9 +671,134 @@ size_t checkFixture(Model model) {
                                std::to_string(p[2])+"), threshold "+std::to_string(threshold)+" px: "+error.what());
       }
     }
+  if(model==Model::Seams)
+    require(movedInterface,"the material interface stayed exact on every cut");
   std::cout << leafTriangles << " -> " << topTriangles << " triangles, " << maxLevel+1
             << " levels, " << mixedCuts << "/24 mixed camera cuts\n";
   return mixedCuts;
+  }
+
+void checkOpenBoundaryRejection() {
+  Fixture mesh{Model::Flat,{},{},{}};
+  addGround(mesh,0,4,0,4,0,0);
+  BuildStats stats;
+  simplifierFault = SimplifierFault::OpenBoundary;
+  buildWithStats(mesh.vertices,mesh.triangles,mesh.boundary,stats);
+  require(simplifierFault==SimplifierFault::None,"the simplifier fault did not remove a triangle");
+  require(stats.stoppedGroups[size_t(StopReason::Boundary)]==1,
+          "the builder accepted a replacement with a changed open boundary");
+  }
+
+void checkLockedPositionRejection() {
+  Fixture mesh{Model::Flat,{},{},{}};
+  addGround(mesh,0,3,0,3,0,0);
+  const auto lockedVertex = uint32_t(mesh.vertices.size());
+  // A small closed tetrahedron can disappear even when one vertex never moves.
+  for(const auto& p : {Point{240,200,240},Point{280,200,240},Point{240,200,280},Point{240,240,240}})
+    mesh.vertices.push_back({p,{0,1,0},{p[0]/6400.f,p[2]/6400.f},0xffffffffu});
+  mesh.triangles.insert(mesh.triangles.end(),{
+    {{lockedVertex,lockedVertex+1,lockedVertex+2},0}, {{lockedVertex,lockedVertex+2,lockedVertex+3},0},
+    {{lockedVertex,lockedVertex+3,lockedVertex+1},0}, {{lockedVertex+1,lockedVertex+3,lockedVertex+2},0}});
+  mesh.boundary.resize(mesh.vertices.size());
+  mesh.boundary[lockedVertex] = 1;
+
+  const auto graph = build(mesh.vertices,mesh.triangles,mesh.boundary);
+  const auto cut = selectCut(graph,{{},1080.f,1.6f},Infinity);
+  require(std::ranges::any_of(cut,[&](uint32_t id) {
+    const auto& cluster = graph.clusters[id];
+    const auto vertices = std::span(graph.vertexIndices).subspan(cluster.vertexOffset,cluster.vertexCount);
+    return std::ranges::find(vertices,lockedVertex)!=vertices.end();
+    }),"the builder lost a locked position while preserving the open edges");
+  }
+
+void checkMixedMaterialWedge() {
+  const auto mesh = makeFixture(Model::Seams);
+  BuildStats stats;
+  simplifierFault = SimplifierFault::MixedMaterialWedge;
+  const auto graph = buildWithStats(mesh.vertices,mesh.triangles,mesh.boundary,stats);
+  require(simplifierFault==SimplifierFault::None,"the simplifier fault did not inject a mixed-material wedge");
+  require(stats.stoppedGroups[size_t(StopReason::Material)]>0,
+          "the builder did not reject the mixed-material triangle");
+
+  std::vector<uint32_t> materials(mesh.vertices.size());
+  for(const auto& triangle : mesh.triangles)
+    for(const auto vertex : triangle.vertices)
+      materials[vertex] = triangle.material;
+  for(const auto& cluster : graph.clusters)
+    for(size_t i=0; i<cluster.vertexCount; ++i)
+      require(materials[graph.vertexIndices[cluster.vertexOffset+i]]==cluster.material,
+              "a mixed-material wedge reached the graph");
+  }
+
+void checkDisappearingMaterial() {
+  constexpr uint32_t Grid = 4, IslandMaterial = 1;
+  Fixture mesh{Model::Flat,{},{},{}};
+  addGround(mesh,0,Grid,0,Grid,0,0);
+  for(uint32_t z=1; z<3; ++z)
+    for(uint32_t x=1; x<3; ++x) {
+      const size_t face = 2*(z*Grid+x);
+      mesh.triangles[face].material = mesh.triangles[face+1].material = IslandMaterial;
+      }
+
+  const auto graph = build(mesh.vertices,mesh.triangles,mesh.boundary);
+  const auto island = std::ranges::find_if(graph.clusters,[](const Cluster& c) { return c.material==IslandMaterial; });
+  require(island!=graph.clusters.end() && island->level==0,"the source material island is missing");
+  const auto transition = island->parentGroup;
+  const float error = graph.groups.at(transition).errorCm;
+  require(std::isfinite(error) && std::ranges::none_of(graph.clusters,[&](const Cluster& c) {
+    return c.refinedGroup==transition && c.material==IslandMaterial;
+    }),"the material island did not disappear in its first replacement");
+  require(error>=4.f*CellCm,"the material island disappeared below half its contour perimeter");
+  }
+
+void checkAccumulatedContourDrift() {
+  constexpr uint32_t Width = 4, Height = 6;
+  Fixture mesh{Model::Flat,{},{},{}};
+  addGround(mesh,0,Width,0,Height,0,0);
+  mesh.model = Model::Seams;
+  // A parabolic seam flattens in successive replacements on an otherwise flat mesh.
+  for(auto& vertex : mesh.vertices) {
+    const auto [x,y,z] = vertex.position;
+    const float t = z/(float(Height)*CellCm);
+    const float blend = 1.f-std::abs(x/(2.f*CellCm)-1.f);
+    vertex = groundVertex(mesh.model,x+blend*80.f*t*(1.f-t),z/4.f,0);
+    }
+  Surface source;
+  for(size_t i=0; i<mesh.triangles.size(); ++i) {
+    auto& triangle = mesh.triangles[i];
+    triangle.material = uint32_t((i/2)%Width>=Width/2);
+    const auto& v = triangle.vertices;
+    const auto& a = mesh.vertices[v[0]];
+    const auto& b = mesh.vertices[v[1]];
+    const auto& c = mesh.vertices[v[2]];
+    source.add(mesh,a,b,c,triangle.material);
+    source.addReferenceFace(a,b,c,triangle.material);
+    }
+  const auto graph = build(mesh.vertices,mesh.triangles,mesh.boundary);
+  const auto cut = selectCut(graph,{{},1080.f,1.6f},Infinity);
+  require(std::ranges::any_of(cut,[&](uint32_t id) { return graph.clusters[id].level>=2; }),
+          "the curved material seam did not simplify across two levels");
+  std::vector<bool> checkedLocation(graph.clusters.size());
+  checkSurface(mesh,source,Reference(source),{},graph,cut,checkedLocation);
+  }
+
+float attributeErrorWithDetachedFace(float x) {
+  Fixture mesh{Model::Flat,{},{},{}};
+  addGround(mesh,0,2,0,2,0,0);
+  mesh.vertices[4].uv[0] += 2.f;
+  for(const auto& p : {Point{x,0,0},Point{x,0,CellCm},Point{x+CellCm,0,0}})
+    mesh.vertices.push_back({p,{0,1,0},{0,0},0xffffffffu});
+  mesh.triangles.push_back({{9,10,11},0});
+  mesh.boundary.assign(mesh.vertices.size(),1);
+  mesh.boundary[4] = 0;
+
+  BuildStats stats;
+  const auto graph = buildWithStats(mesh.vertices,mesh.triangles,mesh.boundary,stats);
+  const float error = graph.groups.at(0).errorCm;
+  // Positional quadrics include a small regularization penalty even on a plane.
+  require(std::isfinite(error) && error>10.f*stats.positionErrorCm.at(0),
+          "the planar UV fixture must be dominated by attribute error");
+  return error;
   }
 
 }
@@ -390,9 +809,17 @@ int main() {
     require(std::abs(projectError({{{0,0,1500},100.f},5.f},view)-5.f/1400.f*600.f)<0.00001f,
             "pixel projection is missing the sphere, perspective or screen-height factor");
     require(projectError({{{0,0,0},100.f},5.f},view)==3000.f,"pixel projection is missing the near-distance clamp");
+    checkOpenBoundaryRejection();
+    checkLockedPositionRejection();
+    checkMixedMaterialWedge();
+    checkDisappearingMaterial();
+    checkAccumulatedContourDrift();
+    const float nearError = attributeErrorWithDetachedFace(1024.f);
+    const float farError = attributeErrorWithDetachedFace(8192.f);
+    require(std::abs(nearError-farError)<=nearError*0.01f,"attribute error changed with the group's extent");
     size_t mixedCuts = 0;
-    const std::array models = {Model::Flat,Model::Hill,Model::Seams,Model::Overhang};
-    const std::array names = {"flat","hill","material and attribute seams","overhang"};
+    const std::array models = {Model::Flat,Model::Hill,Model::Seams,Model::Overhang,Model::FinishedBranch};
+    const std::array names = {"flat","hill","material and attribute seams","overhang","finished branch contact"};
     for(size_t i=0; i<models.size(); ++i) {
       std::cout << names[i] << ": ";
       try {

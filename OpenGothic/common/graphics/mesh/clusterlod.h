@@ -60,9 +60,22 @@ struct Graph {
   size_t byteSize() const; // payload bytes, excluding vector bookkeeping and capacity
   };
 
-// boundary has one flag per vertex. A flag freezes every wedge at that position.
+// The open edge chain is derived from the triangles. A nonzero flag also freezes its position.
 Graph build(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
             std::span<const uint8_t> boundary);
+
+enum class StopReason { Reduction, Material, Boundary, Count };
+enum class CensusVariant { Normal, NoMaterials, NoOpenBorder, NoBoundaries, NoAttributeSeams, AnyReduction, PositionsOnly };
+
+struct BuildStats {
+  std::vector<float> positionErrorCm; // parallel to Graph::groups
+  std::array<size_t, size_t(StopReason::Count)> stoppedGroups{}, stoppedTriangles{};
+  };
+
+// Counterfactual variants are for the census and can discard material or boundary guarantees.
+Graph buildWithStats(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
+                     std::span<const uint8_t> boundary, BuildStats& stats,
+                     CensusVariant variant = CensusVariant::Normal);
 
 struct View {
   Point camera;

@@ -756,7 +756,7 @@ static float quadricError(const Quadric& Q, const Vector3& v)
 	return fabsf(r) * s;
 }
 
-static float quadricError(const Quadric& Q, const QuadricGrad* G, size_t attribute_count, const Vector3& v, const float* va, bool clamped)
+static float quadricError(const Quadric& Q, const QuadricGrad* G, size_t attribute_count, const Vector3& v, const float* va, bool clamped, bool absolute_attributes)
 {
 	float r = quadricEval(Q, v);
 
@@ -772,6 +772,12 @@ static float quadricError(const Quadric& Q, const QuadricGrad* G, size_t attribu
 	// note: unlike position error, we do not normalize by Q.w to retain edge scaling as described in quadricFromAttributes
 	// we do support clamping, with the error limited to the cumulative weight (= area), which makes perceptual error map to position error more closely
 	float e = fabsf(r);
+	// In absolute mode use residual per unit area, like the positional quadric.
+	// Area here is normalized by the group extent, so keeping it would change
+	// the cost of the same attribute deviation when the group extent changes.
+	if (absolute_attributes)
+		return Q.w > 0.f ? e / Q.w : 0.f;
+
 	return clamped ? (e < Q.w ? e : Q.w) : e;
 }
 
@@ -1369,7 +1375,27 @@ static size_t boundEdgeCollapses(const EdgeAdjacency& adjacency, size_t vertex_c
 	return (index_count - dual_count / 2) + 3;
 }
 
-static size_t pickEdgeCollapses(Collapse* collapses, size_t collapse_capacity, const unsigned int* indices, size_t index_count, const unsigned int* remap, const unsigned char* vertex_kind, const unsigned int* loop, const unsigned int* loopback)
+static bool collapseKeepsTags(unsigned int from, unsigned int to, const unsigned char* kind, const unsigned int* tags, const unsigned int* remap, const unsigned int* wedge, const unsigned int* loop, const unsigned int* loopback)
+{
+	if (tags[from] != tags[to])
+		return false;
+
+	if (kind[from] == Kind_Seam)
+	{
+		unsigned int pair = wedge[from];
+		unsigned int target = loop[from] == to ? loopback[pair] : loop[pair];
+		return target != ~0u && tags[pair] == tags[target];
+	}
+
+	if (kind[from] == Kind_Complex || kind[from] == Kind_Fringe)
+		for (unsigned int v = wedge[from]; v != from; v = wedge[v])
+			if (tags[v] != tags[getComplexTarget(v, to, remap, loop, loopback)])
+				return false;
+
+	return true;
+}
+
+static size_t pickEdgeCollapses(Collapse* collapses, size_t collapse_capacity, const unsigned int* indices, size_t index_count, const unsigned int* remap, const unsigned int* wedge, const unsigned char* vertex_kind, const unsigned int* loop, const unsigned int* loopback, const unsigned int* tags)
 {
 	size_t collapse_count = 0;
 
@@ -1411,9 +1437,14 @@ static size_t pickEdgeCollapses(Collapse* collapses, size_t collapse_capacity, c
 			if ((k1 == Kind_Border || k1 == Kind_Seam) && k0 != Kind_Manifold && loopback[i1] != i0)
 				continue;
 
+			bool forward = kCanCollapse[k0][k1] && (!tags || collapseKeepsTags(i0, i1, vertex_kind, tags, remap, wedge, loop, loopback));
+			bool backward = kCanCollapse[k1][k0] && (!tags || collapseKeepsTags(i1, i0, vertex_kind, tags, remap, wedge, loop, loopback));
+			if (!forward && !backward)
+				continue;
+
 			// edge can be collapsed in either direction - we will pick the one with minimum error
 			// note: we evaluate error later during collapse ranking, here we just tag the edge as bidirectional
-			if (kCanCollapse[k0][k1] & kCanCollapse[k1][k0])
+			if (forward && backward)
 			{
 				Collapse c = {i0, i1, {/* bidi= */ 1}};
 				collapses[collapse_count++] = c;
@@ -1421,8 +1452,8 @@ static size_t pickEdgeCollapses(Collapse* collapses, size_t collapse_capacity, c
 			else
 			{
 				// edge can only be collapsed in one direction
-				unsigned int e0 = kCanCollapse[k0][k1] ? i0 : i1;
-				unsigned int e1 = kCanCollapse[k0][k1] ? i1 : i0;
+				unsigned int e0 = forward ? i0 : i1;
+				unsigned int e1 = forward ? i1 : i0;
 
 				Collapse c = {e0, e1, {/* bidi= */ 0}};
 				collapses[collapse_count++] = c;
@@ -1433,7 +1464,7 @@ static size_t pickEdgeCollapses(Collapse* collapses, size_t collapse_capacity, c
 	return collapse_count;
 }
 
-static void rankEdgeCollapses(Collapse* collapses, size_t collapse_count, const Vector3* vertex_positions, const float* vertex_attributes, const Quadric* vertex_quadrics, const Quadric* attribute_quadrics, const QuadricGrad* attribute_gradients, size_t attribute_count, const unsigned int* remap, const unsigned int* wedge, const unsigned char* vertex_kind, const unsigned int* loop, const unsigned int* loopback, bool clamped)
+static void rankEdgeCollapses(Collapse* collapses, size_t collapse_count, const Vector3* vertex_positions, const float* vertex_attributes, const Quadric* vertex_quadrics, const Quadric* attribute_quadrics, const QuadricGrad* attribute_gradients, size_t attribute_count, const unsigned int* remap, const unsigned int* wedge, const unsigned char* vertex_kind, const unsigned int* loop, const unsigned int* loopback, bool clamped, bool absolute_attributes)
 {
 	for (size_t i = 0; i < collapse_count; ++i)
 	{
@@ -1448,8 +1479,8 @@ static void rankEdgeCollapses(Collapse* collapses, size_t collapse_count, const 
 
 		if (attribute_count)
 		{
-			ei += quadricError(attribute_quadrics[i0], &attribute_gradients[i0 * attribute_count], attribute_count, vertex_positions[i1], &vertex_attributes[i1 * attribute_count], clamped);
-			ej += bidi ? quadricError(attribute_quadrics[i1], &attribute_gradients[i1 * attribute_count], attribute_count, vertex_positions[i0], &vertex_attributes[i0 * attribute_count], clamped) : 0;
+			ei += quadricError(attribute_quadrics[i0], &attribute_gradients[i0 * attribute_count], attribute_count, vertex_positions[i1], &vertex_attributes[i1 * attribute_count], clamped, absolute_attributes);
+			ej += bidi ? quadricError(attribute_quadrics[i1], &attribute_gradients[i1 * attribute_count], attribute_count, vertex_positions[i0], &vertex_attributes[i0 * attribute_count], clamped, absolute_attributes) : 0;
 
 			// seam edges need to aggregate attribute errors between primary and secondary edges, as attribute quadrics are separate
 			if (vertex_kind[i0] == Kind_Seam)
@@ -1464,8 +1495,8 @@ static void rankEdgeCollapses(Collapse* collapses, size_t collapse_count, const 
 				// note: this should never happen due to the assertion above, but when disabled if we ever hit this case we'll get a memory safety issue; for now play it safe
 				s1 = (s1 != ~0u) ? s1 : wedge[i1];
 
-				ei += quadricError(attribute_quadrics[s0], &attribute_gradients[s0 * attribute_count], attribute_count, vertex_positions[s1], &vertex_attributes[s1 * attribute_count], clamped);
-				ej += bidi ? quadricError(attribute_quadrics[s1], &attribute_gradients[s1 * attribute_count], attribute_count, vertex_positions[s0], &vertex_attributes[s0 * attribute_count], clamped) : 0;
+				ei += quadricError(attribute_quadrics[s0], &attribute_gradients[s0 * attribute_count], attribute_count, vertex_positions[s1], &vertex_attributes[s1 * attribute_count], clamped, absolute_attributes);
+				ej += bidi ? quadricError(attribute_quadrics[s1], &attribute_gradients[s1 * attribute_count], attribute_count, vertex_positions[s0], &vertex_attributes[s0 * attribute_count], clamped, absolute_attributes) : 0;
 			}
 			else
 			{
@@ -1475,7 +1506,7 @@ static void rankEdgeCollapses(Collapse* collapses, size_t collapse_count, const 
 					{
 						unsigned int t = getComplexTarget(v, i1, remap, loop, loopback);
 
-						ei += quadricError(attribute_quadrics[v], &attribute_gradients[v * attribute_count], attribute_count, vertex_positions[t], &vertex_attributes[t * attribute_count], clamped);
+						ei += quadricError(attribute_quadrics[v], &attribute_gradients[v * attribute_count], attribute_count, vertex_positions[t], &vertex_attributes[t * attribute_count], clamped, absolute_attributes);
 					}
 
 				if ((vertex_kind[i1] == Kind_Complex || vertex_kind[i1] == Kind_Fringe) && bidi)
@@ -1483,7 +1514,7 @@ static void rankEdgeCollapses(Collapse* collapses, size_t collapse_count, const 
 					{
 						unsigned int t = getComplexTarget(v, i0, remap, loop, loopback);
 
-						ej += quadricError(attribute_quadrics[v], &attribute_gradients[v * attribute_count], attribute_count, vertex_positions[t], &vertex_attributes[t * attribute_count], clamped);
+						ej += quadricError(attribute_quadrics[v], &attribute_gradients[v * attribute_count], attribute_count, vertex_positions[t], &vertex_attributes[t * attribute_count], clamped, absolute_attributes);
 					}
 			}
 		}
@@ -2356,7 +2387,7 @@ enum
 	meshopt_SimplifyInternalDebug = 1 << 30
 };
 
-size_t meshopt_simplifyEdge(unsigned int* destination, const unsigned int* indices, size_t index_count, const float* vertex_positions_data, size_t vertex_count, size_t vertex_positions_stride, const float* vertex_attributes_data, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, size_t target_index_count, float target_error, unsigned int options, float* out_result_error)
+size_t meshopt_simplifyEdge(unsigned int* destination, const unsigned int* indices, size_t index_count, const float* vertex_positions_data, size_t vertex_count, size_t vertex_positions_stride, const float* vertex_attributes_data, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, size_t target_index_count, float target_error, unsigned int options, float* out_result_error, const unsigned int* vertex_tags = NULL, float* out_position_error = NULL)
 {
 	using namespace meshopt;
 
@@ -2382,6 +2413,14 @@ size_t meshopt_simplifyEdge(unsigned int* destination, const unsigned int* indic
 	unsigned int* sparse_remap = NULL;
 	if (options & meshopt_SimplifySparse)
 		sparse_remap = buildSparseRemap(result, index_count, vertex_count, &vertex_count, allocator);
+
+	if (vertex_tags && sparse_remap)
+	{
+		unsigned int* tags = allocator.allocate<unsigned int>(vertex_count);
+		for (size_t i = 0; i < vertex_count; ++i)
+			tags[i] = vertex_tags[sparse_remap[i]];
+		vertex_tags = tags;
+	}
 
 	// build adjacency information
 	EdgeAdjacency adjacency = {};
@@ -2418,6 +2457,16 @@ size_t meshopt_simplifyEdge(unsigned int* destination, const unsigned int* indic
 	Vector3* vertex_positions = allocator.allocate<Vector3>(vertex_count);
 	float vertex_offset[3] = {};
 	float vertex_scale = rescalePositions(vertex_positions, vertex_positions_data, vertex_count, vertex_positions_stride, sparse_remap, vertex_offset);
+
+	// Keep attribute costs in the same units as the input positions for the tagged variant.
+	float absolute_weights[kMaxAttributes];
+	if (out_position_error)
+	{
+		assert(options & meshopt_SimplifyErrorAbsolute);
+		for (size_t i = 0; i < attribute_count; ++i)
+			absolute_weights[i] = vertex_scale > 0 ? attribute_weights[i] / vertex_scale : 0.f;
+		attribute_weights = absolute_weights;
+	}
 
 	float* vertex_attributes = NULL;
 	unsigned int attribute_remap[kMaxAttributes];
@@ -2513,7 +2562,7 @@ size_t meshopt_simplifyEdge(unsigned int* destination, const unsigned int* indic
 		// note: throughout the simplification process adjacency structure reflects welded topology for result-in-progress
 		updateEdgeAdjacency(adjacency, result, result_count, vertex_count, remap);
 
-		size_t edge_collapse_count = pickEdgeCollapses(edge_collapses, collapse_capacity, result, result_count, remap, vertex_kind, loop, loopback);
+		size_t edge_collapse_count = pickEdgeCollapses(edge_collapses, collapse_capacity, result, result_count, remap, wedge, vertex_kind, loop, loopback, vertex_tags);
 		assert(edge_collapse_count <= collapse_capacity);
 
 		// no edges can be collapsed any more due to topology restrictions
@@ -2524,7 +2573,7 @@ size_t meshopt_simplifyEdge(unsigned int* destination, const unsigned int* indic
 		printf("pass %d: ", int(pass_count++));
 #endif
 
-		rankEdgeCollapses(edge_collapses, edge_collapse_count, vertex_positions, vertex_attributes, vertex_quadrics, attribute_quadrics, attribute_gradients, attribute_count, remap, wedge, vertex_kind, loop, loopback, (options & meshopt_SimplifyErrorClamped) != 0);
+		rankEdgeCollapses(edge_collapses, edge_collapse_count, vertex_positions, vertex_attributes, vertex_quadrics, attribute_quadrics, attribute_gradients, attribute_count, remap, wedge, vertex_kind, loop, loopback, (options & meshopt_SimplifyErrorClamped) != 0, out_position_error != NULL);
 
 		sortEdgeCollapses(collapse_order, edge_collapses, edge_collapse_count);
 
@@ -2640,6 +2689,8 @@ size_t meshopt_simplifyEdge(unsigned int* destination, const unsigned int* indic
 	// result_error is quadratic; we need to remap it back to linear
 	if (out_result_error)
 		*out_result_error = sqrtf(result_error) * error_scale;
+	if (out_position_error)
+		*out_position_error = sqrtf(vertex_error) * error_scale;
 
 	return result_count;
 }
@@ -2656,6 +2707,12 @@ size_t meshopt_simplifyWithAttributes(unsigned int* destination, const unsigned 
 	assert((options & meshopt_SimplifyInternalSolve) == 0); // use meshopt_simplifyWithUpdate instead
 
 	return meshopt_simplifyEdge(destination, indices, index_count, vertex_positions_data, vertex_count, vertex_positions_stride, vertex_attributes_data, vertex_attributes_stride, attribute_weights, attribute_count, vertex_lock, target_index_count, target_error, options, out_result_error);
+}
+
+size_t meshopt_simplifyWithAbsoluteAttributes(unsigned int* destination, const unsigned int* indices, size_t index_count, const float* vertex_positions_data, size_t vertex_count, size_t vertex_positions_stride, const float* vertex_attributes_data, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, const unsigned int* vertex_tags, size_t target_index_count, unsigned int options, float* out_result_error, float* out_position_error)
+{
+	assert((options & meshopt_SimplifyInternalSolve) == 0 && out_position_error);
+	return meshopt_simplifyEdge(destination, indices, index_count, vertex_positions_data, vertex_count, vertex_positions_stride, vertex_attributes_data, vertex_attributes_stride, attribute_weights, attribute_count, vertex_lock, target_index_count, FLT_MAX, options | meshopt_SimplifyErrorAbsolute, out_result_error, vertex_tags, out_position_error);
 }
 
 size_t meshopt_simplifyWithUpdate(unsigned int* indices, size_t index_count, float* vertex_positions_data, size_t vertex_count, size_t vertex_positions_stride, float* vertex_attributes_data, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, size_t target_index_count, float target_error, unsigned int options, float* out_result_error)
