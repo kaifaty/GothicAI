@@ -19,12 +19,14 @@ layout(binding = 1, std430) readonly buffer Blades { uvec4 blade[]; };
 layout(binding = 2) uniform sampler2D ground;
 // of a ground with its own layers the sward's map, by the world's x and z (grass_layers.glsl); else the same texture
 layout(binding = 3) uniform sampler2D sward;
+// the frame's table of the draws' spans
+layout(binding = 4, std430) readonly buffer Spans { uint span[]; };
 
 layout(push_constant, std430) uniform Push {
   vec4  origin;       // cm: the corner of the cell less its margin, its lowest root in y
   float wind;         // the record's
   float translucency;
-  uint  first;        // the batch's first blade in the buffer
+  uint  table;        // of the draw's spans in `span`
   uint  segments;     // links of a blade in this cell: 4, 3, 2 or 1
   // The fine blades of the short sward (GrassField): x the width at the root, cm, y per step of the blade's bits;
   // z their own ring's full count to here, w into the ground from here to a quarter further. 0: a blade of the
@@ -109,7 +111,16 @@ vec3 bladePoint(Tilt tilt, int k, int n, float height) {
   }
 
 void main() {
-  const uvec4 b = blade[push.first + uint(gl_InstanceIndex)];
+  // The draw's instances are the blades of the cell's squares that are in view, one square after another. Its 16
+  // spans in the table: the instance after the span's last (none: the largest number), and what to add to an
+  // instance of the span for its blade in the buffer (GrassField::draw)
+  const uint inst = uint(gl_InstanceIndex);
+  uint       at   = 0u;
+  if(inst>=span[push.table + 2u*(at+7u)]) at += 8u;
+  if(inst>=span[push.table + 2u*(at+3u)]) at += 4u;
+  if(inst>=span[push.table + 2u*(at+1u)]) at += 2u;
+  if(inst>=span[push.table + 2u*at])      at += 1u;
+  const uvec4 b = blade[inst + span[push.table + 2u*at + 1u]];
 
   const vec3  root   = push.origin.xyz + vec3(float(b.x & 0x3FFFu), float((b.y & 0xFFFFu)*2u), float((b.x >> 14) & 0x3FFFu))*(1.0/16.0);
   const float lean0  = radians(8.0 + float(b.x >> 28)*(40.0/15.0));
@@ -204,4 +215,7 @@ void main() {
   outNormal = normalize(gn*0.75 + face*0.25 - vec3(tilt.lean.x, 0.0, tilt.lean.y)*(t*GrassNormalLean*0.5));
   if((partsOff & GrassPartNormal)!=0u)
     outNormal = gn;
+  // the vertex stage's cost by difference: everything above is done, and the vertex leaves by the right plane
+  if((partsOff & GrassPartOffscreen)!=0u)
+    gl_Position = vec4(4.0*(abs(clip.w)+1.0), clip.y, clip.z, abs(clip.w)+1.0);
   }

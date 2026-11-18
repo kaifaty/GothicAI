@@ -145,9 +145,9 @@ class RtScene {
       };
 
     uint32_t     bucketId(const Tempest::Texture2d* tex, const Tempest::StorageBuffer* vbo, const Tempest::StorageBuffer* ibo);
-    RtObjectDesc objectDesc(const Geometry& geom, Material::AlphaFunc alpha);
+    RtObjectDesc objectDesc(const Geometry& geom, Material::AlphaFunc alpha, Material::TwoSided sides);
     // The instance and the entries of a slot: a new range when the number of geometries changes
-    void         writeSlot(uint32_t slot, Tempest::RtInstance ix, Material::AlphaFunc alpha,
+    void         writeSlot(uint32_t slot, Tempest::RtInstance ix, Material::AlphaFunc alpha, Material::TwoSided sides,
                            const Geometry* geom, size_t count);
     void         releaseRange(Slot& s);
     void         markSlot(uint32_t slot);

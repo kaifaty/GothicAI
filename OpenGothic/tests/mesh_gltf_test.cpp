@@ -5,6 +5,7 @@
 #include "graphics/pfx/particlefx.h"
 #include "graphics/visualfx.h"
 #include "gltfmesh.h"
+#include "gltfmeshcolor.h"
 #include "graphics/shaders.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/facerig.h"
@@ -14,6 +15,10 @@
 #include "graphics/worldview.h"
 #include "graphics/objvisual.h"
 #include "world/chunkresidency.h"
+#include "graphics/landscapestart.h"
+#include "physics/worldcloth.h"
+#include "worldchunkcatalogue.h"
+#include "worldchunkcook.h"
 #include "loadprobe.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "physics/fracture.h"
@@ -147,17 +152,7 @@ void textFile(const std::filesystem::path& path, std::string_view text) {
     throw std::runtime_error("unable to write mesh fixture");
   }
 
-void word(std::vector<uint8_t>& bytes, uint32_t value) {
-  for(size_t i=0;i<4;++i)
-    bytes.push_back(uint8_t(value>>(i*8)));
-  }
-
-void real(std::vector<uint8_t>& bytes, float value) {
-  uint32_t bits = 0;
-  static_assert(sizeof(bits)==sizeof(value));
-  std::memcpy(&bits,&value,sizeof(bits));
-  word(bytes,bits);
-  }
+#include "mesh_gltf_color.h" // word, real; colorCases
 
 struct GlbOptions {
   size_t positions = 3;
@@ -1854,6 +1849,32 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
   require(errors==1 && view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
           "an exhausted Near retry must log once and never retry on later frames or residency changes");
   }
+  {
+  // The catalogue start (worldchunkcatalogue.h): no stitched mesh; the Near chunk comes from its .wcb into the
+  // same page range.
+  cookWorldChunks(directory);
+  ChunkTable catalogueTable;
+  auto landscape=startWorldChunks(directory,{},readWorldChunkManifest(directory),catalogueTable,true);
+  (void)WorldCloth::extract(landscape,&catalogueTable);
+  require(catalogueTable.source && catalogueTable.source->catalogue() && landscape.polygons.material_indices.empty(),
+          "a cooked world must take the catalogue start");
+  ChunkResidency residency(catalogueTable);
+  // The view as the world load makes it (graphics/landscapestart.h): the stitched landscape's bounds, as the start
+  // without the catalogue gives them (packed.bbox() also holds the meshlets' padding).
+  const auto made=streamingWorldView(landscape,catalogueTable,"CONTRACT.ZEN");
+  auto& view=*made;
+  const auto bounds=view.bbox(), expected=PackedMesh::landscapeBbox(readWorldChunks(directory));
+  require(bounds.first.x==expected.first.x && bounds.first.y==expected.first.y && bounds.first.z==expected.first.z &&
+          bounds.second.x==expected.second.x && bounds.second.y==expected.second.y && bounds.second.z==expected.second.z,
+          "the catalogue start's view must take the stitched landscape's bounds");
+  view.startLandscapeStreaming(std::move(landscape),residency,0);
+  view.prepareLandscapeWork();
+  residency.update({100,100,100},{100,100,100},1000);
+  view.finishLandscapeUpdate();
+  require(view.landscapeReady() && residency.stats().published==1 && catalogueTable.source->reads().cooked==1 &&
+          residency.stats().landscapePageUsedBytes==packed.vertices.size()*sizeof(packed.vertices[0])+packed.indices8.size(),
+          "the catalogue start must publish the Near chunk from its .wcb into the same page range");
+  }
   device.waitIdle();
   for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
     Resources::resetRecycled(frame);
@@ -2367,6 +2388,8 @@ void maskBc1Policy(const Fixture& fixture) {
   options.alpha = "MASK";
   glbFile(fixture.root/"meshes/test/own.glb",options);
   glbFile(fixture.root/"meshes/test/opaque.glb");
+  const auto colorPath = fixture.root/"meshes/test/vertex-color.glb";
+  colorGlbFile(colorPath,2);
   options = {};
   options.texture = "SLOT_V0.TGA";
   glbFile(fixture.root/"meshes/test/slot.glb",options);
@@ -2384,6 +2407,7 @@ void maskBc1Policy(const Fixture& fixture) {
   fixture.index(R"({
     "OWN_MESH":{"glb":"test/own.glb"},
     "OWN_OPAQUE":{"glb":"test/opaque.glb"},
+    "OWN_COLOR":{"glb":"test/vertex-color.glb"},
     "OWN_SLOT":{"glb":"test/slot.glb"},
     "OWN_MODEL_ROTATION":{"glb":"test/opaque.glb"},
     "OWN_MODEL_MASK":{"glb":"test/own.glb"},
@@ -2398,6 +2422,7 @@ void maskBc1Policy(const Fixture& fixture) {
     Shaders shaders;
     shaders.waitCompiler();
     fixture.mount();
+    resourceColorCase(device,colorPath);
     const auto& font=Resources::font("ORIGINAL.extra.tga",Resources::FontType::Normal,1.25f);
     require(font.pixelSize()==21 && font.textSize("A B")==Tempest::Size(35,21),
             "native font must retain scaled source advances and height");
@@ -2922,6 +2947,7 @@ int main() {
     fixture.index();
     resourcePaths(fixture,true);
     converterCases(fixture);
+    colorCases(fixture.root/"meshes/test/color.glb");
     headConverterCases(fixture);
     headManifestCases(fixture);
     generatedBarrel(fixture);

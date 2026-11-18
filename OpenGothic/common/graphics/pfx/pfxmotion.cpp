@@ -85,9 +85,12 @@ Vec3 curl(const Params& p, const Vec3& at, float timeMs) {
   return sum*(p.curlStrength*std::sqrt(2.f/float(WaveCount)));
   }
 
-void step(const Params& p, const Vec3& gravity, Vec3& pos, Vec3& vel, const Vec3& origin, float timeMs, float dtMs) {
+void step(const Params& p, const Vec3& gravity, Vec3& pos, Vec3& vel, const Vec3& origin, float timeMs, float dtMs,
+          const Vec3& wind) {
   if(dtMs<=0)
     return;
+  // in the air's own frame the drag pulls to rest: step there and come back
+  vel -= wind;
   const int   n  = std::max(1, int(std::ceil(dtMs/MaxSubstepMs - 1e-4f)));
   const float h  = dtMs/float(n);
   const float dh = p.drag*h;
@@ -109,6 +112,8 @@ void step(const Params& p, const Vec3& gravity, Vec3& pos, Vec3& vel, const Vec3
     pos += vel*f1 + a*f2;
     vel  = vel*e  + a*f1;
     }
+  pos += wind*dtMs;
+  vel += wind;
   }
 
 float flicker(const Flicker& f, uint64_t timeMs) {
@@ -121,11 +126,11 @@ float flicker(const Flicker& f, uint64_t timeMs) {
   return 1.f + f.amount*s;
   }
 
-Vec3 jitter(const Flicker& f, uint64_t timeMs, float cm) {
+Vec3 jitter(const Flicker& f, uint64_t timeMs, float cm, float swayHz) {
   if(cm<=0)
     return Vec3();
   const double t  = double(timeMs)/1000.0;
-  const double hz = (f.jitterHz>0 ? f.jitterHz : f.pulseHz)*KnotsPerPeriod;
+  const double hz = (swayHz>0 ? swayHz : (f.jitterHz>0 ? f.jitterHz : f.pulseHz))*KnotsPerPeriod;
   return Vec3(noise(t*hz, f.seed^0x1B56C4E9u),
               noise(t*hz, f.seed^0x7F4A7C15u),
               noise(t*hz, f.seed^0x2545F491u))*cm;

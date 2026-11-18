@@ -126,6 +126,7 @@ class Renderer final {
 
     void drawPathtrace    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, uint8_t fId);
 
+    void drawHaze(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void stashSceneAux    (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void drawRayQueryDbg  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
@@ -248,6 +249,7 @@ class Renderer final {
     Tempest::ZBuffer          zbufferUi;
 
     Tempest::Attachment       sceneOpaque;
+    Tempest::Attachment       sceneHaze;   // the frame before the haze pass (drawHaze); made at the first haze in view
     Tempest::Attachment       sceneDepth;
 
     Tempest::Attachment       gbufDiffuse;

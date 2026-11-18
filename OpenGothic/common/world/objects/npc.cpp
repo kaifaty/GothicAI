@@ -14,7 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/visualfx.h"
 #include "graphics/effect.h"
@@ -103,11 +103,6 @@ struct Npc::BodyMovementTrace final {
   bool active = false, previous = false;
   Vec3 start = {};
   };
-
-std::string_view Npc::Routine::wayPointName() const {
-  return point!=nullptr ? point->name : fallbackName;
-  }
-
 
 void Npc::GoTo::save(Serialize& fout) const {
   fout.write(npc, uint8_t(flag), wp, pos);
@@ -582,7 +577,7 @@ bool Npc::isMeleeFighter() const {
   }
 
 bool Npc::hasAutoroll() const {
-  auto gl = std::min<uint32_t>(guild(),GIL_MAX);
+  auto gl = std::min<uint32_t>(guild(),owner.guildTraits().count());
   return owner.rules().guildVal().disable_autoroll[gl]==0;
   }
 
@@ -1341,16 +1336,13 @@ bool Npc::isTargetableBySpell(TargetType t) const {
   if(bool(t&(TARGET_TYPE_ALL|TARGET_TYPE_NPCS)))
     return true;
 
-  const Guild gil = Guild(trueGuild());
+  const auto gil = trueGuild();
 
-  const auto G2_UNDEAD = (gil == GIL_GOBBO_SKELETON ||
-    gil == GIL_SUMMONED_GOBBO_SKELETON || gil == GIL_SKELETON      ||
-    gil == GIL_SUMMONED_SKELETON       || gil == GIL_SKELETON_MAGE ||
-    gil == GIL_SHADOWBEAST_SKELETON    || gil == GIL_ZOMBIE);
+  const auto G2_UNDEAD = owner.guildTraits().has(gil,GuildTraits::Undead);
 
   if(bool(t&TARGET_TYPE_HUMANS) && isHuman())
     return true;
-  if(bool(t&TARGET_TYPE_ORCS) && gil>GIL_SEPERATOR_ORC)
+  if(bool(t&TARGET_TYPE_ORCS) && owner.guildTraits().has(gil,GuildTraits::Orc))
     return true;
   if(bool(t&TARGET_TYPE_UNDEAD) && G2_UNDEAD)
     return true;

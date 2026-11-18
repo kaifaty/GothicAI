@@ -1,0 +1,94 @@
+# The blades' own cost by its parts, on the standing views of perf-meadow.bench (reports/engine/2026-11-17-grass-cost):
+# each view as it is, then with the blades through the whole vertex stage and off the screen (`grass parts 32768`:
+# the frame less this is their rasterising and pixels), then with the blades dropped at the start of the vertex stage
+# (`grass parts 128`: the difference to the sample before is the vertex stage's work). Read the pass `Grass` of
+# gpu_passes (OPENGOTHIC_GPU_PASSES=1); `grass parts 128` also paints the ground in bands, so the pass `GBuffer`
+# and the passes of light are not comparable in that sample.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+# view 1 of perf-meadow.bench: the densest
+goto pos 41701 3320 795
+clear 3000
+cam at 41452 3421 -168 40003 3790 -1503
+wait 20000
+grass stats
+perf sample perf-grass/view-1
+wait 8000
+perf stop
+grass parts 32768
+wait 2000
+perf sample perf-grass/view-1-vertex
+wait 8000
+perf stop
+grass parts 128
+wait 2000
+perf sample perf-grass/view-1-hidden
+wait 8000
+perf stop
+grass parts 0
+# view 2: `stone`
+goto pos 40003 3790 -1503
+cam at 40503 3581 -902 41503 3480 -902
+wait 20000
+grass stats
+perf sample perf-grass/view-2
+wait 8000
+perf stop
+grass parts 32768
+wait 2000
+perf sample perf-grass/view-2-vertex
+wait 8000
+perf stop
+grass parts 128
+wait 2000
+perf sample perf-grass/view-2-hidden
+wait 8000
+perf stop
+grass parts 0
+# view 3: `far`
+goto NW_TAVERNE_TROLLAREA_04
+cam at 38907 4994 -1252 42532 2685 438
+wait 20000
+grass stats
+perf sample perf-grass/view-3
+wait 8000
+perf stop
+grass parts 32768
+wait 2000
+perf sample perf-grass/view-3-vertex
+wait 8000
+perf stop
+grass parts 128
+wait 2000
+perf sample perf-grass/view-3-hidden
+wait 8000
+perf stop
+grass parts 0
+# view 5: standing on the track, the game's camera
+cam game
+goto pos 41940 3300 -317
+face -122
+wait 20000
+grass stats
+perf sample perf-grass/view-4
+wait 8000
+perf stop
+grass parts 32768
+wait 2000
+perf sample perf-grass/view-4-vertex
+wait 8000
+perf stop
+grass parts 128
+wait 2000
+perf sample perf-grass/view-4-hidden
+wait 8000
+perf stop
+grass parts 0

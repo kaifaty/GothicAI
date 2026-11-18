@@ -1,0 +1,28 @@
+{
+ "format": 1,
+ "visual": [
+  {"id": 2884, "visual": "OWN_WALL_TORCH_01"},
+  {"id": 8618, "visual": "OWN_WALL_TORCH_01"}
+ ],
+ "effect": [
+  {"id": 2887, "pfx": "OWN_TORCH_SPARKS"},
+  {"id": 8621, "pfx": "OWN_TORCH_SPARKS"}
+ ],
+ "remove": [2885, 2890, 8619, 8625],
+ "add": [
+  {"key": "wall-torch-oldworld-2884-flame", "kind": "emitter", "pfx": "OWN_TORCH_FLAME", "position": [-26045.7, -517.4, 22649.1], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 8659}},
+  {"key": "wall-torch-oldworld-2884-flame-a", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [-26048.4, -523.5, 22652.5], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 8660}},
+  {"key": "wall-torch-oldworld-2884-flame-b", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [-26043.2, -523.5, 22645.7], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 8661}},
+  {"key": "wall-torch-oldworld-2884-licks", "kind": "emitter", "pfx": "OWN_TORCH_LICKS", "position": [-26044.4, -539.0, 22650.1], "yaw_deg": 0},
+  {"key": "wall-torch-oldworld-2884-drops", "kind": "emitter", "pfx": "OWN_TORCH_DROPS", "position": [-26043.5, -557.4, 22650.8], "yaw_deg": 0},
+  {"key": "wall-torch-oldworld-2884-soot", "kind": "emitter", "pfx": "OWN_TORCH_SOOT", "position": [-26047.1, -507.7, 22648.1], "yaw_deg": 0},
+  {"key": "wall-torch-oldworld-2884-light", "kind": "light", "position": [-26047.8, -509.7, 22647.5], "yaw_deg": 0, "range": 250, "color": [230, 84, 15], "near": 8, "flicker_from": "wall-torch-oldworld-2884-flame", "jitter_cm": 0.6, "sway_hz": 1.5},
+  {"key": "wall-torch-oldworld-8618-flame", "kind": "emitter", "pfx": "OWN_TORCH_FLAME", "position": [-24924.9, -593.3, 22467.7], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 25861}},
+  {"key": "wall-torch-oldworld-8618-flame-a", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [-24923.4, -599.5, 22463.7], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 25862}},
+  {"key": "wall-torch-oldworld-8618-flame-b", "kind": "emitter", "pfx": "OWN_TORCH_FLAME_SIDE", "position": [-24926.3, -599.5, 22471.7], "yaw_deg": 0, "flicker": {"pulse_hz": 4.5, "jitter_hz": 12, "amount": 0.2, "seed": 25863}},
+  {"key": "wall-torch-oldworld-8618-licks", "kind": "emitter", "pfx": "OWN_TORCH_LICKS", "position": [-24926.5, -615.0, 22467.1], "yaw_deg": 0},
+  {"key": "wall-torch-oldworld-8618-drops", "kind": "emitter", "pfx": "OWN_TORCH_DROPS", "position": [-24927.5, -633.4, 22466.7], "yaw_deg": 0},
+  {"key": "wall-torch-oldworld-8618-soot", "kind": "emitter", "pfx": "OWN_TORCH_SOOT", "position": [-24923.3, -583.7, 22468.3], "yaw_deg": 0},
+  {"key": "wall-torch-oldworld-8618-light", "kind": "light", "position": [-24922.4, -585.7, 22468.6], "yaw_deg": 0, "range": 250, "color": [230, 84, 15], "near": 8, "flicker_from": "wall-torch-oldworld-8618-flame", "jitter_cm": 0.6, "sway_hz": 1.5}
+ ]
+}

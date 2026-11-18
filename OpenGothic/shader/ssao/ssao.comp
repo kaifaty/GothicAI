@@ -19,7 +19,8 @@ layout(push_constant, std140) uniform PushConstant {
   uint frame;     // the cycle of 4 frames picks the samples
   uint reset;     // no history: this frame alone
   uint fullSet;   // the whole set of 32 this frame (OPENGOTHIC_SSAO_HISTORY=0); reset is set with it
-  uint behindOld; // bench `ssao study 1`: a sample behind the camera is read off the screen, as before 2026-11-13
+  uint flags;     // 1 bench `ssao study 1`: a sample behind the camera is read off the screen, as before 2026-11-13;
+                  // 2 the short sphere over the light of the GI probes (graphics/contactao.h)
   } push;
 
 layout(binding  = 0) uniform writeonly image2D result;
@@ -38,14 +39,20 @@ const uint  numIter        = 8;
 const uint  samplesPerStep = numSamples/numIter;
 const uint  cycle          = 4;                 // frames to pass the whole set
 const uint  itersPerFrame  = numIter/cycle;
-const float sphereLen      = 100;
-const float kHit           = 1.3;               // fitted to the grid's look on the AO-only shots (report, 2026-11-09)
+const float sphereLenFull  = 100;
+// Over the GI probes: they stand 25 cm apart at the nearest and see the world's mesh alone, the occlusion of a
+// metre is theirs. The sphere of a quarter of a metre is what they miss: a foot on the ground, a cup on a table
+const float sphereLenShort = 25;
+const float kHitFull       = 1.3;               // fitted to the grid's look on the AO-only shots (report, 2026-11-09)
 const float maxFrames      = 8;                 // the share of a new frame stays at least 1/8
 const float clampMargin    = 0.1;               // the history may leave the neighbours' range of this frame by this
 const float depthTolerance = 0.1;               // relative: a different surface under the reprojected texel
 
 ivec2 fragCoord;
 mat3  tangent;
+bool  shortAo;   // the short sphere over the GI probes (push.flags)
+float sphereLen;
+float kHit;
 
 float sumH = 0, sumM = 0, sumN = 0; // hit weight, misses, samples on the screen
 
@@ -97,7 +104,7 @@ void calcOcclussion(const vec3 pos0, const float f0, uint seed, uint step) {
     // A face 40 cm from the camera took many of its samples so, off its own mirrored pixels, and came out in dark
     // patches of the mesh's facets (reports/engine/2026-11-13-ssao-behind-camera). Nothing seen stands there: the
     // surface is seen from the camera, so the way to it is free - the sample is open
-    if(smp.z*scene.project[2][3] + scene.project[3][3] <= 0.0 && push.behindOld==0u) {
+    if(smp.z*scene.project[2][3] + scene.project[3][3] <= 0.0 && (push.flags & 1u)==0u) {
       sumM += 1.0;
       sumN += 1.0;
       continue;
@@ -115,7 +122,7 @@ void calcOcclussion(const vec3 pos0, const float f0, uint seed, uint step) {
       vec3  pos2  = unproject(vec3(at1.xy,z));
       vec3  dp    = (pos2.xyz-pos0);
       float distQ = dot(dp,dp)/(sphereLen*sphereLen);
-      sumH += 2.0/(distQ+1);
+      sumH += shortAo ? min(1.0, 2.0/(distQ+1)) : 2.0/(distQ+1);
       } else {
       sumM += 1.0;
       }
@@ -155,6 +162,12 @@ vec3 reconstructNormal(const vec3 at0, in vec2 uv){
 shared float curOcc[gl_WorkGroupSize.x][gl_WorkGroupSize.y];
 
 void main() {
+  // the short sphere counts a hit as a miss's equal: the samples are spread by the cosine, so their share that hits
+  // is the share of the sky's light the thing takes away
+  shortAo   = (push.flags & 2u)!=0u;
+  sphereLen = shortAo ? sphereLenShort : sphereLenFull;
+  kHit      = shortAo ? 1.0 : kHitFull;
+
   const ivec2 screenSize = imageSize(result); // half of the depth buffer with halfResAoFog
   fragCoord = ivec2(gl_GlobalInvocationID.xy);
 

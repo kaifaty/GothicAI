@@ -6,6 +6,7 @@
 #include "world/objects/npc_melee.h"
 #include "world/world.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
@@ -59,7 +60,9 @@ void MoveAlgo::tickBumpSignal(uint64_t dt, const Vec3& origin, const Vec3& displ
   input.accepted = moved.position-origin;
   input.normal = moved.obstacleNormal;
   input.obstacle = moved.obstacleNormal!=Vec3();
-  input.enabled = Settings::physicsFlags().bumpReactions;
+  // the hands, the stand and the wall stop read the same observations: the answer below is the bump's own
+  const auto& flag = Settings::physicsFlags();
+  input.enabled = flag.bumpReactions || flag.wallReach || flag.wallStop;
   input.human = npc.isHuman();
   input.grounded = moved.grounded && !moved.collision.preFall;
   input.airborne = flags==InAir;
@@ -78,7 +81,7 @@ void MoveAlgo::tickBumpSignal(uint64_t dt, const Vec3& origin, const Vec3& displ
   input.interactive = npc.interactive()!=nullptr;
   const auto signal = BumpSignal::update(bumpSignal,input);
   tickReachSignal(dt,origin,displacement,moved,signal);
-  if(!signal.contactStarted)
+  if(!flag.bumpReactions || !signal.contactStarted)
     return;
 
   Npc* other = moved.obstacleNpc;
@@ -173,32 +176,38 @@ void MoveAlgo::tickReachSignal(uint64_t dt, const Vec3& origin, const Vec3& disp
     reach.normal = ahead;
   else if(input.obstacle && input.eligible)
     reach.normal = Vec3::normalize(Vec3(moved.obstacleNormal.x,0,moved.obstacleNormal.z));
-  // the wall-stop trial: is what holds the hero a wall that stands flat to both sides of the body?
+  // the wall stop: is what holds the hero a wall that stands flat to both sides of the body?
   reach.flat = false;
-  if(Settings::physicsFlags().wallStop && npc.isPlayer() && input.enabled && input.eligible && input.obstacle &&
+  if(Settings::physicsFlags().wallStop && npc.isPlayer() && input.eligible && input.obstacle &&
      !reach.person && !moved.obstacleDynamic && reach.normal!=Vec3()) {
     using Hit = DynamicWorld::NavigationHit;
     const Vec3 n     = reach.normal;
     const Vec3 along = Vec3(n.z,0,-n.x);
-    float gap[2] = {}, facing[2] = {};
-    bool  hit[2] = {};
-    for(int side=0; side<2; ++side) {
-      const Vec3 from = moved.position + Vec3(0,130,0) + along*(side==0 ? -1.f : 1.f)*input.radius*1.2f;
+    const float beside = input.radius*1.2f;
+    const std::array<float,4> side = {-ReachSignal::FlatReach,-beside,beside,ReachSignal::FlatReach};
+    std::array<ReachSignal::WallLook,4> looks;
+    for(size_t i=0; i<side.size(); ++i) {
+      const Vec3 from = moved.position + Vec3(0,130,0) + along*side[i];
       const auto ray  = npc.world().physic()->navigationRay(from,from-n*(input.radius+40.f),npc.livingBody());
-      hit[side]    = ray.hasCol && (ray.kind==Hit::World || ray.kind==Hit::StaticVob);
-      facing[side] = Vec3::dotProduct(ray.normal,n);
-      gap[side]    = (ray.point-from).length();
+      looks[i].hit    = ray.hasCol && (ray.kind==Hit::World || ray.kind==Hit::StaticVob);
+      looks[i].facing = Vec3::dotProduct(ray.normal,n);
+      looks[i].gap    = (ray.point-from).length();
       }
-    // planks and beams are not a plane: 20 degrees and a hand's breadth of room
-    reach.flat = hit[0] && hit[1] && facing[0]>=0.94f && facing[1]>=0.94f && std::abs(gap[0]-gap[1])<=10.f &&
-                 std::max(gap[0],gap[1])<=input.radius+25.f;
-    if(bump.contactStarted)
+    reach.flat = ReachSignal::flatWall(looks.data(),looks.size(),input.radius);
+    if(bump.contactStarted) {
+      std::string hit, gap, facing;
+      for(size_t i=0; i<looks.size(); ++i) {
+        const char* comma = i>0 ? "," : "";
+        hit    += comma+std::to_string(int(looks[i].hit));
+        gap    += comma+std::to_string(looks[i].gap);
+        facing += comma+std::to_string(looks[i].facing);
+        }
       writeMeleePosture("{\"event\":\"wall_flat\",\"tick_ms\":"+std::to_string(now)+",\"flat\":"+(reach.flat ? "true" : "false")+
-                        ",\"hit\":["+std::to_string(int(hit[0]))+","+std::to_string(int(hit[1]))+
-                        "],\"gap\":["+std::to_string(gap[0])+","+std::to_string(gap[1])+
-                        "],\"facing\":["+std::to_string(facing[0])+","+std::to_string(facing[1])+
+                        ",\"hit\":["+hit+"],\"gap\":["+gap+"],\"facing\":["+facing+
                         "],\"radius\":"+std::to_string(input.radius)+"}");
+      }
     }
+  reach.stop = wallStopping;
   const bool press = reach.press>=0.5f;
   if((signal.warn && !wasWarn) || press!=wasPress)
     writeMeleePosture("{\"event\":\"reach\",\"tick_ms\":"+std::to_string(now)+",\"who\":"+bumpWho(&npc)+
@@ -212,18 +221,15 @@ void MoveAlgo::tickReachSignal(uint64_t dt, const Vec3& origin, const Vec3& disp
 Vec3 MoveAlgo::wallStop(const Vec3& displacement) {
   const uint64_t now    = npc.world().tickCount();
   const float    length = std::hypot(displacement.x,displacement.z);
-  if(!Settings::physicsFlags().wallStop || !npc.isPlayer() || !reach.flat || now<reach.tick || now-reach.tick>200 ||
-     length<=0) {
-    wallStopping = false;
+  const bool     fresh  = Settings::physicsFlags().wallStop && npc.isPlayer() && now>=reach.tick && now-reach.tick<=200;
+  const Vec3     n      = reach.normal;
+  const float    into   = length>0 ? -(displacement.x*n.x+displacement.z*n.z)/length : 0.f;
+  const bool     stop   = fresh && length>0 && ReachSignal::stops(wallStopping,reach.flat,into);
+  if(stop!=wallStopping)
+    writeMeleePosture("{\"event\":\"wall_stop\",\"tick_ms\":"+std::to_string(now)+",\"phase\":\""+(stop ? "begin" : "end")+
+                      "\",\"angle_deg\":"+std::to_string(std::acos(std::clamp(into,-1.f,1.f))*(180.f/3.14159265f))+"}");
+  wallStopping = stop;
+  if(!stop)
     return displacement;
-    }
-  const Vec3  n    = reach.normal;
-  const float into = -(displacement.x*n.x+displacement.z*n.z)/length;
-  // 25 degrees off head on to begin, 30 to go on
-  if(into<(wallStopping ? 0.866f : 0.906f)) {
-    wallStopping = false;
-    return displacement;
-    }
-  wallStopping = true;
   return Vec3(-n.x*into*length,displacement.y,-n.z*into*length);
   }

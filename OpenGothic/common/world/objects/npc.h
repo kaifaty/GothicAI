@@ -14,7 +14,8 @@
 #include "game/fightalgo.h"
 #include "game/archerai.h"
 #include "game/gamerules.h"
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
+#include "game/guildtraits.h"
 #include "game/ragdollsave.h"
 #include "game/meleedodge.h"
 #include "game/meleeai.h"
@@ -29,6 +30,7 @@
 #include "world/npclogicalstate.h"
 #include "world/objects/attention.h"
 #include "world/objects/archer.h"
+#include "world/objects/npcroutinetable.h"
 #include "world/fplock.h"
 #include "world/waypath.h"
 #include "world/wayheights.h"
@@ -907,15 +909,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      runEffect  (Effect&& e);
 
   private:
-    struct Routine final {
-      gtime            start;
-      gtime            end;
-      ScriptFn         callback;
-      const WayPoint*  point = nullptr;
-      std::string      fallbackName;
-
-      std::string_view wayPointName() const;
-      };
+    using Routine = NpcRoutineTable::Row;
 
     enum TransformBit : uint8_t {
       TR_Pos  =1,
@@ -1305,7 +1299,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     Tempest::Vec3                 ragdollQuestFrom;
 
     WalkBit                        wlkMode                 =WalkBit::WM_Run;
-    int32_t                        trGuild                 =GIL_NONE;
+    int32_t                        trGuild                 =GuildNone;
     int32_t                        talentsSk[TALENT_MAX_G2]={};
     int32_t                        talentsVl[TALENT_MAX_G2]={};
     uint64_t                       refuseTalkMilis         =0;

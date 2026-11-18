@@ -20,7 +20,8 @@
 // stitched landscape gives the collision, as before, with one log line "[world-collision] <file> not used, ...:
 // <reason>"; nothing is logged without a cooked index (OPENGOTHIC_WCB=0 among others). A failure of the builder
 // never fails the load. On success it logs "[world-collision] chunks <index>: N triangles, M vertices, T ms".
-// Until the start without the stitched mesh (task 8) this reads the cells a second time at load.
+// After a catalogue start (worldchunkcatalogue.h) there is no stitched landscape: when the builder gives nothing,
+// WorldCollisionSource reads and stitches the world then (WorldCatalogue::stitchedLandscape), as the old start had it.
 
 #include "asset/worldmesh.h"
 
@@ -66,5 +67,6 @@ class WorldCollisionSource final {
     bool                               clothBundle = false;
     const asset::WorldMesh&            landscape;
     std::optional<WorldCollisionInput> built;
+    std::optional<asset::WorldMesh>    stitched; // a catalogue start's landscape, when the builder gives nothing
     size_t                             count = 0;
   };

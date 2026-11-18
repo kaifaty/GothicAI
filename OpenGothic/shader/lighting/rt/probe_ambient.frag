@@ -18,16 +18,19 @@
 #if defined(MATERIAL_MAPS)
 #include "lighting/material_brdf.glsl"
 #include "lighting/eye_brdf.glsl"
+#include "lighting/crown_light.glsl"
 #endif
 
-// No SSAO on the light of the probes: they trace what hides the sky and the lit surfaces from them, SSAO (1 m
-// around a pixel) would take that occlusion away a second time. The path tracer has no SSAO either.
+// No SSAO of a metre on the light of the probes: they trace what hides the sky and the lit surfaces from them, it
+// would take that occlusion away a second time. What they do not see - anything nearer than their 25 cm grid, the
+// hero, the people, the things - is the short occlusion of ssao.comp (VF_CONTACT_AO, graphics/contactao.h).
 
 layout(binding  = 0, std140) uniform UboScene {
   SceneDesc scene;
   };
 layout(binding  = 1) uniform sampler2D  gbufDiffuse;
 layout(binding  = 2) uniform usampler2D gbufNormal;
+layout(binding  = 3) uniform sampler2D  contactAo;
 layout(binding  = 4) uniform sampler2D  depth;
 layout(binding  = 5, std430) readonly buffer Hbo0 { uint hashTable[]; };
 layout(binding  = 6, std430) readonly buffer Pbo  { ProbesHeader probeHeader; Probe probe[]; };
@@ -44,6 +47,10 @@ bool err       = false;
 #if defined(MATERIAL_MAPS)
 bool ownMaterial = false;
 float skyVisibilitySum = 0.0;
+// a leaf of a tree's crown (crown_light.glsl): the light of the same probes on a surface that faces away from the eye
+bool crownThrough = false;
+vec3 throughDir   = vec3(0);
+vec3 throughSum   = vec3(0);
 #endif
 
 vec3 unprojectDepth(const float z) {
@@ -116,6 +123,8 @@ void addProbe(vec3 wpos, uint probeId, uint bits, vec3 pixelPos, vec3 pixelNorm)
 #if defined(MATERIAL_MAPS)
   if(ownMaterial)
     skyVisibilitySum += probeReadSkyVisibility(bits, pixelNorm) * weight;
+  if(crownThrough)
+    throughSum += probeReadIrradiance(probesLighting, probeId, throughDir) * weight;
 #endif
   }
 
@@ -174,7 +183,8 @@ void main() {
   const vec3  diff    = diff4.rgb;
   const vec3  norm    = normalFetch(gbufNormal, ivec2(gl_FragCoord.xy));
 #if defined(MATERIAL_MAPS)
-  const vec4 orm = gbufOrmMaterial(texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0), diff4.a);
+  const vec4 ormG = texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0);
+  const vec4 orm  = gbufOrmMaterial(ormG, diff4.a);
   // hair cards keep their own values in the ORM channels (common.glsl, GBufHairBit): the probes light them as a
   // matte surface of the hair's colour, like the pixels of the original
   ownMaterial = orm.a>0.5 && !isGBufHair(diff4.a);
@@ -184,6 +194,15 @@ void main() {
   // must be exactly same as in allocation !
   const int   lod     = probeGridLod(basePos, scene.camPos, scene.probeLodScale);
   const vec3  pos     = basePos + norm*probeCageBias;
+#if defined(MATERIAL_MAPS)
+  const bool  crown   = ownMaterial && isGBufCrown(diff4.a);
+  float       through = 0.0;
+  if(crown && isGBufFoliage(diff4.a)) {
+    throughDir   = normalize(basePos - scene.camPos);
+    through      = crownSkyThrough(ormG.b, norm, -throughDir);
+    crownThrough = through>0.0;
+    }
+#endif
 
   gather(basePos, pos, norm, lod);
 
@@ -194,11 +213,14 @@ void main() {
     colorSum.w   = 1;  // * Fd_Lambert is accounted in integration
 #if defined(MATERIAL_MAPS)
     skyVisibilitySum = 1.0;
+    if(crownThrough)
+      throughSum = probeReadIrradiance(probesLighting, 0, throughDir);
 #endif
     } else {
     colorSum.rgb = colorSum.rgb/max(colorSum.w, minW);
 #if defined(MATERIAL_MAPS)
     skyVisibilitySum /= max(colorSum.w, minW);
+    throughSum       /= max(colorSum.w, minW);
 #endif
     }
 
@@ -210,8 +232,18 @@ void main() {
   vec3 luminance  = vec3(0);
   luminance += colorSum.rgb;
 
+  float ao = 1.0;
+  if((scene.viewFlags & VF_CONTACT_AO)!=0u)
+    ao = textureLod(contactAo, gl_FragCoord.xy*scene.screenResInv, 0).r;
+#if defined(MATERIAL_MAPS)
+  // a leaf and a blade of grass carry their own occlusion (the root's shade of grass.frag, the crown's of the
+  // leaves): cards in the depth buffer would take it away a second time, and as noise
+  if(orm.a>0.5 && isGBufFoliage(diff4.a))
+    ao = 1.0;
+#endif
+
   vec3 color = linear;
-  color *= luminance;
+  color *= luminance * ao;
 #if defined(MATERIAL_MAPS)
   if(ownMaterial && isGBufEye(diff4.a)) {
     // an eyeball (eye_brdf.glsl): the lids' shade takes the light of the probes and the sky's reflection in full
@@ -234,7 +266,13 @@ void main() {
     const vec3 sky = probeReadIrradiance(probesLighting, 0, norm);
     const vec3 reflectedSky = mix(sharpSky, sky, orm.g*orm.g);
     color += reflectedSky * materialEnvBrdf(materialF0(linear, orm.b), orm.g, noV) *
-             materialSpecularWeight(orm.g, orm.b) * clamp(skyVisibilitySum, 0.0, 1.0);
+             materialSpecularWeight(orm.g, orm.b) * clamp(skyVisibilitySum, 0.0, 1.0) * ao;
+    // a tree's crown (crown_light.glsl): the light of the probes behind a leaf comes through it under the map's
+    // occlusion, and the shade of the crown's depth takes its share of all of it
+    if(through>0.0)
+      color += linear * FoliageThroughTint * throughSum * (through * orm.r);
+    if(crown)
+      color *= gbufCrownShade(ormG, diff4.a);
     }
 #endif
   color *= scene.exposure;

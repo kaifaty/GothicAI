@@ -1,4 +1,4 @@
-"""Write the base triangles Blender cannot hold into an edited chunk (world_edit.py build-region).
+"""Write the base triangles Blender cannot hold into an edited chunk (world_edit.py build and build-region).
 
 Plain Python and numpy, like chunk_canon.py. world_region_dropped.py lists them on the Blender side and says where
 each went (dropped.json); write() runs after chunk_canon.canonical:
@@ -108,6 +108,9 @@ def write(src: Path, out: Path, entries: list[dict], fresh: dict[bytes, np.void]
         if name not in names:          # a material of which out has no triangle
             doc['materials'].append(m)
             names.append(name)
+    # Keep the converter's records for base materials, including JSON number types altered by Blender.
+    base_materials = {m['name']: m for m in base_doc['materials']}
+    doc['materials'] = [base_materials.get(m['name'], m) for m in doc['materials']]
     prims = []
     for m, tris, order, flags, light in edited:
         rows_ = [(tri, None if order is None else order[t], None if flags is None else flags[t],

@@ -160,6 +160,36 @@ int main() {
     const auto result = ReachSignal::update(on,off);
     check(near(result.press,0.f) && !result.warn && near(on.press,0.f),"flag_disabled");
   }
+  {
+    // the wall stop: a wall that stands flat at every look to both sides of the body, 8 cm of capsule
+    using Look = ReachSignal::WallLook;
+    const float radius = 8.f;
+    const Look planks[4] = {{true,1.f,24.f},{true,0.97f,23.f},{true,1.f,23.5f},{true,0.95f,26.f}};
+    check(ReachSignal::flatWall(planks,4,radius),"flat_planks");
+    // a door or the house's corner within the reach to a side: nothing there, or a thing that is not a wall
+    Look door[4] = {planks[0],planks[1],planks[2],{false,0.f,48.f}};
+    check(!ReachSignal::flatWall(door,4,radius),"not_flat_opening");
+    // a niche or a post: the wall steps further than planks do
+    Look niche[4] = {planks[0],planks[1],planks[2],{true,1.f,38.f}};
+    check(!ReachSignal::flatWall(niche,4,radius),"not_flat_step");
+    // an inner corner: the wall to a side faces another way
+    Look corner[4] = {{true,0.2f,20.f},planks[1],planks[2],planks[3]};
+    check(!ReachSignal::flatWall(corner,4,radius),"not_flat_turned");
+    // the body is held by something that stands in front of the wall
+    const Look far[4] = {{true,1.f,36.f},{true,1.f,36.f},{true,1.f,36.f},{true,1.f,36.f}};
+    check(!ReachSignal::flatWall(far,4,radius),"not_flat_far");
+    check(!ReachSignal::flatWall(planks,0,radius),"not_flat_unseen");
+
+    const auto into = [](float degrees) { return std::cos(degrees*(3.14159265358979323846f/180.f)); };
+    check(ReachSignal::stops(false,true,into(0.f)) && ReachSignal::stops(false,true,into(13.f)) &&
+          ReachSignal::stops(false,true,into(24.f)),"stop_head_on");
+    check(!ReachSignal::stops(false,true,into(27.f)) && !ReachSignal::stops(false,true,into(45.f)),"slide_past_25");
+    // a stop begun holds on to 30 degrees: a hero who turns away is let go once
+    check(ReachSignal::stops(true,true,into(27.f)) && !ReachSignal::stops(true,true,into(32.f)),"stop_keeps_to_30");
+    check(!ReachSignal::stops(false,false,into(0.f)) && !ReachSignal::stops(true,false,into(0.f)),"no_stop_not_flat");
+    // the move asks away from the wall
+    check(!ReachSignal::stops(true,true,-1.f),"no_stop_away");
+  }
   if(failures!=0)
     return EXIT_FAILURE;
   std::puts("reach contract passed");

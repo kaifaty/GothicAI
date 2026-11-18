@@ -17,9 +17,14 @@
 #include "game/constants.h"
 #include "game/scripttypes.h"
 #include "game/gamerules.h"
+#include "game/gothicguildtraits.h"
 #include "game/questlog.h"
 #include "game/ownsymbols.h"
 #include "game/gamescript_startupfloor.h"
+#include "game/itemdefinitionruntime.h"
+#include "game/routinedefinitionruntime.h"
+#include "game/npcdefinitionruntime.h"
+#include "game/placementdefinitionruntime.h"
 #include "asset/worldtypes.h"
 
 class GameSession;
@@ -64,6 +69,7 @@ class GameScript final : public GameRules {
     float attackFinishDistance() override;
 
     bool         hasSymbolName(std::string_view fn);
+    void         runStartup(std::string_view fn);
 
     auto         createNpc(Npc& owner, size_t instance, std::string_view waypoint, uint32_t& kind) -> std::shared_ptr<NpcRecord> override;
     uint32_t     initializeInstanceNpc(const std::shared_ptr<NpcRecord>& npc, size_t instance) override;
@@ -76,6 +82,7 @@ class GameScript final : public GameRules {
     auto         npcRecord(daedalus::DaedalusSymbol* symbol) -> std::shared_ptr<NpcRecord>;
     auto         createItem(Item& owner, size_t instance, uint32_t& kind) -> std::shared_ptr<ItemRecord> override;
     auto         createItem(size_t instance) -> std::shared_ptr<ItemRecord> override;
+    auto         createItemForQuery(size_t instance) -> std::shared_ptr<ItemRecord>;
     auto         loadItem(Serialize& fin, Item& owner, uint32_t& kind) -> std::shared_ptr<ItemRecord> override;
     void         attachItem(const std::shared_ptr<ItemRecord>& item, Item& owner) override;
     void         initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance);
@@ -134,6 +141,7 @@ class GameScript final : public GameRules {
     const FocusRecord&           focusRange() const override { return cFocusRange; }
     const FocusRecord&           focusMage()  const override { return cFocusMage;  }
     const GuildRecord&           guildVal()   const override { return *cGuildVal;  }
+    const GuildTraits&           guildTraits() const override { return gothicGuildTraits(); }
 
     std::string_view            menuMain() const;
 
@@ -206,7 +214,9 @@ class GameScript final : public GameRules {
     StartupFloor& startupFloor() { return floorDefer; }
 
   private:
-    void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance);
+    friend struct NpcDefinitionContract;
+    void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);
+    void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
     bool startHotkeyPotion(Npc& pl, bool mana);
 
     template<typename T>
@@ -278,12 +288,12 @@ class GameScript final : public GameRules {
     bool aiOutputSvm(Npc &from, std::string_view name, std::string_view svm, Npc* target, bool overlay);
 
     bool searchScheme(std::string_view sc, std::string_view listName);
-
-    static daedalus::DaedalusVm createVm(Gothic& gothic);
-
+    static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
+                                       RoutineDefinitionRuntime::Definitions& routines,
+                                       NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements);
+    int initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* function);
     bool game_initgerman     ();
     bool game_initenglish    ();
-
     int  hlp_random          (int bound);
     bool hlp_isvalidnpc      (std::shared_ptr<daedalus::INpc> npcRef);
     bool hlp_isitem          (std::shared_ptr<daedalus::IItem> itemRef, int instanceSymbol);
@@ -508,6 +518,10 @@ class GameScript final : public GameRules {
     void makeCurrent(Item* w);
 
     GameSession&                                                owner;
+    ItemDefinitionRuntime::Definitions                          itemDefinitions;
+    RoutineDefinitionRuntime::Definitions                       routineDefinitions;
+    NpcDefinitionRuntime::Definitions                           npcDefinitions;
+    PlacementDefinitionRuntime::Definitions                     placementDefinitions;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};

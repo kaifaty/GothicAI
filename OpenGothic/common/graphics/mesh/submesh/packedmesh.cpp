@@ -177,7 +177,8 @@ void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices, std::vector<Verte
                                 const std::vector<asset::Vec3>& vboList,
                                 const std::vector<asset::MeshWedge>& wedgeList,
                                 const std::vector<SkeletalData>* skeletal,
-                                const std::vector<SkinRest>* rest) {
+                                const std::vector<SkinRest>* rest,
+                                const std::vector<uint32_t>* colors) {
   if(indSz==0)
     return;
 
@@ -212,7 +213,7 @@ void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices, std::vector<Verte
       vx.norm[2] = v.normal.z;
       vx.uv[0]   = v.texture.x;
       vx.uv[1]   = v.texture.y;
-      vx.color    = 0xFFFFFFFF;
+      vx.color    = colors!=nullptr ? (*colors)[vert[i].second] : 0xFFFFFFFF;
       vertices[vboSz+i]   = vx;
       if(verticesId!=nullptr)
         (*verticesId)[vboSz+i] = vert[i].first;
@@ -457,7 +458,8 @@ PackedMesh::PackedMesh(const asset::WorldMesh& mesh, std::span<const uint32_t> t
   measureTexels();
   }
 
-PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest) {
+PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest,
+                       const std::vector<std::vector<uint32_t>>* colors) {
   LoadProbe::Vobs::Scope probe("mesh_pack");
   subMeshes.resize(mesh.sub_meshes.size());
   /* NOTE: some mods do have corrupted content description,
@@ -470,7 +472,7 @@ PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explici
   mBbox[1] = Vec3(bbox.max.x,bbox.max.y,bbox.max.z);
   }
 
-  packMeshletsObj(mesh,type,nullptr);
+  packMeshletsObj(mesh,type,nullptr,nullptr,colors);
   measureTexels();
   // Native MRM keeps its historical alpha heuristics. GLB declares OPAQUE or
   // MASK explicitly, including when both occur in one mesh.
@@ -872,7 +874,8 @@ void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh, std::span<const u
 
 void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
                                  const std::vector<SkeletalData>* skeletal,
-                                 const std::vector<SkinRest>* rest) {
+                                 const std::vector<SkinRest>* rest,
+                                 const std::vector<std::vector<uint32_t>>* colors) {
   auto* vId = (type==PK_VisualMorph) ? &verticesId : nullptr;
 
   size_t maxTri = 0;
@@ -901,9 +904,10 @@ void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
     for(size_t i=0; i<meshlets.size(); ++i)
       meshlets[i].updateBounds(mesh);
 
+    const auto* color = colors!=nullptr && mId<colors->size() && (*colors)[mId].size()==sm.wedges.size() ? &(*colors)[mId] : nullptr;
     pack.iboOffset = indices.size();
     for(auto& i:meshlets)
-      i.flush(vertices,verticesA,indices,indices8,vId,mesh.positions,sm.wedges,skeletal,rest);
+      i.flush(vertices,verticesA,indices,indices8,vId,mesh.positions,sm.wedges,skeletal,rest,color);
     pack.iboLength = indices.size() - pack.iboOffset;
 
     //dbgUtilization(meshlets);

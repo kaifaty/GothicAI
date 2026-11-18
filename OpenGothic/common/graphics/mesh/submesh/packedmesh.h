@@ -59,7 +59,10 @@ class PackedMesh {
     bool                  isUsingAlphaTest = true;
     float                 strandWidth      = 0;    // strands (groommesh.cpp): the mean width of a hair, cm; 0: not strands
 
-    PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest = false);
+    // colors: the vertex colour of each wedge of each sub-mesh (gltfmeshcolor.h); without them, and for a list that
+    // is not of the sub-mesh's size, the vertices are drawn with ones
+    PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest = false,
+               const std::vector<std::vector<uint32_t>>* colors = nullptr);
     PackedMesh(const asset::WorldMesh& mesh, PkgType type);
     // Triangle IDs address the unchanged source polygon arrays. Materials and
     // vertex/feature IDs remain global to mesh, including unused materials.
@@ -121,7 +124,8 @@ class PackedMesh {
                     std::vector<uint32_t>* verticesId, const std::vector<asset::Vec3>& vbo,
                     const std::vector<asset::MeshWedge>& wedgeList,
                     const std::vector<SkeletalData>* skeletal,
-                    const std::vector<SkinRest>* rest);
+                    const std::vector<SkinRest>* rest,
+                    const std::vector<uint32_t>* colors = nullptr);
       bool    validate() const;
 
       bool    insert(const Vert& a, const Vert& b, const Vert& c);
@@ -146,7 +150,8 @@ class PackedMesh {
                           std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
     void   packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
                            const std::vector<SkeletalData>* skeletal,
-                           const std::vector<SkinRest>* rest = nullptr);
+                           const std::vector<SkinRest>* rest = nullptr,
+                           const std::vector<std::vector<uint32_t>>* colors = nullptr);
 
     std::vector<Meshlet> buildMeshlets(const asset::WorldMesh* mesh, const asset::SubMesh* proto_mesh,
                                        PrimitiveHeap& heap, std::vector<bool>& used,

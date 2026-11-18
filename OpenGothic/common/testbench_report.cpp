@@ -107,7 +107,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",lip_tone,br_w,br_acc,br_moves,ls_w,ls_nods,ls_faces,vf_w,vf_emo");
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
   std::fprintf(bench.csv,",b_pitch,b_roll,b_twist,b_head,b_hits");
-  std::fprintf(bench.csv,",rc_press,rc_warn,rc_halt,rc_wl,rc_wr,rc_pl,rc_pr,rc_gapl,rc_gapr,rc_slipl,rc_slipr,rc_elbl,rc_elbr,rc_wrl,rc_wrr,rc_arm,rc_curl0,rc_curl1");
+  std::fprintf(bench.csv,",rc_press,rc_warn,rc_stop,rc_halt,rc_wl,rc_wr,rc_pl,rc_pr,rc_gapl,rc_gapr,rc_slipl,rc_slipr,rc_elbl,rc_elbr,rc_wrl,rc_wrr,rc_arm,rc_curl0,rc_curl1");
   std::fprintf(bench.csv,",hp_player,hp_subject");
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
   std::fprintf(bench.csv,",ai_on,ai_want,ai_sigma,ai_errx,ai_erry,ai_lead,ai_pv,ai_ps");
@@ -656,8 +656,8 @@ void writeRow(Npc& pl) {
     // the hands to a wall and the stand of a body pressed into it (graphics/mesh/reach, game/reachsignal): the hero's
     const auto& rc   = Reach::playerProbe;
     const auto  wall = pl.wallReach();
-    std::fprintf(bench.csv,",%.3f,%d,%.3f,%.3f,%.3f,%d,%d,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
-                 wall.press,wall.warn ? 1 : 0,pl.haltShown(),
+    std::fprintf(bench.csv,",%.3f,%d,%d,%.3f,%.3f,%.3f,%d,%d,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
+                 wall.press,wall.warn ? 1 : 0,wall.stop ? 1 : 0,pl.haltShown(),
                  rc.weight[0],rc.weight[1],rc.planted[0] ? 1 : 0,rc.planted[1] ? 1 : 0,
                  rc.gap[0],rc.gap[1],rc.slip[0],rc.slip[1],rc.elbow[0],rc.elbow[1],rc.wrist[0],rc.wrist[1],rc.armLength,rc.curl[0],rc.curl[1]);
   }

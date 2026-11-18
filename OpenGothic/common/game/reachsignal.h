@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // What a body running at an obstacle shows before and after the bump (reports/physics/2026-11-15-reach-wall):
@@ -49,6 +50,27 @@ namespace ReachSignal {
     float timeToHit = -1;    // s, -1: nothing ahead
     float closing   = 0;     // cm/s into the surface ahead
     };
+
+  // The wall stop (GAME wall_stop): the hero held nearly head on by a wall that stands flat to both sides of the
+  // body asks only the way into it - he stands instead of creeping along the wall with the key held. Further off
+  // head on, at a door's jamb, a corner, a post or a niche he slides as the controller has it.
+  constexpr float StopBegin  = 0.906f; // cosine of 25 degrees off head on: the stop begins
+  constexpr float StopKeep   = 0.866f; // of 30: a stop begun holds on up to here
+  constexpr float FlatReach  = 45.f;   // cm to both sides of the body the wall has to stand: a door a step away is
+                                       // still slid into
+  constexpr float FlatFacing = 0.94f;  // cosine of 20 degrees between the wall there and the one that holds
+  constexpr float FlatStep   = 10.f;   // cm the wall may come nearer or go further between the looks: planks, beams
+  constexpr float FlatRoom   = 25.f;   // cm past the capsule the wall may be at the furthest look
+
+  struct WallLook final {
+    bool  hit    = false; // a wall of the world or of a house, not a door, a thing or a body
+    float facing = 0;     // cosine between its normal and the normal of what holds the body
+    float gap    = 0;     // cm from the body's line to it
+    };
+
+  bool   flatWall   (const WallLook* looks, size_t count, float radius);
+  // `into`: cosine between the asked move and the way into the wall
+  bool   stops      (bool stopping, bool flat, float into);
 
   bool   wantsProbe (const Input& input);
   // cm from the body's axis: the capsule and the way of the warning time, with the room the hold-on needs

@@ -17,6 +17,7 @@ struct Result {
 // Runtime-only own records identify additions without changing the base schema.
 bool isAdded(const asset::VirtualObject& vob);
 const std::string& key(const asset::VirtualObject& vob);
+float upCm(const asset::VirtualObject& vob); // a tree entry's place up the world's vertical from its place in the slot
 // Sorted *.json files commit individually; a rejected file leaves the world untouched.
 Result apply(WorldData::Data& data, const std::filesystem::path& baseWorldDir,
              const std::filesystem::path& worldContentDir, GameHost::ParticleNameCheck particleNames,

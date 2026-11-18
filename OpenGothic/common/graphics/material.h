@@ -2,12 +2,15 @@
 
 #include <Tempest/Texture2d>
 
+#include <array>
+
 #include "asset/material.h"
 #include "asset/worldtypes.h"
 #include "records/definitions.h"
-#include "graphics/foliagewind.h"
+#include "graphics/foliagetree.h"
 #include "graphics/grass/grassground.h"
 #include "graphics/grass/grassparams.h"
+#include "graphics/grass/grasstrack.h"
 #include "graphics/windowglow.h"
 
 class Material final {
@@ -26,6 +29,15 @@ class Material final {
       Multiply2,
       Transparent,
       AdditiveLight,
+      };
+
+    // "two_sided" of a record: an object's mesh is drawn, casts its shadow and is seen by rays from both sides
+    // (reports/engine/2026-11-16-modern-trees/two-sided.md). Same: the side away from the winding is lit by the
+    // vertex normal as it is, as the second copy of a card listed twice was; Flip: by the normal turned to the eye
+    enum class TwoSided : uint8_t {
+      Off,
+      Same,
+      Flip,
       };
 
     enum class Antitile : uint8_t {
@@ -50,17 +62,28 @@ class Material final {
     // materials.json "ground" of a texture with `grass`: the meadow's two layers by world position (grass/
     // grassground.h, shader/grass/grass_layers.glsl); "verge" of the ground beside it: the same maps and numbers of
     // the grass it is the verge of, and that grass's packed record
+    // "ground.border": the earth of the meadow's notches by a road; "track" of a road (grass/grasstrack.h,
+    // shader/grass/grass_track.glsl): its crust and loose earth by world position, the ribbon's three maps (tint,
+    // normal, mask) in the mesh's uv
     struct Layers final {
+      using Maps = std::array<const Tempest::Texture2d*,3>;
       const Tempest::Texture2d* sward[3] = {}; // albedo, normal, ORM with the height in its blue
       const Tempest::Texture2d* earth[3] = {};
+      Maps                      border = {};
+      Maps                      crust  = {}, loose = {}, ribbon = {};
       Grass::Ground             ground;
       Grass::Verge              verge;
+      Grass::Track              track;
+      float                     borderTile = 0.f; // metres per repeat; 0: the meadow's own earth at the border
       uint32_t                  grassBits = 0;
       bool  operator==(const Layers&) const = default;
       bool  present() const {
         return ground.on && sward[0]!=nullptr && sward[1]!=nullptr && sward[2]!=nullptr &&
                earth[0]!=nullptr && earth[1]!=nullptr && earth[2]!=nullptr;
         }
+      bool  hasBorder() const { return borderTile>0.f && all(border); }
+      bool  hasTrack() const { return track.on && all(crust) && all(loose) && all(ribbon); }
+      static bool all(const Maps& m) { return m[0]!=nullptr && m[1]!=nullptr && m[2]!=nullptr; }
       };
 
     const Tempest::Texture2d* tex=nullptr;
@@ -86,6 +109,7 @@ class Material final {
     bool                      strand           = false; // strands as ribbons (materials.json): BK_STRAND
     bool                      eye              = false; // an eyeball (materials.json): BK_EYE
     FoliageWind::Params       foliage;                 // leaves in the wind (materials.json): BK_FOLIAGE
+    TwoSided                  twoSided         = TwoSided::Off; // both sides (materials.json): BK_TWO_SIDED, BK_TWO_SIDED_FLIP
     Grass::Params             grass;                   // a ground that grows grass (materials.json): BK_GRASS
     Layers                    layers;                  // its own two layers, or a verge's (materials.json): BK_GROUND, BK_VERGE
     WindowGlow::Params        window;                  // the glow is a window's (materials.json): BK_WINDOW

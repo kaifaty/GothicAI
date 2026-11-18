@@ -1,5 +1,6 @@
 #include "worldcollisionmesh.h"
 
+#include "worldchunkcatalogue.h"
 #include "worldchunkcook.h"
 #include "worldchunkcookedsource.h"
 #include "worldclothbundle.h"
@@ -28,7 +29,7 @@ std::string cellName(ChunkId id) {
 
 // The cooked world of the load: world.json read again, the index the load read, every cell's .wcb beside the GLB
 // the load read, each checked as readCookedWorld checks it. file names what is being read, for the log line.
-CookedWorld readLoaded(const CookedSet& set, const CookedIndex& index, std::string& file) {
+CookedWorld readLoaded(const CookedSet& set, const CookedIndex& index, const WorldCatalogue* catalogue, std::string& file) {
   CookedWorld world;
   world.dir = set.dir;
   file = (set.dir/"world.json").string();
@@ -41,14 +42,26 @@ CookedWorld readLoaded(const CookedSet& set, const CookedIndex& index, std::stri
   world.cells.reserve(world.manifest.cells.size());
   for(size_t i=0;i<world.manifest.cells.size();++i) {
     const auto& name = world.manifest.cells[i].drawFile();
-    const auto path = cookedChunkPath(set.dir,set.overrideDir,name);
+    const auto glb = chunkGlbPath(set.dir,set.overrideDir,name);
+    auto path = glb;
+    path.replace_extension(".wcb");
     file = path.string();
-    std::error_code error;
-    if(!fs::is_regular_file(path,error))
-      fail("the cell's .wcb is missing");
-    auto chunk = CookedChunk::read(path);
-    checkCookedCell(chunk,i,world.manifest,world.index,chunkGlbPath(set.dir,set.overrideDir,name));
-    world.cells.push_back(std::move(chunk));
+    try {
+      std::error_code error;
+      if(!fs::is_regular_file(path,error))
+        fail("the cell's .wcb is missing");
+      auto chunk = CookedChunk::read(path);
+      checkCookedCell(chunk,i,world.manifest,world.index,glb);
+      world.cells.push_back(std::move(chunk));
+      }
+    catch(const std::exception&) {
+      if(catalogue==nullptr || !catalogue->canRecoverIndexedChunk())
+        throw;
+      auto chunk = recoverIndexedChunk(glb,world.index,i,world.manifest.materials);
+      checkCookedCell(chunk,i,world.manifest,world.index,glb);
+      world.cells.push_back(std::move(chunk));
+      Tempest::Log::i("[world-collision] ",file," not used, recovered the cell from its GLB");
+      }
     }
   return world;
   }
@@ -96,7 +109,7 @@ WorldCollisionInput worldCollisionInput(const ChunkTable& table, bool clothBundl
     checkClothBundle(bundle,*set);
     if(!clothBundle)
       fail("WorldCloth::extract did not take the bundle for this load");
-    const auto world = readLoaded(*set,*index,file);
+    const auto world = readLoaded(*set,*index,table.source->catalogue(),file);
     file = set->index.string();
     // What extract left of each cell in the loaded table is what the bundle leaves of its .wcb.
     if(table.entries.size()!=world.cells.size())
@@ -134,6 +147,12 @@ const asset::WorldMesh& WorldCollisionSource::operator()() {
   ++count;
   if(!built)
     built = worldCollisionInput(table,clothBundle);
+  // A catalogue start has no stitched landscape: the world is read and stitched now, as the old start had it.
+  if(!built->mesh && table.source && table.source->catalogue()) {
+    if(!stitched)
+      stitched = table.source->catalogue()->stitchedLandscape();
+    return *stitched;
+    }
   return built->select(landscape);
   }
 

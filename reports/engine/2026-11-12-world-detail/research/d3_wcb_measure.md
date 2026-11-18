@@ -431,3 +431,54 @@ The CPU part adds 21 % to the file at ×1 and 80 % at ×16; the shapes grow 4.2 
 | frames, whole route: FPS, p99 | 103.2, 12.3 ms | 105.5, 12.2 ms |
 
 On `main` a warm start of the same copy took 221.1 ms in `physics_static` (task 5's table, `read_ms=97.1` after packing). The cache file the cold run wrote has the contract's size, 38 174 237 bytes. `world_end` also counts the other derived caches the cold run fills (way heights, census, pipelines). The read takes 59 ms in the game against 41 ms in the contract: the game's BVH thread reads while the view packs on another thread. One run each, no noise estimate. An earlier warm run on a busy machine (load average 23, other sessions' builds; class `quick`, `TIMEOUT` 300) reached the same `input=cache` mark and way heights, then was killed in the first route at frame 11 175; the pair above replaced that run on a quiet machine.
+
+## Task 8: the catalogue start (2026-11-16)
+
+With streaming on and a cooked set the world load no longer goes through `readWorldChunks` (`common/worldchunkcatalogue.*`): the chunk table, the material table, the materials the streaming view decodes first, the landscape's bounds and world cloth come from the index and the world cloth bundle, and a cell's geometry is read from its `.wcb` only when the residency asks for it (`ChunkMeshSource::readLandscape`: the cell's triangles ordered by the index's ranks, the bundle's exclusions left out). What the stitched mesh used to give as a side effect and depends on the cloth rules — each cell's triangle count and bounds after cloth, the landscape's bounds (`PackedMesh::landscapeBbox`) and its materials in first use — went into the bundle, version 2 (the index is unchanged: it stays a function of the set alone). Bytes of the bundle: 205 240 at ×1 (version 1: 187 979) and 2 377 816 at ×16 (2 358 628): 32 more per cell, 24 in the header, 4 per landscape material.
+
+### Machine and commands
+
+Ryzen as above; branch `codex/landscape-d3-task8` at `b7ff75044`; the game of `scripts/bench.sh` (`RelWithDebInfo`), `scripts/loadprobe.sh ryzen orig:NEWWORLD:par` (class `quiet`, `OPENGOTHIC_CONTENT=` and `OPENGOTHIC_TEXTURES=` empty), one run per cell of the table. Base `693b9370…9cbc`; the copies are cooked as `stress-base` writes them, with this branch's converter:
+
+```
+content-convert stress-base $B $T/x1  --subdivide 0 --meshes 0      # 8.6 s, peak RSS 0.30 GB
+content-convert stress-base $B $T/w16 --subdivide 2 --meshes 0      # 40.7 s, peak RSS 4.16 GB
+OPENGOTHIC_BASE=$T/<set> OPENGOTHIC_BASE_CACHE=$T/<set>-<before|after>.cache [OPENGOTHIC_WORLD_CATALOGUE=0] \
+  OUT=<fresh> scripts/loadprobe.sh ryzen orig:NEWWORLD:par
+```
+
+"Before" is the same build with `OPENGOTHIC_WORLD_CATALOGUE=0`: the stitched start of tasks 3–7 (cells from `.wcb`, bundle and collision input from the cooked set). "Cold" is a fresh `OPENGOTHIC_BASE_CACHE` (no collision cache, way heights or pipelines), "warm" the second run on it; the page cache was warm in every run except the very first (×1 after, cold), which is repeated below — its first run gave `landscape_view` 2 217 ms against 281 ms on the repeat, the rest within a few percent. ×16 after, warm, is the build with the merged runs (`b7ff75044`); the other runs sorted each cell, which cost ×16's ring 100.2 ms instead of 89.8 ms in `read_ms` and touches no other mark.
+
+### Load probe, `NEWWORLD`
+
+Milliseconds of each mark (`stage_ms`); `world_end` is the whole `World` constructor.
+
+| Mark | ×1 before cold | ×1 after cold | ×1 before warm | ×1 after warm | ×16 before cold | ×16 after cold | ×16 before warm | ×16 after warm |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `mesh_chunks_read` | 628.2 | **3.9** | 528.3 | **3.1** | 8 218.9 | **4.0** | 8 093.3 | **6.1** |
+| `world_read_total` (with `world_data_read`) | 958.3 | 332.0 | 850.7 | 326.6 | 8 548.7 | 331.7 | 8 414.5 | 325.7 |
+| `physics_static` | 748.6 | 805.9 | 53.3 | 54.5 | 4 873.4 | 4 696.2 | 302.8 | 345.7 |
+| of it, the collision input | chunks 55.8 | chunks 119.0 | cache | cache | chunks 642.0 | chunks 448.0 | cache | cache |
+| `cloth_surfaces` | 30.8 | 32.3 | 29.7 | 29.4 | 52.5 | 50.8 | 48.3 | 47.6 |
+| `landscape_pack` (Near 5 × 5) | 34.7 | 36.6 | 34.4 | 35.7 | 410.3 | 437.1 | 416.3 | 420.8 |
+| of it, reading the 25 cells (`read_ms`) | 7.4 | 9.1 | 7.3 | 8.6 | 52.1 | 88.6 | 72.5 | 89.8 |
+| `landscape_view` | 205.6 | 280.6 | 141.8 | 139.6 | 630.2 | 594.4 | 625.0 | 666.5 |
+| `world_end` | 4 091.0 | 3 550.7 | 1 799.9 | 1 263.8 | 16 188.4 | 7 661.4 | 9 979.9 | **1 608.7** |
+| RSS at `world_end`, MB | 943.8 | 925.3 | 849.4 | 841.0 | 1 941.7 | 1 639.9 | 1 356.9 | 1 065.2 |
+| first frame, from session start, ms | 6 430 | 6 114 | 3 964 | 3 477 | 19 059 | 10 613 | 12 555 | 4 373 |
+
+**The goal.** Reading world chunks at load on ×16, warm: the start 6.1 ms plus the ring's 25 cells 89.8 ms, about 96 ms, against `mesh_chunks_read` 528.3 ms plus 7.3 ms of the ring on ×1 before (the stress report's 544 ms). The scout's candidate 8 330 → ≤ 544 ms is met with room.
+
+**Where the time went, not moved.** Every mark other than `mesh_chunks_read` stays within a run's noise or below, except three: the ring's `read_ms` grows by 17 ms at ×16 (each cell's stitched order is now computed from its `.wcb`: ranks and a merge of the GLB's ascending runs; before it came from the table's ownership arrays, which the stitching built); the cold collision input grows at ×1 (56 → 119 ms) and falls at ×16 (642 → 448 ms) — the input reads every `.wcb` in both starts, and in the catalogue start it runs at once beside the view's material decoding instead of after the stitching; and ×16's warm `physics_static` reads the 236 MB collision cache in 346 against 303 ms. The rest of `world_read_total` is `world_data_read` (vobs, waynet, sectors: about 300 ms), the same in both starts. The view (`landscape_view`, its material decode) and the ring packing (`landscape_pack` less `read_ms`) are the same. Memory at the end of the load is 292 MB lower at ×16 warm: no stitched mesh and no ownership arrays.
+
+### The contract and the game
+
+`gothic-world-catalogue-contract` (check build): on `NEWWORLD` of the base cooked in a scratch copy the catalogue start takes 7.2–7.3 ms against 521–569 ms for `readWorldChunks` with `WorldCloth::extract` (two runs). In the game, the ×1 copy on Ryzen:
+
+| Run | Result |
+|---|---|
+| `SCENARIO=load_rewind scripts/ryzen.sh e2e` | exit 0, 48 s; both world loads (new game and the save) logged `[world-catalogue] …: 403 cells` |
+| `SCENARIO=check_walk scripts/ryzen.sh e2e` | exit 0, 132 s, catalogue start |
+| `scripts/bench.sh streaming-flythrough` (`BENCH_HOST=ryzen`, `RYZEN_BENCH_CLASS=quiet`, own cold cache) | exit 0, 201 s; `mesh_chunks_read` 3.2 ms `start=catalogue`; `[world-chunks] cooked_reads=403 glb_reads=0`, 139.3 ms; whole route 18 463 frames, 116.4 FPS, p99 11.0 ms, max 35.7 ms |
+
+The look was not assessed: the contract compares every cell's triangles, ids and the packing's materials field by field.

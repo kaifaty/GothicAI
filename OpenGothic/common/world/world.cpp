@@ -10,8 +10,9 @@
 #include <cstdlib>
 #include <string_view>
 #include <Tempest/Painter>
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/landscapestart.h"
 #include "graphics/shaders.h"
 #include "commandline.h"
 #include "camera.h"
@@ -130,7 +131,7 @@ const char* materialTag(asset::MaterialGroup src) {
   }
 
 World::World(GameSession& game, GameRules& rules, std::string_view file, bool startup, std::function<void(int)> loadProgress)
-  :wname(std::move(file)), game(game), gameRules(&rules), wsound(game,*this), wobj(*this) {
+  :wname(std::move(file)), game(game), gameRules(&rules), guildKinds(rules.guildTraits()), wsound(game,*this), wobj(*this) {
   const auto loadStarted = std::chrono::steady_clock::now();
   Resources::configureTextures(Settings::getS("GAME","texture_budget_mb"),Settings::getS("GAME","texture_far_skip_mips"),
                                Settings::getS("GAME","texture_target_mb"),Settings::getS("GAME","texture_screen_mips"),
@@ -176,22 +177,8 @@ World::World(GameSession& game, GameRules& rules, std::string_view file, bool st
         const auto t = LoadProbe::now();
         std::unique_ptr<WorldView> view;
         if(streamLandscape) {
-          const auto map=PackedMesh::landscapeMaterialMap(worldMesh);
-          {
-          Resources::TextureLoadScope textureLoadScope(true);
-          std::vector<bool> loaded(worldMesh.materials.size());
-          // Decode initially used materials before publishing landscape chunks.
-          for(auto id:worldMesh.polygons.material_indices) {
-            id=map[id];
-            if(!loaded[id]) {
-              Resources::loadMaterial(worldMesh.materials[id],true);
-              loaded[id]=true;
-              }
-            }
-          }
-          // worldMesh.bbox is zero for compiled worlds; the sky and fog take the
-          // observer's height from the lowest landscape vertex (SceneGlobals::setWorld).
-          view=std::make_unique<WorldView>(PackedMesh::landscapeBbox(worldMesh),wname);
+          // Initially used materials are decoded before publishing landscape chunks.
+          view=streamingWorldView(worldMesh,chunks,wname);
           }
         else {
           PackedMesh vmesh(worldMesh,PackedMesh::PK_VisualLnd);
@@ -427,7 +414,7 @@ void World::load(Serialize &fin) {
   fin.read(sz);
   std::string tag;
   for(size_t i=0;i<sz;++i) {
-    int32_t guild=GIL_NONE;
+    int32_t guild=GuildNone;
     fin.read(tag,guild);
     if(auto p = portalAt(tag))
       p->guild = guild;
@@ -609,7 +596,7 @@ std::vector<World::PhysicsTrace> World::physicsTraces(const Tempest::Vec3* viewe
     for(size_t i=0;i<wobj.npcCount();++i) {
       const auto& npc   = wobj.npc(i);
       const auto& state = npc.bodyTrace();
-      if(state.id==0 || !BodyTraces::isTrace(true,npc.isDead(),npc.isPlayer(),int32_t(npc.guild()),GIL_SEPERATOR_HUM))
+      if(state.id==0 || !BodyTraces::isTrace(true,npc.isDead(),npc.isPlayer(),npc.isHuman()))
         continue;
       // The viewer's own range test (npc_view: distance to the trace position) before the
       // bones and strings: the same rows, built only for bodies the viewer can get.
@@ -685,7 +672,7 @@ bool World::bodyTraceInWorld(uint32_t bodyTraceId) const {
   for(size_t i=0;i<wobj.npcCount();++i) {
     const auto& npc = wobj.npc(i);
     if(npc.bodyTrace().id==bodyTraceId)
-      return BodyTraces::isTrace(true,npc.isDead(),npc.isPlayer(),int32_t(npc.guild()),GIL_SEPERATOR_HUM);
+      return BodyTraces::isTrace(true,npc.isDead(),npc.isPlayer(),npc.isHuman());
     }
   return false;
   }
@@ -762,7 +749,7 @@ BodyTraces::Body World::bodyRule(const Npc& body, const Npc* hero) const {
   rule.now          = gameMinute();
   rule.heroDistance = hero!=nullptr ? (body.position()-hero->position()).length() : 0.f;
   rule.missionItems = body.inventory().hasMissionItems();
-  rule.dragon       = body.guild()==GIL_DRAGON;
+  rule.dragon       = guildTraits().has(body.guild(),GuildTraits::Dragon);
   rule.immortal     = body.isImmortal();
   rule.storyType    = isStoryNpcType(int32_t(body.handlePtr()->type));
   return rule;
@@ -2114,10 +2101,10 @@ void World::assignRoomToGuild(std::string_view r, int32_t guildId) {
 int32_t World::guildOfRoom(const Tempest::Vec3& pos) {
   std::string_view tg = roomAt(pos);
   if(auto room=portalAt(tg)) {
-    if(room->guild==GIL_PUBLIC) //FIXME: proper portal implementation
+    if(room->guild==int32_t(guildTraits().publicGuild)) //FIXME: proper portal implementation
       return room->guild;
     }
-  return GIL_NONE;
+  return int32_t(guildTraits().none);
   }
 
 int32_t World::guildOfRoom(std::string_view portalName) {
@@ -2137,7 +2124,7 @@ int32_t World::guildOfRoom(std::string_view portalName) {
     if(s==name)
       return bsp.sectorsData[i].guild;
     }
-  return GIL_NONE;
+  return int32_t(guildTraits().none);
   }
 
 

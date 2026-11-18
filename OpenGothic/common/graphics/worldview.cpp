@@ -19,6 +19,9 @@
 #include "loadprobe.h"
 #include "frameprofile.h"
 #include "utils/workers.h"
+#include "gameservices.h"
+#include "physics/dynamicworld.h"
+#include "physics/worldwind.h"
 
 using namespace Tempest;
 
@@ -202,22 +205,18 @@ struct WorldView::LandscapeStreaming {
   bool firstUpdate=true;
   double preloadMs=0;
   double initialPackMs=0;
+  double initialReadMs=0; // the Near cells' reads within initialPackMs
   double initialUploadMs=0;
   uint64_t subscription=0;
   std::thread worker;
 
   LandscapeStreaming(WorldView& view, asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs)
     :view(view),residency(residency),source(residency.table().source),
-     triangles(residency.table().entries.size()),materials(PackedMesh::landscapeMaterialMap(mesh)),
-     chunks(triangles.size()),preloadMs(preloadMs) {
+     triangles(chunkSourceLists(residency.table())),materials(PackedMesh::landscapeMaterialMap(mesh)),
+     chunks(residency.table().entries.size()),preloadMs(preloadMs) {
     if(!source)
       throw std::runtime_error("Landscape streaming requires a file-backed chunk source");
-    const auto& table=residency.table();
-    for(size_t i=0;i<triangles.size();++i)
-      triangles[i].reserve(table.entries[i].triangleCount);
-    for(size_t i=0;i<table.triangleChunks.size();++i)
-      triangles.at(table.triangleChunks[i]).push_back(table.triangleSources.at(i));
-    // Physics and cloth have consumed the stitched mesh. Repacking reads only
+    // Physics and cloth have consumed the stitched mesh (a catalogue start has none). Repacking reads only
     // the selected chunk; no dense world geometry survives on the CPU.
     releasedSourceBytes=mesh.vertices.capacity()*sizeof(mesh.vertices[0])+
                         mesh.features.capacity()*sizeof(mesh.features[0])+
@@ -267,7 +266,7 @@ struct WorldView::LandscapeStreaming {
               }
             else {
               try {
-                packed=pack(i);
+                packed=pack(i,false,firstUpdate ? &initialReadMs : nullptr);
                 }
               catch(...) {
                 packed=pack(i,true);
@@ -400,8 +399,11 @@ struct WorldView::LandscapeStreaming {
       }
     }
 
-  std::unique_ptr<PackedMesh> pack(size_t i, bool currentFile=false) const {
-    auto chunk=source->read(i,triangles[i],currentFile);
+  std::unique_ptr<PackedMesh> pack(size_t i, bool currentFile=false, double* readMs=nullptr) const {
+    const auto t=ChunkResidency::Clock::now();
+    auto chunk=source->catalogue() ? source->readLandscape(i,currentFile) : source->read(i,triangles[i],currentFile);
+    if(readMs!=nullptr)
+      *readMs+=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
     if(view.grass)
       view.grass->addChunk(residency.table().entries[i].id,chunk.mesh);
     std::vector<uint32_t> selected(chunk.mesh.polygons.material_indices.size());
@@ -483,7 +485,7 @@ struct WorldView::LandscapeStreaming {
         size_t sourceBytes=source->memoryBytes()+materials.capacity()*sizeof(materials[0]);
         for(const auto& list:triangles)
           sourceBytes+=list.capacity()*sizeof(list[0]);
-        LoadProbe::mark("landscape_pack",initialPackMs,"near_chunks="+std::to_string(residency.stats().near));
+        LoadProbe::mark("landscape_pack",initialPackMs,"near_chunks="+std::to_string(residency.stats().near)+" read_ms="+std::to_string(initialReadMs));
         LoadProbe::mark("landscape_view",preloadMs+initialPackMs+initialUploadMs,
                         "streaming=1 published="+std::to_string(residency.stats().published)+
                         " source_geometry_bytes="+std::to_string(sourceBytes)+
@@ -504,6 +506,21 @@ WorldView::WorldView(std::pair<Vec3,Vec3> bounds, std::string_view skyPreset)
     : aabb(bounds), gSky(skyPreset), gLights(sGlobal), houses(Resources::worldOverrideDir(skyPreset)),
     visuals(sGlobal,bounds), objGroup(visuals), pfxGroup(*this,sGlobal,visuals) {
   pfxGroup.resetTicks();
+  // how open a fire's place is to the wind (particles.d "wind"): none under a roof within 30 m, a third behind a
+  // wall within 6 m upwind. Static geometry only; without a physics world every place is open
+  pfxGroup.setShelter([](const Vec3& at, const Vec3& wind) {
+    const auto* physics = GameServices::inst().physicsWorld();
+    if(physics==nullptr)
+      return 1.f;
+    const Vec3 from = at+Vec3(0,30,0);
+    if(physics->rayStatic(from, from+Vec3(0,3000,0)).hasCol)
+      return 0.f;
+    const Vec3  flat = Vec3(wind.x,0,wind.z);
+    const float len  = flat.length();
+    if(len>0 && physics->rayStatic(from, from-flat*(600.f/len)).hasCol)
+      return 0.35f;
+    return 1.f;
+    });
   sGlobal.setHouses(houses.houses());
   // A scene without a single lamp still binds the (empty) light buffer: VSM visibility reads it unconditionally
   sGlobal.lights = &gLights.lightsSsbo();
@@ -639,6 +656,8 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   houses.tick(gSky.dayHour());
 
   pfxGroup.setViewerPos(camera.originLwc());
+  // the same wind as the cloth's and the vegetation's, m/s -> cm/ms
+  pfxGroup.setWind(WorldWind::sample(tickCount, sGlobal.windPeriod, sGlobal.zWindEnabled, sGlobal.windScale)*0.1f);
   pfxGroup.tick(tickCount);
   gLights.tick(tickCount);
   sGlobal.setTime(tickCount);
@@ -757,9 +776,14 @@ void WorldView::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   }
 
 void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  // The blades go first: the ground under them then fails the depth test before its layers are shaded
+  // (reports/engine/2026-11-17-grass-cost). Their own marker gives them a row of their own in the pass timings
+  if(grass) {
+    cmd.setDebugMarker("Grass");
+    grass->draw(cmd,fId);
+    cmd.setDebugMarker("GBuffer");
+    }
   visuals.drawGBuffer(cmd);
-  if(grass)
-    grass->draw(cmd);
   pfxGroup.drawGBuffer(cmd, fId);
   }
 
@@ -770,6 +794,18 @@ void WorldView::drawWater(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
 void WorldView::drawMultiply(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
   visuals.drawMultiply(cmd);
   pfxGroup.drawMultiply(cmd, fId);
+  }
+
+bool WorldView::hasHaze(uint8_t fId) const {
+  return pfxGroup.hasHaze(fId);
+  }
+
+void WorldView::setHazeImage(const Tempest::Texture2d& frame) {
+  sGlobal.sceneHaze = &frame;
+  }
+
+void WorldView::drawHaze(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  pfxGroup.drawHaze(cmd, fId);
   }
 
 void WorldView::drawTranslucent(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {

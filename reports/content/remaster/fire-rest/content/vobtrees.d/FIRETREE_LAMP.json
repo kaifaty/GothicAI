@@ -1,0 +1,109 @@
+{
+ "format": 1,
+ "add": [
+  {
+   "key": "lamp-flame",
+   "kind": "emitter",
+   "pfx": "OWN_TORCH_FLAME",
+   "position": [
+    0.0,
+    -2.0,
+    0.0
+   ],
+   "yaw_deg": 0,
+   "flicker": {
+    "pulse_hz": 4.5,
+    "jitter_hz": 12,
+    "amount": 0.2,
+    "seed": 41
+   }
+  },
+  {
+   "key": "lamp-flame-a",
+   "kind": "emitter",
+   "pfx": "OWN_TORCH_FLAME_SIDE",
+   "position": [
+    5.0,
+    -10.0,
+    2.0
+   ],
+   "yaw_deg": 0,
+   "flicker": {
+    "pulse_hz": 4.5,
+    "jitter_hz": 12,
+    "amount": 0.2,
+    "seed": 42
+   }
+  },
+  {
+   "key": "lamp-flame-b",
+   "kind": "emitter",
+   "pfx": "OWN_TORCH_FLAME_SIDE",
+   "position": [
+    -4.0,
+    -10.0,
+    -3.0
+   ],
+   "yaw_deg": 0,
+   "flicker": {
+    "pulse_hz": 4.5,
+    "jitter_hz": 12,
+    "amount": 0.2,
+    "seed": 43
+   }
+  },
+  {
+   "key": "lamp-licks",
+   "kind": "emitter",
+   "pfx": "OWN_TORCH_LICKS",
+   "position": [
+    0.0,
+    -22.0,
+    0.0
+   ],
+   "yaw_deg": 0
+  },
+  {
+   "key": "lamp-sparks",
+   "kind": "emitter",
+   "pfx": "OWN_TORCH_SPARKS",
+   "position": [
+    0.0,
+    -15.0,
+    0.0
+   ],
+   "yaw_deg": 0
+  },
+  {
+   "key": "lamp-haze",
+   "kind": "emitter",
+   "pfx": "OWN_TORCH_HAZE",
+   "position": [
+    0.0,
+    20.0,
+    0.0
+   ],
+   "yaw_deg": 0
+  },
+  {
+   "key": "lamp-light",
+   "kind": "light",
+   "position": [
+    0,
+    -85.0,
+    0
+   ],
+   "yaw_deg": 0,
+   "range": 550,
+   "color": [
+    230,
+    84,
+    15
+   ],
+   "near": 8,
+   "flicker_from": "lamp-flame",
+   "jitter_cm": 0.6,
+   "sway_hz": 1.5
+  }
+ ]
+}

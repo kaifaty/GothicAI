@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <Tempest/Matrix4x4>
 #include <Tempest/UniformBuffer>
 
@@ -21,6 +22,9 @@ class PfxObjects final {
     static constexpr const float viewRage = 4000.f;
 
     void       setViewerPos(const Tempest::Vec3& pos);
+    // the world's wind this frame, cm/ms, and how open a place is to it (0..1; nullptr: open) - particles.d "wind"
+    void       setWind(const Tempest::Vec3& wind);
+    void       setShelter(std::function<float(const Tempest::Vec3& at, const Tempest::Vec3& wind)> open);
 
     void       resetTicks();
     void       tick(uint64_t ticks);
@@ -32,6 +36,8 @@ class PfxObjects final {
     void       drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, int layer);
     void       drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void       drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    bool       hasHaze        (uint8_t fId) const;
+    void       drawHaze       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
   private:
     struct SpriteEmitter {
@@ -53,6 +59,8 @@ class PfxObjects final {
     std::vector<SpriteEmitter>    spriteEmit;
 
     Tempest::Vec3                 viewerPos={};
+    Tempest::Vec3                 wind={};
+    std::function<float(const Tempest::Vec3&,const Tempest::Vec3&)> shelter;
     uint64_t                      lastUpdate=0;
     uint64_t                      now=0;  // the world tick of the update: the curl field's clock and the flicker's
 

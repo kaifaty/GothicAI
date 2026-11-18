@@ -62,7 +62,7 @@ class Settings final {
       bool ragdollBrace = true;
       bool bumpReactions = true;
       bool wallReach = true;
-      bool wallStop = false;
+      bool wallStop = true;
 
       bool allowsMonsterCharacterVirtual(bool down, bool flying) const {
         return monsterCharacterVirtual && !down && !flying;

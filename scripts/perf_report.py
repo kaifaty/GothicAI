@@ -7,6 +7,7 @@ import csv
 import json
 import math
 from pathlib import Path
+import re
 import statistics
 import sys
 
@@ -83,8 +84,8 @@ def segment_parts(segment):
     parts = segment.split("/")
     if len(parts) == 2 and parts[0] == "streaming-flythrough" and parts[1] in {"run", "fly"}:
         return tuple(parts)
-    if len(parts) == 2 and parts[0].startswith("perf-") and parts[1] in {
-            "view-1", "view-2", "view-3", "view-4"}:
+    # view-N, or view-N-LABEL: a view measured again under another switch (perf-meadow's `-noroad`)
+    if len(parts) == 2 and parts[0].startswith("perf-") and re.fullmatch(r"view-[1-9][0-9]*(-[a-z0-9]+)?", parts[1]):
         return parts[0][5:], parts[1]
     return None
 
@@ -544,7 +545,7 @@ def build_report(directory):
         view_samples = {}
         repeat_reports = []
         for repeat, views in repeats.items():
-            if place != "streaming-flythrough" and set(views) != {"view-1", "view-2", "view-3", "view-4"}:
+            if place != "streaming-flythrough" and not {"view-1", "view-2", "view-3", "view-4"} <= set(views):
                 warnings.append(f"{place}/{repeat}: expected four views, found {', '.join(sorted(views))}")
             repeat_reports.append({"directory": repeat,
                                    "summary": summarize([sample for rows in views.values() for sample in rows]),

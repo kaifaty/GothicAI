@@ -491,13 +491,17 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   const auto alpha   = (mat.isGhost ? Material::Ghost : mat.alpha);
   const bool trivial = (!mat.hasUvAnimation() && alpha==Material::Solid && t==DrawCommands::Landscape);
 
+  // materials.json "two_sided": an object's mesh without culling in every pass, the same shaders. The world mesh,
+  // skins, morphs and particles are drawn as they were
+  const bool twoSided = (mat.twoSided!=Material::TwoSided::Off && t==DrawCommands::Movable);
+
   for(auto& i:materials) {
-    if(i.alpha==alpha && i.type==t && i.pipelineType==pt && i.bindless==bl && i.trivial==trivial)
+    if(i.alpha==alpha && i.type==t && i.pipelineType==pt && i.bindless==bl && i.trivial==trivial && i.twoSided==twoSided)
       return &i.pipeline;
     }
 
   RenderState state;
-  state.setCullFaceMode(RenderState::CullMode::Front);
+  state.setCullFaceMode(twoSided ? RenderState::CullMode::NoCull : RenderState::CullMode::Front);
   state.setZTestMode   (RenderState::ZTestMode::LEqual);
   //state.setZTestMode   (RenderState::ZTestMode::Less);
 
@@ -507,7 +511,8 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   if(pt==PipelineType::T_Vsm) {
     // state.setZTestMode(RenderState::ZTestMode::Always); //FIXME
     state.setZTestMode(RenderState::ZTestMode::Greater); //FIXME
-    // the mesh shader culls by itself (main.vert, meshShader): the sun's pages as before, a lamp's faces not at all
+    // the mesh shader culls by itself (main.vert, meshShader): the sun's pages as before, a lamp's faces and a
+    // two-sided material not at all
     if(options().doMeshShading && t!=DrawCommands::Pfx &&
        !(mat.isTesselated() && Resources::device().properties().tesselationShader && t==DrawCommands::Landscape))
       state.setCullFaceMode(RenderState::CullMode::NoCull);
@@ -517,7 +522,15 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
     case Material::Solid:
     case Material::AlphaTest:
     case Material::Water:
+      break;
     case Material::Ghost:
+      if(t==DrawCommands::Pfx) {
+        // a haze (particles.d "haze"): the frame shifted, no surface of its own. Blended for the TAA reactive mask:
+        // the colour goes out with alpha 1, the mask with the haze's strength as alpha (main.frag mainGhost)
+        state.setBlendSource  (RenderState::BlendMode::SrcAlpha);
+        state.setBlendDest    (RenderState::BlendMode::OneMinusSrcAlpha);
+        state.setZWriteEnabled(false);
+        }
       break;
     case Material::Transparent:
       state.setBlendSource  (RenderState::BlendMode::SrcAlpha); // premultiply in shader
@@ -658,6 +671,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   b.pipelineType = pt;
   b.bindless     = bl;
   b.trivial      = trivial;
+  b.twoSided     = twoSided;
 
   auto& device = Resources::device();
   if(mat.isTesselated() && device.properties().tesselationShader && t==DrawCommands::Landscape && true) {

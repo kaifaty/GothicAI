@@ -107,6 +107,33 @@ void readMotion(const Json& entry, Motion& motion) {
     motion.hdrEdge=number(member(hdr,"edge"),"hdr.edge",0,1,"0..1");
     require(motion.hdrTo>motion.hdrFrom,"hdr.to: must be over hdr.from");
     }
+  if(entry.HasMember("lean")) {
+    const auto& lean=entry["lean"];
+    require(lean.IsObject(),"lean: expected object");
+    fields(lean,{"rise","max_deg","response","along","grow","grow_from"});
+    motion.leanRise=number(member(lean,"rise"),"lean.rise",0.1,20,"0.1..20");
+    if(lean.HasMember("max_deg"))  motion.leanMaxDeg  =number(lean["max_deg"],"lean.max_deg",0,88,"0..88");
+    if(lean.HasMember("response")) motion.leanResponse=number(lean["response"],"lean.response",0.02,2,"0.02..2");
+    if(lean.HasMember("along"))    motion.leanAlong   =number(lean["along"],"lean.along",0.05,1,"0.05..1");
+    if(lean.HasMember("grow"))     motion.leanGrow    =number(lean["grow"],"lean.grow",0,2,"0..2");
+    if(lean.HasMember("grow_from")) motion.leanGrowFrom=number(lean["grow_from"],"lean.grow_from",0.02,1,"0.02..1");
+    }
+  if(entry.HasMember("inherit")) motion.inherit=number(entry["inherit"],"inherit",0,1,"0..1");
+  if(entry.HasMember("wind"))    motion.wind   =number(entry["wind"],"wind",0,2,"0..2");
+  if(entry.HasMember("plume")) {
+    const auto& plume=entry["plume"];
+    require(plume.IsObject(),"plume: expected object");
+    fields(plume,{"height","rise","wind"});
+    motion.plumeHeight=number(member(plume,"height"),"plume.height",1,500,"1..500");
+    motion.plumeRise  =number(member(plume,"rise"),"plume.rise",0.1,20,"0.1..20");
+    motion.plumeWind  =number(member(plume,"wind"),"plume.wind",0,2,"0..2");
+    }
+  if(entry.HasMember("haze")) {
+    const auto& haze=entry["haze"];
+    fields(haze,{"shift","cell"});
+    motion.hazeShift=number(member(haze,"shift"),"haze.shift",0,10,"0..10");
+    motion.hazeCell =number(member(haze,"cell"),"haze.cell",1,200,"1..200");
+    }
   }
 } // namespace
 
@@ -180,13 +207,21 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
       decltype(result.effects) pending;
       decltype(result.flipbooks) pendingFlipbooks;
       decltype(result.motions) pendingMotions;
+      decltype(result.with) pendingWith;
       for(const auto& entry:effects.GetArray()) {
-        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr"});
+        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze","lean","inherit","wind","plume","replaces","with"});
         const auto name=text(member(entry,"name"));
         require(!name.empty() && std::all_of(name.begin(),name.end(),[](char c) {
           return (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_';
           }),"invalid effect name "+name+": expected [A-Z0-9_]+");
-        require(!hasBase(vm,name),"effect name conflicts with base PFX "+name);
+        // "replaces": the entry takes the place of the game's own effect of this name, wherever it is asked for
+        bool replaces=false;
+        if(entry.HasMember("replaces")) {
+          require(entry["replaces"].IsBool(),"replaces: expected boolean");
+          replaces=entry["replaces"].GetBool();
+          }
+        if(replaces) require(hasBase(vm,name),"replaces: no base PFX "+name);
+        else require(!hasBase(vm,name),"effect name conflicts with base PFX "+name);
         require(result.effects.count(name)==0 && pending.count(name)==0,"duplicate effect "+name);
         const auto baseName=canonicalName(text(member(entry,"base")));
         std::shared_ptr<Def::ParticleEffect> original;
@@ -199,7 +234,7 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
         // a flipbook comes with the entry, or from an own base that has one
         if(entry.HasMember("flipbook")) {
           const auto& fb=entry["flipbook"];
-          fields(fb,{"cols","rows","frames","fps","yaw","steady"});
+          fields(fb,{"cols","rows","frames","fps","yaw","steady","once"});
           auto integer=[&](const char* key) {
             const auto& v=member(fb,key);
             require(v.IsInt(),std::string("flipbook.")+key+": expected integer");
@@ -221,6 +256,11 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
             require(fb["steady"].IsBool(),"flipbook.steady: expected boolean");
             book.steady=fb["steady"].GetBool();
             }
+          if(fb.HasMember("once")) {
+            require(fb["once"].IsBool(),"flipbook.once: expected boolean");
+            book.once=fb["once"].GetBool();
+            }
+          require(!(book.once && book.steady),"flipbook.once: not with steady");
           pendingFlipbooks.emplace(name,book);
           }
         else if(const auto f=pendingFlipbooks.find(baseName); f!=pendingFlipbooks.end())
@@ -237,13 +277,37 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
           require(orientation=="VELO" || orientation=="VELO3D","stretch: needs visOrientation_S VELO or VELO3D");
           }
         require(motion.minPixels==0 || pendingFlipbooks.count(name)==0,"minPixels: not with a flipbook");
+        {
+        const auto book=pendingFlipbooks.find(name);
+        const bool steady=book!=pendingFlipbooks.end() && book->second.steady;
+        require(motion.leanRise==0 || steady,"lean: needs a steady flipbook");
+        require(motion.inherit==0 || !steady,"inherit: not with a steady flipbook");
+        require(motion.stretch==0 || book==pendingFlipbooks.end(),"stretch: not with a flipbook");
+        require(motion.wind==0 || motion.leanRise>0 || (motion.drag>0 && !steady),"wind: needs lean or drag");
+        require(motion.plumeHeight==0 || (motion.wind>0 && !steady),"plume: needs wind, not with a steady flipbook");
+        }
         require(motion.hdrTo==0 || uppercase(definition->vis_alpha_func_s)=="ADD","hdr: needs visAlphaFunc_S ADD");
+        require(motion.hazeShift==0 || (motion.hdrTo==0 && pendingFlipbooks.count(name)==0),"haze: not with hdr or a flipbook");
         if(!motion.empty()) pendingMotions.emplace(name,motion);
+        if(entry.HasMember("with")) {
+          const auto& with=entry["with"];
+          require(with.IsArray() && with.Size()>=1 && with.Size()<=8,"with: expected 1..8 effect names");
+          std::vector<std::string> names;
+          for(const auto& item:with.GetArray()) {
+            const auto other=canonicalName(text(item));
+            require(pending.count(other)!=0 || result.effects.count(other)!=0,"with: unknown own effect "+other);
+            require(pendingWith.count(other)==0 && result.with.count(other)==0,"with: "+other+" brings effects of its own");
+            require(std::find(names.begin(),names.end(),other)==names.end(),"with: duplicate "+other);
+            names.push_back(other);
+            }
+          pendingWith.emplace(name,std::move(names));
+          }
         pending.emplace(name,std::move(definition));
         }
       result.effects.insert(pending.begin(),pending.end());
       result.flipbooks.insert(pendingFlipbooks.begin(),pendingFlipbooks.end());
       result.motions.insert(pendingMotions.begin(),pendingMotions.end());
+      result.with.insert(pendingWith.begin(),pendingWith.end());
       }
     catch(const std::exception& error) { result.errors.push_back(file.string()+": "+error.what()); }
     }

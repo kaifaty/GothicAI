@@ -115,14 +115,31 @@ class ParticleFx final {
     uint8_t       flipFrames = 0;
     float         flipFps    = 0.f;
     bool          flipSteady = false;  // ParticleContent::Flipbook::steady
+    bool          flipOnce   = false;  // ParticleContent::Flipbook::once
+    std::vector<const ParticleFx*> with; // particles.d "with": effects an emitter of this one brings along
     // own motion and look (particles.d "curl", "drag", "stretch", "minPixels"; ParticleContent::Motion)
     PfxMotion::Params motion;
     float         stretchMs = 0.f;  // a velocity-oriented sprite grows by |v|*stretchMs along its path
     float         minPixels = 0.f;  // a smaller sprite is drawn this size on screen, its alpha down by the area
+    // particles.d "lean" of a steady card and "inherit" of a living particle (ParticleContent::Motion)
+    float         leanRise       = 0.f;  // cm/ms; 0: off
+    float         leanMaxTan     = 0.f;
+    float         leanResponseMs = 0.f;
+    float         leanAlong      = 0.75f;
+    float         leanGrowMs     = 0.f;
+    float         leanGrowFrom   = 1.f;
+    float         inherit        = 0.f;
+    float         plumeCm        = 0.f;  // particles.d "plume": cm over the fire; 0: off
+    float         plumeRise      = 0.f;  // cm/ms
+    float         plumeWind      = 0.f;  // the flame's share of the wind over this effect's own
+    float         wind           = 0.f;  // particles.d "wind": the share of the world's wind
     // particles.d "hdr" (ParticleContent::Motion): the night's gain of the emission over a texel's brightness
     float         hdrFrom   = 0.f;
     float         hdrTo     = 0.f;  // 0: off
     float         hdrEdge   = 1.f;
+    // particles.d "haze": the shimmer of hot air, cm; hazeShift 0: off. Such an effect is Material::Ghost
+    float         hazeShift = 0.f;
+    float         hazeCell  = 0.f;
 
     const Tempest::Texture2d* trlTexture = nullptr;
     float         trlFadeSpeed         = 0.f;

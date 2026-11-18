@@ -106,9 +106,10 @@ void LightSource::setEnabled(bool e) {
   enable = e;
   }
 
-void LightSource::setFlicker(const PfxMotion::Flicker& f, float jitterCm) {
+void LightSource::setFlicker(const PfxMotion::Flicker& f, float jitterCm, float swayHz) {
   flicker         = f;
   flickerJitterCm = jitterCm;
+  flickerSwayHz   = swayHz;
   curPos          = pos;
   }
 
@@ -148,7 +149,7 @@ void LightSource::update(uint64_t time) {
     // the world time, without the light's offset: the emitter's particles read the same tick (pfxbucket.cpp)
     const float s = PfxMotion::flicker(flicker, worldTime);
     curClr = clr*s;
-    curPos = pos + PfxMotion::jitter(flicker, worldTime, flickerJitterCm);
+    curPos = pos + PfxMotion::jitter(flicker, worldTime, flickerJitterCm, flickerSwayHz);
     if(PfxMotion::logEnabled())
       Tempest::Log::i("flicker light seed=", flicker.seed, " t=", worldTime, " s=", s);
     }

@@ -97,7 +97,7 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   defaults->set("GAME", "ragdoll_brace",       1); // a knocked-down human braces the fall (S_BRACE_* poses on the motors)
   defaults->set("GAME", "bump_reactions",      1);
   defaults->set("GAME", "wall_reach",          1); // hands to the wall ahead and the stand of a body pressed into it
-  defaults->set("GAME", "wall_stop",           0); // a trial: the hero held nearly head on by a flat wall does not slide along it
+  defaults->set("GAME", "wall_stop",           1); // the hero held nearly head on by a flat wall stands, he does not creep along it
   defaults->set("GAME", "furniture_parts",     1);
   defaults->set("GAME", "physics_noise",       1);
   defaults->set("GAME", "destruction",         1);
@@ -180,9 +180,16 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   // costs ~11 ms GPU indoors on an M1 Pro
 #if defined(__APPLE__)
   defaults->set("INTERNAL",     "vsmLampSoft", 0);
+  defaults->set("INTERNAL",     "lampContact", 0); // graphics/lampcontact.h
+  defaults->set("INTERNAL",     "grassContact", 0); // graphics/grasscontact.h
 #else
   defaults->set("INTERNAL",     "vsmLampSoft", 1);
+  defaults->set("INTERNAL",     "lampContact", 1);
+  defaults->set("INTERNAL",     "grassContact", 1);
 #endif
+
+  defaults->set("INTERNAL",     "giContactAo", 1); // graphics/contactao.h
+  defaults->set("INTERNAL",     "crownLight", 1); // graphics/crownlight.h
 
   defaults->set("VIDEO", "zVidBrightness", 0.5f);
   defaults->set("VIDEO", "zVidContrast",   0.5f);

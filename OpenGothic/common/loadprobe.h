@@ -21,8 +21,11 @@
 #include <Tempest/Texture2d>
 
 #include "resources.h"
+#include "itemloadprobe.h"
+#include "routineloadprobe.h"
+#include "npcloadprobe.h"
+#include "placementloadprobe.h"
 #include <Tempest/LoadProbe>
-
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <malloc/malloc.h>
@@ -539,12 +542,23 @@ inline void countTexture(const Tempest::Texture2d& t, std::chrono::steady_clock:
   Startup::Scope::bytes(Startup::Texture,textureBytes(t));
   texNs    += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-started).count());
   }
-
 // one line per stage: name, stage time, wall time since the first mark, memory, textures so far
 inline void mark(std::string_view stage, double stageMs = -1, std::string_view extra = {}) {
   if(!enabled())
     return;
   const double elapsed = msSince(origin());
+  Routines::mark(stage);
+  Npcs::mark(stage);
+  Placement::mark(stage);
+  if(stage=="session_begin") {
+    Items::constructors=0;
+    Items::constructorNs=0;
+    }
+  char itemLine[224];
+  std::snprintf(itemLine,sizeof(itemLine),"[loadprobe-items] stage=%.*s vm_constructors=%llu vm_ms=%.6f",
+                int(stage.size()),stage.data(),(unsigned long long)Items::constructors.load(),
+                double(Items::constructorNs.load())/1e6);
+  Tempest::Log::i(itemLine);
 #if defined(__APPLE__) || defined(__linux__)
   if(stage=="session_begin" || stage=="change_begin") {
     double load[3]={};

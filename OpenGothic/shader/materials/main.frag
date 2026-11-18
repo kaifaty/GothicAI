@@ -18,6 +18,7 @@
 #include "lighting/shadow_sampling.glsl"
 #include "lighting/tonemapping.glsl"
 #include "lighting/material_brdf.glsl"
+#include "lighting/crown_light.glsl"
 #if defined(MAT_SUN_SHADOW)
 #include "virtual_shadow/vsm_sun_shadow.glsl"
 #endif
@@ -58,11 +59,12 @@ layout(location = 0) out vec4 outColor;
     !defined(GBUFFER) && !defined(WATER)
 #define TAA_REACTIVE
 layout(location = 1) out vec4 outReactive;
-#if (MESH_TYPE==T_PFX) && !defined(GHOST)
+#if (MESH_TYPE==T_PFX)
 layout(push_constant, std430) uniform PushPfx {
   float reactive;    // ParticleFx::taaReactive: 1 for particles, 0 for rain and snow
   float hdrFrom;     // particles.d "hdr" (mainEmissive): the night's gain over a texel's brightness
-  float hdrInvRange; // 1/(to - from); 0: off
+                     // of a haze (GHOST, mainHaze): its largest shift, cm
+  float hdrInvRange; // 1/(to - from); 0: off. Of a haze: one over its noise cell, 1/cm
   float hdrEdge;
   } pushPfx;
 #endif
@@ -119,6 +121,18 @@ float encodeHintBits() {
   }
 
 #if defined(GBUFFER)
+// The vertex normal of the side the pixel shows. A material of two sides (materials.json "two_sided": "flip") turns
+// it to the eye on the side away from the winding: Tempest's front face is clockwise and the pipelines cull it, so
+// the side every material shows is the back one, and the other side is gl_FrontFacing. A fragment shader is not told
+// MESH_TYPE: the bit is set for objects' meshes alone (DrawBuckets::commit)
+vec3 sideNormal() {
+#if (MESH_TYPE!=T_PFX)
+  if(gl_FrontFacing && (bucket[bucketId].flags & BK_TWO_SIDED_FLIP)!=0u)
+    return -shInp.normal;
+#endif
+  return shInp.normal;
+  }
+
 vec3 flatNormal() {
 #if defined(FLAT_NORMAL)
   vec3 pos   = shInp.pos;
@@ -452,7 +466,7 @@ float emberBreath(vec3 pos) {
 #endif
 
 #if defined(BINDLESS) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
-#include "grass/grass_layers.glsl"
+#include "grass/grass_track.glsl"
 #endif
 
 #if defined(ANTITILE_MATERIAL)
@@ -462,7 +476,8 @@ void mainGBuffer(vec4 t) {
 #endif
   outDiffuse.rgb = t.rgb;
   outDiffuse.a   = encodeHintBits();
-  outNormal      = encodeNormal(shInp.normal);
+  const vec3 normal = sideNormal();
+  outNormal      = encodeNormal(normal);
 #if defined(MATERIAL_MAPS)
   outOrm = vec4(1,1,0,0);
 #if (MESH_TYPE!=T_PFX)
@@ -511,7 +526,7 @@ void mainGBuffer(vec4 t) {
               weights.z * antitileOrm(tId, maps.c);
       }
     if(hasNormal)
-      outNormal = encodeNormal(mappedNormal(shInp.normal, dpdx, dpdy, duvdx, duvdy,
+      outNormal = encodeNormal(mappedNormal(normal, dpdx, dpdy, duvdx, duvdy,
                                            vec3(slope,1)));
     if(hasOrm)
       outOrm.rgb = orm;
@@ -520,7 +535,7 @@ void mainGBuffer(vec4 t) {
     } else {
     if((bucket[bucketId].flags & BK_NORMAL)!=0) {
       vec4 nm = textureGrad(sampler2D(textureNormal[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale);
-      outNormal = encodeNormal(mappedNormal(shInp.normal, dpdx, dpdy, duvdx, duvdy, nm));
+      outNormal = encodeNormal(mappedNormal(normal, dpdx, dpdy, duvdx, duvdy, nm));
       }
     if((bucket[bucketId].flags & BK_ORM)!=0)
       outOrm.rgb = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).rgb;
@@ -615,6 +630,18 @@ void mainGBuffer(vec4 t) {
     if(through>0.0) {
       outOrm.b     = through;
       outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufFoliageBit)/255.0;
+      }
+    }
+  if((bucket[bucketId].flags & BK_CROWN)!=0u) {
+    // A tree's crown (crown_light.glsl): the shade of its depth goes to the light passes in the ORM alpha, under the
+    // crown bit (common.glsl, gbufCrownShade); a material without its own maps has no such alpha and no crown
+    const float openness = crownOpenness(shInp.normal);
+    if((scene.viewFlags & VF_CROWN_MASK)!=0u) {
+      outDiffuse.rgb = crownMask(openness, outOrm.b);
+      }
+    else if(outOrm.a>0.5) {
+      outOrm.a     = gbufCrownShadeCode(crownShade(openness));
+      outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufCrownBit)/255.0;
       }
     }
   const float glow = bucket[bucketId].emissive;
@@ -778,7 +805,65 @@ void mainEmissive(vec4 t) {
   }
 #endif
 
-#if defined(GHOST)
+#if defined(GHOST) && (MESH_TYPE==T_PFX)
+// The shimmer of hot air over a fire (particles.d "haze"). The sprite has no colour: it shows the finished frame
+// behind it (sceneColor is the copy Renderer::drawHaze makes after everything translucent) shifted by a noise that
+// rises and changes. The shift is in cm of the world at the sprite's distance, so it shrinks with distance as the
+// real one does; it fades to the sprite's rim and with the particle's alpha. A sample that would land on something
+// in front of the sprite (a man before the fire) is not shifted, or his outline would smear into the air.
+float hazeHash(vec3 p) {
+  p = fract(p*vec3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return fract((p.x + p.y)*p.z);
+  }
+
+float hazeNoise(vec3 p) {
+  const vec3 i = floor(p);
+  vec3       f = fract(p);
+  f = f*f*(3.0-2.0*f);
+  const float a = mix(mix(hazeHash(i),               hazeHash(i+vec3(1,0,0)), f.x),
+                      mix(hazeHash(i+vec3(0,1,0)),   hazeHash(i+vec3(1,1,0)), f.x), f.y);
+  const float b = mix(mix(hazeHash(i+vec3(0,0,1)),   hazeHash(i+vec3(1,0,1)), f.x),
+                      mix(hazeHash(i+vec3(0,1,1)),   hazeHash(i+vec3(1,1,1)), f.x), f.y);
+  return mix(a, b, f.z);
+  }
+
+void mainGhost(vec4 t) {
+  const vec2  uv   = gl_FragCoord.xy*scene.screenResInv;
+  const vec2  c    = shInp.uv*2.0 - vec2(1.0);
+  const float rim  = clamp(1.0 - dot(c,c), 0.0, 1.0);
+  const float k    = rim*rim*shInp.color.a;
+
+  const float own  = linearDepth(gl_FragCoord.z, scene.clipInfo);
+  vec4        wpos = scene.viewProjectInv*vec4(uv*2.0-vec2(1.0), gl_FragCoord.z, 1.0);
+  wpos.xyz /= wpos.w;
+
+  // hot air rises at about 1 m/s and its cells live for a fraction of a second
+  const float time = float(scene.tickCount32 % 1000000u)*0.001;
+  vec3        q    = wpos.xyz*pushPfx.hdrInvRange;
+  q.y -= time*100.0*pushPfx.hdrInvRange;
+  const vec3  morph = vec3(0.0, 0.0, time*1.7);
+  // two octaves; the shift is mostly sideways, as of rising streams
+  vec2 n = vec2(hazeNoise(q + morph), hazeNoise(q.zyx + vec3(17.3, 5.1, 9.7) - morph)) - vec2(0.5);
+  n     += (vec2(hazeNoise(q*2.3 - morph), hazeNoise(q.zyx*2.3 + vec3(3.1, 11.9, 1.3) + morph)) - vec2(0.5))*0.5;
+  n     *= vec2(1.0, 0.6);
+
+  // cm of the world to the screen by the size of a pixel at the sprite
+  const float cmPerPx = max(length(dFdx(wpos.xyz)), 1e-3);
+  vec2 shift = n*(2.0*k*pushPfx.hdrFrom/cmPerPx)*scene.screenResInv;
+  const float behind = linearDepth(textureLod(gbufferDepth, uv+shift, 0).r, scene.clipInfo);
+  if(behind<own)
+    shift = vec2(0.0);
+
+  outColor = vec4(textureLod(sceneColor, uv+shift, 0).rgb, 1.0);
+#if defined(TAA_REACTIVE)
+  // The frame under a haze changes every frame with no motion vector: the temporal resolve would average the shimmer
+  // into a blur with a stipple, so the mask goes up with the shift. Blended over the mask of the flames and smoke
+  // under it, which stays where the haze is weak
+  outReactive = vec4(1.0, 0, 0, smoothstep(0.0, 0.25, k));
+#endif
+  }
+#elif defined(GHOST)
 void mainGhost(vec4 t) {
   vec3  color  = textureAlbedo(t.rgb) * 5.0;
   vec3  normal = normalize(shInp.normal);
@@ -1000,11 +1085,13 @@ void main() {
   const uint ground = bucket[bucketId].flags;
   float sward = -1.0;
 #if defined(BINDLESS)
-  // the meadow's own two layers, and the strip of them along a road (grass/grass_layers.glsl)
-  if((ground & (BK_GROUND | BK_VERGE))!=0u)
-    sward = grassLayers(ground, bucket[bucketId].fringeTex, bucket[bucketId].fringeScale, bucket[bucketId].fringeTop0,
-                        bucket[bucketId].fringeTop1, shInp.pos, shInp.normal, maps.dpdx, maps.dpdy,
-                        outDiffuse, outNormal, outOrm);
+  // the meadow's own two layers, the strip of them along a road (grass/grass_layers.glsl), and the road's own
+  // track (grass/grass_track.glsl)
+  if((ground & (BK_GROUND | BK_VERGE | BK_TRACK))!=0u)
+    sward = grassOwnGround(ground, bucket[bucketId].fringeTex, bucket[bucketId].fringeScale, bucket[bucketId].fringeTop0,
+                           bucket[bucketId].fringeTop1, bucket[bucketId].fringeBottom0, bucket[bucketId].fringeBottom1,
+                           bucket[bucketId].foliageReach, shInp.uv*bucket[bucketId].uvScale, maps.duvdx, maps.duvdy,
+                           shInp.pos, shInp.normal, maps.dpdx, maps.dpdy, outDiffuse, outNormal, outOrm);
 #endif
   if(sward>-1.5 && ((ground & BK_GRASS)!=0u || sward>0.0))
     grassGround(bucket[bucketId].foliage, shInp.pos, shInp.normal, sward, outDiffuse, outNormal, outOrm);

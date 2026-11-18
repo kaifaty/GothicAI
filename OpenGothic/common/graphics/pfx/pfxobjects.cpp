@@ -31,6 +31,14 @@ void PfxObjects::setViewerPos(const Vec3& pos) {
   viewerPos = pos;
   }
 
+void PfxObjects::setWind(const Vec3& w) {
+  wind = w;
+  }
+
+void PfxObjects::setShelter(std::function<float(const Vec3&,const Vec3&)> open) {
+  shelter = std::move(open);
+  }
+
 void PfxObjects::resetTicks() {
   lastUpdate = size_t(-1);
   }
@@ -103,6 +111,22 @@ void PfxObjects::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, 
     return;
   for(auto& i:bucket)
     i.drawTranslucent(cmd, scene, fId);
+  }
+
+bool PfxObjects::hasHaze(uint8_t fId) const {
+  if(hiddenByBench())
+    return false;
+  for(auto& i:bucket)
+    if(i.hasHaze(fId))
+      return true;
+  return false;
+  }
+
+void PfxObjects::drawHaze(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  if(hiddenByBench())
+    return;
+  for(auto& i:bucket)
+    i.drawHaze(cmd, scene, fId);
   }
 
 PfxBucket& PfxObjects::getBucket(const ParticleFx &decl) {

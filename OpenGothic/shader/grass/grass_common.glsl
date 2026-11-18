@@ -29,6 +29,8 @@ const uint GrassPartHide        = 128u;
 const uint GrassPartCover       = 256u; // the paint of the meadow's own ground (grass_layers.glsl): sward green, earth red
 const uint GrassPartLayers      = 4096u; // a ground with its own layers as a painted ground: no layers, its blades as there
 const uint GrassPartCells       = 8192u;
+const uint GrassPartTrack       = 16384u; // a road with `track` as with its `verge` alone
+const uint GrassPartOffscreen   = 32768u; // the blades' whole vertex stage, then off the screen (grass.vert)
 
 uint grassPartsOff(float ringW) { return uint(max(ringW - 1.0, 0.0)*0.5 + 0.25); }
 

@@ -620,7 +620,25 @@ namespace daedalus {
 		// Optional offline instrumentation. Unset in the game; reads are observed when consumed,
 		// not when a reference is pushed (a pushed reference may be a store destination).
 		void observe_reads(std::function<void(DaedalusSymbol const&)> callback) { _m_read_observer = std::move(callback); }
+		// Consumed member values include the reference's context, which can differ from the current context.
+		void observe_member_reads(std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> callback) { _m_member_read_observer = std::move(callback); }
+		// Writes are observed before bytecode assignments, not internal scratch/local restoration.
+		void observe_writes(std::function<void(DaedalusSymbol const&)> callback) { _m_write_observer = std::move(callback); }
+		// Assigned member elements are reported after the write, with their exact context and index.
+		void observe_member_writes(std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> callback) { _m_member_write_observer = std::move(callback); }
 		void observe_instructions(std::function<void(DaedalusInstruction const&)> callback) { _m_instruction_observer = std::move(callback); }
+		// Optional script-call instrumentation; includes functions reached through BL overrides.
+		void observe_calls(std::function<void(DaedalusSymbol const&)> callback) { _m_call_observer = std::move(callback); }
+		void add_call_observer(std::function<void(DaedalusSymbol const&)> callback) {
+			auto previous = std::move(_m_call_observer);
+			_m_call_observer = [previous = std::move(previous), callback = std::move(callback)](auto const& symbol) {
+				if (previous) previous(symbol);
+				callback(symbol);
+			};
+		}
+		// Both bytecode and record playback report externals before consuming their arguments.
+		void observe_externals(std::function<void(DaedalusSymbol const&)> callback) { _m_external_observer = std::move(callback); }
+		[[nodiscard]] DaedalusStackFrame const& stack_frame(uint16_t depth) const;
 		// Like override_function, with a signature read from program records by the caller.
 		void override_function_custom(DaedalusSymbol const& sym, std::function<void(DaedalusVm&)> callback) {
 			_m_function_overrides[sym.address()] = std::move(callback);
@@ -1028,7 +1046,12 @@ namespace daedalus {
 		std::optional<std::function<void(DaedalusVm&, DaedalusSymbol&)>> _m_default_external {std::nullopt};
 		std::function<void(DaedalusSymbol&)> _m_access_trap;
 		std::function<void(DaedalusSymbol const&)> _m_read_observer;
+		std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> _m_member_read_observer;
+		std::function<void(DaedalusSymbol const&)> _m_write_observer;
+		std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> _m_member_write_observer;
 		std::function<void(DaedalusInstruction const&)> _m_instruction_observer;
+		std::function<void(DaedalusSymbol const&)> _m_call_observer;
+		std::function<void(DaedalusSymbol const&)> _m_external_observer;
 		std::optional<std::function<
 		    DaedalusVmExceptionStrategy(DaedalusVm&, DaedalusScriptError const&, DaedalusInstruction const&)>>
 		    _m_exception_handler {std::nullopt};

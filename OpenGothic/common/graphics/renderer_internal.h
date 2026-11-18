@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "graphics/contactao.h"
+
 namespace RendererInternal {
 
 uint32_t nextPot(uint32_t x);

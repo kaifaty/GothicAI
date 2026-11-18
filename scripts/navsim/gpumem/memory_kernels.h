@@ -638,7 +638,7 @@ struct Body {
 };
 
 GM_HD Body body(const Ctx& c, int64_t a) {
-  Body b;
+  Body b{};
   b.x = c.bodyPos[3 * a];
   b.y = c.bodyPos[3 * a + 1];
   b.z = c.bodyPos[3 * a + 2];
@@ -707,9 +707,11 @@ GM_HD Sample classify(const GridView& v, const Body& b, int x, int z) {
         const int64_t n = v.at(nx, nz);
         if ((v.g->known[n] & (1u << Ground)) == 0) continue;
         const float difference = height - v.height(Ground, n);
+        const float rise = fabsf(difference);
+        if (rise <= b.step) continue;
         const float dx = gx - v.hitX(Ground, n), dz = gz - v.hitZ(Ground, n);
         const float distance = sqrtf(dx * dx + dz * dz);
-        if (fabsf(difference) <= b.step || fabsf(difference) <= distance * b.slope) continue;
+        if (rise <= distance * b.slope) continue;
         const float certainty = smin(c[Ground], confidence(b, v.time(Ground, n), v.path(Ground, n), false));
         if (difference > 0.f) out.ledge = smax(out.ledge, certainty);
         else out.drop = smax(out.drop, certainty);
@@ -743,9 +745,8 @@ GM_HD float quantize(float value) { return float(lroundf(value * 255.f)) / 255.f
 // lattice puts at most a few world centres in one output cell, all within the
 // 3x3 world cells around its inverse-mapped centre; they are merged in the
 // readout's z-major world order, like NavigationMemory::read.
-GM_HD void readCell(const Ctx& c, int64_t a, int index, int vx, int vz, float* out, int64_t plane) {
+GM_HD void readCell(const Ctx& c, int64_t a, const Body& b, int index, int vx, int vz, float* out, int64_t plane) {
   const GridView v = gridView(c, a, index);
-  const Body b = body(c, a);
   const float rx = -b.fz, rz = b.fx;
   const float half = float(v.size / 2) * v.cell;
   const float ux = (float(vx) + .5f) * v.cell - half, uz = (float(vz) + .5f) * v.cell - half;
@@ -796,13 +797,17 @@ GM_HD void readCell(const Ctx& c, int64_t a, int index, int vx, int vz, float* o
 }
 
 // Output k of a readout batch: near CHW [k][10][64][64], far CHW [k][10][50][100].
-GM_HD void readOutput(const Ctx& c, int64_t a, int64_t k, int r, float* near, float* far) {
+GM_HD void readOutput(const Ctx& c, int64_t a, const Body& b, int64_t k, int r, float* near, float* far) {
   if (r < NearOutputs) {
-    readCell(c, a, 0, r % 64, r / 64, near + k * 10 * NearOutputs + r, NearOutputs);
+    readCell(c, a, b, 0, r % 64, r / 64, near + k * 10 * NearOutputs + r, NearOutputs);
   } else {
     r -= NearOutputs;
-    readCell(c, a, 1, r % 100, 50 + r / 100, far + k * 10 * FarOutputs + r, FarOutputs);
+    readCell(c, a, b, 1, r % 100, 50 + r / 100, far + k * 10 * FarOutputs + r, FarOutputs);
   }
+}
+
+GM_HD void readOutput(const Ctx& c, int64_t a, int64_t k, int r, float* near, float* far) {
+  readOutput(c, a, body(c, a), k, r, near, far);
 }
 
 // Bench-only stand-in for the eye: copy one recorded update into the slots.

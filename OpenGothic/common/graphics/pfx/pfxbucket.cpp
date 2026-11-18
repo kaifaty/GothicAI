@@ -19,6 +19,22 @@
 
 using namespace Tempest;
 
+// particles.d "lean": a longer way in a frame is a teleport, a longer frame is a pause; the spring's substep and
+// damping; how much longer the card is at its largest lean
+static constexpr float LeanJumpCm      = 300.f;
+static constexpr uint64_t LeanLongFrameMs = 250;
+static constexpr float LeanSubstepMs   = 8.f;
+static constexpr float LeanDamping     = 0.6f;
+static constexpr float LeanStretch     = 0.2f;
+// particles.d "wind": the shelter is asked again a metre on, not more often than this, and fades in over this
+static constexpr float    WindAskCm  = 100.f;
+static constexpr uint64_t WindAskMs  = 300;
+static constexpr float    WindFadeMs = 500.f;
+// particles.d "plume": the air's spring as a flame's default (lean.response), the largest lean as a flame's cap
+static constexpr float PlumeResponseMs = 120.f;
+static constexpr float PlumeMaxTan     = 2.747f;  // 70 degrees
+
+
 static uint64_t ppsDiff(const ParticleFx& decl, bool loop, uint64_t time0, uint64_t time1) {
   if(time1<=time0)
     return 0;
@@ -46,7 +62,8 @@ bool PfxBucket::Draw::isEmpty() const {
 
 PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlobals& scene, VisualObjects& visual)
   :decl(decl), parent(parent),
-   push{decl.taaReactive(), decl.hdrFrom, decl.hdrTo>decl.hdrFrom ? 1.f/(decl.hdrTo-decl.hdrFrom) : 0.f, decl.hdrEdge},
+   push{decl.hazeShift>0 ? Push{0.f, decl.hazeShift, 1.f/decl.hazeCell, 0.f}
+                         : Push{decl.taaReactive(), decl.hdrFrom, decl.hdrTo>decl.hdrFrom ? 1.f/(decl.hdrTo-decl.hdrFrom) : 0.f, decl.hdrEdge}},
    visual(visual)  {
   uint64_t lt      = decl.maxLifetime();
   uint64_t pps     = uint64_t(std::ceil(decl.maxPps()));
@@ -198,6 +215,9 @@ PfxBucket::Block& PfxBucket::getBlock(ImplEmitter &e) {
     e.block = allocBlock();
     auto& p = block[e.block];
     p.pos   = e.pos;
+    // a new flame: upright, and small if it grows (particles.d "lean.grow")
+    p.lean  = Vec3(0,1,0);
+    p.grow  = decl.leanGrowMs>0 ? decl.leanGrowFrom : 1.f;
     }
   return block[e.block];
   }
@@ -212,6 +232,12 @@ size_t PfxBucket::allocEmitter() {
     if(b.st==S_Free) {
       b.st      = S_Inactive;
       b.flicker = {};
+      // a new flame in an old slot: it has not moved yet and has no air of the last one
+      b.carried = false;
+      b.air     = {};
+      b.airRate = {};
+      b.grownMs = 0;
+      b.spent   = false;
       updateTextureDemand(i);
       return i;
       }
@@ -449,6 +475,25 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
     float velocity = randf(decl.velAvg,decl.velVar);
     p.dir = p.dir*velocity/l;
     }
+
+  if(emitter.trail.quadLength()>0 && !decl.useEmittersFOR)
+    p.pos -= emitter.trail*randf();
+
+  if(decl.plumeCm>0 && !decl.useEmittersFOR) {
+    // born on the leaning flame (particles.d "plume"): plumeCm along it instead of straight over the fire, and
+    // with the wind the flame's gas has taken
+    // the flame feels its own share of the wind, not this effect's
+    const Vec3  wind = emitter.wind*decl.plumeWind;
+    const Vec3  air  = emitter.air-emitter.wind+wind;
+    const Vec3  flat = Vec3(air.x,0,air.z);
+    const float len  = flat.length();
+    const float t    = std::min(len/decl.plumeRise, PlumeMaxTan);
+    if(t>1e-4f) {
+      const float cs = 1.f/std::sqrt(1.f+t*t);
+      p.pos += flat*(decl.plumeCm*t*cs/len) - Vec3(0,decl.plumeCm*(1.f-cs),0);
+      }
+    p.dir += wind;
+    }
   }
 
 void PfxBucket::finalize(size_t particle) {
@@ -479,7 +524,8 @@ void PfxBucket::tick(Block& sys, ImplEmitter& emitter, size_t particle, uint64_t
     // own curl and drag (particles.d): substeps, drag integrated exactly, the field in world space
     const Vec3  origin = decl.useEmittersFOR ? emitter.pos : Vec3();
     const float t0     = float((parent.now>=dt ? parent.now-dt : 0)%3600000u);
-    PfxMotion::step(decl.motion, decl.flyGravity, ps.pos, ps.dir, origin, t0, dtF);
+    PfxMotion::step(decl.motion, decl.flyGravity, ps.pos, ps.dir, origin, t0, dtF,
+                    decl.useEmittersFOR ? Vec3() : emitter.wind);
     } else {
     ps.pos  += ps.dir*dtF;
     ps.dir  += decl.flyGravity*dtF;
@@ -560,7 +606,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
         Log::i("flicker pfx seed=", emitter.flicker.seed, " t=", parent.now, " s=", p.flicker);
       }
 
-    if(decl.flipSteady && emitter.block!=size_t(-1) && (emitter.st!=S_Active || !nearby)) {
+    if(decl.flipSteady && emitter.block!=size_t(-1) && (emitter.st!=S_Active || !nearby || emitter.spent)) {
       // steady particles never die on their own: they go with their emitter or when it is out of view range
       auto& p = getBlock(emitter);
       for(size_t i=0;i<blockSize;++i)
@@ -576,6 +622,71 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
         doShrink = true;
         continue;
         }
+      }
+
+    if(decl.wind>0 && nearby && emitter.st==S_Active) {
+      const bool moved = (emitter.pos-emitter.openAt).quadLength()>WindAskCm*WindAskCm;
+      if(!emitter.openAsked || (moved && parent.now-emitter.openTime>=WindAskMs)) {
+        emitter.openTo   = parent.shelter ? std::clamp(parent.shelter(emitter.pos,parent.wind),0.f,1.f) : 1.f;
+        if(!emitter.openAsked)
+          emitter.open = emitter.openTo;
+        emitter.openAsked = true;
+        emitter.openAt    = emitter.pos;
+        emitter.openTime  = parent.now;
+        }
+      // a carried flame comes out of a door: the wind rises over about half a second
+      emitter.open += (emitter.openTo-emitter.open)*std::min(1.f,float(dt)/WindFadeMs);
+      emitter.wind  = parent.wind*(decl.wind*emitter.open);
+      }
+
+    if(decl.flipSteady || decl.inherit>0 || decl.plumeCm>0) {
+      // a steady particle is its emitter's flame: it goes where the emitter goes (a torch in a hand); a living one
+      // takes the share "inherit" of the way, so the tail behind a carried flame stays short
+      const auto  moved = emitter.pos-emitter.steadyAt;
+      const float share = decl.flipSteady ? 1.f : decl.inherit;
+      if(emitter.block!=size_t(-1) && moved.quadLength()>0 && !(decl.useEmittersFOR && !decl.flipSteady)) {
+        auto& p = getBlock(emitter);
+        for(size_t i=0;i<blockSize;++i)
+          if(particles[p.offset+i].life!=0)
+            particles[p.offset+i].pos += moved*share;
+        }
+      if((decl.leanRise>0 || decl.plumeCm>0) && dt>0) {
+        // the air past the wick is minus the emitter's motion; a jump (a teleport, the first frame) is no motion
+        const bool jump   = !emitter.carried || moved.quadLength()>LeanJumpCm*LeanJumpCm || dt>LeanLongFrameMs;
+        const Vec3 target = emitter.wind - (jump ? Vec3() : moved*(1.f/float(dt)));
+        if(dt>LeanLongFrameMs) {
+          emitter.air     = target;
+          emitter.airRate = Vec3();
+          } else {
+          // a damped spring: the flame answers in about leanResponseMs and swings a little past
+          const float w = 2.f/(decl.leanRise>0 ? decl.leanResponseMs : PlumeResponseMs);
+          const int   n = std::max(1, int(std::ceil(float(dt)/LeanSubstepMs)));
+          const float h = float(dt)/float(n);
+          for(int i=0; i<n; ++i) {
+            emitter.airRate += ((target-emitter.air)*(w*w) - emitter.airRate*(2.f*LeanDamping*w))*h;
+            emitter.air     += emitter.airRate*h;
+            }
+          }
+        emitter.grownMs += float(dt);
+        if(emitter.block!=size_t(-1) && decl.leanRise>0 && decl.leanGrowMs>0) {
+          // a launched flame grows out of the small one it was lit from (a bolt out of the flame on the palm)
+          const float k = std::min(emitter.grownMs/decl.leanGrowMs, 1.f);
+          getBlock(emitter).grow = decl.leanGrowFrom + (1.f-decl.leanGrowFrom)*k*k*(3.f-2.f*k);
+          }
+        if(emitter.block!=size_t(-1) && decl.leanRise>0) {
+          const Vec3  flat = Vec3(emitter.air.x,0,emitter.air.z);
+          const float t    = std::min(flat.length()/decl.leanRise, decl.leanMaxTan);
+          const float len  = 1.f + LeanStretch*(decl.leanMaxTan>0 ? t/decl.leanMaxTan : 0.f);
+          const float cs   = 1.f/std::sqrt(1.f+t*t);
+          const Vec3  side = t>1e-4f ? flat*(t*cs/flat.length()) : Vec3();
+          getBlock(emitter).lean = Vec3(side.x,cs,side.z)*len;
+          }
+        }
+      // a fast emitter (a flying bolt) drops its tail along the way of the tick, not in a clump per frame
+      emitter.trail    = (emitter.carried && decl.inherit>0 && decl.inherit<1 &&
+                          moved.quadLength()<=LeanJumpCm*LeanJumpCm) ? moved : Vec3();
+      emitter.steadyAt = emitter.pos;
+      emitter.carried  = true;
       }
 
     if(emitter.block!=size_t(-1)) {
@@ -598,7 +709,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
 
     if(emitter.st==S_Active && nearby) {
       auto& p = getBlock(emitter);
-      auto dE = decl.flipSteady ? (p.count==0 ? uint64_t(blockSize) : 0) : ppsDiff(decl,emitter.isLoop,p.timeTotal,p.timeTotal+dt);
+      auto dE = decl.flipSteady ? (p.count==0 && !emitter.spent ? uint64_t(blockSize) : 0) : ppsDiff(decl,emitter.isLoop,p.timeTotal,p.timeTotal+dt);
       tickEmit(p,emitter,dE);
       }
 
@@ -723,8 +834,8 @@ void PfxBucket::buildSsbo() {
                         : (std::min(a, 0.1f)/0.1f)*visAlphaStart*(1.f-a) + (std::min(1.f-a, 0.1f)/0.1f)*visAlphaEnd*a;
 
       const float scale = 1.f*(1.f-a) + a*visSizeEndScale;
-      const float szX   = visSizeStart.x*scale;
-      const float szY   = visSizeStart.y*scale;
+      const float szX   = visSizeStart.x*scale*p.grow;
+      const float szY   = visSizeStart.y*scale*p.grow;
       const float szZ   = 0.1f*((szX+szY)*0.5f);
 
       struct Color {
@@ -762,10 +873,12 @@ void PfxBucket::buildSsbo() {
         const uint32_t seed   = uint32_t(pId+p.offset)*2654435761u ^ uint32_t(ps.maxLife)*40503u;
         const float    frames = float(decl.flipFrames);
         const float    age    = decl.flipSteady ? float(p.timeTotal%3600000u) : float(ps.maxLife-ps.life);
-        const float    t      = age*decl.flipFps/1000.f + float(seed%997u)/997.f*frames;
+        // once: the whole atlas over the particle's life, from the first frame, the last one held
+        const float    t      = decl.flipOnce ? std::min(age/float(std::max<uint16_t>(ps.maxLife,1))*frames, frames-1.f)
+                                              : age*decl.flipFps/1000.f + float(seed%997u)/997.f*frames;
         const float    f      = std::fmod(t, frames);
         const uint32_t f0     = uint32_t(f)%decl.flipFrames;
-        const uint32_t f1     = (f0+1)%decl.flipFrames;
+        const uint32_t f1     = decl.flipOnce ? std::min<uint32_t>(f0+1,decl.flipFrames-1u) : (f0+1)%decl.flipFrames;
         const uint32_t blend  = uint32_t((f-std::floor(f))*127.f+0.5f);
         px.bits0 |= 1u << 6;
         px.bits0 |= uint32_t(decl.flipCols-1) << 7 | uint32_t(decl.flipRows-1) << 10;
@@ -812,7 +925,16 @@ void PfxBucket::buildBilboard(PfxState& v, const Block& p, const ParState& ps, c
   v.bits0 |= uint32_t(0) << 3; // TODO: trails
   v.bits0 |= uint32_t(decl.visOrientation) << 4;
   v.dir   = ps.dir;
-  if(decl.stretchMs>0 && decl.visOrientation!=ParticleFx::Orientation::None) {
+  if(decl.leanRise>0) {
+    // a leaning flame card (particles.d "lean", pfx.vert): orientation 3 with a flipbook, dir the way from the
+    // card's lower edge to its upper in card heights
+    v.bits0 |= uint32_t(3) << 4;
+    v.dir    = p.lean;
+    v.size.z = decl.leanAlong; // pfx.vert: the least length of the card seen along the flame, in card heights
+    // a growing card keeps its lower edge where the full one has it
+    v.pos.y -= 0.5f*szY*(1.f/p.grow - 1.f);
+    }
+  else if(decl.stretchMs>0 && decl.visOrientation!=ParticleFx::Orientation::None) {
     // own streak (particles.d "stretch", pfx.vert): orientation 3, size.z the path of stretchMs at the velocity in cm
     v.bits0 |= uint32_t(3) << 4;
     v.size.z = ps.dir.length()*decl.stretchMs;
@@ -854,7 +976,7 @@ uint32_t PfxBucket::mkTrailColor(float clA) const {
     color.b = uint8_t(255*clA);
     color.a = uint8_t(255);
     }
-  else if(decl.visMaterial.alpha==Material::AlphaFunc::Transparent) {
+  else if(decl.visMaterial.alpha==Material::AlphaFunc::Transparent || decl.hazeShift>0) {
     color.r = 255;
     color.g = 255;
     color.b = 255;
@@ -918,10 +1040,21 @@ void PfxBucket::drawMultiply(Tempest::Encoder<Tempest::CommandBuffer>& cmd, cons
   }
 
 void PfxBucket::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
+  if(decl.hazeShift>0)
+    return; // drawHaze
   for(auto i:{/*Material::Water, */Material::Transparent, Material::AdditiveLight, Material::Ghost}) {
     drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false);
     drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true);
     }
+  }
+
+bool PfxBucket::hasHaze(uint8_t fId) const {
+  return decl.hazeShift>0 && item[fId].pMain!=nullptr && !item[fId].pfxGpu.isEmpty();
+  }
+
+void PfxBucket::drawHaze(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
+  if(decl.hazeShift>0)
+    drawCommon(cmd, scene, item[fId], SceneGlobals::V_Main, Material::Ghost, false);
   }
 
 void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, const Draw& itm,
@@ -973,7 +1106,8 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
     }
 
   if(view==SceneGlobals::V_Main && mat.isSceneInfoRequired()) {
-    cmd.setBinding(L_SceneClr, *scene.sceneColor, Sampler::bilinear(ClampMode::MirroredRepeat));
+    // a haze shifts the finished frame (the copy made before its pass), a ghost the opaque scene
+    cmd.setBinding(L_SceneClr, decl.hazeShift>0 ? *scene.sceneHaze : *scene.sceneColor, Sampler::bilinear(ClampMode::MirroredRepeat));
     cmd.setBinding(L_GDepth,   *scene.sceneDepth, Sampler::nearest (ClampMode::MirroredRepeat));
     }
 
@@ -990,7 +1124,7 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
 
   cmd.setBinding(L_Scene, scene.uboGlobal[view]);
   cmd.setBinding(L_Pfx,   itm.pfxGpu);
-  if(view==SceneGlobals::V_Main && (mat.alpha==Material::Transparent || mat.alpha==Material::AdditiveLight)) {
+  if(view==SceneGlobals::V_Main && (mat.alpha==Material::Transparent || mat.alpha==Material::AdditiveLight || mat.alpha==Material::Ghost)) {
     // the weight of the TAA reactive mask (graphics plan 1v), the "hdr" of an additive effect (main.frag PushPfx)
     cmd.setPushData(push);
     }
