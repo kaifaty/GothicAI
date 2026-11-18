@@ -8,6 +8,12 @@
     "boughs": "OWN_TREE_FIR_BOUGHS"
   },
   "budget_tris": 48000,
+  "levels": [
+    {"px": 400, "share": 0.499, "target_share": 0.3333, "min_open": 0.004, "merge": "cluster", "merge_px": 5, "trunk_sides": 14},
+    {"px": 200, "share": 0.249, "target_share": 0.125, "min_open": 0.008, "merge": "cluster", "merge_px": 5, "trunk_sides": 10},
+    {"px": 100, "share": 0.124, "target_share": 0.05, "min_open": 0.012, "merge": "branch", "merge_px": 3, "trunk_sides": 7},
+    {"px": 50, "share": 0.03117, "target_share": 0.015625, "min_open": 0.016, "merge": "whorl", "merge_px": 3, "trunk_sides": 5}
+  ],
   "palette": {
     "needles_srgb": [
       31,
