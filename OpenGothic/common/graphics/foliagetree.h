@@ -115,7 +115,7 @@ struct Fade final {
   bool  none() const { return trunk<=0.f; }  // no wind at all: the vertex is not moved
   };
 
-// SceneDesc::foliageFade.x: the pixels of the main view a unit of the tangent is. projY: the projection's [1][1]
+// SceneDesc::foliageFadeScale: the pixels of the main view a unit of the tangent is. projY: the projection's [1][1]
 inline float fadeScale(float projY, int screenH) {
   return 0.5f*float(std::max(screenH,0))*std::abs(projY);
   }

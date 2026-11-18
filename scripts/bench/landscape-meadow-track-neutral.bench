@@ -1,0 +1,31 @@
+# Repeat on Ryzen in the order on, off, on, off (OPENGOTHIC_GRASS_TRACK_NEUTRAL=0 turns it off).
+# The two camera setups match landscape-meadow-track-cheap.bench.
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+set time 12 0
+cloth wind calm
+
+# perf-meadow view 5.
+goto pos 41940 3300 -317
+clear 3000
+face -122
+streaming wait
+grass wait
+wait 5000
+shot track
+wait 200
+
+# The camera is 30 m from the reference point on the track; the hero is behind it.
+goto NW_TAVERNE_TROLLAREA_07
+cam at 42968 3406 2499 41940 3300 -317
+streaming wait
+grass wait
+wait 5000
+shot track-30m
+wait 200

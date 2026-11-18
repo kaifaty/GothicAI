@@ -28,6 +28,9 @@
 // from afar - its mips are means of the encoded colour, 0.86-0.89 of the linear mean at the third and fourth. By
 // the frames the road with its stains stands at 0.94-0.96 of the painted one near and, with 0.86 of this shade,
 // at 1.04-1.05 from afar.
+// Work outside the track's share and samples that cannot change the chosen layer are skipped. Far enough to
+// move the ribbon by less than one pixel at 2560x1440, the wander can be skipped; the end of the ORM fade can
+// use just the layer chosen by wear. See the cart track section of reports/engine/2026-11-17-grass-cost.
 const float GrassTrackHeight   = 140.0;  // of 256 of the wear: what the heights' difference is worth
 const float GrassTrackFarFrom  = 1200.0; // cm: the hard choice of a layer passes to their mix
 const float GrassTrackFarTo    = 1500.0;
@@ -52,9 +55,34 @@ const uint GrassPartTrackSpots  = 1u << 21;
 const uint GrassPartTrackTone   = 1u << 22;
 const uint GrassPartTrackForm   = 1u << 23;
 const uint GrassPartTrackGrain  = 1u << 24;
+const uint GrassPartTrackNeutral   = 1u << 25;
+const uint GrassPartTrackWanderLod = 1u << 26;
+const uint GrassPartTrackOrmLod    = 1u << 27;
 
 // the crust's lattice, turned the other way from the loose earth's
 vec2 grassCrustUv(vec2 xz) { return vec2(0.84805*xz.x - 0.52992*xz.y, 0.52992*xz.x + 0.84805*xz.y); }
+
+bool grassTrackSubpixelWander(float wander, vec3 t, vec3 b, float det, vec2 edge,
+                             vec2 duvdx, vec2 duvdy, vec3 dpdx, vec3 dpdy) {
+  const float uvDet = abs(duvdx.x*duvdy.y - duvdx.y*duvdy.x);
+  if(uvDet<=1e-12)
+    return false;
+  // The slow noises have independent signs; the same quick noise is added to x and subtracted from z.
+  const vec2 slow = abs(vec2(t.x,b.x)) + abs(vec2(t.z,b.z));
+  const vec2 quick = 0.3*abs(vec2(t.x-t.z,b.x-b.z));
+  const vec2 uvMax = min(vec2(0.1), (slow + quick)*(wander/abs(det)))*edge;
+  const mat2 inverseUv = mat2(abs(vec2(duvdy.y,duvdx.y)), abs(vec2(duvdy.x,duvdx.x)));
+  const vec2 pixelMax = (inverseUv*uvMax)/uvDet;
+  // dpdx/dpdy connect samples one pixel apart. Account for the maximum change of their perspective divisor.
+  const vec3 clipW = vec3(scene.viewProject[0].w, scene.viewProject[1].w, scene.viewProject[2].w);
+  const vec2 depthStep = abs(vec2(dot(clipW,dpdx), dot(clipW,dpdy)));
+  const float depth = 1.0/gl_FragCoord.w;
+  const float minDepth = depth - dot(pixelMax, depthStep);
+  const vec2 resolution = max(vec2(1.0), vec2(2560.0,1440.0)*scene.screenResInv);
+  const vec2 upper = pixelMax*(depth + depthStep)*resolution;
+  // Leave a margin for numerical error in the inverse of the derivatives.
+  return minDepth>0.0 && length(upper)<0.98*minDepth;
+  }
 
 // tex: the crust's maps in the bindless arrays, then the loose earth's, then the ribbon's; crustK, looseK: repeats
 // per cm; knobs: Grass::pack(Track); uv with its derivatives: the mesh's own, as its painted texture is read;
@@ -74,25 +102,31 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
   const float mip    = scene.mipGradScale;
   const uint  rib    = tex + 2u;
   const uint  partsOff = scene.grassTrackPartsOff;
+  const bool  neutral = (partsOff & GrassPartTrackNeutral)==0u;
 
   // the ribbon's frame on the ground: t and b along the growth of u and v, over det the gradients themselves
   const vec3  py  = cross(dpdy, gn), px = cross(gn, dpdx);
   const vec3  t   = py*duvdx.x + px*duvdy.x, b = py*duvdx.y + px*duvdy.y;
   const float det = dot(dpdx, py);
+  const float d   = distance(pos, scene.camPos);
+  const float far = smoothstep(GrassTrackFarFrom, GrassTrackFarTo, d);
   // the drawing wanders by the world: a slow sway and a quicker one; still at the tile's edges, where it meets
   // the next piece and the ground beside
   vec2 uvR = uv;
   if((partsOff & GrassPartTrackWander)==0u && wander>0.0 && abs(det)>1e-12) {
-    const float quick = grassTrackNoise(place,2560,0x73u)*0.3;
-    const vec3  w = vec3(grassTrackNoise(place,11200,0x71u) + quick, 0.0,
-                         grassTrackNoise(place + ivec2(5113,2971),11200,0x72u) - quick)*wander;
     const vec2  f = fract(uv);
-    uvR += clamp(vec2(dot(t,w), dot(b,w))/det, vec2(-0.1), vec2(0.1))*smoothstep(vec2(0.0), vec2(0.08), min(f, 1.0-f));
+    const vec2  edge = smoothstep(vec2(0.0), vec2(0.08), min(f, 1.0-f));
+    const bool subpixel = far>=1.0 && (partsOff & GrassPartTrackWanderLod)==0u &&
+                          grassTrackSubpixelWander(wander, t, b, det, edge, duvdx, duvdy, dpdx, dpdy);
+    if(!subpixel) {
+      const float quick = grassTrackNoise(place,2560,0x73u)*0.3;
+      const vec3  w = vec3(grassTrackNoise(place,11200,0x71u) + quick, 0.0,
+                           grassTrackNoise(place + ivec2(5113,2971),11200,0x72u) - quick)*wander;
+      uvR += clamp(vec2(dot(t,w), dot(b,w))/det, vec2(-0.1), vec2(0.1))*edge;
+      }
     }
   // from afar the ribbon's maps are read by a wider foot, the same along and across the road: the fray and the
   // grain that break a rut's edge near are gone there, and its narrow dark bed would be a ruled line
-  const float d   = distance(pos, scene.camPos);
-  const float far = smoothstep(GrassTrackFarFrom, GrassTrackFarTo, d);
   vec2 dxR = duvdx*mip, dyR = duvdy*mip;
   if(far>0.0 && abs(det)>1e-12) {
     const float soft = far*GrassTrackFarSoft/abs(det);
@@ -103,13 +137,17 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
   const float own  = max(mask.b, strip);
   if(own<=0.004)
     return;
+  // With a unit height the near share is still zero here, and so is the far share.
+  if(neutral && (own<=(128.0 - 0.5*GrassTrackHeight)/256.0 || (far>=1.0 && own<=0.3)))
+    return;
 
   // where the ruts fade: 1 at their full depth and tone; by 6 m and by 2.2 m - one rut of the two may fade alone
   float k = 1.0;
-  if((partsOff & GrassPartTrackFade)==0u)
+  if((partsOff & GrassPartTrackFade)==0u && (!neutral || fade>0.0))
     k = 1.0 - fade*smoothstep(0.05, 0.55, grassTrackNoise(place,9600,0x75u)*0.6 + grassTrackNoise(place,3520,0x76u)*0.4);
   float lean = (mask.g*mix(1.0, k, 0.5) + strip)*256.0 - 128.0;
-  if((partsOff & GrassPartTrackRagged)==0u)
+  // Neither the winning layer nor the clamped far weight can change beyond the combined noise's amplitude.
+  if((partsOff & GrassPartTrackRagged)==0u && (!neutral || (ragged>0.0 && abs(lean)<0.5*GrassTrackHeight + 130.0*ragged + 1.0)))
     lean += (grassTrackNoise(place,3840,0x77u)*90.0 + grassTrackNoise(place,560,0x78u)*40.0)*ragged;
 
   const vec2  uvC = grassCrustUv(pos.xz)*crustK, dxC = grassCrustUv(dpdx.xz)*crustK, dyC = grassCrustUv(dpdy.xz)*crustK;
@@ -120,15 +158,32 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
   bool  loose = lean>0.0;
   if(far<1.0) {
     vec3 own0 = o;
-    if((partsOff & GrassPartTrackOrm)!=0u) {
-      // The constant ORM has equal heights. The sign of lean already chose the layer.
-      } else if(abs(lean)<0.5*GrassTrackHeight) {
-      const vec3 oC = fringeTexture(2u, tex,    uvC, dxC*mip, dyC*mip).rgb;
-      const vec3 oL = fringeTexture(2u, tex+1u, uvL, dxL*mip, dyL*mip).rgb;
-      loose = lean + (oL.b-oC.b)*GrassTrackHeight>0.0;
-      own0  = loose ? oL : oC;
-      } else {
-      own0  = loose ? fringeTexture(2u, tex+1u, uvL, dxL*mip, dyL*mip).rgb : fringeTexture(2u, tex, uvC, dxC*mip, dyC*mip).rgb;
+    if((partsOff & GrassPartTrackOrm)==0u) {
+      const bool oneTap = far>=254.0/255.0 && (partsOff & GrassPartTrackOrmLod)==0u;
+      if(neutral || oneTap) {
+        own0 = fringeTexture(2u, tex+uint(loose), loose ? uvL : uvC,
+                             (loose ? dxL : dxC)*mip, (loose ? dyL : dyC)*mip).rgb;
+        if(!oneTap && abs(lean)<0.5*GrassTrackHeight) {
+          // The second height is in [0,1]. Read it only if it can overturn the expected winner.
+          const bool uncertain = loose ? lean + (own0.b-1.0)*GrassTrackHeight<=0.0 :
+                                         lean + (1.0-own0.b)*GrassTrackHeight>0.0;
+          if(uncertain) {
+            const vec3 other = fringeTexture(2u, tex+uint(!loose), loose ? uvC : uvL,
+                                             (loose ? dxC : dxL)*mip, (loose ? dyC : dyL)*mip).rgb;
+            const float delta = loose ? own0.b-other.b : other.b-own0.b;
+            const bool pickLoose = lean + delta*GrassTrackHeight>0.0;
+            own0 = loose==pickLoose ? own0 : other;
+            loose = pickLoose;
+            }
+          }
+        } else if(abs(lean)<0.5*GrassTrackHeight) {
+        const vec3 oC = fringeTexture(2u, tex,    uvC, dxC*mip, dyC*mip).rgb;
+        const vec3 oL = fringeTexture(2u, tex+1u, uvL, dxL*mip, dyL*mip).rgb;
+        loose = lean + (oL.b-oC.b)*GrassTrackHeight>0.0;
+        own0  = loose ? oL : oC;
+        } else {
+        own0  = loose ? fringeTexture(2u, tex+1u, uvL, dxL*mip, dyL*mip).rgb : fringeTexture(2u, tex, uvC, dxC*mip, dyC*mip).rgb;
+        }
       }
     wl = mix(loose ? 1.0 : 0.0, wl, far);
     o  = mix(own0, o, far);
@@ -159,7 +214,7 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
   const float inside = clamp((1.0 - max(tint.r, max(tint.g, tint.b)))*(1.0/(1.0 - GrassTrackBody)), 0.0, 1.0);
   const float rut    = clamp((GrassTrackBody - tint.g)*GrassTrackStainRut, 0.0, 1.0)*k;
   float stain = 0.0;
-  if((partsOff & GrassPartTrackSpots)==0u) {
+  if((partsOff & GrassPartTrackSpots)==0u && (!neutral || (inside>0.0 && rut<1.0 && strip<1.0))) {
     const float spots = grassTrackNoise(place,4160,0x7Du)*0.55 + grassTrackNoise(place,1120,0x7Eu)*0.45;
     stain = smoothstep(GrassTrackStainFrom, GrassTrackStainTo, spots)*inside*(1.0 - rut)*(1.0 - strip);
     }

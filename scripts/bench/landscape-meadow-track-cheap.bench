@@ -1,0 +1,83 @@
+# Comparison at 2560x1440. The before mask disables the track optimizations.
+# @timeout 600
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+set time 12 0
+cloth wind calm
+grass parts 234881024
+
+# perf-meadow view 5.
+goto pos 41940 3300 -317
+clear 3000
+face -122
+streaming wait
+grass wait
+wait 5000
+shot track-before
+wait 200
+grass parts 0
+wait 3000
+shot track-after
+wait 200
+
+# Both fixed cameras are above the road centre, with the hero behind them.
+grass parts 234881024
+goto NW_TAVERNE_TROLLAREA_07
+cam at 42968 3406 2499 41940 3300 -317
+streaming wait
+grass wait
+wait 5000
+shot track-30m-before
+wait 200
+grass parts 0
+wait 3000
+shot track-30m-after
+wait 200
+
+grass parts 234881024
+cam at 43775 3471 5393 41940 3300 -317
+streaming wait
+grass wait
+wait 5000
+shot track-60m-before
+wait 200
+grass parts 0
+wait 3000
+shot track-60m-after
+wait 200
+
+# The waypoint route follows the cart track for 90 m. Both clips use the game camera for 18 seconds.
+grass parts 234881024
+cam game
+set time 12 0
+goto NW_TAVERNE_TROLLAREA_02
+clear 3000
+face wp NW_TAVERNE_TROLLAREA_03
+streaming wait
+grass wait
+wait 5000
+rec track-run-before
+wait 500
+walkto NW_TAVERNE_TROLLAREA_08
+wait 17500
+stop
+waitarrive 25000
+
+grass parts 0
+set time 12 0
+goto NW_TAVERNE_TROLLAREA_02
+face wp NW_TAVERNE_TROLLAREA_03
+streaming wait
+grass wait
+wait 5000
+rec track-run-after
+wait 500
+walkto NW_TAVERNE_TROLLAREA_08
+wait 17500
+stop

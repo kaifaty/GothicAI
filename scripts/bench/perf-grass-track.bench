@@ -1,5 +1,6 @@
 # The cart track's GBuffer cost on the original perf-meadow views 5 and 1.
 # Each diagnostic sample removes one part; -noroad keeps the verge and painted road.
+# -before disables all three optimizations (the mask combines Grass::PartTrack*Lod and PartTrackNeutral).
 # Run with OPENGOTHIC_GPU_PASSES=1 and read the GBuffer row in report.json.
 seed 73013
 cheat god
@@ -21,6 +22,11 @@ face -122
 wait 20000
 grass stats
 perf sample perf-grass-track/view-5
+wait 8000
+perf stop
+grass parts 234881024
+wait 2000
+perf sample perf-grass-track/view-5-before
 wait 8000
 perf stop
 grass parts 16384
@@ -81,6 +87,11 @@ cam at 41452 3421 -168 40003 3790 -1503
 wait 20000
 grass stats
 perf sample perf-grass-track/view-1
+wait 8000
+perf stop
+grass parts 234881024
+wait 2000
+perf sample perf-grass-track/view-1-before
 wait 8000
 perf stop
 grass parts 16384
