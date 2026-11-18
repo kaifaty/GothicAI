@@ -1,4 +1,4 @@
-# SAVE=<absolute session-activity.sav>; journal starts at the normal bench command boundary.
+# SAVE=<absolute session-activity.sav>; journal starts before the first positive loaded-world step.
 # @headless
 cheat god
 npcday 60 5 shared probe trace=VLK_412_HARAD
