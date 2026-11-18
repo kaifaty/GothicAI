@@ -14,6 +14,7 @@ set time 12 0
 goto pos 43700 3000 500
 clear 3000
 deterministic on
+impostor probe on
 impostor off
 cam at 33500 7267 500 48500 7267 500
 streaming wait
@@ -37,6 +38,7 @@ impostor force
 wait 300
 shot lone-50px-on
 wait 200
+impostor probe off
 impostor auto
 deterministic off
 
