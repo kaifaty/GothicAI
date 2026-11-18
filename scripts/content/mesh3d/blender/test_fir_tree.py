@@ -134,7 +134,7 @@ def test_the_outline_takes_in_a_hole_and_leaves_out_a_notch_wider_than_the_closi
     assert 400 <= (inside & ~solid).sum() <= 400 + .1 * 40 * 14
 
 
-def test_ranked_prefix_covers_two_boughs_before_adding_a_duplicate(tmp_path):
+def test_ranked_prefix_covers_two_boughs_before_adding_a_duplicate(tmp_path, monkeypatch):
     def quad(left, right, low, high, depth):
         return [(left, depth, low), (left, depth, high), (right, depth, low), (right, depth, high)]
 
@@ -148,22 +148,45 @@ def test_ranked_prefix_covers_two_boughs_before_adding_a_duplicate(tmp_path):
         return dict(name=name, cutout=cutout, position=position, normal=np.tile([0, 1, 0], (count, 1)),
                     uv=np.full((count, 2), .5), colour=colour, index=index.reshape(-1, 3))
 
-    wood = part('bark', [quad(-.06, .06, 0, 3, 0)], False, 255)
-    left, right = quad(-1.2, -.1, .9, 2.7, .15), quad(.1, .9, .9, 2.5, .15)
-    hidden = quad(-1.2, -.1, .9, 2.7, .15001)
+    trunk = quad(-.06, .06, 0, 3, 0)
+    wood = part('bark', [trunk, quad(-.18, -.08, .2, .4, 0)], False, 255)
+    level_wood = part('bark', [trunk], False, 255)
+    # In the +Y order view the narrow right bough wins on silhouette weight,
+    # then the front left bough beats the duplicate with the same footprint.
+    left, right = quad(-1.2, -.2, .8, 2, .15), quad(.14, .48, .25, 2.7, .15)
+    hidden = quad(-1.2, -.2, .8, 2, .14999)
+    monkeypatch.setattr(tree_prefix, 'ORDER_VIEWS', ((0, 0),))
     full, designed = tmp_path / 'full.glb', tmp_path / 'designed.glb'
-    tree_glb.write(full, [wood, part('boughs', [left, hidden, right], True, 128)])
-    tree_glb.write(designed, [wood, part('boughs', [left, right], True, 128)])
-    rows = tree_prefix.measure(full, {50: designed}, np.ones((4, 4), bool), np.full((4, 4), 27.),
-                               {50: (1/3, 2/3)})[50]
-    assert rows['same_total']['cards'] == 2
-    assert rows['same_total']['triangles'] == rows['designed']['triangles'] == 6
-    assert rows['same_total']['views'] == rows['designed']['views'] == rows['0.666667']['views']
+    tree_glb.write(full, [wood, part('boughs', [right, hidden, left], True, 128)])
+    tree_glb.write(designed, [level_wood, part('boughs', [left, right], True, 128)])
+    mask = np.ones((4, 4), bool)
+    bark, boughs = tree_prefix.split_parts(tree_glb.read(full))
+    first, _, by_face = tree_prefix.cards(boughs)
+    points = np.concatenate((bark['position'], boughs['position']))
+    order = tree_prefix.rank_cards(points, bark, boughs, mask, by_face, np.bincount(by_face, minlength=len(first)))
+    assert order.tolist() == [0, 2, 1]
+
+    rows = tree_prefix.measure(full, {50: designed}, mask, np.full((4, 4), 27.), {50: (1/3, 2/3)})[50]
+    assert (rows['same_total']['cards'], rows['same_total']['wood_triangles']) == (1, 4)
+    assert (rows['same_canopy']['cards'], rows['same_canopy']['wood_triangles']) == (2, 2)
+    assert rows['same_total']['triangles'] == rows['same_canopy']['triangles'] == rows['designed']['triangles'] == 6
+    assert rows['same_total']['views'] == rows['0.333333']['views']
+    assert rows['same_canopy']['views'] == rows['designed']['views']
     assert rows['0.333333']['views'][0]['reference_opening'] > rows['0.666667']['views'][0]['reference_opening']
     assert rows['0.666667_grown']['growth'] == pytest.approx(1.5**.25)
     assert rows['0.666667_grown']['views'][0]['extra_outline'] > 0
-    assert rows['same_total']['luma_srgb'] == pytest.approx(27)
-    assert rows['same_total']['mean_openness'] == pytest.approx(128 / 255)
+
+
+def test_prefix_render_samples_atlas_and_interpolates_openness():
+    leaves = dict(position=np.array([(0, 0, 0), (6, 0, 0), (0, 6, 0)]),
+                  index=np.array([(0, 1, 2)]), uv=np.array([(0, 0), (1, 0), (0, 1)]),
+                  colour=np.array([(0, 0, 0, 0), (0, 0, 128, 255), (0, 0, 255, 0)], np.uint8))
+    mask = np.array([[False, True], [False, False]])
+    luma = np.array([[1, 11, 21], [31, 41, 51], [61, 71, 81]])
+    _, tone = tree_prefix.render(leaves, lambda points: points, (6, 6), np.full(36, np.inf), mask, luma)
+    # The six hits sample luma 11, 11, 41, 21, 21 and 21. Their interpolated A is x/6
+    # for x = 3.5, 4.5 and 5.5, hit three, two and one times respectively.
+    assert tone == pytest.approx([126, 25 / 6, 6])
 
 
 def test_colour_0_is_laid_out_for_the_tree_wind(spruce):
