@@ -5,5 +5,7 @@ target_include_directories(gothic-cluster-lod PUBLIC "${CMAKE_CURRENT_LIST_DIR}/
 target_compile_features(gothic-cluster-lod PUBLIC cxx_std_20)
 target_link_libraries(gothic-cluster-lod PRIVATE meshoptimizer)
 if(NOT MSVC)
-  target_compile_options(gothic-cluster-lod PRIVATE -Wall -Wconversion -Werror)
+  # Match x86 and ARM rounding when scoring and ordering edge collapses.
+  target_compile_options(meshoptimizer PRIVATE -ffp-contract=off)
+  target_compile_options(gothic-cluster-lod PRIVATE -Wall -Wconversion -Werror -ffp-contract=off)
 endif()

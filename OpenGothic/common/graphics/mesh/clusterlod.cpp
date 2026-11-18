@@ -93,7 +93,8 @@ class Builder {
     std::vector<Indices> partition() const;
     std::vector<uint8_t> lockBoundary(const std::vector<Indices>& partitions) const;
     Group groupBounds(const Indices& clusters) const;
-    void finishGroup(const Indices& clusters, const std::vector<uint8_t>& locks, Indices& pending);
+    void finishGroup(const Indices& clusters, const std::vector<uint8_t>& locks,
+                     Indices& pending, std::vector<uint8_t>& nextFixed);
     bool sameBoundary(const Indices& original, const Indices& simplified) const;
     MaterialContours materialContours(const Indices& indices) const;
   };
@@ -328,7 +329,8 @@ MaterialContours Builder::materialContours(const Indices& indices) const {
   return contours;
   }
 
-void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& locks, Indices& pending) {
+void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& locks,
+                          Indices& pending, std::vector<uint8_t>& nextFixed) {
   Indices original;
   for(uint32_t id : clusters)
     appendIndices(original, result.clusters[id], false);
@@ -384,18 +386,22 @@ void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& l
   else {
     group.errorCm = Infinity;
     for(uint32_t wedge : original)
-      fixed[positions[wedge]] = meshopt_SimplifyVertex_Lock;
+      nextFixed[positions[wedge]] = meshopt_SimplifyVertex_Lock;
     }
   result.groups.push_back(group);
   }
 
 Graph Builder::finish() {
+  std::vector<uint8_t> nextFixed;
   while(!live.empty()) {
     const auto partitions = partition();
     const auto locks = lockBoundary(partitions);
     Indices pending;
+    // Keep both simplification and boundary validation on the same round's locks.
+    nextFixed = fixed;
     for(const auto& group : partitions)
-      finishGroup(group, locks, pending);
+      finishGroup(group, locks, pending, nextFixed);
+    fixed.swap(nextFixed);
     live.swap(pending);
     }
   return std::move(result);

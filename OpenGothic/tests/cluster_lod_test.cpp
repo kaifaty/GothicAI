@@ -277,6 +277,8 @@ size_t checkFixture(Model model) {
 
   const View view{{-2000.f,1400.f,850.f},1080.f,1.6f};
   std::vector<uint32_t> leaves, tops;
+  struct GroupTriangles { size_t input = 0, output = 0; };
+  std::vector<GroupTriangles> groupTriangles(graph.groups.size());
   size_t leafTriangles = 0, topTriangles = 0;
   uint32_t maxLevel = 0;
   for(uint32_t id=0; id<graph.clusters.size(); ++id) {
@@ -286,6 +288,9 @@ size_t checkFixture(Model model) {
     maxLevel = std::max(maxLevel,cluster.level);
     const auto& parent = graph.groups.at(cluster.parentGroup);
     const Group own = cluster.refinedGroup==NoGroup ? Group{cluster.bounds,0.f} : graph.groups.at(cluster.refinedGroup);
+    groupTriangles[cluster.parentGroup].input += cluster.triangleCount;
+    if(cluster.refinedGroup!=NoGroup)
+      groupTriangles[cluster.refinedGroup].output += cluster.triangleCount;
     require((cluster.level==0)==(cluster.refinedGroup==NoGroup),"unexpected transition for meshlet level");
     require(std::isfinite(own.errorCm) && own.errorCm>=0.f && own.errorCm<=parent.errorCm,
             "parent error failed to include the maximum child error");
@@ -304,7 +309,18 @@ size_t checkFixture(Model model) {
       topTriangles += cluster.triangleCount;
       }
     }
+  for(size_t id=0; id<graph.groups.size(); ++id) {
+    const auto [input,output] = groupTriangles[id];
+    if(graph.groups[id].errorCm==Infinity)
+      require(output==0,"terminal group produced a replacement");
+    else if(output==0 || output*100>input*85)
+      throw std::runtime_error("group "+std::to_string(id)+" kept "+std::to_string(output)+"/"+
+                               std::to_string(input)+" input triangles, expected a nonempty replacement at most 85%");
+    }
   require(leafTriangles==fixture.triangles.size() && topTriangles<leafTriangles,"fixture hierarchy did not simplify");
+  if(model==Model::Seams && topTriangles*4>leafTriangles)
+    throw std::runtime_error("seam-heavy fixture kept "+std::to_string(topTriangles)+"/"+
+                             std::to_string(leafTriangles)+" input triangles at the top, expected at most 25%");
   require(selectCut(graph,view,0.f)==leaves,"zero threshold must select exactly level zero");
   require(selectCut(graph,view,Infinity)==tops,"infinite threshold must select exactly the branch tops");
 
