@@ -134,7 +134,8 @@ Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> tri
         wedges.push_back(wedge);
         fixed.push_back(0);
         }
-      fixed[it->second] |= boundary[id] != 0 ? meshopt_SimplifyVertex_Lock : 0;
+      if(boundary[id])
+        fixed[it->second] = meshopt_SimplifyVertex_Lock;
       indices.push_back(it->second);
       }
     }
