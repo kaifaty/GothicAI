@@ -15,15 +15,21 @@ const int VSM_FOG_MIP       = 5;
 const int VSM_PAGE_PER_ROW  = 8192/VSM_PAGE_SIZE;
 const int VSM_MAX_PAGES     = VSM_PAGE_PER_ROW * VSM_PAGE_PER_ROW; // 1024;
 const int VSM_CLIPMAP_SIZE  = VSM_PAGE_SIZE * VSM_PAGE_TBL_SIZE;
-// Meshlet-page pairs the visibility pass may emit a frame (peak 18.6k at 1280x720 on Ryzen, 2026-11-04); the cluster
-// buffers are sized to it (Renderer/DrawCommands: VsmMaxMeshlets; OPENGOTHIC_VSM_PAIRS sets another cap for a study,
-// DrawCommands::vsmPairCap). Past it, clusters drop out of the shadow: an object's cluster is all its meshlets, drawn
-// into every page its sphere touches, so a forest of the modern spruce asks more than the cap holds (64 spruces at
-// view near-30 about 0.56 million, 1 024 about 3 million: reports/engine/2026-11-16-modern-trees/shadow-flicker.md).
+// Meshlet-page pairs the shadow pages may draw a frame (peak 18.6k at 1280x720 on Ryzen, 2026-11-04); the buffers of
+// pairs and of candidates are sized to it (DrawCommands::VsmMaxMeshlets; OPENGOTHIC_VSM_PAIRS sets another cap for a
+// study, DrawCommands::vsmPairCap). The visibility pass lists a cluster for each page entry its sphere touches; the
+// meshlets' pass (vsm_cull_meshlets.comp) keeps an object's meshlets whose own spheres touch the entry. The pairs go by
+// classes: when the frame asks more than the cap, whole classes drop from the end of the order, the same ones in every
+// frame (vsmAdmit) - reports/engine/2026-11-16-modern-trees/shadow-flicker.md, «Второй круг»
 const uint VSM_MAX_MESHLETS = 512u*1024u;
-// The visibility pass fills the slots a cluster reserved past the cap with this pair, and the packing skips it: the
-// slots do not keep an older frame's pairs (vsm_visibility_pass.comp, vsm_pack_draws.comp)
+// A slot the meshlets' pass reserved and found no meshlet for (it never should): the packing skips it, so the slot does
+// not keep an older frame's pair (vsm_cull_meshlets.comp, vsm_pack_draws.comp)
 const uint VSM_PAIR_SKIP = 0xFFFFFFFFu;
+// The classes of pairs: a mip of the sun's pages each, then the lamps' faces
+const int  VSM_PAIR_CLASSES = VSM_PAGE_MIPS+1;
+const uint VSM_CLASS_OMNI   = VSM_PAGE_MIPS;
+// No sphere of an object's meshlets (Bucket::meshletSpheres): its cluster is taken whole
+const uint VSM_NO_SPHERES   = 0xFFFFFFFFu;
 // const int VSM_CUBE_TBL_SIZE = 2;
 
 struct VsmHeader {
@@ -40,7 +46,32 @@ struct VsmHeader {
   uint  omniTileOverflow;  // 16x16 screen tiles with more shadowed lights than a tile holds
   uint  omniTileLightsMax; // most shadowed lights in one tile
   uint  pairSpill;         // pairs the packing put past their draw's range (vsm_pack_draws.comp): 0 unless broken
+  uint  candidateCount;    // cluster-entry candidates of the visibility pass; past the cap of pairs they are lost
+  uint  clusterPairs;      // pairs the candidates' clusters ask whole: the demand before the meshlets' test
+  uint  admitMask;         // the classes drawn this frame, a bit each (vsmAdmit)...
+  uint  admitPrev;         // ...and the frame before: vsm_clear.comp moves the one into the other
+  uint  pairDemand[VSM_PAIR_CLASSES]; // pairs of each class after the meshlets' test
   };
+
+// The classes drawn when the pairs of a frame are short of the cap: in the order lamps' faces, then the sun's mips from
+// the finest, each class whole while the sum stays within the cap; the first class past it and all after it drop. The
+// demand is counted before any pair is written, so the order the GPU runs its groups in decides nothing: a still
+// camera drops the same classes every frame. A class dropped the frame before comes back only under 7/8 of the cap,
+// so a demand at the edge does not switch a ring of the sun's pages on and off
+uint vsmAdmit(const uint demand[VSM_PAIR_CLASSES], uint cap, uint prev) {
+  uint sum  = 0;
+  uint mask = 0;
+  for(uint rank=0; rank<uint(VSM_PAIR_CLASSES); ++rank) {
+    const uint cls   = rank==0 ? VSM_CLASS_OMNI : rank-1;
+    const uint limit = (prev & (1u << cls))!=0u ? cap : cap - cap/8u;
+    const uint d     = demand[cls];
+    if(d > limit || sum > limit - d)
+      break;
+    sum  += d;
+    mask |= 1u << cls;
+    }
+  return mask;
+  }
 
 uint packVsmPageInfo(ivec3 at, ivec2 size) {
   // 1 : 8 : 8 : 7 : 4 : 4

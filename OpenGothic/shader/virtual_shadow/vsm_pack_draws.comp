@@ -61,11 +61,11 @@ void mainCmd() {
 void mainClusters() {
   uint index = gl_GlobalInvocationID.x;
   if(index>=min(vsm.header.meshletCount, push.pairCap))
-    return; // the counter runs on past the cap, the payload does not
+    return; // the classes let in fit under the cap (vsmAdmit); the bound holds anyway
 
   const uvec4 cluster    = payloadSrc[index];
   if(cluster.w==VSM_PAIR_SKIP)
-    return; // a slot reserved past the cap (vsm_visibility_pass.comp)
+    return; // a slot the meshlets' pass reserved and found no meshlet for (vsm_cull_meshlets.comp)
   const uint  instanceId = cluster.x;
   const uint  meshletId  = cluster.y;
   const uint  commandId  = cluster.z & 0xFFFF;

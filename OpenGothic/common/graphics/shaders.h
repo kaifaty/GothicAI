@@ -135,6 +135,7 @@ class Shaders {
 
     // Virtual shadow
     Tempest::ComputePipeline vsmVisibilityPass;
+    Tempest::ComputePipeline vsmCullMeshlets; // the meshlets of the visibility pass's candidates: count, then write
     Tempest::ComputePipeline vsmClear, vsmClearOmni, vsmCullLights, vsmMarkPages, vsmMarkOmniPages, vsmPostprocessOmni;
     Tempest::ComputePipeline vsmTrimPages, vsmSortPages, vsmListPages, vsmClumpPages, vsmAllocPages, vsmAlloc2Pages, vsmMergePages;
     Tempest::ComputePipeline vsmPackDraw0, vsmPackDraw1;

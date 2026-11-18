@@ -460,6 +460,7 @@ add_shader(vsm_merge_pages.comp      virtual_shadow/vsm_merge_pages.comp)
 add_shader(vsm_pack_draws0.comp      virtual_shadow/vsm_pack_draws.comp   -DPASS0)
 add_shader(vsm_pack_draws1.comp      virtual_shadow/vsm_pack_draws.comp   -DPASS1)
 add_shader(vsm_visibility_pass.comp  virtual_shadow/vsm_visibility_pass.comp -DVIRTUAL_SHADOW)
+add_shader(vsm_cull_meshlets.comp    virtual_shadow/vsm_cull_meshlets.comp)
 # virtual shadows: omni lights
 add_shader(vsm_cull_lights.comp      virtual_shadow/vsm_cull_lights.comp)
 add_shader(vsm_mark_omni_pages.comp  virtual_shadow/vsm_mark_omni_pages.comp)

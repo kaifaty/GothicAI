@@ -492,6 +492,7 @@ void PackedMesh::addLevel(const asset::StaticMesh& level, float px, const std::v
     mainEnd[0] = vertices.size();
     mainEnd[1] = indices.size();
     mainEnd[2] = indices8.size();
+    mainEnd[3] = meshletBounds.size();
     }
   // a meshlet is MaxVert vertices, MaxInd indices of them and its 8-bit list: the level's go after, its indices
   // counted from its first vertex
@@ -503,6 +504,7 @@ void PackedMesh::addLevel(const asset::StaticMesh& level, float px, const std::v
   for(auto i:packed.indices)
     indices.push_back(firstVertex+i);
   indices8.insert(indices8.end(),packed.indices8.begin(),packed.indices8.end());
+  meshletBounds.insert(meshletBounds.end(),packed.meshletBounds.begin(),packed.meshletBounds.end());
 
   Level lv;
   lv.px = px;
@@ -519,6 +521,7 @@ void PackedMesh::dropLevels() {
   vertices.resize(mainEnd[0]);
   indices.resize(mainEnd[1]);
   indices8.resize(mainEnd[2]);
+  meshletBounds.resize(mainEnd[3]);
   levels.clear();
   }
 
@@ -944,8 +947,12 @@ void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
 
     const auto* color = colors!=nullptr && mId<colors->size() && (*colors)[mId].size()==sm.wedges.size() ? &(*colors)[mId] : nullptr;
     pack.iboOffset = indices.size();
-    for(auto& i:meshlets)
+    for(auto& i:meshlets) {
+      // a sphere for each meshlet flushed, by its index (the shadow pages' test of an object's meshlets)
+      if(i.indSz!=0)
+        meshletBounds.push_back(i.bounds);
       i.flush(vertices,verticesA,indices,indices8,vId,mesh.positions,sm.wedges,skeletal,rest,color);
+      }
     pack.iboLength = indices.size() - pack.iboOffset;
 
     //dbgUtilization(meshlets);

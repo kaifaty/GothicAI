@@ -3,6 +3,7 @@
 #include <Tempest/Application>
 #include <Tempest/Log>
 #include <cstring>
+#include <string>
 
 #include "graphics/drawcommands.h"
 #include "frameprofile.h"
@@ -176,12 +177,13 @@ void Renderer::logVsmStats(const WorldView& wview) {
     return;
   vsm.statsTime = now;
 
-  struct Header {
+  struct Header { // VsmHeader of vsm_common.glsl
     uint32_t pageCount, meshletCount, counterM, counterV;
     uint32_t pagePerMip[16];
     int32_t  pageBbox[16][4];
     uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax;
-    uint32_t pairSpill;
+    uint32_t pairSpill, candidateCount, clusterPairs, admitMask, admitPrev;
+    uint32_t pairDemand[17]; // the sun's mips, then the lamps (VSM_PAIR_CLASSES)
     } h = {};
   uint32_t visibleLights = 0;
   auto& device = Resources::device();
@@ -191,14 +193,31 @@ void Renderer::logVsmStats(const WorldView& wview) {
 
   const uint32_t poolPages = uint32_t(vsm.pageData.w()/VSM_PAGE_SIZE) * uint32_t(vsm.pageData.h()/VSM_PAGE_SIZE);
   const uint32_t dropped   = h.pageListCount>h.pagePlaced ? h.pageListCount-h.pagePlaced : 0;
+  const uint32_t cap       = DrawCommands::vsmPairCap();
+  uint64_t demand = 0;
+  for(auto d:h.pairDemand)
+    demand += d;
+  // meshletCount: the pairs drawn; demand: the pairs the meshlets' test keeps, whole clusters: before it (a cluster's
+  // all meshlets in every entry its sphere touches); OVERFLOW: the demand is past the cap and classes are dropped
   Log::i("vsm stats: pageCount = ", h.pageCount, "/", poolPages,
          ", entries = ", h.pageListCount, " (sun ", h.pageListCount-h.pageOmniCount, ", pageOmniCount ", h.pageOmniCount, ")",
          ", placed = ", h.pagePlaced, ", dropped = ", dropped,
-         ", meshletCount = ", h.meshletCount, "/", DrawCommands::vsmPairCap(),
-         (h.meshletCount>DrawCommands::vsmPairCap() ? " OVERFLOW" : ""),
+         ", meshletCount = ", h.meshletCount, "/", cap,
+         ", demand = ", demand, (demand>cap ? " OVERFLOW" : ""), " (whole clusters ", h.clusterPairs, ")",
+         ", candidates = ", h.candidateCount, (h.candidateCount>cap ? " LOST" : ""),
          ", spilled = ", h.pairSpill,
          ", lights = ", visibleLights, "/", uint32_t(wview.lights().size()),
          ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
+  // the demand of each class with any, a class dropped this frame (vsmAdmit) marked
+  std::string classes;
+  for(uint32_t i=0; i<17; ++i) {
+    if(h.pairDemand[i]==0)
+      continue;
+    classes += (i==16 ? std::string(" lamps ") : " mip" + std::to_string(i) + " ") + std::to_string(h.pairDemand[i]);
+    if((h.admitMask & (1u << i))==0)
+      classes += " DROPPED";
+    }
+  Log::i("vsm pairs by class:", classes);
 
   // the lamp filter's counters of one frame (light_vsm_probe), then the next frame is counted
   if(lights.directLightPso!=&Shaders::inst().lightsVsmProbe || vsm.lampProbe.isEmpty())

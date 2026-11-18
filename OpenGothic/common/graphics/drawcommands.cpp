@@ -453,17 +453,18 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
 
   auto& view = views[SceneGlobals::V_Vsm];
   const uint32_t cap = vsmPairCap();
-  const size_t visClustersSz = size_t(cap)*sizeof(uint32_t)*4;
+  const size_t pairsSz = size_t(cap)*sizeof(uint32_t)*4;
 
-  usesSsbo(view.vsmClusters, visClustersSz);
-  usesSsbo(view.visClusters, visClustersSz);
+  usesSsbo(vsmCandidates,    pairsSz); // a cluster and a page entry its sphere touches, the visibility pass's
+  usesSsbo(view.vsmClusters, pairsSz); // the pairs of meshlet and entry, as the meshlets' pass writes them...
+  usesSsbo(view.visClusters, pairsSz); // ...and by draw
 
-  struct Push { uint32_t meshletCount; uint32_t pairCap; } push = {};
+  struct Push { uint32_t meshletCount; uint32_t candidateCap; } push = {};
   push.meshletCount = uint32_t(clusters.size());
-  push.pairCap      = cap;
+  push.candidateCap = cap;
 
   cmd.setBinding(T_Scene,    scene.uboGlobal[SceneGlobals::V_Vsm]);
-  cmd.setBinding(T_Payload,  view.vsmClusters); //unsorted clusters
+  cmd.setBinding(T_Payload,  vsmCandidates);
   cmd.setBinding(T_Instance, owner.instanceSsbo());
   cmd.setBinding(T_Bucket,   buckets.ssbo());
   cmd.setBinding(T_Indirect, view.indirectCmd);
@@ -475,6 +476,19 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   cmd.setPushData(&push, sizeof(push));
   cmd.setPipeline(shaders.vsmVisibilityPass);
   cmd.dispatchThreads(push.meshletCount, size_t(scene.vsmPageTbl->d() + 1));
+
+  // the candidates' meshlets (vsm_cull_meshlets.comp): an object's by their spheres; the first pass counts them by
+  // classes, the second writes the classes that fit under the cap. Scene, candidates, instances, buckets, draws,
+  // clusters and lights keep their slots
+  struct CullPush { uint32_t pairCap; uint32_t emit; } cull = {cap, 0};
+  cmd.setBinding(7, buckets.meshletSpheres());
+  cmd.setBinding(8, *scene.vsmPageList);
+  cmd.setBinding(9, view.vsmClusters);
+  cmd.setPipeline(shaders.vsmCullMeshlets);
+  for(cull.emit=0; cull.emit<2; ++cull.emit) {
+    cmd.setPushData(cull);
+    cmd.dispatch(VsmCullGroups);
+    }
 
   cmd.setBinding(1, view.vsmClusters);
   cmd.setBinding(2, view.visClusters);

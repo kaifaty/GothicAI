@@ -36,7 +36,13 @@ void main() {
     header.pagePlaced        = 0;
     header.omniTileOverflow  = 0;
     header.omniTileLightsMax = 0;
+    header.candidateCount    = 0;
+    header.clusterPairs      = 0;
+    header.admitPrev         = header.admitMask;
     }
+
+  if(gl_WorkGroupID==uvec3(0) && gl_LocalInvocationIndex<VSM_PAIR_CLASSES)
+    header.pairDemand[gl_LocalInvocationIndex] = 0;
 
   if(gl_LocalInvocationIndex<16) {
     header.pagePerMip[gl_LocalInvocationIndex] = 0;

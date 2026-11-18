@@ -399,6 +399,7 @@ void Shaders::compileShaders() noexcept {
 
   if(Shaders::isVsmSupported()) {
     vsmVisibilityPass  = computeShader("vsm_visibility_pass.comp.sprv");
+    vsmCullMeshlets    = computeShader("vsm_cull_meshlets.comp.sprv");
     vsmClear           = computeShader("vsm_clear.comp.sprv");
     vsmClearOmni       = computeShader("vsm_clear_omni.comp.sprv");
     vsmCullLights      = computeShader("vsm_cull_lights.comp.sprv");
