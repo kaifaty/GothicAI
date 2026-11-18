@@ -9,8 +9,8 @@
 //     for the cell's full triangle list and for every third triangle reversed,
 //     and the counters show which path ran.
 //   - Every fallback gives the GLB result and its log line.
-//   - The catalogue reader returns the same v3 graph as a direct build from
-//     the GLB and skips it when disabled.
+//   - The catalogue reader retains the same v3 graph as a direct build from
+//     the GLB while the cell is resident and skips it when disabled.
 //   - Two threads reading at once give the single-thread result.
 //   - The cook rewrites a .wcb whose bytes changed at the same length.
 // Needs GOTHIC_DIR and a ready base for NEWWORLD.
@@ -18,6 +18,7 @@
 #include "commandline.h"
 #include "gothicglb.h"
 #include "resources.h"
+#include "world/chunkresidency.h"
 #include "worldchunkcatalogue.h"
 #include "worldchunkcook.h"
 #include "worldchunk_fixtures.h"
@@ -33,6 +34,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -224,12 +226,21 @@ void hierarchyRead(const fs::path& root) {
     ChunkTable table;
     startWorldChunks(dir,{},manifest,table,true);
     require(table.source && table.source->catalogue(),"the cooked hierarchy fixture must start from its catalogue");
-    return table.source;
+    return table;
     };
   setHierarchyPath(true);
-  const auto source=start();
-  source->cooked().setResident(cell,true);
-  const auto cooked=source->readLandscape(cell);
+  const auto table=start();
+  const auto& source=table.source;
+  const auto id=table.entries[cell].id;
+  using State=ChunkResidency::State;
+  ChunkResidency residency(table);
+  WorldChunkMesh cooked;
+  residency.subscribe([&](ChunkId changed, State, State next) {
+    if(changed==id && next==State::Near)
+      cooked=source->readLandscape(cell);
+    });
+  const Tempest::Vec3 inside((float(id.x)+0.5f)*ChunkId::Size,0,(float(id.z)+0.5f)*ChunkId::Size);
+  residency.update(inside,inside,0.f);
   require(source->reads().cooked==1 && cooked.clusterHierarchy && cooked.clusterHierarchy->version()==3,
           "the game's catalogue reader must return the v3 hierarchy from the .wcb");
   require(source->cooked().clusterHierarchy(cell)==cooked.clusterHierarchy,"the resident cell must retain its graph");
@@ -237,8 +248,11 @@ void hierarchyRead(const fs::path& root) {
   require(sameBytes(actual.vertices,refs) && sameBytes(actual.vertexIndices,direct.vertexIndices) &&
           sameBytes(actual.indices,direct.indices) && sameBytes(actual.clusters,direct.clusters) &&
           sameBytes(actual.groups,direct.groups),"the catalogue hierarchy must equal a direct build from the GLB");
-  source->cooked().setResident(cell,false);
-  require(!source->cooked().clusterHierarchy(cell),"the evicted cell must release its graph");
+  const std::weak_ptr<const CookedChunk> retained=cooked.clusterHierarchy;
+  cooked.clusterHierarchy.reset();
+  const Tempest::Vec3 outside(inside.x+float((ChunkResidency::NearExitRadius+1)*ChunkId::Size),inside.y,inside.z);
+  residency.update(outside,outside,0.f);
+  require(residency.desired(cell)==State::Outside && retained.expired(),"the evicted cell must release its graph");
 
   // Corrupt a hierarchy reference, leaving the level 0 arrays and directory intact.
   const auto path=dir/"chunks/1_0.wcb";
@@ -247,7 +261,7 @@ void hierarchyRead(const fs::path& root) {
   put32(bytes,refsAt,0xffffffffu);
   writeBytes(path,bytes);
   setHierarchyPath(false);
-  const auto disabled=start();
+  const auto disabled=start().source;
   const auto skipped=disabled->readLandscape(cell);
   setHierarchyPath(true);
   require(disabled->reads().cooked==1 && !skipped.clusterHierarchy && compareReads(cooked,skipped).empty(),

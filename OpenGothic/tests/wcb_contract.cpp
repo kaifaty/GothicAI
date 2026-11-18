@@ -20,6 +20,7 @@
 #include <bit>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -483,7 +484,8 @@ void hierarchyRoundTrip(const fs::path& root) {
   require(verifyCookedWorld(dir,{},{},true).empty(),"the v3 hierarchy must match a fresh build");
 
   constexpr size_t baseSections=5, hierarchyDirectory=baseSections*wcb::EntrySize;
-  constexpr size_t strings=wcb::HeaderSize+4*wcb::EntrySize, indices=wcb::HeaderSize+7*wcb::EntrySize;
+  constexpr size_t strings=wcb::HeaderSize+4*wcb::EntrySize, clusters=wcb::HeaderSize+5*wcb::EntrySize,
+                   indices=wcb::HeaderSize+7*wcb::EntrySize;
   auto changed=bytes;
   const auto firstIndex=size_t(get64(bytes,indices+16));
   // A cyclic permutation leaves the same triangle and is readable, but must fail a byte comparison.
@@ -494,7 +496,19 @@ void hierarchyRoundTrip(const fs::path& root) {
   (void)CookedChunk::read(path,true);
   require(verifyCookedWorld(dir,{},{},true).find("cluster hierarchy indices")!=std::string::npos,
           "verification must report which hierarchy section changed");
-  gothicglb::writeFile(path,bytes.data(),bytes.size());
+
+  const auto readHierarchy=[&] { (void)CookedChunk::read(path,true); };
+  changed=bytes;
+  changed[firstIndex]=uint8_t(hierarchy.clusters.front().vertexCount);
+  gothicglb::writeFile(path,changed.data(),changed.size());
+  expectThrows(readHierarchy,{"0_0.wcb","local indices","meshlet-local vertex index out of range"},
+               "a local index past the cluster's vertices");
+  changed=bytes;
+  const auto firstCluster=size_t(get64(bytes,clusters+16));
+  put32(changed,firstCluster+offsetof(ClusterLod::Cluster,triangleCount),2);
+  gothicglb::writeFile(path,changed.data(),changed.size());
+  expectThrows(readHierarchy,{"0_0.wcb","local indices","invalid cluster triangle range"},
+               "a cluster triangle range past the local index section");
 
   auto legacy=bytes;
   legacy.resize(size_t(get64(bytes,strings+16)+get64(bytes,strings+24)));
@@ -507,13 +521,16 @@ void hierarchyRoundTrip(const fs::path& root) {
   put32(legacy,4,2);
   put32(legacy,124,baseSections);
   put64(legacy,16,legacy.size());
-  const auto old=CookedChunk::open(legacy,"legacy.wcb");
-  const auto oldHierarchy=old.hierarchy();
-  require(old.version()==2 && oldHierarchy.vertices.empty() && oldHierarchy.clusters.empty() &&
-          oldHierarchy.groups.empty() && oldHierarchy.vertexIndices.empty() && oldHierarchy.indices.empty(),
-          "the reader must accept v2 without a hierarchy");
-  require(differingFields(chunk,old).empty(),"v2 keeps the same positions, features, triangles and materials");
-  std::puts("Cluster hierarchy: v3 round trip and byte verification; a v2 chunk reads without a hierarchy");
+  gothicglb::writeFile(path,legacy.data(),legacy.size());
+  for(const bool wantHierarchy:{true,false}) {
+    const auto old=CookedChunk::read(path,wantHierarchy);
+    const auto oldHierarchy=old.hierarchy();
+    require(old.version()==2 && oldHierarchy.vertices.empty() && oldHierarchy.clusters.empty() &&
+            oldHierarchy.groups.empty() && oldHierarchy.vertexIndices.empty() && oldHierarchy.indices.empty(),
+            "the file reader must accept v2 without a hierarchy");
+    require(differingFields(chunk,old).empty(),"v2 keeps the same positions, features, triangles and materials");
+    }
+  std::puts("Cluster hierarchy: v3 round trip and byte verification, bad indices rejected, v2 file reads in both modes");
   }
 
 void rejections(const fs::path& root) {
