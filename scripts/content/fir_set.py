@@ -83,13 +83,14 @@ PROBE = (((38700., 3456.2, 1000.), 40., 1.2, 33),
          ((42100., 3227.1, 1600.), 170., .9, 59))
 
 # The cost stand (tree-cost mode, reports/engine/2026-11-16-modern-trees/tree-cost.md): a grid of SIDE x SIDE spruces,
-# STEP apart (the original's forest has 6.6 m to the nearest neighbour), each shifted up to JITTER, east of the
-# meadow of PROBE and of the rock hill east of it. Column i runs east from X0, row j north from Z0; a forest of
-# n spruces is the block of the first sqrt(n) columns and the middle sqrt(n) rows, so 64, 256 and 1 024 nest at
-# the middle of the west edge, where scripts/bench/perf-trees.bench looks from. Each place takes one of the five
-# spruces of PROBE and a yaw by FOREST_SEED, the same in every forest. LONE: spruce A alone on the top of the hill,
-# west of the forest, for the pairs of frames at distances; the hill hides the forest behind it from the west.
-X0, Z0, STEP, SIDE, JITTER = 51500., -16060., 660., 32, 150.
+# STEP apart (the original's forest has 6.6 m to the nearest neighbour), each shifted up to JITTER, in the basin
+# of Akil's farm east of the meadow of PROBE and of the rock hill east of it. Column i runs east from X0, row j
+# north from Z0; a forest of n spruces is the block of the first sqrt(n) columns and of sqrt(n) rows round
+# NEST_ROW, so 64, 256 and 1 024 nest at the west edge where the views of scripts/bench/perf-trees.bench look:
+# from the hill, the only open sight on the forest. Each place takes one of the five spruces of PROBE and a yaw
+# by FOREST_SEED, the same in every forest. LONE: spruce A alone on the top of the hill, west of the forest, for
+# the pairs of frames at distances; the hill hides the forest behind it from the west.
+X0, Z0, STEP, SIDE, JITTER, NEST_ROW = 51500., -16060., 660., 32, 150., 8
 FOREST_SEED = 20261118
 LONE = (48500., 500.)
 GROUND = ('ground', 'rock')     # the material classes a root stands on
@@ -315,7 +316,8 @@ def forest_layout(count: int) -> list[dict]:
     shift = rng.uniform(-JITTER, JITTER, (SIDE, SIDE, 2))
     yaw = rng.uniform(0., 360., (SIDE, SIDE))
     spruce = rng.integers(1, len(PROBE) + 1, (SIDE, SIDE))
-    rows = range((SIDE - side) // 2, (SIDE + side) // 2)
+    first = min(max(NEST_ROW - side // 2, 0), SIDE - side)
+    rows = range(first, first + side)
     return [dict(column=i, row=j, x=X0 + (i + .5) * STEP + shift[i, j, 0], z=Z0 + (j + .5) * STEP + shift[i, j, 1],
                  yaw=round(float(yaw[i, j]), 1), spruce=int(spruce[i, j]))
             for i in range(side) for j in rows]
