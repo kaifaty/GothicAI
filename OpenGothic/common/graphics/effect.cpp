@@ -7,6 +7,7 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "visualfx.h"
+#include "graphics/pfx/particlefx.h"
 
 using namespace Tempest;
 
@@ -70,7 +71,12 @@ void Effect::setupPfx(World& owner) {
     return;
 
   pfx = PfxEmitter(owner,pfxDecl);
-  if(root->isMeshEmmiter())
+  // an own effect born on the body's surface (particles.d, shpType_S MESH: the fire on a burning body) gets the
+  // mesh as the game's "=" effects do
+  meshPfx = pfxDecl->shpType==ParticleFx::EmitterType::Mesh;
+  for(const auto* other:pfxDecl->with)
+    meshPfx = meshPfx || other->shpType==ParticleFx::EmitterType::Mesh;
+  if(root->isMeshEmmiter() || meshPfx)
     pfx.setMesh(meshEmitter,pose,meshSkin);
   pfx.setActive(active);
   pfx.setLooped(looped);
@@ -244,7 +250,7 @@ void Effect::setMesh(const MeshObjects::Mesh* mesh, const std::vector<Tempest::M
     next->setMesh(mesh,skin);
   meshEmitter = mesh;
   meshSkin    = skin;
-  if(root!=nullptr && root->isMeshEmmiter())
+  if(root!=nullptr && (root->isMeshEmmiter() || meshPfx))
     pfx.setMesh(meshEmitter,pose,meshSkin);
   }
 
@@ -295,7 +301,7 @@ void Effect::bindAttaches(const Pose& p, const Skeleton& to) {
     // case: VOB_MAGICBURN
     boneId = to.findRootNode();
     }
-  if(root!=nullptr && root->isMeshEmmiter())
+  if(root!=nullptr && (root->isMeshEmmiter() || meshPfx))
     pfx.setMesh(meshEmitter,pose,meshSkin);
   }
 

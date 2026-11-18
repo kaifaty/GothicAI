@@ -64,6 +64,7 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
   if(const auto m=content.motions.find(cname); m!=content.motions.end()) {
     // particles.d units to the engine's cm and ms
     const auto& own = m->second;
+    p->own                 = true;
     p->motion.curlStrength = own.curlStrength*1e-4f;
     p->motion.curlWave     = own.curlFrequency*6.2831853f/100.f;
     p->motion.curlDrift    = own.curlSpeed*0.1f;
