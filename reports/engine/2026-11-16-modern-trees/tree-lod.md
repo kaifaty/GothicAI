@@ -60,7 +60,7 @@
 | `OpenGothic/common/resources_base.cpp` | разбор поля `levels` в индексе мешей |
 | `OpenGothic/common/resources.{h,cpp}` | `implLoadMeshLevels`: чтение GLB уровней, сверка материалов и `COLOR_0`, порядок подмешей как у основного |
 | `OpenGothic/common/graphics/mesh/submesh/packedmesh.*` | `addLevel` — уровень в те же буферы после меша, `dropLevels` — меш без уровней |
-| `OpenGothic/common/graphics/mesh/submesh/staticmesh.*` | уровни, коробка отсечения `drawn`, BLAS по самому грубому уровню, `rtSlice` |
+| `OpenGothic/common/graphics/mesh/submesh/staticmesh.*` | уровни, коробка отсечения `drawn`, BLAS по самому грубому уровню, `rtSlice`, мешлеты уровня `levelMeshlets` |
 | `OpenGothic/common/graphics/mesh/protomesh.cpp` | форма, оболочка и точки попадания — без уровней |
 | `OpenGothic/common/graphics/visualobjects.*` | `preFrameUpdateLevels`, диапазон кластера, срез лучей |
 | `OpenGothic/common/graphics/drawclusters.cpp`, `drawbuckets.cpp` | сфера и коробка отсечения по `drawn` |
@@ -74,10 +74,10 @@
 **Счётчики профиля** `mesh_level0`…`mesh_level3` считают предметы с уровнями на каждом уровне за кадр. Предмет считается один раз, по первому подмешу; в отчёте `perf_report.py` это `per_frame`. В кадр ничего не пишется. Загрузка пишет в журнал строку на меш, например `meshes: "OWN_TREE_FIR_A_4" levels of detail: 22570 triangles under 400 px, 11262 …, 5639 …`.
 
 **Тесты** — `gothic-mesh-gltf-test`, `levelCases`:
-- выключатель;
+- выключатель — в своём процессе теста, потому что он читается один раз: и `OPENGOTHIC_MESH_LEVELS=0`, и `[INTERNAL] meshLevels=0` дают основной меш в рисовании и в лучах;
 - высота на экране;
 - выбор уровня: уходя — уровни по порядку и никогда не подробнее, приближаясь — обратно; на пороге уровень не меняется туда-обратно между `px` и `1,1·px`; запись без уровней даёт основной меш на любой высоте;
-- верное поле: срезы уровней после меша, лучи берут грубый уровень, коробка отсечения шире, коллизия и оболочка без вершин уровней;
+- верное поле: срезы уровней после меша, мешлеты кластера на каждом уровне (`StaticMesh::levelMeshlets`), лучи берут грубый уровень, коробка отсечения шире, коллизия и оболочка без вершин уровней;
 - 18 неверных полей, каждое: меш грузится один.
 
 `scripts/content/test_fir_set.py` проверяет поле, которое пишет генератор.

@@ -24,6 +24,7 @@
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "physics/fracture.h"
 #include "resources.h"
+#include "settings.h"
 #include "asset/fromzenkit.h"
 #include "baseimport.h"
 #include "basemesh.h"
@@ -72,14 +73,18 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <thread>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 #include <sys/wait.h>
 #include <unistd.h>
+
+extern char** environ;
 
 struct MeshGltfTest {
   static MdlVisual& visual(Npc& npc) { return npc.visual; }
@@ -1432,11 +1437,76 @@ void indexCases(const Fixture& fixture) {
   resourcePaths(fixture,true);
   }
 
+// The switch of the levels of detail off, in a process of this test of its own (MeshLevels::enabled() is read once):
+// mode `env` by OPENGOTHIC_MESH_LEVELS=0, mode `ini` by [INTERNAL] meshLevels=0 of the game's settings. A record with
+// levels must load the mesh alone, its rays the mesh's own triangles. Returns the exit code
+int levelSwitchChild(std::string_view mode) {
+  Fixture fixture;
+  const auto root=fixture.root.string();
+  const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str(),"-rt","0"};
+  CommandLine commandLine(5,args);
+  std::unique_ptr<Settings> settings;
+  if(mode=="ini") {
+    textFile(fixture.root/"system.ini","");
+    textFile(fixture.root/"user.ini","[INTERNAL]\nmeshLevels=0\n");
+    settings=std::make_unique<Settings>();
+    settings->load((fixture.root/"system.ini").u16string(),(fixture.root/"user.ini").u16string());
+    }
+  glbFile(fixture.root/"meshes/test/lod1.glb");
+  fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400}]}})");
+  Resources resources;
+  fixture.mount();
+  const auto* proto = Resources::loadMesh("own_mesh.3ds");
+  require(!MeshLevels::enabled(),"the switch must be off: "+std::string(mode));
+  require(proto!=nullptr && proto->attach.size()==1 && proto->attach[0].sub.size()==1,"the mesh must load");
+  const auto& mesh = proto->attach[0];
+  const auto& sub  = mesh.sub[0];
+  require(mesh.levels.empty() && mesh.rtSlice(sub.iboOffset,sub.iboLength)==std::pair(sub.iboOffset,sub.iboLength) &&
+          mesh.levelMeshlets(sub.iboOffset,sub.iboLength,1)==std::pair(uint32_t(0),uint32_t(1)),
+          "levels switched off must leave the mesh itself, in the rays too: "+std::string(mode));
+  std::cout << "mesh levels off by " << mode << ": the mesh alone\n";
+  return 0;
+  }
+
+// Runs levelSwitchChild in this test's binary anew; fork and exec only, so a thread of this process cannot hold a lock
+void levelSwitchCase(std::string_view mode) {
+  std::error_code error;
+  const auto self = std::filesystem::read_symlink("/proc/self/exe",error);
+  require(!error,"the switch's case needs this test's binary (/proc/self/exe)");
+  std::vector<std::string> env;
+  for(char** e=environ; *e!=nullptr; ++e) {
+    const std::string_view v(*e);
+    if(!v.starts_with("OPENGOTHIC_MESH_LEVELS=") && !v.starts_with("GOTHIC_MESH_LEVELS_CHILD="))
+      env.emplace_back(v);
+    }
+  env.push_back("GOTHIC_MESH_LEVELS_CHILD="+std::string(mode));
+  if(mode=="env")
+    env.push_back("OPENGOTHIC_MESH_LEVELS=0");
+  std::vector<char*> envp;
+  for(auto& v:env)
+    envp.push_back(v.data());
+  envp.push_back(nullptr);
+  const std::string path = self.string();
+  char* argv[] = {const_cast<char*>(path.c_str()),nullptr};
+  std::cout.flush();
+  const pid_t child = fork();
+  require(child>=0,"the switch's process must start");
+  if(child==0) {
+    execve(path.c_str(),argv,envp.data());
+    _exit(127);
+    }
+  int status = 0;
+  require(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0,
+          "levels switched off by "+std::string(mode)+" must draw and trace the mesh alone");
+  }
+
 // Levels of detail of an own mesh (graphics/meshlevels.h): the switch, the choice by the height on screen, the field
 // of meshes.json and the packing of the levels after the mesh
 void levelCases(const Fixture& fixture) {
   require(MeshLevels::parse("",true) && !MeshLevels::parse("",false) && !MeshLevels::parse("0",true) &&
           MeshLevels::parse("1",false),"OPENGOTHIC_MESH_LEVELS must win over [INTERNAL] meshLevels, 0 is off");
+  levelSwitchCase("env");
+  levelSwitchCase("ini");
 
   // spruce A, 18 m, at 1920x1080 and 67.5 degrees: the levels of 400, 200 and 100 px come at 36, 73 and 145 m
   const float px[3] = {400,200,100};
@@ -1498,6 +1568,14 @@ void levelCases(const Fixture& fixture) {
             lv1.second==PackedMesh::MaxInd && lv2.second==PackedMesh::MaxInd,
             "the levels must be packed after the mesh in its buffers, a meshlet each");
     require(mesh.rtSlice(sub.iboOffset,sub.iboLength)==lv2,"the ray scene must take the coarsest level");
+    // what VisualObjects gives the object's cluster at each level (drawnMeshlets)
+    using Range = std::pair<uint32_t,uint32_t>;
+    const auto itself = Range(uint32_t(sub.iboOffset/PackedMesh::MaxInd),uint32_t(sub.iboLength/PackedMesh::MaxInd));
+    require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,0)==itself &&
+            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,1)==Range(uint32_t(lv1.first/PackedMesh::MaxInd),1) &&
+            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,2)==Range(uint32_t(lv2.first/PackedMesh::MaxInd),1) &&
+            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,3)==itself,
+            "a cluster must draw the meshlets of its level: the mesh's at 0 and at a level the mesh has not");
     require(close(mesh.bbox.bbox[0].x,-400.f) && close(mesh.bbox.bbox[1].y,600.f),
             "the mesh's own box (the wind's height) must not take the levels in");
     const auto& own = mesh.bbox.bbox;
@@ -3057,6 +3135,8 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
 
 int main() {
   try {
+    if(const char* mode=std::getenv("GOTHIC_MESH_LEVELS_CHILD"))
+      return levelSwitchChild(mode);
     // The effect receipt uses the caller's installation and base: read them before the fixture
     // points the environment at its own toy installation.
     const char* gameDir = std::getenv("GOTHIC_DIR");

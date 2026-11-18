@@ -285,6 +285,17 @@ const Tempest::AccelerationStructure* StaticMesh::blas(size_t iboOffset, size_t 
   return nullptr;
   }
 
+std::pair<uint32_t,uint32_t> StaticMesh::levelMeshlets(size_t iboOffset, size_t iboLen, size_t level) const {
+  std::pair<size_t,size_t> slice = {iboOffset,iboLen};
+  if(level>0 && level<=levels.size())
+    for(size_t i=0;i<sub.size() && i<levels[level-1].sub.size();++i)
+      if(sub[i].iboOffset==iboOffset && sub[i].iboLength==iboLen) {
+        slice = levels[level-1].sub[i];
+        break;
+        }
+  return {uint32_t(slice.first/PackedMesh::MaxInd), uint32_t(slice.second/PackedMesh::MaxInd)};
+  }
+
 std::pair<size_t,size_t> StaticMesh::rtSlice(size_t iboOffset, size_t iboLen) const {
   for(auto& i:sub)
     if(i.iboOffset==iboOffset && i.iboLength==iboLen)

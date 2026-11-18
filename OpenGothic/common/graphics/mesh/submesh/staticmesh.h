@@ -101,6 +101,8 @@ class StaticMesh {
     const Tempest::AccelerationStructure* blas(size_t iboOffset, size_t iboLen) const;
     // The slice of the triangles blas() of the submesh at this slice is built from (SubMesh::rtOffset, rtLength)
     std::pair<size_t,size_t>              rtSlice(size_t iboOffset, size_t iboLen) const;
+    // The meshlets (first, count) the submesh at this slice draws at a level of detail: 0 or one the mesh has not, its own
+    std::pair<uint32_t,uint32_t>          levelMeshlets(size_t iboOffset, size_t iboLen, size_t level) const;
 
     const Tempest::StorageBuffer& vboBuffer() const;
     const Tempest::StorageBuffer& ibo8Buffer() const;

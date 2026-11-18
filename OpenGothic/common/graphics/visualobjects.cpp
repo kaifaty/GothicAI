@@ -875,11 +875,8 @@ std::pair<uint32_t,uint32_t> VisualObjects::drawnMeshlets(Object& obj) {
   const uint32_t first = obj.iboOff/PackedMesh::MaxInd;
   if(obj.strandMeshlets>0)
     return {first, obj.strandMeshlets};
-  const auto* mesh = obj.bucketId->staticMesh;
-  if(obj.level>0 && obj.levelSub!=NoLevels && mesh!=nullptr && obj.level<=mesh->levels.size()) {
-    const auto& slice = mesh->levels[obj.level-1u].sub[obj.levelSub];
-    return {uint32_t(slice.first/PackedMesh::MaxInd), uint32_t(slice.second/PackedMesh::MaxInd)};
-    }
+  if(const auto* mesh = obj.bucketId->staticMesh)
+    return mesh->levelMeshlets(obj.iboOff, obj.iboLen, obj.level);
   return {first, obj.iboLen/PackedMesh::MaxInd};
   }
 
