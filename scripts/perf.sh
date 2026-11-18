@@ -100,7 +100,7 @@ PERF_WAIT="${PERF_WAIT:-600}"
 PERF_WAIT=$((10#$PERF_WAIT))
 if [[ $# == 0 ]]; then PLACES=(market harbour forest interior combat); else PLACES=("$@"); fi
 for place in "${PLACES[@]}"; do
-  case "$place" in market|market-walk|harbour|harbour-night|house-night|forest|interior|combat|shot|face|face-far|rock|meadow|grass|trees|xardas|temple|fires) ;; *) fail "unknown place: $place (market market-walk harbour harbour-night house-night forest interior combat shot face face-far rock meadow grass trees xardas temple fires)" ;; esac
+  case "$place" in market|market-walk|harbour|harbour-night|house-night|forest|interior|combat|shot|face|face-far|rock|meadow|grass|grass-track|trees|xardas|temple|fires) ;; *) fail "unknown place: $place (market market-walk harbour harbour-night house-night forest interior combat shot face face-far rock meadow grass grass-track trees xardas temple fires)" ;; esac
 done
 export PERF_WINDOW PERF_REPEAT PERF_WAIT
 export PERF_ARGS="${PERF_ARGS:-}" PERF_ENV="${PERF_ENV:-}" PERF_VID_RES="${PERF_VID_RES:-0}" PERF_INI="${PERF_INI:-}"
@@ -339,11 +339,18 @@ try:
         rows = list(csv.DictReader(source))
     if not rows or any(int(row.get('overflow', 0)) for row in rows):
         raise ValueError('empty or overflowed frame profile')
-    for view in range(1, 5):
-        samples = [row for row in rows if row['segment'] == f'perf-{place}/view-{view}']
+    if place == 'grass-track':
+        track_samples = ('', '-noroad', '-nowander', '-nofade', '-noragged', '-noorm', '-nocolor',
+                         '-nospots', '-notone', '-noribbonnormal', '-nolayernormal')
+        segments_expected = [f'perf-{place}/view-{view}{suffix}'
+                             for view in (5, 1) for suffix in track_samples]
+    else:
+        segments_expected = [f'perf-{place}/view-{view}' for view in range(1, 5)]
+    for segment in segments_expected:
+        samples = [row for row in rows if row['segment'] == segment]
         elapsed = (int(samples[-1]['begin_ns']) - int(samples[0]['begin_ns'])) / 1e9 if samples else 0
         if len(samples) < 2 or elapsed < 7.5:
-            raise ValueError(f'view-{view}: only {len(samples)} attempts / {elapsed:.3f}s')
+            raise ValueError(f'{segment}: only {len(samples)} attempts / {elapsed:.3f}s')
     events = [json.loads(line) for line in (leaf / 'events.jsonl').read_text().splitlines() if line]
     errors = [event for event in events if event.get('kind') == 'error' or event.get('kind', '').endswith('_error') or event.get('pass') is False]
     if errors:
@@ -359,7 +366,7 @@ try:
     (leaf / 'metadata.json').write_text(json.dumps(meta, indent=2) + '\n')
 except (OSError, ValueError, KeyError) as error:
     raise SystemExit(f'perf: invalid {place} run: {error}; see {leaf}')
-print(f'perf: validated {place}: 4 views, {len(rows)} attempts')
+print(f'perf: validated {place}: {len(segments_expected)} samples, {len(rows)} attempts')
 PY
   done
 done

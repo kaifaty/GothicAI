@@ -42,6 +42,17 @@ const float GrassTrackStainFrom = -0.10; // of the stains' noise: none below, wh
 const float GrassTrackStainTo  = 0.32;
 const float GrassTrackStainRut = 4.0;    // by the tint's green under the body's: no stain in a rut from 1/4
 
+// Bench bits (Grass::Part in grassdiag.h); substitute neutral material inputs for the disabled work.
+const uint GrassPartTrackWander = 1u << 16;
+const uint GrassPartTrackFade   = 1u << 17;
+const uint GrassPartTrackRagged = 1u << 18;
+const uint GrassPartTrackOrm    = 1u << 19;
+const uint GrassPartTrackColor  = 1u << 20;
+const uint GrassPartTrackSpots  = 1u << 21;
+const uint GrassPartTrackTone   = 1u << 22;
+const uint GrassPartTrackForm   = 1u << 23;
+const uint GrassPartTrackGrain  = 1u << 24;
+
 // the crust's lattice, turned the other way from the loose earth's
 vec2 grassCrustUv(vec2 xz) { return vec2(0.84805*xz.x - 0.52992*xz.y, 0.52992*xz.x + 0.84805*xz.y); }
 
@@ -62,6 +73,7 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
   const ivec2 place  = ivec2(floor(pos.xz*16.0));
   const float mip    = scene.mipGradScale;
   const uint  rib    = tex + 2u;
+  const uint  partsOff = scene.viewFlags;
 
   // the ribbon's frame on the ground: t and b along the growth of u and v, over det the gradients themselves
   const vec3  py  = cross(dpdy, gn), px = cross(gn, dpdx);
@@ -70,7 +82,7 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
   // the drawing wanders by the world: a slow sway and a quicker one; still at the tile's edges, where it meets
   // the next piece and the ground beside
   vec2 uvR = uv;
-  if(wander>0.0 && abs(det)>1e-12) {
+  if((partsOff & GrassPartTrackWander)==0u && wander>0.0 && abs(det)>1e-12) {
     const float quick = grassTrackNoise(place,2560,0x73u)*0.3;
     const vec3  w = vec3(grassTrackNoise(place,11200,0x71u) + quick, 0.0,
                          grassTrackNoise(place + ivec2(5113,2971),11200,0x72u) - quick)*wander;
@@ -93,10 +105,12 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
     return;
 
   // where the ruts fade: 1 at their full depth and tone; by 6 m and by 2.2 m - one rut of the two may fade alone
-  const float k    = 1.0 - fade*smoothstep(0.05, 0.55, grassTrackNoise(place,9600,0x75u)*0.6 +
-                                                       grassTrackNoise(place,3520,0x76u)*0.4);
+  const float k = (partsOff & GrassPartTrackFade)==0u ?
+                  1.0 - fade*smoothstep(0.05, 0.55, grassTrackNoise(place,9600,0x75u)*0.6 +
+                                                   grassTrackNoise(place,3520,0x76u)*0.4) : 1.0;
   const float lean = (mask.g*mix(1.0, k, 0.5) + strip)*256.0 - 128.0 +
-                     (grassTrackNoise(place,3840,0x77u)*90.0 + grassTrackNoise(place,560,0x78u)*40.0)*ragged;
+                     ((partsOff & GrassPartTrackRagged)==0u ?
+                      (grassTrackNoise(place,3840,0x77u)*90.0 + grassTrackNoise(place,560,0x78u)*40.0)*ragged : 0.0);
 
   const vec2  uvC = grassCrustUv(pos.xz)*crustK, dxC = grassCrustUv(dpdx.xz)*crustK, dyC = grassCrustUv(dpdy.xz)*crustK;
   const vec2  uvL = grassLooseUv(pos.xz)*looseK, dxL = grassLooseUv(dpdx.xz)*looseK, dyL = grassLooseUv(dpdy.xz)*looseK;
@@ -106,7 +120,9 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
   bool  loose = lean>0.0;
   if(far<1.0) {
     vec3 own0;
-    if(abs(lean)<0.5*GrassTrackHeight) {
+    if((partsOff & GrassPartTrackOrm)!=0u) {
+      own0 = o;
+      } else if(abs(lean)<0.5*GrassTrackHeight) {
       const vec3 oC = fringeTexture(2u, tex,    uvC, dxC*mip, dyC*mip).rgb;
       const vec3 oL = fringeTexture(2u, tex+1u, uvL, dxL*mip, dyL*mip).rgb;
       loose = lean + (oL.b-oC.b)*GrassTrackHeight>0.0;
@@ -130,23 +146,31 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
     }
 
   vec3 albedo = vec3(0);
-  if(wl<1.0)
-    albedo = fringeTexture(0u, tex, uvC, dxC*mip, dyC*mip).rgb;
-  if(wl>0.0)
-    albedo = mix(albedo, fringeTexture(0u, tex+1u, uvL, dxL*mip, dyL*mip).rgb, wl);
+  if((partsOff & GrassPartTrackColor)==0u) {
+    if(wl<1.0)
+      albedo = fringeTexture(0u, tex, uvC, dxC*mip, dyC*mip).rgb;
+    if(wl>0.0)
+      albedo = mix(albedo, fringeTexture(0u, tex+1u, uvL, dxL*mip, dyL*mip).rgb, wl);
+    } else {
+    albedo = vec3(1.0);
+    }
   const vec3  tint   = fringeTexture(0u, rib, uvR, dxR, dyR).rgb;
   // the stains by the world: by 2.6 m and by 0.7 m
-  const float inside = clamp((1.0 - max(tint.r, max(tint.g, tint.b)))*(1.0/(1.0 - GrassTrackBody)), 0.0, 1.0);
-  const float spots  = grassTrackNoise(place,4160,0x7Du)*0.55 + grassTrackNoise(place,1120,0x7Eu)*0.45;
-  const float rut    = clamp((GrassTrackBody - tint.g)*GrassTrackStainRut, 0.0, 1.0)*k;
-  const float stain  = smoothstep(GrassTrackStainFrom, GrassTrackStainTo, spots)*inside*(1.0 - rut)*(1.0 - strip);
+  float stain = 0.0;
+  if((partsOff & GrassPartTrackSpots)==0u) {
+    const float inside = clamp((1.0 - max(tint.r, max(tint.g, tint.b)))*(1.0/(1.0 - GrassTrackBody)), 0.0, 1.0);
+    const float spots  = grassTrackNoise(place,4160,0x7Du)*0.55 + grassTrackNoise(place,1120,0x7Eu)*0.45;
+    const float rut    = clamp((GrassTrackBody - tint.g)*GrassTrackStainRut, 0.0, 1.0)*k;
+    stain = smoothstep(GrassTrackStainFrom, GrassTrackStainTo, spots)*inside*(1.0 - rut)*(1.0 - strip);
+    }
+  const float tone = (partsOff & GrassPartTrackTone)==0u ? grassTrackTone(place) : 1.0;
   albedo *= mix(vec3(1.0), tint, k*mix(GrassTrackCrustTint, 1.0, wl))*mix(vec3(1.0), GrassTrackStain, stain)*
-            (grassTrackTone(place)*mix(1.0, GrassTrackFarShade, far));
+            (tone*mix(1.0, GrassTrackFarShade, far));
 
   // the normal: the ribbon's large forms, the layer's grain over them
   vec3 n = gn;
   const float form = k*(1.0 - smoothstep(0.7*GrassTrackRibbonTo, GrassTrackRibbonTo, d));
-  if(form>0.0) {
+  if((partsOff & GrassPartTrackForm)==0u && form>0.0) {
     const float lt = dot(t,t), lb = dot(b,b);
     if(lt>1e-20 && lb>1e-20) {
       // each axis by its own length: the ribbon's maps are made for its metres across and along
@@ -154,7 +178,7 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
       n = normalize(t*(inversesqrt(lt)*xy.x) + b*(inversesqrt(lb)*xy.y) + gn*sqrt(max(0.0, 1.0 - dot(xy,xy))));
       }
     }
-  if(d<GrassLayerNormalTo && far<1.0) {
+  if((partsOff & GrassPartTrackGrain)==0u && d<GrassLayerNormalTo && far<1.0) {
     const vec4 nm = loose ? fringeTexture(1u, tex+1u, uvL, dxL*mip, dyL*mip) : fringeTexture(1u, tex, uvC, dxC*mip, dyC*mip);
     const vec3 fine = mappedNormal(n, dpdx, dpdy, loose ? dxL : dxC, loose ? dyL : dyC, nm);
     n = normalize(mix(fine, n, far));
