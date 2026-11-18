@@ -126,6 +126,8 @@ class ParticleFx final {
     float         leanMaxTan     = 0.f;
     float         leanResponseMs = 0.f;
     float         leanAlong      = 0.75f;
+    float         leanGrowMs     = 0.f;
+    float         leanGrowFrom   = 1.f;
     float         inherit        = 0.f;
     float         plumeCm        = 0.f;  // particles.d "plume": cm over the fire; 0: off
     float         plumeRise      = 0.f;  // cm/ms

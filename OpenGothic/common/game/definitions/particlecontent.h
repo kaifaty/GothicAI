@@ -53,6 +53,8 @@ struct Motion {
   float leanMaxDeg    = 70;
   float leanResponse  = 0.12f;
   float leanAlong     = 0.75f; // the share of its height the card keeps when seen along the flame
+  float leanGrow      = 0;     // seconds a new emitter's card takes to grow from leanGrowFrom of its size; 0: off
+  float leanGrowFrom  = 0.2f;
   // "inherit": the share 0..1 of its emitter's motion a living particle takes, so the tail behind a carried flame
   // is short: at 0.75 a tongue trails at a quarter of the carrier's speed
   float inherit       = 0;

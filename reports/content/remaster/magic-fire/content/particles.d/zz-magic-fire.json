@@ -61,7 +61,9 @@
     "rise": 1.8,
     "max_deg": 87,
     "response": 0.03,
-    "along": 0.2
+    "along": 0.2,
+    "grow": 0.3,
+    "grow_from": 0.25
    },
    "hdr": {
     "from": 1,
@@ -126,7 +128,9 @@
     "rise": 1.8,
     "max_deg": 87,
     "response": 0.03,
-    "along": 0.2
+    "along": 0.2,
+    "grow": 0.3,
+    "grow_from": 0.16
    }
   },
   {

@@ -215,6 +215,9 @@ PfxBucket::Block& PfxBucket::getBlock(ImplEmitter &e) {
     e.block = allocBlock();
     auto& p = block[e.block];
     p.pos   = e.pos;
+    // a new flame: upright, and small if it grows (particles.d "lean.grow")
+    p.lean  = Vec3(0,1,0);
+    p.grow  = decl.leanGrowMs>0 ? decl.leanGrowFrom : 1.f;
     }
   return block[e.block];
   }
@@ -229,6 +232,11 @@ size_t PfxBucket::allocEmitter() {
     if(b.st==S_Free) {
       b.st      = S_Inactive;
       b.flicker = {};
+      // a new flame in an old slot: it has not moved yet and has no air of the last one
+      b.carried = false;
+      b.air     = {};
+      b.airRate = {};
+      b.grownMs = 0;
       updateTextureDemand(i);
       return i;
       }
@@ -658,6 +666,12 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
             emitter.air     += emitter.airRate*h;
             }
           }
+        emitter.grownMs += float(dt);
+        if(emitter.block!=size_t(-1) && decl.leanRise>0 && decl.leanGrowMs>0) {
+          // a launched flame grows out of the small one it was lit from (a bolt out of the flame on the palm)
+          const float k = std::min(emitter.grownMs/decl.leanGrowMs, 1.f);
+          getBlock(emitter).grow = decl.leanGrowFrom + (1.f-decl.leanGrowFrom)*k*k*(3.f-2.f*k);
+          }
         if(emitter.block!=size_t(-1) && decl.leanRise>0) {
           const Vec3  flat = Vec3(emitter.air.x,0,emitter.air.z);
           const float t    = std::min(flat.length()/decl.leanRise, decl.leanMaxTan);
@@ -819,8 +833,8 @@ void PfxBucket::buildSsbo() {
                         : (std::min(a, 0.1f)/0.1f)*visAlphaStart*(1.f-a) + (std::min(1.f-a, 0.1f)/0.1f)*visAlphaEnd*a;
 
       const float scale = 1.f*(1.f-a) + a*visSizeEndScale;
-      const float szX   = visSizeStart.x*scale;
-      const float szY   = visSizeStart.y*scale;
+      const float szX   = visSizeStart.x*scale*p.grow;
+      const float szY   = visSizeStart.y*scale*p.grow;
       const float szZ   = 0.1f*((szX+szY)*0.5f);
 
       struct Color {
@@ -916,6 +930,8 @@ void PfxBucket::buildBilboard(PfxState& v, const Block& p, const ParState& ps, c
     v.bits0 |= uint32_t(3) << 4;
     v.dir    = p.lean;
     v.size.z = decl.leanAlong; // pfx.vert: the least length of the card seen along the flame, in card heights
+    // a growing card keeps its lower edge where the full one has it
+    v.pos.y -= 0.5f*szY*(1.f/p.grow - 1.f);
     }
   else if(decl.stretchMs>0 && decl.visOrientation!=ParticleFx::Orientation::None) {
     // own streak (particles.d "stretch", pfx.vert): orientation 3, size.z the path of stretchMs at the velocity in cm

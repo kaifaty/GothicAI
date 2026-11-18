@@ -62,7 +62,7 @@ def firebolt() -> list:
                  'shpDim_S': '2', 'trlWidth': 0.0, 'trlFadeSpeed': 0.0, 'visOrientation_S': 'NONE'}},
         # the hot root of the flame: a short bright card inside the body
         {'name': 'OWN_BOLT_ROOT', 'base': 'OWN_HAND_FLAME', 'set': {'visSizeStart_S': '36 50', **foot(50)},
-         'lean': {'rise': 1.8, 'max_deg': 87, 'response': 0.03, 'along': 0.2}, 'hdr': {'from': 1, 'to': 16, 'edge': 0.06}},
+         'lean': {'rise': 1.8, 'max_deg': 87, 'response': 0.03, 'along': 0.2, 'grow': 0.3, 'grow_from': 0.25}, 'hdr': {'from': 1, 'to': 16, 'edge': 0.06}},
         # embers: left behind on the way, they drift, cool from orange to dull red and sink
         of_torch('OWN_TORCH_SPARKS', 'OWN_BOLT_EMBERS',
                  {'ppsValue': 110.0, 'shpDim_S': '5', 'velAvg': 0.07, 'velVar': 0.04, 'flyGravity_S': '0 -0.00025 0',
@@ -72,7 +72,8 @@ def firebolt() -> list:
         # the body: the flame pressed to the way by the air, its foot at the head, widest behind it, torn at the tip
         {'name': 'MFX_FIREBOLT_CAST', 'base': 'OWN_HAND_FLAME', 'replaces': True,
          'with': ['OWN_BOLT_HEAD', 'OWN_BOLT_ROOT', 'OWN_BOLT_EMBERS'],
-         'set': {'visSizeStart_S': '40 100', **foot(100)}, 'lean': {'rise': 1.8, 'max_deg': 87, 'response': 0.03, 'along': 0.2}},
+         'set': {'visSizeStart_S': '40 100', **foot(100)},
+         'lean': {'rise': 1.8, 'max_deg': 87, 'response': 0.03, 'along': 0.2, 'grow': 0.3, 'grow_from': 0.16}},
         # hit
         of_torch('OWN_TORCH_SPARKS', 'OWN_BOLT_HIT_SPARKS',
                  {'ppsValue': 30.0, 'shpDim_S': '4', 'velAvg': 0.3, 'velVar': 0.15, 'flyGravity_S': '0 -0.0007 0',
