@@ -204,7 +204,8 @@ def test_spruce_a_is_built_as_before_and_thin_is_a_separate_step(config):
     assert digest(fir_tree.build(config)) == digest(tree)
 
 
-def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, config):
+@pytest.mark.parametrize(('px', 'old_share'), [(400, .5), (200, .25), (100, .125), (50, 1 / 32)])
+def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, config, px, old_share):
     tree = spruce['tree']
     before = digest(tree)
     normals = [part['normal'].copy() for part in tree.parts]
@@ -224,32 +225,30 @@ def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, co
     atlas[..., 3] = mask * 255
 
     assert [settings['px'] for settings in config['levels']] == [400, 200, 100, 50]
-    merged = False
-    for settings, old_share in zip(config['levels'], (.5, .25, .125, 1 / 32)):
-        px = settings['px']
-        level = fir_tree.design_level(tree, settings, mask, atlas)
-        level_wood, level_boughs = level.parts
-        triangles = sum(len(part['index']) for part in level.parts)
-        assert triangles <= int(tree.metrics['triangles'] * settings['share']), px
-        assert triangles <= fir_tree.thin(tree, old_share, seed=4).metrics['triangles'], px
-        assert (level_wood['owner'] == 0).all(), px
-        comparison = tree_density.compare_level(tree.parts, level.parts, mask, atlas, px)
-        assert len(comparison['views']) == 5
-        openings = {view['view']: view['background_level'] - view['background_full'] for view in comparison['views']}
-        assert max(map(abs, openings.values())) <= .01, (px, openings)
-        assert abs(comparison['tone']['relative']) <= .005, (px, comparison['tone'])
-        assert level.cards and sum(card['count'] for card in level.cards) == len(level_boughs['colour']), px
-        for card in level.cards:
-            source = card['source']
-            members = list(card['members'])
-            merged |= len(members) > 1
-            assert source in members and source_areas[source] == pytest.approx(max(source_areas[members]), rel=1e-6), (px, card)
-            original = tree.cards[source]
-            retained = level_boughs['colour'][card['first']:card['first'] + card['count']]
-            assert float(retained[:, 3].max()) / 255 >= settings['min_open'], (px, card)
-            np.testing.assert_array_equal(retained, source_colour[original['first']:original['first'] + original['count']])
-
-    assert merged
+    settings = next(level for level in config['levels'] if level['px'] == px)
+    level = fir_tree.design_level(tree, settings, mask, atlas)
+    level_wood, level_boughs = level.parts
+    triangles = sum(len(part['index']) for part in level.parts)
+    assert triangles <= int(tree.metrics['triangles'] * settings['share'])
+    assert triangles <= fir_tree.thin(tree, old_share, seed=4).metrics['triangles']
+    assert (level_wood['owner'] == 0).all()
+    assert any(len(card['members']) > 1 for card in level.cards)
+    assert sum(card['count'] for card in level.cards) == len(level_boughs['colour'])
+    for card in level.cards:
+        source = card['source']
+        members = card['members']
+        assert source in members
+        assert source_areas[source] == pytest.approx(max(source_areas[members]), rel=1e-6), card
+        original = tree.cards[source]
+        retained = level_boughs['colour'][card['first']:card['first'] + card['count']]
+        assert float(retained[:, 3].max()) / 255 >= settings['min_open'], card
+        np.testing.assert_array_equal(retained, source_colour[original['first']:original['first'] + original['count']])
     assert digest(tree) == before
     for part, original in zip(tree.parts, normals):
         np.testing.assert_array_equal(part['normal'], original)
+
+    comparison = tree_density.compare_level(tree.parts, level.parts, mask, atlas, px)
+    assert len(comparison['views']) == 5
+    openings = {view['view']: view['background_level'] - view['background_full'] for view in comparison['views']}
+    assert max(map(abs, openings.values())) <= .01, (px, openings)
+    assert abs(comparison['tone']['relative']) <= .005, (px, comparison['tone'])
