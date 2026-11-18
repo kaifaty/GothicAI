@@ -65,4 +65,3 @@ void Npc::quitInteraction() {
   if(auto* probe=NpcActivityProbe::instance) probe->mob(*this,*currentInteract,false);
   currentInteract=nullptr;
   }
-

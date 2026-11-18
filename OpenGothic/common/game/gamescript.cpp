@@ -1525,7 +1525,6 @@ uint64_t GameScript::tickCount() const {
 void GameScript::tick(uint64_t) {
   }
 
-
 void GameScript::isolateRandom(const Npc& actor, uint32_t seed, uint32_t stream) {
   std::seed_seq sequence{seed, stream, 0x5C21D7u};
   isolatedRandom[&actor].seed(sequence);

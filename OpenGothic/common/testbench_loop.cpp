@@ -561,12 +561,12 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       const auto initial=split(bench.prog[bench.pc+1]);
       if(prelude.size()==2 && prelude[0]=="cheat" && prelude[1]=="god" &&
          ((initial.size()==3 && (initial[0]=="water" || initial[0]=="water-bodies") && initial[1]=="initial") ||
-          (!initial.empty() && initial[0]=="npcday")))
+          npcDayInitialCommand(initial)))
         exec(bench.prog[bench.pc++],*world,*player,ctrl);
       }
     if(bench.pc<bench.prog.size()) {
       const auto args=split(bench.prog[bench.pc]);
-      if(!args.empty() && args[0]=="npcday") {
+      if(npcDayInitialCommand(args)) {
         exec(bench.prog[bench.pc++],*world,*player,ctrl);
         }
       else if(args.size()>1 && args[0]=="ragdoll" && args[1]=="session-initial") {

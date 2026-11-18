@@ -871,7 +871,6 @@ int GameScript::hlp_getinstanceid(std::shared_ptr<daedalus::DaedalusInstance> in
   return instance == nullptr ? -1 : int(instance->symbol_index());
   }
 
-
 bool GameScript::hlp_isvalidnpc(std::shared_ptr<daedalus::INpc> npcRef) {
   auto self = findNpc(npcRef);
   return self != nullptr;
