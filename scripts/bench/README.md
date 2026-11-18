@@ -1920,8 +1920,10 @@ Queue `action` uses the `Action` enum in `game/rpgvocabulary.h`; `i0/i1/i2/s0/s1
 `npcday-save <npc> [minutes 60] [period 5] [shared]` waits up to one game day for an executed
 `ZS_SMITH_ANVIL_LOOP` on an occupied `BSANVIL`, writes `session-activity.sav`, then journals
 and traces the next hour. It leaves the actor's routine and position untouched. Load that save in a
-fresh process with a scenario whose first command is `npcday 60 5 shared probe trace=<symbol>`;
-this first-command form starts at `dt=0`, before any positive native step. Use the same stream mode
+fresh process with a scenario with `cheat god` followed by `npcday 60 5 shared probe trace=<symbol>`;
+this initial-command form restores the nonsaved god-mode setting and starts the journal at `dt=0`,
+before any positive native step. The trace header retains each scenario's last explicit `seed` as metadata;
+compare event records after that header when checking a load, without reseeding the shared stream. Use the same stream mode
 and compare the complete activity trace and strict sample/event files. A current-game save/load
 mismatch is reported as the first differing record, never corrected by this measuring step.
 `npc-day-smith-save.bench` and `npc-day-smith-reload.bench` provide this fixture for Harad.

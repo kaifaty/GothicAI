@@ -560,7 +560,8 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       const auto prelude=split(bench.prog[bench.pc]);
       const auto initial=split(bench.prog[bench.pc+1]);
       if(prelude.size()==2 && prelude[0]=="cheat" && prelude[1]=="god" &&
-         initial.size()==3 && (initial[0]=="water" || initial[0]=="water-bodies") && initial[1]=="initial")
+         ((initial.size()==3 && (initial[0]=="water" || initial[0]=="water-bodies") && initial[1]=="initial") ||
+          (!initial.empty() && initial[0]=="npcday")))
         exec(bench.prog[bench.pc++],*world,*player,ctrl);
       }
     if(bench.pc<bench.prog.size()) {
