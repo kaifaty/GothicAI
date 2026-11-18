@@ -24,4 +24,12 @@ inline bool enabled() {
   return on;
   }
 
+inline uint32_t study() {
+  static const uint32_t mode = [] {
+    const char* env = std::getenv("OPENGOTHIC_GRASS_CONTACT_STUDY");
+    return env!=nullptr && std::string_view(env)=="count" ? 1u : 0u;
+    }();
+  return mode;
+  }
+
 }

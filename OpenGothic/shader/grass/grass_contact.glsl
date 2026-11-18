@@ -26,9 +26,24 @@ const float GrassContactOwn    = 1.5;   // cm: the receiver's own surface within
 const float GrassContactOwnK   = 0.6;   // and within this share of the ray's depth under the plane: a blade leans and bends
 const float GrassContactSkip   = 3.0;   // cm: what a blade's ray meets nearer than this is the blade itself
 
+// Include a one-pixel margin for projection and truncation, and inspect only on-screen texels.
+void grassContactBounds(vec2 px0, vec2 px1, vec2 size, out ivec2 lo, out ivec2 hi) {
+  lo = ivec2(clamp(floor(min(px0, px1)) - 1.0, vec2(0), size));
+  hi = ivec2(clamp(floor(max(px0, px1)) + 1.0, vec2(-1), size - 1.0));
+  }
+
+bool grassContactRectEmpty(sampler2D diffTex, ivec2 lo, ivec2 hi) {
+  for(int y=lo.y; y<=hi.y; ++y)
+    for(int x=lo.x; x<=hi.x; ++x)
+      if(isGBufGrass(texelFetch(diffTex, ivec2(x,y), 0).a))
+        return false;
+  return true;
+  }
+
 // frag: gl_FragCoord.xy; d: the pixel's depth; surfN: the surface's normal, vec3(0) for a blade's pixel (its card
 // turns its width to the eye, its normal is three quarters the ground's). Returns the share of the sun left, 0..1
-float grassContact(in sampler2D depthTex, in sampler2D diffTex, const vec2 frag, const float d, const vec3 surfN) {
+float grassContact(in sampler2D depthTex, in sampler2D diffTex, const vec2 frag, const float d, const vec3 surfN,
+                   const uint study, inout uint grassClass) {
   const vec4  scr  = vec4(frag*scene.screenResInv*2.0 - vec2(1.0), d, 1.0);
   const vec4  pos4 = scene.viewProjectInv*scr;
   const vec4  clip = scr/pos4.w;
@@ -55,6 +70,13 @@ float grassContact(in sampler2D depthTex, in sampler2D diffTex, const vec2 frag,
   const float pxLen = length(px1-px0);
   if(pxLen < GrassContactMinPx)
     return 1.0;
+
+  if(study==1u) {
+    ivec2 lo, hi;
+    grassContactBounds(px0, px1, size, lo, hi);
+    grassClass = grassContactRectEmpty(diffTex, lo, hi) ? 2u : 1u;
+    return 1.0;
+    }
 
   // the ray's depth under the receiver's own plane at its end, cm along the view: over 0 when the sun stands behind
   // the plane (a blade lit from behind). What lies at that depth is the receiver itself, not a thing in the way

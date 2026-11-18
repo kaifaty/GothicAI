@@ -102,7 +102,7 @@ class Renderer final {
     void drawGBuffer      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void drawGWater       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void drawShadowMap    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
-    void drawShadowResolve(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
+    void drawShadowResolve(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view, uint32_t grassContactStudy = 0);
     void drawLights       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawSky          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawAmbient      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
@@ -255,6 +255,7 @@ class Renderer final {
     Tempest::Attachment       gbufDiffuse;
     Tempest::Attachment       gbufNormal;
     Tempest::Attachment       gbufOrm;
+    Tempest::Attachment       grassContactDiagnostic;
 
     struct Shadow {
       Tempest::RenderPipeline* directLightPso = nullptr;

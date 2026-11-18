@@ -18,6 +18,7 @@
 
 #include "graphics/drawcommands.h"
 #include "graphics/foliagewind.h"
+#include "graphics/grasscontact.h"
 #include "graphics/grass/grassparams.h"
 #include "camera.h"
 #include "frameprofile.h"
@@ -970,6 +971,13 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   prepareGi  (cmd, fId, wview);
   prepareSurfels(cmd, wview);
 
+  if(taa.shot && GrassContact::study()!=0 && Shaders::options().doMaterialMaps) {
+    // Capture the shader's classes directly, before any exposure, fog or antialiasing.
+    grassContactDiagnostic = Resources::device().attachment(TextureFormat::RGBA8, zbuffer.w(), zbuffer.h());
+    cmd.setFramebuffer({{grassContactDiagnostic, Vec4(), Tempest::Preserve}}, {zbuffer, Tempest::Readonly});
+    drawShadowResolve(cmd, wview, GrassContact::study());
+    }
+
   cmd.setFramebuffer({{sceneLinear, Tempest::Discard, Tempest::Preserve}}, {zbuffer, Tempest::Readonly});
   drawShadowResolve(cmd, wview);
   drawAmbient(cmd, wview);
@@ -1270,7 +1278,7 @@ void Renderer::drawShadowMap(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView
     }
   }
 
-void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
+void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& wview, uint32_t grassContactStudy) {
   static bool light = true;
   if(!light)
     return;
@@ -1278,10 +1286,9 @@ void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& w
   auto& scene = wview.sceneGlobals();
   cmd.setDebugMarker(settings.vsmEnabled ? "DirectSunLight-VSM" : "DirectSunLight");
 
-  struct Push { Vec3 originLwc; float vsmMipBias; } push = {scene.originLwc, settings.vsmMipBias};
-  if(shadow.directLightPso==&shaders.vsmDirectLight)
-    cmd.setPushData(&push, sizeof(push)); else
-    cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
+  struct Push { Vec3 originLwc; float vsmMipBias; uint32_t grassContactStudy; };
+  const Push push = {scene.originLwc, settings.vsmMipBias, grassContactStudy};
+  cmd.setPushData(&push, sizeof(push));
   cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, gbufDiffuse, Sampler::nearest());
   cmd.setBinding(2, gbufNormal,  Sampler::nearest());
@@ -1510,6 +1517,8 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&&
 
   auto sync = device.submit(cmd);
   sync.wait();
+  if(!grassContactDiagnostic.isEmpty())
+    return std::move(grassContactDiagnostic);
   return img;
 
   // debug

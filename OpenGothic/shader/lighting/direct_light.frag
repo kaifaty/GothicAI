@@ -28,9 +28,8 @@ layout(location = 0) out vec4 outColor;
 
 layout(push_constant, std430) uniform UboPush {
   vec3  originLwc;
-#if defined(VIRTUAL_SHADOW)
   float vsmMipBias;
-#endif
+  uint  grassContactStudy;
   } push;
 
 layout(binding = 0, std140) uniform UboScene {
@@ -287,8 +286,16 @@ void main(void) {
   float       light  = shadowFactor(d, shadowNormal, isHair ? hairShell(dot(scene.sunDir,normal)) :
                                     (through>0.0 ? max(dot(scene.sunDir,normal),0.0) + through :
                                     (isFlat ? 0 : dot(scene.sunDir,normal))));
+  uint grassClass = 0u;
   if((scene.viewFlags & VF_GRASS_CONTACT)!=0u && light>0.0)
-    light *= grassContact(depth, gbufDiffuse, gl_FragCoord.xy, d, isGBufGrass(diff.a) ? vec3(0) : normal);
+    light *= grassContact(depth, gbufDiffuse, gl_FragCoord.xy, d, isGBufGrass(diff.a) ? vec3(0) : normal,
+                          push.grassContactStudy, grassClass);
+  if(push.grassContactStudy!=0u) {
+    const vec3 color = grassClass==2u ? vec3(0,0,1) : grassClass==1u ? vec3(0,1,0) :
+                       light>0.0 ? vec3(1,0,0) : vec3(0);
+    outColor = vec4(color, 1);
+    return;
+    }
   float lightThrough = 0.0;
   if(through>0.0) {
     const float lit = light/(max(dot(scene.sunDir,normal),0.0) + through); // what the shadow leaves of the sun
