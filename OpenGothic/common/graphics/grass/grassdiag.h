@@ -34,13 +34,27 @@ enum Part : uint32_t {
   PartTrack       = 16384, // a road with `track` as with its `verge` alone: the painted road and the strip (grass_track.glsl)
   PartOffscreen   = 32768, // the blades go through the whole vertex stage and then leave the screen: nothing is rasterised,
                            // so a frame less this one is the blades' rasterising and pixels, this one less PartHide their vertex stage
-  PartAll         = 65535,
+  PartTrackWander = 1u << 16,
+  PartTrackFade   = 1u << 17,
+  PartTrackRagged = 1u << 18,
+  PartTrackOrm    = 1u << 19,
+  PartTrackColor  = 1u << 20,
+  PartTrackSpots  = 1u << 21,
+  PartTrackTone   = 1u << 22,
+  PartTrackForm   = 1u << 23,
+  PartTrackGrain  = 1u << 24,
+  PartAll         = (1u << 25) - 1u,
+  PartTrackMask   = PartAll & ~0xFFFFu,
   };
 
-// SceneDesc::grassRing.w carries it: 1 + 2*mask
-inline uint32_t& partsOff() {
+inline uint32_t& benchPartsOff() {
   static uint32_t mask = 0;
   return mask;
+  }
+
+// SceneDesc::grassRing.w carries the low bits as 1 + 2*mask. The track bits use SceneDesc::viewFlags.
+inline uint32_t partsOff() {
+  return benchPartsOff() & 0xFFFFu;
   }
 
 // OPENGOTHIC_GRASS_ORDER=0: submit grass draws in cell traversal order
@@ -101,7 +115,7 @@ constexpr uint8_t MaxSegments = 4;
 
 // OPENGOTHIC_GRASS_LINKS sets the three distances in cm where broad blades lose a link.
 inline uint8_t broadLinks(float dist) {
-  static constexpr std::array<uint32_t, MaxSegments-1> defaults = {1000, 2500, 4500};
+  static constexpr std::array<uint32_t, MaxSegments-1> defaults = {800, 1200, 2400};
   static const auto thresholds = [] {
     const char* e = std::getenv("OPENGOTHIC_GRASS_LINKS");
     if(e==nullptr)
