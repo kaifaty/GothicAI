@@ -48,3 +48,17 @@ def test_the_levels_are_the_field_the_engine_takes_and_keep_the_spruces_material
         assert all(p['colour_format'] == (tree_glb.UBYTE, 'VEC4', True) for p in prims)
         assert abs(level['triangles'] / full.metrics['triangles'] - level['share']) < .01
     assert numbers[-1]['triangles'] / full.metrics['triangles'] == pytest.approx(1 / 32, rel=.02)
+
+
+def test_tree_occlusion_probe_detects_clear_depth_outside_the_projected_box():
+    import runpy
+
+    helper = fir_set.HERE.parents[1] / 'reports/engine/2026-11-16-modern-trees/tree-hidden.py'
+    Depth = runpy.run_path(str(helper))['Depth']
+    depth = np.full((16, 16), 0.97, dtype=np.float32)
+    depth[4, 4] = 1
+    pyramid = Depth(depth, (4, 4))
+    projected_box = np.array([[1, 1], [4, 1]], dtype=np.float32) / 16
+
+    assert pyramid.test(projected_box, 0.98) == (True, 0)
+    assert pyramid.test(projected_box, 0.98, 'neighbors') == (False, 0)
