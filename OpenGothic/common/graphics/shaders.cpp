@@ -145,6 +145,7 @@ void Shaders::compileShaders() noexcept {
     sh      = GothicShader::get("grass.frag.sprv");
     auto fs = device.shader(sh.data,sh.len);
     grass   = device.pipeline(Triangles,state,vs,fs);
+    grassContactMask = computeShader("grass_contact_mask.comp.sprv");
     }
 
   directLight      = postEffect(string_frm("direct_light", materialMaps),    RenderState::ZTestMode::NoEqual);

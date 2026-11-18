@@ -30,6 +30,7 @@ layout(push_constant, std430) uniform UboPush {
   vec3  originLwc;
   float vsmMipBias;
   uint  grassContactStudy;
+  uint  useGrassContactMask;
   } push;
 
 layout(binding = 0, std140) uniform UboScene {
@@ -41,6 +42,7 @@ layout(binding = 2) uniform usampler2D gbufNormal;
 layout(binding = 3) uniform sampler2D  depth;
 #if defined(MATERIAL_MAPS)
 layout(binding = 12) uniform sampler2D gbufOrm;
+layout(binding = 13) uniform usampler2D grassContactMask;
 #endif
 
 #if defined(SHADOW_MAP)
@@ -288,10 +290,11 @@ void main(void) {
                                     (isFlat ? 0 : dot(scene.sunDir,normal))));
   uint grassClass = 0u;
   if((scene.viewFlags & VF_GRASS_CONTACT)!=0u && light>0.0)
-    light *= grassContact(depth, gbufDiffuse, gl_FragCoord.xy, d, isGBufGrass(diff.a) ? vec3(0) : normal,
+    light *= grassContact(depth, gbufDiffuse, grassContactMask, gl_FragCoord.xy, d,
+                          isGBufGrass(diff.a) ? vec3(0) : normal, push.useGrassContactMask!=0u,
                           push.grassContactStudy, grassClass);
   if(push.grassContactStudy!=0u) {
-    const vec3 color = grassClass==2u ? vec3(0,0,1) : grassClass==1u ? vec3(0,1,0) :
+    const vec3 color = grassClass==3u ? vec3(1,0,1) : grassClass==2u ? vec3(0,0,1) : grassClass==1u ? vec3(0,1,0) :
                        light>0.0 ? vec3(1,0,0) : vec3(0);
     outColor = vec4(color, 1);
     return;

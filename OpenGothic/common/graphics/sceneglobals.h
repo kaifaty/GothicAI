@@ -100,6 +100,7 @@ class SceneGlobals final {
     void                      setGrassRing(const Tempest::Vec4& ring) { uboGlobalCpu.grassRing = ring; }
     // the last frame drew blades: the sun's screen ray over them runs in the next (graphics/grasscontact.h)
     void                      setGrassDrawn(bool drawn) { grassDrawn = drawn; }
+    bool                      grassContactActive() const { return (uboGlobalCpu.viewFlags & VF_GRASS_CONTACT)!=0; }
     Tempest::Point            screenRes() const { return uboGlobalCpu.screenRes; }
 
     const Tempest::Matrix4x4  viewProjectLwc() const;
