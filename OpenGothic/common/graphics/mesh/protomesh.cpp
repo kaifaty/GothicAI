@@ -66,6 +66,8 @@ ProtoMesh::ProtoMesh(PackedMesh&& pm, std::string_view fname, bool collision)
   attach.emplace_back(pm);
   submeshId.resize(attach[0].sub.size());
   auto&  att   = attach[0];
+  // the levels of detail are drawn only (meshlevels.h): the shape, the hull and the hit zones are the mesh's own
+  pm.dropLevels();
   if(collision) {
     points = pointsOf(pm);
     att.hullVertices = hullVerticesOf(pm);

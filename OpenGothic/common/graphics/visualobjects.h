@@ -165,6 +165,8 @@ class VisualObjects final {
       float    alpha     = 0;
       };
 
+    static constexpr uint8_t NoLevels = 0xFF;
+
     struct Object {
       bool     isEmpty() const { return cmdId==uint16_t(-1); }
 
@@ -194,6 +196,8 @@ class VisualObjects final {
       uint8_t             strandLevel    = 0;    // ...the level: 2^(-level/8) of the list
       bool                tree           = false; // a tree in the wind: its sphere follows the wind's fade
       uint16_t            treeFade       = 0;     // ...the fade its sphere is grown by now (preFrameUpdateTrees)
+      uint8_t             levelSub       = NoLevels; // its submesh of a mesh with levels of detail (meshlevels.h)
+      uint8_t             level          = 0;     // ...the level its cluster draws now: 0 the mesh itself
       bool                isGhost       = false;
       bool                visible       = true;
       Resources::TextureCategory textureCategory = Resources::TextureCategory::Dynamic;
@@ -229,6 +233,9 @@ class VisualObjects final {
     void     preFrameUpdateMorph();
     void     preFrameUpdateStrands();
     void     preFrameUpdateTrees();
+    void     preFrameUpdateLevels();
+    // the meshlets the object's cluster draws while visible: [first, first+count) of its bucket's mesh
+    std::pair<uint32_t,uint32_t> drawnMeshlets(const Object& obj) const;
 
     size_t   implAlloc();
     void     free(size_t id);
@@ -283,6 +290,7 @@ class VisualObjects final {
     std::unordered_set<size_t> objectsMorph;
     std::unordered_set<size_t> objectsStrand;
     std::unordered_set<size_t> objectsTree;
+    std::unordered_set<size_t> objectsLevels;
     std::unordered_set<size_t> objectsFree;
     mutable std::recursive_mutex textureSync;
     ChunkResidency*            textureResidency = nullptr;

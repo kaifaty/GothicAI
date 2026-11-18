@@ -39,6 +39,7 @@
 
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/meshlevels.h"
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/renderrig.h"
 #include "graphics/mesh/skeleton.h"
@@ -572,6 +573,92 @@ asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replace
   return {};
   }
 
+std::vector<Resources::MeshLevel> Resources::implLoadMeshLevels(std::string_view name, const asset::StaticMesh& main,
+                                                                bool colored) {
+  std::lock_guard<std::recursive_mutex> guard(sync);
+  auto original = std::string(name);
+  FileExt::exchangeExt(original,"3DS","MRM");
+  if(!FileExt::hasExt(original,"MRM"))
+    return {};
+  auto key = original.substr(0,original.size()-4);
+  for(auto& c:key)
+    c = char(std::toupper(uint8_t(c)));
+  const auto it = meshOverrides.find(key);
+  if(it==meshOverrides.end() || it->second.levels.empty() || !MeshLevels::enabled())
+    return {};
+
+  std::vector<MeshLevel> ret;
+  std::string summary;
+  try {
+    for(size_t i=0; i<it->second.levels.size(); ++i) {
+      const auto& [file,px] = it->second.levels[i];
+      const auto  level     = "level "+std::to_string(i+1)+" \""+file.string()+"\": ";
+      std::vector<uint8_t> bytes;
+      asset::StaticMesh mesh;
+      try {
+        mesh = loadGltfMesh(file,&bytes);
+        }
+      catch(const std::exception& error) {
+        throw std::runtime_error(level+error.what());
+        }
+      // the same materials, each once: a level is drawn by the mesh's buckets, a slice for each of them
+      std::vector<size_t> order(main.sub_meshes.size(),size_t(-1));
+      bool same = mesh.sub_meshes.size()==main.sub_meshes.size();
+      for(size_t r=0; same && r<main.sub_meshes.size(); ++r) {
+        for(size_t k=0; k<mesh.sub_meshes.size(); ++k)
+          if(mesh.sub_meshes[k].mat.texture==main.sub_meshes[r].mat.texture &&
+             std::find(order.begin(),order.end(),k)==order.end()) {
+            order[r] = k;
+            break;
+            }
+        same = order[r]!=size_t(-1) && !mesh.sub_meshes[order[r]].triangles.empty();
+        }
+      if(!same) {
+        std::string want, got;
+        for(auto& sm:main.sub_meshes)
+          want += (want.empty() ? "" : ", ")+sm.mat.texture;
+        for(auto& sm:mesh.sub_meshes)
+          got  += (got.empty()  ? "" : ", ")+sm.mat.texture;
+        throw std::runtime_error(level+"materials "+got+" are not the mesh's "+want);
+        }
+      GltfMeshColors colors;
+      try {
+        colors = loadGltfMeshColors(bytes,mesh);
+        }
+      catch(const std::exception& error) {
+        throw std::runtime_error(level+"vertex colour: "+error.what());
+        }
+      if(colors.empty()==colored)
+        throw std::runtime_error(level+(colored ? "no COLOR_0, the mesh has it" : "COLOR_0, the mesh has none"));
+
+      MeshLevel out;
+      out.px = px;
+      out.mesh.positions = std::move(mesh.positions);
+      out.mesh.normals   = std::move(mesh.normals);
+      out.mesh.materials = std::move(mesh.materials);
+      out.mesh.alpha_test = mesh.alpha_test;
+      out.mesh.bbox      = mesh.bbox;
+      out.mesh.obbox     = mesh.obbox;
+      size_t triangles = 0;
+      for(auto k:order) {
+        triangles += mesh.sub_meshes[k].triangles.size();
+        out.mesh.sub_meshes.push_back(std::move(mesh.sub_meshes[k]));
+        if(!colors.empty())
+          out.colors.push_back(std::move(colors[k]));
+        }
+      summary += (summary.empty() ? "" : ", ")+std::to_string(triangles)+" triangles under "+
+                 std::to_string(int(std::lround(px)))+" px";
+      ret.push_back(std::move(out));
+      }
+    }
+  catch(const std::exception& error) {
+    Log::e("meshes: \"",key,"\" is drawn without its levels of detail: ",error.what());
+    return {};
+    }
+  Log::i("meshes: \"",key,"\" levels of detail: ",summary);
+  return ret;
+  }
+
 ProtoMesh* Resources::implLoadMesh(std::string_view name) {
   LoadProbe::Requests::add(0,name);
   LoadProbe::Vobs::Scope probe("mesh_hit");
@@ -736,6 +823,9 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
       return nullptr;
 
     PackedMesh packed(zmsh,PackedMesh::PK_Visual,replaced,colors.empty() ? nullptr : &colors);
+    if(replaced)
+      for(auto& level:implLoadMeshLevels(name,zmsh,!colors.empty()))
+        packed.addLevel(level.mesh,level.px,level.colors.empty() ? nullptr : &level.colors);
     return std::unique_ptr<ProtoMesh>{new ProtoMesh(std::move(packed),name)};
     }
 

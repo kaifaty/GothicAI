@@ -1,0 +1,68 @@
+#pragma once
+
+#include <Tempest/Log>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <string_view>
+
+#include "settings.h"
+
+// Levels of detail of an own static mesh (reports/engine/2026-11-16-modern-trees/tree-lod.md). Its record of
+// meshes/meshes.json names up to MaxLevels coarser GLBs with the materials of the mesh, each with the height of the
+// object on the main view's screen under which it is drawn:
+//   "levels": [{"glb": "<path>", "px": 400}, {"glb": "<path>", "px": 200}, {"glb": "<path>", "px": 100}]
+// px falling. The levels are packed after the mesh into its own buffers (PackedMesh::addLevel): a level is a slice of
+// meshlets of each submesh, so an object draws one by its cluster's range, and every pass that reads the cluster —
+// the main view, the occluders, the shadows — draws that level. The level is picked on the processor once a frame by
+// the main view (VisualObjects::preFrameUpdateLevels), with no blend: the switch is hard. The ray scene takes the
+// coarsest level once, at any distance; collision, hit zones and fracture take the mesh itself.
+// [INTERNAL] meshLevels=0|1; OPENGOTHIC_MESH_LEVELS=0|1 wins. Off: the levels are not loaded, the mesh is drawn and
+// traced as it was without them. Read once
+namespace MeshLevels {
+
+constexpr size_t MaxLevels  = 3;
+// A level gives way to the finer one only at this many times its pixels: a height on a threshold does not switch the
+// level back and forth
+constexpr float  Hysteresis = 1.1f;
+
+inline bool parse(std::string_view env, bool ini) {
+  return env.empty() ? ini : env!="0";
+  }
+
+inline bool enabled() {
+  static const bool on = [] {
+    const char* env = std::getenv("OPENGOTHIC_MESH_LEVELS");
+    const bool  set = env!=nullptr && *env!='\0';
+    // without the game's settings (a tool that loads meshes) the default of [INTERNAL] meshLevels
+    const bool  ini = !::Settings::exists() || ::Settings::getI("INTERNAL","meshLevels")!=0;
+    const bool  v   = parse(set ? std::string_view(env) : std::string_view(), ini);
+    Tempest::Log::i("render: mesh levels of detail = ", v ? "1" : "0",
+                    set ? " by OPENGOTHIC_MESH_LEVELS" : " by [INTERNAL] meshLevels");
+    return v;
+    }();
+  return on;
+  }
+
+// The pixels of the main view an object `height` high is `distance` from the camera, in the same units; projY: the
+// projection's [1][1], screenH: the view's height in pixels. As the size of a motion in the fade of a tree's wind
+// (FoliageTree::fadeScale)
+inline float screenHeight(float height, float distance, float projY, int screenH) {
+  return height*0.5f*float(std::max(screenH,0))*std::abs(projY)/std::max(distance,1.f);
+  }
+
+// The level to draw at `height` pixels: 0 the mesh itself, k the k-th of the `count` thresholds `px` (falling). Level
+// k comes in under px[k-1] and goes back to k-1 at Hysteresis*px[k-1] and over; `current` is the level drawn now
+inline uint8_t pick(const float* px, size_t count, uint8_t current, float height) {
+  size_t level = std::min<size_t>(current, count);
+  while(level<count && height<px[level])
+    ++level;
+  while(level>0 && height>=px[level-1]*Hysteresis)
+    --level;
+  return uint8_t(level);
+  }
+
+}

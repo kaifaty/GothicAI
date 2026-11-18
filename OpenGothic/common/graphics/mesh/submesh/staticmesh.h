@@ -62,6 +62,15 @@ class StaticMesh {
       std::string                    texName;
       Tempest::AccelerationStructure blas;
       TexelDensity                   texel;  // lowest UV density and bounds in mesh space (texeldensity.h)
+      // the triangles blas is built from: the submesh's own, or the coarsest level's (meshlevels.h)
+      size_t                         rtOffset = 0;
+      size_t                         rtLength = 0;
+      };
+
+    // A level of detail (graphics/meshlevels.h, PackedMesh::Level): a slice of indices of each of sub
+    struct Level {
+      float                                 px = 0;
+      std::vector<std::pair<size_t,size_t>> sub;
       };
 
     struct Morph {
@@ -90,6 +99,8 @@ class StaticMesh {
       };
 
     const Tempest::AccelerationStructure* blas(size_t iboOffset, size_t iboLen) const;
+    // The slice of the triangles blas() of the submesh at this slice is built from (SubMesh::rtOffset, rtLength)
+    std::pair<size_t,size_t>              rtSlice(size_t iboOffset, size_t iboLen) const;
 
     const Tempest::StorageBuffer& vboBuffer() const;
     const Tempest::StorageBuffer& ibo8Buffer() const;
@@ -109,6 +120,10 @@ class StaticMesh {
 
     std::vector<SubMesh>            sub;
     Bounds                          bbox;
+    // bbox with every level of detail in it: what the culling keeps (the clusters' spheres, the buckets' boxes);
+    // bbox itself is the mesh's, as a tree's height for the wind is. The same as bbox without levels
+    Bounds                          drawn;
+    std::vector<Level>              levels;
     float                           strandWidth = 0; // PackedMesh::strandWidth
 
   private:
