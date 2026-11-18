@@ -864,28 +864,41 @@ def _level_stencils(bark: dict, boughs: dict, triangle_options: np.ndarray, view
 
     pieces, targets, filled, weights = [], [], [], []
     size = int(triangle_options[-1]) + 1
-    total_rays = sum(np.prod(shape) for _, _, shape, _ in views)
+    pixel_dtype = np.min_scalar_type(sum(np.prod(shape) for _, _, shape, _ in views))
+    options = np.arange(size + 1)
     tone_sum, tone_count = np.zeros(size), np.zeros(size)
     offset = 0
     for (_, project, shape, ppm), (target, _, _) in zip(views, reference):
         wood = np.isfinite(tree_density.raster(project(bark['position']), bark['index'], shape)).ravel()
+        rays = wood.size
         points = project(boughs['position'])
         projected = []
         for triangle, pixel, _, u, v in tree_density.fragments(points, boughs['index'], shape, boughs['uv'], mask):
             option = triangle_options[triangle]
             show = ~wood[pixel]
-            projected.append(option[show] * total_rays + pixel[show] + offset)
+            projected.append(option[show] * rays + pixel[show])
             tone_count += np.bincount(option, minlength=size)
             tone_sum += np.bincount(option, weights=_atlas_samples(luma, u, v), minlength=size)
-        pieces.append(np.unique(np.concatenate(projected)))
+        keys = np.concatenate(projected)
+        del projected
+        keys.sort()
+        first = np.empty(len(keys), bool)
+        first[:1] = True
+        np.not_equal(keys[1:], keys[:-1], out=first[1:])
+        keys = keys[first]
+        cuts = np.searchsorted(keys, options * rays)
+        keys %= rays
+        keys += offset
+        pieces.append((keys.astype(pixel_dtype), cuts))
+        del keys, first
         targets.append(target)
         filled.append(wood)
         # Balance the views by their projected areas. Opposite views contribute equally.
-        weights.append((1. / max(target.sum(), 1), np.prod(shape)))
-        offset += np.prod(shape)
-    option, pixel = np.divmod(np.sort(np.concatenate(pieces)), total_rays)
-    cuts = np.searchsorted(option, np.arange(size + 1))
-    return (np.split(pixel, cuts[1:-1]), np.concatenate(targets), np.concatenate(filled),
+        weights.append((1. / max(target.sum(), 1), rays))
+        offset += rays
+    # Views have disjoint increasing pixel ranges, so each option is already ordered.
+    pixels = [np.concatenate([keys[cuts[i]:cuts[i + 1]] for keys, cuts in pieces]) for i in range(size)]
+    return (pixels, np.concatenate(targets), np.concatenate(filled),
             np.repeat(*zip(*weights)), tone_sum / np.maximum(tone_count, 1))
 
 
@@ -920,15 +933,21 @@ def _fit_level(positive, spill: np.ndarray, initial: np.ndarray, filled: np.ndar
     return selected
 
 
+def _solid_pixels(coverage: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    from tree_density import RAYS
+
+    samples = coverage.reshape(shape[0] // RAYS, RAYS, shape[1] // RAYS, RAYS)
+    return samples.sum(axis=(1, 3)) > RAYS ** 2 // 2
+
+
 def _projected_openings(coverage: np.ndarray, reference) -> np.ndarray:
-    from tree_density import RAYS, level_opening
+    from tree_density import level_opening
 
     readings = []
     offset = 0
     for target, shape, ppm in reference:
         hit = coverage[offset:offset + len(target)]
-        solid = hit.reshape(shape[0] // RAYS, RAYS, shape[1] // RAYS, RAYS).sum(axis=(1, 3)) > RAYS ** 2 // 2
-        readings.append(level_opening(solid, ppm))
+        readings.append(level_opening(_solid_pixels(hit, shape), ppm))
         offset += len(target)
     return np.array(readings)
 
@@ -947,6 +966,9 @@ def design_level(tree: Tree, level: dict, mask: np.ndarray, atlas: np.ndarray) -
     area = np.add.reduceat(np.linalg.norm(np.cross(points[:, 1] - points[:, 0], points[:, 2] - points[:, 0]),
                                          axis=1) * .5, cuts[:-1])
     views = list(tree_density.level_views(tree.parts, level['px']))
+    # Below the closing radius of one screen pixel, single covered pixels decide which
+    # holes connect to the background. The coverage objective then needs the pixel mask.
+    pixel_fit = all(round(tree_density.CLOSE * ppm) == 0 for _, _, _, ppm in views)
     luma = atlas[..., :3].astype(np.float32) @ np.array((.2126, .7152, .0722), np.float32)
     visible, reference, tone = _level_reference(tree.parts, starts, views, mask, luma)
     groups, centres = _level_groups(tree, level, visible, starts, area)
@@ -960,12 +982,13 @@ def design_level(tree: Tree, level: dict, mask: np.ndarray, atlas: np.ndarray) -
         centre = centres[source]
         points = boughs['position'][starts[source]:ends[source]] - centre
         merged = min(2., math.sqrt(area[group].sum() / area[source]))
+        shift = np.average(centres[group], axis=0, weights=area[group]) - centre if pixel_fit else 0.
         for grow in sorted({1., 1.18, 1.4, round(merged, 3), round(merged * 1.25, 3), round(merged * 1.6, 3)}):
             sources.append(source)
             members.append(group)
             groups_by_option.append(group_id)
             scales.append(grow)
-            geometry.append((centre + points * grow).astype(np.float32))
+            geometry.append((centre + points * grow + shift * min(.5, grow - 1.)).astype(np.float32))
     sources = np.array(sources)
     counts = ends[sources] - starts[sources]
     first = np.r_[0, np.cumsum(counts)]
@@ -973,16 +996,20 @@ def design_level(tree: Tree, level: dict, mask: np.ndarray, atlas: np.ndarray) -
     costs = np.diff(cuts)[sources]
     used = np.concatenate([np.arange(starts[s], ends[s]) for s in sources])
     candidates = dict(position=np.concatenate(geometry), uv=boughs['uv'][used], index=np.concatenate(triangles))
-    def assemble(selected):
+    def assemble(selected, size=1.):
         positions, vertex_ids, kept_indices, cards = [], [], [], []
         first_vertex = 0
         for option in selected:
             source = sources[option]
-            positions.append(geometry[option])
+            position = geometry[option]
+            if size != 1.:
+                centre = centres[source]
+                position = (centre + (position - centre) * size).astype(np.float32)
+            positions.append(position)
             vertex_ids.extend(range(starts[source], ends[source]))
             kept_indices.append(triangles[option] - first[option] + first_vertex)
             cards.append(dict(tree.cards[source], first=first_vertex, source=int(source),
-                              members=members[option], growth=scales[option]))
+                              members=members[option], growth=scales[option] * size))
             first_vertex += counts[option]
         part = dict(boughs, position=np.concatenate(positions), index=np.concatenate(kept_indices),
                     **{key: boughs[key][vertex_ids] for key in ('normal', 'uv', 'colour', 'owner')})
@@ -990,17 +1017,44 @@ def design_level(tree: Tree, level: dict, mask: np.ndarray, atlas: np.ndarray) -
 
     pixels, target, filled, weights, option_tone = _level_stencils(
         trunk, candidates, np.repeat(np.arange(len(sources)), costs), views, reference, mask, luma)
+    full = _projected_openings(target, reference)
+    # Accepting a pixel takes a majority of its rays. Fit its coverage without treating a
+    # different arrangement of those rays as a hole or rewarding hits in fully open pixels.
+    if pixel_fit:
+        samples = tree_density.RAYS
+        target = np.concatenate([
+            _solid_pixels(hit, shape).repeat(samples, axis=0).repeat(samples, axis=1).ravel()
+            for hit, shape, _ in reference
+        ])
     positive = [p[target[p]] for p in pixels]
     spill = np.array([weights[p[~target[p]]].sum() for p in pixels])
     initial = np.array([weights[p].sum() for p in positive])
-    full = _projected_openings(target, reference)
+
+    def measure(parts):
+        openings = []
+        rgb = np.zeros(3)
+        count = 0
+        for _, project, shape, ppm in views:
+            solid, colours, rays = tree_density.level_sample(parts, project, shape, mask, atlas)
+            openings.append(tree_density.level_opening(solid, ppm))
+            rgb += colours
+            count += rays
+        openings = np.array(openings)
+        gaps = openings[:, 0] - full[:, 0]
+        signed_gap = gaps[np.abs(gaps).argmax()]
+        gap = abs(signed_gap)
+        outline = np.abs(openings[:, 1] / full[:, 1] - 1).max()
+        delta = abs(rgb @ (.2126, .7152, .0722) / (count * tone) - 1)
+        return (max(0., gap / .01 - 1, delta / .005 - 1), outline, gap, delta), signed_gap
+
     best = None
     group_ids = np.array(groups_by_option)
+    biases = (0., -12., 12., 24., 36.) if pixel_fit else (0., 12., 24.)
     for share in (level['target_share'], level['share']):
         limit = int(tree.metrics['triangles'] * share) - len(trunk['index'])
         fits = []
         for penalty in (.25, .65, 1.):
-            for bias in (0., 12., 24.):
+            for bias in biases:
                 tone_weight = np.exp(-bias * (option_tone / tone - 1))
                 selected = _fit_level(positive, spill, initial, filled, weights, group_ids, costs,
                                       min(limit, budget), penalty, tone_weight)
@@ -1012,26 +1066,33 @@ def design_level(tree: Tree, level: dict, mask: np.ndarray, atlas: np.ndarray) -
                 opening = _projected_openings(hit, reference)
                 gap = np.abs(opening[:, 0] - full[:, 0]).max()
                 outline = np.abs(opening[:, 1] / full[:, 1] - 1).max()
-                fits.append((max(0., gap - .01), outline, gap, tuple(selected)))
-        for _, outline, gap, selected in sorted(set(fits)):
+                fits.append((max(0., gap / .01 - 1), outline, gap, tuple(selected)))
+        previous = best
+        for gap_loss, _, _, selected in sorted(set(fits)):
+            if best is not None and gap_loss > best[0][0]:
+                break
             parts, cards = assemble(selected)
-            rgb = np.zeros(3)
-            count = 0
-            for _, project, shape, _ in views:
-                _, colours, rays = tree_density.level_sample(parts, project, shape, mask, atlas)
-                rgb += colours
-                count += rays
-            delta = abs(rgb @ (.2126, .7152, .0722) / (count * tone) - 1)
-            score = (max(0., gap / .01 - 1, delta / .005 - 1), outline, gap, delta)
+            score, error = measure(parts)
             if best is None or score < best[0]:
-                best = score, parts, cards
+                best = score, parts, cards, selected, error
             if score[0] == 0:
                 break
+        # A small common size change can recover holes the coverage objective filled,
+        # or bridge holes it left open, while keeping the same cards and wind attributes.
+        if best is not previous and abs(best[4]) > .01:
+            selected, error = best[3:]
+            for step in (.02, .04, .06):
+                parts, cards = assemble(selected, 1. + math.copysign(step, error))
+                score, gap = measure(parts)
+                if score < best[0]:
+                    best = score, parts, cards, selected, gap
+                if score[0] == 0:
+                    break
         if best is not None and best[0][0] == 0:
             break
     if best is None:
         raise ValueError(f'No crown cards fit under {level["px"]} px')
-    _, parts, cards = best
+    _, parts, cards, _, _ = best
     metrics = dict(tree.metrics, triangles=sum(len(part['index']) for part in parts),
                    triangles_by_material={part['name']: len(part['index']) for part in parts},
                    vertices={part['name']: len(part['position']) for part in parts},

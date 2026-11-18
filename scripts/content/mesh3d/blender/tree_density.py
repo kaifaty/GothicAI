@@ -54,34 +54,41 @@ def fragments(points: np.ndarray, index: np.ndarray, shape, uv: np.ndarray | Non
     bucket = np.ceil(np.log2(span)).astype(np.int64)
     for wide, tall in np.unique(bucket, axis=0):
         chosen = np.flatnonzero((bucket[:, 0] == wide) & (bucket[:, 1] == tall))
-        ox, oy = (v.reshape(-1) + .5 for v in np.meshgrid(np.arange(2 ** wide), np.arange(2 ** tall)))
-        for part in np.array_split(chosen, max(1, len(chosen) * len(ox) // 2_000_000)):
+        ox, oy = np.arange(2 ** wide) + .5, np.arange(2 ** tall) + .5
+        samples = len(chosen) * len(ox) * len(oy)
+        for part in np.array_split(chosen, max(1, samples // 2_000_000)):
             a, b, c = (tri[part, k] for k in range(3))
             x = low[part, 0, None] + ox[None]
             y = low[part, 1, None] + oy[None]
             area = (b[:, 1] - c[:, 1]) * (a[:, 0] - c[:, 0]) + (c[:, 0] - b[:, 0]) * (a[:, 1] - c[:, 1])
             flat = np.abs(area) < 1e-9
-            area = np.where(flat, 1., area)[:, None]
-            w0 = ((b[:, 1] - c[:, 1])[:, None] * (x - c[:, 0, None]) + (c[:, 0] - b[:, 0])[:, None] * (y - c[:, 1, None])) / area
-            w1 = ((c[:, 1] - a[:, 1])[:, None] * (x - c[:, 0, None]) + (a[:, 0] - c[:, 0])[:, None] * (y - c[:, 1, None])) / area
+            area = np.where(flat, 1., area)[:, None, None]
+            dx = x - c[:, 0, None]
+            dy = y - c[:, 1, None]
+            # The edge functions separate into one term per row and one per column.
+            w0x, w0y = (b[:, 1] - c[:, 1])[:, None] * dx, (c[:, 0] - b[:, 0])[:, None] * dy
+            w1x, w1y = (c[:, 1] - a[:, 1])[:, None] * dx, (a[:, 0] - c[:, 0])[:, None] * dy
+            w0 = (w0x[:, None, :] + w0y[:, :, None]) / area
+            w1 = (w1x[:, None, :] + w1y[:, :, None]) / area
             w2 = 1 - w0 - w1
-            inside = (w0 >= 0) & (w1 >= 0) & (w2 >= 0) & ~flat[:, None]
-            inside &= (x > 0) & (x < shape[1]) & (y > 0) & (y < shape[0])
-            face, sample = np.nonzero(inside)
-            weights = (w0[face, sample], w1[face, sample], w2[face, sample])
+            inside = (w0 >= 0) & (w1 >= 0) & (w2 >= 0) & ~flat[:, None, None]
+            inside &= ((x > 0) & (x < shape[1]))[:, None, :]
+            inside &= ((y > 0) & (y < shape[0]))[:, :, None]
+            face, row, column = np.nonzero(inside)
+            weights = (w0[face, row, column], w1[face, row, column], w2[face, row, column])
             u = v = None
             if uv is not None:
-                corner = uv[index[part]].astype(np.float64)[face]
-                hit_uv = sum(w[:, None] * corner[:, k] for k, w in enumerate(weights))
-                u, v = hit_uv.T
+                corner = uv[index[part]]
+                u, v = (sum(w * corner[face, k, axis] for k, w in enumerate(weights)) for axis in (0, 1))
                 if mask is not None:
                     size = mask.shape[0]
                     covered = mask[np.clip((v * size).astype(np.int64), 0, size - 1),
                                    np.clip((u * size).astype(np.int64), 0, size - 1)]
-                    face, sample, u, v = face[covered], sample[covered], u[covered], v[covered]
+                    face, row, column = face[covered], row[covered], column[covered]
+                    u, v = u[covered], v[covered]
                     weights = tuple(w[covered] for w in weights)
             z = sum(w * vertex[face, 2] for w, vertex in zip(weights, (a, b, c)))
-            pixel = y[face, sample].astype(np.int64) * shape[1] + x[face, sample].astype(np.int64)
+            pixel = y[face, row].astype(np.int64) * shape[1] + x[face, column].astype(np.int64)
             yield part[face], pixel, z.astype(np.float32), u, v
 
 
