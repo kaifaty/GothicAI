@@ -42,18 +42,20 @@ void vsmPairCapRecords(Tempest::Device& device) {
   require(sizeof(Light)==shaders.vsmCullMeshlets.sizeofBuffer(6, 1), "the test's LightSource follows scene.glsl");
   require(shaders.vsmCullMeshlets.sizeofBuffer(3, 1)==144, "Bucket of scene.glsl is DrawBuckets::BucketGpu's 144 bytes");
 
-  // the sun's view is the identity: mip 0's page (16,16) is x and y of 0..64, mip 1's of 0..128, mip 2's of 0..256; a
-  // lamp hangs 5 m over them and its face 5 looks down on them
+  // the sun's view scales x and y by 1/1024 per cm, as the game's does: vsm_cull.glsl takes a sphere's centre through the
+  // view and its radius by that scale (smWidthInv). Mip 0's page (16,16) is then x and y of 0..64, mip 1's of 0..128,
+  // mip 2's of 0..256; a lamp hangs 5 m over them and its face 5 looks down on them
   std::vector<uint8_t> scene(sizeof(SceneGlobals::UboGlobal), 0);
-  const auto identity = Tempest::Matrix4x4::mkIdentity();
-  std::memcpy(scene.data(), &identity, sizeof(identity));
+  auto sunView = Tempest::Matrix4x4::mkIdentity();
+  sunView.scale(1.f/1024.f, 1.f/1024.f, 1.f);
+  std::memcpy(scene.data(), &sunView, sizeof(sunView));
   const auto sunEntry = [](uint32_t mip) { // packVsmPageInfo(ivec3(16,16,mip), ivec2(1))
     return (16u << 1) | (16u << 9) | (mip << 17) | (1u << 24) | (1u << 28);
     };
   const uint32_t entries[4] = {sunEntry(0), sunEntry(1), 0x1u | (5u << 1) | (1u << 24) | (1u << 28), sunEntry(2)};
   const Light light = {{32.f, 32.f, 500.f}, 1000.f, {1.f, 1.f, 1.f}, 0.f, 0.f, 0.f, {0.f, 0.f}};
 
-  // cluster 0: an object of six meshlets at the instance's origin (identity). Its meshlets' spheres: 0, 1 and 5 touch
+  // cluster 0: an object of six meshlets at the instance's origin (the identity). Its meshlets' spheres: 0, 1 and 5 touch
   // all sun entries, 2 those of mips 1 and 2, 3 and 4 none, and all but 3 and 4 the lamp's face. Cluster 1: one
   // meshlet of the landscape, whole in each entry but mip 2's, where it is too small (the visibility pass's 32 pixels)
   const float meshlets[6][4] = {{32,32,0,4}, {40,20,0,4}, {100,32,0,4}, {-3000,32,0,4}, {32,-3000,0,4}, {60,60,0,4}};
@@ -218,11 +220,18 @@ void vsmPairCapRecords(Tempest::Device& device) {
     return ret;
     };
   const Frame all = run(false, Slots, {}, 0, zero, older);
+  const auto demand = [](const Frame& f) {
+    return " (lamp " + std::to_string(f.header.pairDemand[Lamp]) + ", mip 0 " + std::to_string(f.header.pairDemand[Sun0]) +
+           ", mip 1 " + std::to_string(f.header.pairDemand[Sun1]) + ", mip 2 " + std::to_string(f.header.pairDemand[Sun2]) +
+           ", candidates " + std::to_string(f.header.candidateCount) + ", drawn " + std::to_string(f.header.meshletCount) + ")";
+    };
   require(all.header.pairDemand[Sun0]==4 && all.header.pairDemand[Sun1]==5 && all.header.pairDemand[Lamp]==5 &&
-          all.header.pairDemand[Sun2]==4, "the demand of each bin: the meshlets whose spheres touch its entries");
-  require(all.header.clusterPairs==4*6+3*1, "whole clusters would ask a pair for each meshlet in each entry");
+          all.header.pairDemand[Sun2]==4,
+          ("the demand of each bin: the meshlets whose spheres touch its entries"+demand(all)).c_str());
+  require(all.header.clusterPairs==4*6+3*1,
+          ("whole clusters would ask a pair for each meshlet in each entry: "+std::to_string(all.header.clusterPairs)).c_str());
   require(admitted(all)==prefix(16+16*16) && all.header.meshletCount==18 && all.header.pairSpill==0,
-          "with room for all every bin is drawn");
+          ("with room for all every bin is drawn"+demand(all)).c_str());
   require(pairsOf(all, 0, 0)==ids({0, 1, 5}) && pairsOf(all, 0, 1)==ids({0, 1, 2, 5}) &&
           pairsOf(all, 0, 2)==ids({0, 1, 2, 5}) && pairsOf(all, 0, 3)==ids({0, 1, 2, 5}),
           "an object's entry takes the meshlets whose spheres touch it");
@@ -233,7 +242,8 @@ void vsmPairCapRecords(Tempest::Device& device) {
   // too, though they would fit
   const Frame edge = run(false, 13, admitted(all), 0, zero, older);
   require(admitted(edge)==prefix(Sun1) && edge.header.meshletCount==9 && edge.header.pairSpill==0,
-          "bins go in whole in their order, lamps first; the first past the cap and all after it are left out");
+          ("bins go in whole in their order, lamps first; the first past the cap and all after it are left out"+
+           demand(edge)).c_str());
   require(pairsOf(edge, 0, 0)==ids({0, 1, 5}) && pairsOf(edge, 0, 1).empty() && pairsOf(edge, 0, 2)==ids({0, 1, 2, 5}) &&
           pairsOf(edge, 0, 3).empty() && pairsOf(edge, 1, 1).empty(),
           "a bin left out has no pair, the bins drawn all theirs");
@@ -242,10 +252,10 @@ void vsmPairCapRecords(Tempest::Device& device) {
   // of the cap: it stays out
   const Frame held = run(false, 14, admitted(edge), 0, zero, older);
   require(admitted(held)==prefix(Sun1) && held.header.meshletCount==9,
-          "a bin left out the frame before needs an eighth of the cap spare to come back");
+          ("a bin left out the frame before needs an eighth of the cap spare to come back"+demand(held)).c_str());
 
   // drawn the frame before, mip 1 keeps the whole cap: 14 pairs, exactly the cap
   const Frame exact = run(false, 14, prefix(Sun2), 0, zero, older);
   require(admitted(exact)==prefix(Sun2) && exact.header.meshletCount==14 && exact.header.pairSpill==0,
-          "a bin drawn the frame before goes in up to the cap and exactly at it");
+          ("a bin drawn the frame before goes in up to the cap and exactly at it"+demand(exact)).c_str());
   }
