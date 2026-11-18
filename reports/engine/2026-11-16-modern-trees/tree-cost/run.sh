@@ -4,10 +4,14 @@
 # with its own PERF_ENV; then one run of the full forest with OPENGOTHIC_VSM_STATS=1 for the counters of the shadow
 # maps (it waits for the GPU: not a timing run). The sets of `scripts/content/fir_set.py forest` must already lie in
 # ~/gothic-ai/tree-cost/content/<set>/ on Ryzen (rsync, see tree-cost.md, «Как повторить»).
-#   reports/engine/2026-11-16-modern-trees/tree-cost/run.sh /absolute/local/out
+# With variant names after the output, only those run, in that order, as rounds 3 and 4 (a repeat of runs a hang
+# stopped), without the counters' run.
+#   reports/engine/2026-11-16-modern-trees/tree-cost/run.sh /absolute/local/out [variant...]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
-OUT="${1:?usage: run.sh /absolute/local/out}"
+OUT="${1:?usage: run.sh /absolute/local/out [variant...]}"
+shift
+ONLY=("$@")
 HOST="${RYZEN_HOST:-ryzen}"
 source "$ROOT/scripts/perf.sh"          # perf_checkout, source_fingerprint
 FINGERPRINT="$(source_fingerprint)"
@@ -28,7 +32,7 @@ rsync -a "$ROOT"/scripts/bench/perf-*.bench "$HOST:$SOURCE/scripts/bench/"
 
 ENV=(PERF_REMOTE=1 PERF_VID_RES=0 PERF_INI= PERF_WINDOW=2560x1440 PERF_REPEAT=1 PERF_WAIT=600 PERF_ARGS=
      "PERF_COMMIT=$COMMIT" "PERF_DIRTY=$DIRTY" "PERF_SOURCE_FINGERPRINT=$FINGERPRINT")
-"$ROOT/scripts/gq" --host "$HOST" run --class quick --threads 8 --mem 12G --max 30m --wait-max 7200 \
+[[ -z "${NO_BUILD:-}" ]] && "$ROOT/scripts/gq" --host "$HOST" run --class quick --threads 8 --mem 12G --max 30m --wait-max 7200 \
   --name 'build tree-cost stand' -- env "${ENV[@]}" PERF_ENV= RYZEN_JOBS=8 \
   bash "$SOURCE/scripts/perf.sh" __build "$REMOTE_OUT/build"
 
@@ -56,9 +60,17 @@ line() {  # name, round, extra env
   local name="$1" round="$2" extra="$3"
   JOB+="echo \"tree-cost: $name round $round\"; env ${ENV[*]} NO_BUILD=1 PERF_ENV='OPENGOTHIC_CONTENT=$CONTENT/$(set_of "$name") OPENGOTHIC_GPU_PASSES=1 $extra' bash $SOURCE/scripts/perf.sh __run $REMOTE_OUT/$name/round-$round trees || echo \"tree-cost: $name round $round FAILED\""$'\n'
 }
-for v in "${VARIANTS[@]}"; do line "${v%%|*}" 1 "${v#*|}"; done
-for ((k=${#VARIANTS[@]}-1; k>=0; k--)); do v="${VARIANTS[$k]}"; line "${v%%|*}" 2 "${v#*|}"; done
-line F1024-vsmstats 1 "OPENGOTHIC_VSM_STATS=1"
+if ((${#ONLY[@]})); then
+  round=3
+  for name in "${ONLY[@]}"; do
+    for v in "${VARIANTS[@]}"; do [[ "${v%%|*}" == "$name" ]] && line "$name" "$round" "${v#*|}"; done
+    round=$((round == 3 ? 4 : 3))
+  done
+else
+  for v in "${VARIANTS[@]}"; do line "${v%%|*}" 1 "${v#*|}"; done
+  for ((k=${#VARIANTS[@]}-1; k>=0; k--)); do v="${VARIANTS[$k]}"; line "${v%%|*}" 2 "${v#*|}"; done
+  line F1024-vsmstats 1 "OPENGOTHIC_VSM_STATS=1"
+fi
 "$ROOT/scripts/gq" --host "$HOST" run --class quiet --threads 4 --mem 5G --gpu-mem 4G --display --max 180m \
   --wait-max 7200 --name 'tree-cost runs' --archive "$REMOTE_OUT" -- bash -c "$JOB" 2>&1 | tee "$OUT.log"
 mkdir -p "$OUT"
