@@ -1,9 +1,13 @@
 """The forest of the cost stand (scripts/content/fir_set.py forest, reports/engine/2026-11-16-modern-trees/tree-cost.md):
 the forests of 64, 256 and 1 024 spruces nest, every place keeps its spruce and yaw, the grid is STEP apart."""
+import json
+
 import numpy as np
 import pytest
 
 import fir_set
+import impostor_bake
+from mesh3d.blender import tree_glb
 
 
 def test_the_forests_nest_and_keep_their_places():
@@ -30,11 +34,9 @@ def test_a_forest_is_an_even_square_within_the_grid(count):
 def test_the_levels_are_the_field_the_engine_takes_and_keep_the_spruces_materials(tmp_path):
     """--levels (reports/engine/2026-11-16-modern-trees/tree-lod.md): four levels, px falling, each a GLB of
     thin() with the materials and the COLOR_0 of the spruce, as the engine's check of meshes.json wants them."""
-    import json
     import sys
     sys.path.insert(0, str(fir_set.BLENDER))
     import fir_tree
-    import tree_glb
     config = json.loads((fir_set.BLENDER / 'fir.json').read_text())
     full = fir_tree.build(config)
     field, numbers = fir_set.write_levels(tmp_path, 'OWN_TREE_FIR_A_4', full, 4, dict(tree=config['id']))
@@ -48,6 +50,42 @@ def test_the_levels_are_the_field_the_engine_takes_and_keep_the_spruces_material
         assert all(p['colour_format'] == (tree_glb.UBYTE, 'VEC4', True) for p in prims)
         assert abs(level['triangles'] / full.metrics['triangles'] - level['share']) < .01
     assert numbers[-1]['triangles'] / full.metrics['triangles'] == pytest.approx(1 / 32, rel=.02)
+
+
+def test_baking_the_same_mesh_level_produces_identical_atlases(tmp_path, monkeypatch):
+    monkeypatch.setattr(impostor_bake, 'FRAMES', 4)
+    monkeypatch.setattr(impostor_bake, 'TILE', 16)
+    monkeypatch.setattr(impostor_bake, 'PADDING', 4)
+    monkeypatch.setattr(impostor_bake, 'MIPS', 3)
+    meshes = tmp_path / 'meshes'
+    materials = tmp_path / 'materials'
+    materials.mkdir()
+    part = dict(name='OWN_LEAF', position=np.array(((-1, 0, 0), (1, 0, 0), (0, 1, 2))),
+                normal=np.tile((0, -1, 0), (3, 1)), uv=np.array(((0, 1), (1, 1), (.5, 0))),
+                index=np.array(((0, 1, 2),)), colour=np.tile((0, 0, 0, 128), (3, 1)), cutout=True)
+    tree_glb.write(meshes / 'base.glb', [part])
+    tree_glb.write(meshes / 'level.glb', [part])
+    dds = fir_set.sibling('test-material.py')
+    image = np.tile((.2, .5, .3, 1), (4, 4, 1))
+    image[::2, ::2, 3] = 0
+    dds.write_dds(materials / 'leaf.dds', image)
+    (materials / 'materials.json').write_text(json.dumps({'OWN_LEAF.TGA': {
+        'albedo': 'leaf.dds', 'two_sided': 'same', 'foliage': {'anchor': 'tree', 'translucency': .35},
+    }}))
+    source = {'glb': 'level.glb', 'px': 50}
+    index = meshes / 'meshes.json'
+    index.write_text(json.dumps({'OWN_LEAF': {'glb': 'base.glb', 'levels': [source]}}))
+
+    first = impostor_bake.bake(tmp_path, 'OWN_LEAF', 49)
+    paths = {layer: meshes / path for layer, path in first['atlases'].items()}
+    atlases = {layer: path.read_bytes() for layer, path in paths.items()}
+    coverage = impostor_bake.dds_mips(paths['albedo'])[0][..., 3]
+    assert 0 < np.count_nonzero(coverage) < coverage.size
+    for path in paths.values():
+        path.unlink()
+    assert impostor_bake.bake(tmp_path, 'OWN_LEAF', 49) == first
+    assert {layer: path.read_bytes() for layer, path in paths.items()} == atlases
+    assert json.loads(index.read_text())['OWN_LEAF']['levels'] == [source, {'impostor': first['atlases'], 'px': 49}]
 
 
 def test_tree_occlusion_probe_detects_clear_depth_outside_the_projected_box():
