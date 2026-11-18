@@ -1,0 +1,43 @@
+# The fire rain on the meadow east of the tavern at night (reports/content/remaster/magic-fire/rain.md): the whole rain
+# from 18 m aside, where its circle of 10 m and its height of 10 m fit the frame (wide), then the drops landing around
+# the hero from 4.5 m at the height of a man (close). The rain falls 6.5 s; each take holds 9 s after the cast.
+seed 73013
+cheat god
+set time 22 0
+overlay off
+ui off
+goto NW_TAVERNE_TROLLAREA_03
+clear 3000
+stats mana 3000 circle 6
+equip ItRu_Firerain
+tap spell
+wait 4000
+set time 22 0
+watch player
+cam follow 1800 450 70
+wait 1500
+rec wide
+wait 300
+press action
+wait 1500
+press forward
+wait 300
+release forward
+wait 300
+release action
+wait 9000
+stop
+clear 3000
+cam follow 450 160 40
+wait 3000
+rec close
+wait 300
+press action
+wait 1500
+press forward
+wait 300
+release forward
+wait 300
+release action
+wait 9000
+stop

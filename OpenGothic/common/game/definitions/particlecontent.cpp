@@ -227,8 +227,9 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
       decltype(result.flipbooks) pendingFlipbooks;
       decltype(result.motions) pendingMotions;
       decltype(result.with) pendingWith;
+      decltype(result.land) pendingLand;
       for(const auto& entry:effects.GetArray()) {
-        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze","lean","inherit","wind","plume","light","replaces","with"});
+        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze","lean","inherit","wind","plume","light","replaces","with","land"});
         const auto name=text(member(entry,"name"));
         require(!name.empty() && std::all_of(name.begin(),name.end(),[](char c) {
           return (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_';
@@ -321,12 +322,23 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
             }
           pendingWith.emplace(name,std::move(names));
           }
+        if(entry.HasMember("land")) {
+          // the particles fly in the world (not with their emitter), and the effect they land as lands no more
+          const auto other=canonicalName(text(member(entry,"land")));
+          require(pending.count(other)!=0 || result.effects.count(other)!=0,"land: unknown own effect "+other);
+          require(pendingLand.count(other)==0 && result.land.count(other)==0,"land: "+other+" lands itself");
+          require(definition->use_emitters_for==0,"land: needs useEmittersFOR 0");
+          const auto book=pendingFlipbooks.find(name);
+          require(book==pendingFlipbooks.end() || !book->second.steady,"land: not with a steady flipbook");
+          pendingLand.emplace(name,other);
+          }
         pending.emplace(name,std::move(definition));
         }
       result.effects.insert(pending.begin(),pending.end());
       result.flipbooks.insert(pendingFlipbooks.begin(),pendingFlipbooks.end());
       result.motions.insert(pendingMotions.begin(),pendingMotions.end());
       result.with.insert(pendingWith.begin(),pendingWith.end());
+      result.land.insert(pendingLand.begin(),pendingLand.end());
       }
     catch(const std::exception& error) { result.errors.push_back(file.string()+": "+error.what()); }
     }

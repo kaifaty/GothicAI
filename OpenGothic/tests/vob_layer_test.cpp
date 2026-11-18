@@ -608,12 +608,13 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"name":"OWN_TEST_TAIL","base":"FIRE_SMOKE","set":{},"inherit":0.75,"drag":1,"wind":1,"plume":{"height":42,"rise":2.2,"wind":0.5},"light":{"range":450,"color":[255,150,60],"keys":[0.5,1,0],"fps":6}}]})");
   textFile(directory/"60-replace.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_PUFF","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":8,"rows":8,"frames":64,"fps":10,"once":true}},
-    {"name":"FIRE_SPARKS","base":"OWN_TEST_SPARKS","replaces":true,"set":{"ppsValue":7.0},"with":["OWN_TEST_PUFF","OWN_TEST_TAIL"]}]})");
+    {"name":"FIRE_SPARKS","base":"OWN_TEST_SPARKS","replaces":true,"set":{"ppsValue":7.0},"with":["OWN_TEST_PUFF","OWN_TEST_TAIL"]},
+    {"name":"OWN_TEST_DROP","base":"FIRE_SMOKE","set":{"useEmittersFOR":0},"land":"own_test_puff.pfx"}]})");
   auto vm=ParticleContent::openProgram(baseRoot);
   const auto original=ParticleContent::base(*vm,"FIRE_SMOKE");
   require(original!=nullptr,"base FIRE_SMOKE definition");
   const auto loaded=ParticleContent::load(*vm,f.content);
-  require(loaded.errors.empty() && loaded.effects.size()==13,"own definitions load in filename and declaration order");
+  require(loaded.errors.empty() && loaded.effects.size()==14,"own definitions load in filename and declaration order");
   const auto& sparks=loaded.motions.at("OWN_TEST_SPARKS_CHILD");
   require(sparks.curlStrength==1.5f && sparks.curlFrequency==4.f && sparks.curlSpeed==0.3f && sparks.drag==3.f &&
           sparks.stretch==0.025f && sparks.minPixels==1.5f && loaded.motions.at("OWN_TEST_SPARKS").drag==2.f &&
@@ -634,6 +635,8 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
           loaded.effects.at("FIRE_SPARKS")->pps_value==7.f && loaded.motions.at("FIRE_SPARKS").drag==2.f &&
           loaded.with.at("FIRE_SPARKS")==std::vector<std::string>{"OWN_TEST_PUFF","OWN_TEST_TAIL"} && loaded.with.size()==1,
           "once, replaces and with are read");
+  require(loaded.land.size()==1 && loaded.land.at("OWN_TEST_DROP")=="OWN_TEST_PUFF" && loaded.with.count("OWN_TEST_DROP")==0,
+          "land is read and names its effect canonically");
   require(loaded.motions.count("OWN_TEST_SMOKE")==0 && loaded.motions.count("OWN_TEST_FLIP")==0,"effects without them have no motion");
   const auto flip=loaded.flipbooks.find("OWN_TEST_FLIP");
   require(flip!=loaded.flipbooks.end() && flip->second.cols==8 && flip->second.rows==4 && flip->second.frames==30 &&
@@ -680,6 +683,12 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"with-base",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"with":["FIRE_SMOKE"]})"},
     {"with-nested",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"with":["FIRE_SPARKS"]})"},
     {"with-empty",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"with":[]})"},
+    {"land-unknown",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"useEmittersFOR":0},"land":"OWN_NONE"})"},
+    {"land-base",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"useEmittersFOR":0},"land":"FIRE_SMOKE"})"},
+    {"land-emitter",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"useEmittersFOR":1},"land":"OWN_PREVIOUS"})"},
+    {"land-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"useEmittersFOR":0},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"land":"OWN_PREVIOUS"})"},
+    {"land-type",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"useEmittersFOR":0},"land":["OWN_PREVIOUS"]})"},
+    {"land-nested",R"({"name":"OWN_BAD_DROP","base":"FIRE_SMOKE","set":{"useEmittersFOR":0},"land":"OWN_PREVIOUS"},{"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"useEmittersFOR":0},"land":"OWN_BAD_DROP"})"},
     {"once-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true,"once":true}})"},
     {"plume-no-wind",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"drag":1,"plume":{"height":42,"rise":2.2,"wind":0.5}})"},
     {"plume-no-rise",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"drag":1,"wind":1,"plume":{"height":42,"wind":0.5}})"},
@@ -760,6 +769,9 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
   require(replaced && puff && replaced->ppsValue==7.f && replaced->with.size()==2 && replaced->with[0]==puff &&
           puff->flipOnce && puff->with.empty() && !replaced->flipOnce,
           "an own effect replaces the game's by name and brings its effects along");
+  const auto* drop=gothic.loadParticleFx("OWN_TEST_DROP");
+  require(drop && drop->land==puff && replaced->land==nullptr && puff->land==nullptr,
+          "a landing effect reaches the native effect");
   }
   const auto* haze=gothic.loadParticleFx("OWN_TEST_HAZE");
   require(haze && haze->hazeShift==3.f && haze->hazeCell==5.f && haze->visMaterial.alpha==Material::Ghost,

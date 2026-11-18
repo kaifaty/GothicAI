@@ -61,6 +61,8 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
       if(const auto* fx=implGet(other,relaxed))
         p->with.push_back(fx);
     }
+  if(const auto l=content.land.find(cname); l!=content.land.end())
+    p->land = implGet(l->second,relaxed);
   if(const auto m=content.motions.find(cname); m!=content.motions.end()) {
     // particles.d units to the engine's cm and ms
     const auto& own = m->second;
