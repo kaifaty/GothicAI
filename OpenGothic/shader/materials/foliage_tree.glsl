@@ -56,14 +56,42 @@ const float FoliageTreePatchFull  = 0.5;
 const float FoliageTreeLeafUp     = 0.8;
 const float FoliageTreeLeafSide   = 0.6;
 const vec3  FoliageTreeLeafPlace  = vec3(0.045, 0.031, 0.053);
+// the fade with the distance, in pixels of the main view: a motion is whole from *Full of them and gone under *None
+const float FoliageTreeFadeLeafFull   = 0.8;
+const float FoliageTreeFadeLeafNone   = 0.5;
+const float FoliageTreeFadeBranchFull = 5.0;
+const float FoliageTreeFadeBranchNone = 3.0;
+const float FoliageTreeFadeTrunkFull  = 4.0;
+const float FoliageTreeFadeTrunkNone  = 2.5;
+
+// Far off the tree's wind fades (tree-wind.md, section 4): first the needles stop, then the branches, the trunk
+// last, and past that the vertex is not moved at all. x the trunk's share of its motion, y the branches', z the
+// needles'; 1 near, where the rule is what it was, and never x < y < z. A motion fades by how many pixels of the
+// main view the most of it is at the tree's root: the needles' LeafMax, the end of the longest branch the rule
+// lets a tree of this height have, the lean of the top, all at a wind and a flutter of one, so the bark and the
+// leaves of a tree fade as one body. camPos: the main camera's, in every view, so the shadow fades with its tree;
+// pxPerTan: the pixels a unit of the tangent is there (SceneDesc::foliageFade.x), 0 without the fade
+vec3 foliageTreeFade(uint bits, float reach, mat4x3 mat, vec3 camPos, float pxPerTan) {
+  if((bits >> 24)!=FoliageAnchorTree || pxPerTan<=0.0)
+    return vec3(1.0);
+  const float scale  = length(mat[1]);
+  const float height = max(reach, 1e-3);
+  const float px     = scale*pxPerTan/max(distance(mat[3], camPos), 1.0); // pixels a cm of the mesh is
+  const float arm    = height*FoliageTreeBranchReach;
+  const float bough  = arm*FoliageTreeBranchGive*min(sqrt(scale*arm/FoliageTreeBranchLong), FoliageTreeBranchTopK);
+  const float leaf   = smoothstep(FoliageTreeFadeLeafNone, FoliageTreeFadeLeafFull, FoliageTreeLeafMax*px);
+  const float branch = max(leaf,   smoothstep(FoliageTreeFadeBranchNone, FoliageTreeFadeBranchFull, bough*px));
+  const float trunk  = max(branch, smoothstep(FoliageTreeFadeTrunkNone,  FoliageTreeFadeTrunkFull,  FoliageTreeLean*height*px));
+  return vec3(trunk, branch, leaf);
+  }
 
 // p: the vertex in the mesh's axes; color: its colour, R in the low byte; reach: the mesh's height
 // (Bucket::foliageReach); mat: the object's matrix; wind, phase, swingOf: as foliageBend takes them, the pressure
-// that of the tree's place; frontPh, frontK: the front of that frame (foliageFrontAt)
+// that of the tree's place; frontPh, frontK: the front of that frame (foliageFrontAt); fade: foliageTreeFade
 vec3 foliageTreeBend(vec3 p, uint color, uint bits, float reach, mat4x3 mat, vec4 wind, vec4 phase, vec4 swingOf,
-                     vec2 frontPh, vec4 frontK) {
+                     vec2 frontPh, vec4 frontK, vec3 fade) {
   const float windK = foliagePackedWind(bits), flutK = foliagePackedFlutter(bits);
-  if(wind.w<=0.0 || (windK<=0.0 && flutK<=0.0))
+  if(wind.w<=0.0 || (windK<=0.0 && flutK<=0.0) || fade.x<=0.0)
     return p;
   const float height = max(reach, 1e-3);
   const vec4  c      = unpackUnorm4x8(color);
@@ -90,15 +118,16 @@ vec3 foliageTreeBend(vec3 p, uint color, uint bits, float reach, mat4x3 mat, vec
       const float sa    = FoliageTree1Share*sin(a1) + FoliageTree2Share*sin(a2);
       const float sb    = FoliageTree1Share*cos(a1) - FoliageTree2Share*cos(a2);
       const float sway  = FoliageTreeSwayCalm + FoliageTreeSwayWind*q;
-      const float along = height*u*u*windK*(FoliageTreeLean*q + sway*sa);
-      const float side  = height*u*u*windK*sway*FoliageTreeAcross*sb;
+      const float along = height*u*u*windK*(FoliageTreeLean*q + sway*sa)*fade.x;
+      const float side  = height*u*u*windK*sway*FoliageTreeAcross*sb*fade.x;
       const vec3  t     = vec3(p.x + wx*along - wz*side, p.y, p.z + wz*along + wx*side);
       const float tl    = length(t);
       r = tl>1e-6 ? t*(length(p)/tl) : p;
       }
     }
 
-  const bool branch = c.r>0.0 && windK>0.0, leaf = c.b>0.0 && flutK>0.0;
+  // a far tree has the trunk's motion alone: no front and no waves for its vertices
+  const bool branch = c.r>0.0 && windK>0.0 && fade.y>0.0, leaf = c.b>0.0 && flutK>0.0 && fade.z>0.0;
   if(!branch && !leaf)
     return r;
 
@@ -121,7 +150,7 @@ vec3 foliageTreeBend(vec3 p, uint color, uint bits, float reach, mat4x3 mat, vec
     const vec4  take  = max(vec4(0.0), vec4(1.0) - abs(vec4(0.0,1.0,2.0,3.0) - vec4(span + 0.5))/FoliageTreeWaveWidth);
     const float gusts = dot(take,wave)/(take.x + take.y + take.z + take.w);
     const float give  = FoliageTreeBranchGive*min(sqrt(al.y*rl*c.r/FoliageTreeBranchLong), FoliageTreeBranchTopK);
-    const float push  = windK*min(rl, height*FoliageTreeBranchReach)*give*(ql + FoliageTreeBranchGust*el*gusts);
+    const float push  = windK*min(rl, height*FoliageTreeBranchReach)*give*(ql + FoliageTreeBranchGust*el*gusts)*fade.y;
     r.x += push*(wx - firm*along*p.x/rl);
     r.z += push*(wz - firm*along*p.z/rl);
     r.y += push*FoliageTreeBranchLift*firm*along;
@@ -132,7 +161,7 @@ vec3 foliageTreeBend(vec3 p, uint color, uint bits, float reach, mat4x3 mat, vec
   if(leaf) {
     const float crest = smoothstep(FoliageTreePatchFrom, FoliageTreePatchFull, 0.5*(wave.z + wave.w));
     const float end   = mix(FoliageTreeLeafInner, 1.0, smoothstep(FoliageTreeLeafEndFrom, FoliageTreeLeafEndFull, c.r));
-    const float amp   = flutK*c.b*FoliageTreeLeafMax*el*crest*end;
+    const float amp   = flutK*c.b*FoliageTreeLeafMax*el*crest*end*fade.z;
     const float place = dot(p, FoliageTreeLeafPlace);
     const float s1    = sin(12.5663706*(phase.z + c.g + h) + place);
     const float s2    = sin(12.5663706*(phase.w + c.g + fract(h*1.618034)) + place*1.3 + 1.7);
@@ -144,11 +173,11 @@ vec3 foliageTreeBend(vec3 p, uint color, uint bits, float reach, mat4x3 mat, vec
   }
 
 // a vertex of a BK_FOLIAGE bucket, by the anchor of its material: a tree or a tuft (FoliageTree::move). frontPh,
-// frontK: the front of that frame, which a tree reads at every vertex
+// frontK: the front of that frame, which a tree reads at every vertex; fade: foliageTreeFade, a tuft has none
 vec3 foliageMove(vec3 p, uint color, uint bits, float reach, mat4x3 mat, vec4 wind, vec4 phase, vec4 swingOf,
-                 vec2 frontPh, vec4 frontK) {
+                 vec2 frontPh, vec4 frontK, vec3 fade) {
   if((bits >> 24)==FoliageAnchorTree)
-    return foliageTreeBend(p, color, bits, reach, mat, wind, phase, swingOf, frontPh, frontK);
+    return foliageTreeBend(p, color, bits, reach, mat, wind, phase, swingOf, frontPh, frontK, fade);
   return foliageBend(p, bits, reach, mat, wind, phase, swingOf);
   }
 

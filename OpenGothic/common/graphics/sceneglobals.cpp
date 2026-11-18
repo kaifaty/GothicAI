@@ -273,6 +273,9 @@ void SceneGlobals::setTime(uint64_t time) {
   }
 
 void SceneGlobals::commitUbo(uint8_t fId) {
+  // the tree's wind fades by its size in the main view's pixels, in the shadow views as well (graphics/treewindfade.h)
+  uboGlobalCpu.foliageFade = Tempest::Vec4(TreeWindFade::enabled() ? FoliageTree::fadeScale(proj.at(1,1), uboGlobalCpu.screenRes.y) : 0.f,
+                                           0.f, 0.f, 0.f);
   UboGlobal perView[V_Count];
   uboGlobalPf[fId][V_Main].update(&uboGlobalCpu);
 

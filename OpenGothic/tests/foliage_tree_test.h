@@ -75,6 +75,146 @@ void hizOccluderRule() {
           "a solid leaf, a tuft and the original's alpha-tested leaves (no `foliage`) stay occluders");
   }
 
+// The fade of the tree's wind with the distance (the note's section 4; FoliageTree::fade, foliageTreeFade of the
+// shader, graphics/treewindfade.h): the spruce of 18 m of the probe and one of 6 m, seen at 2560x1440 and at
+// 1920x1080 with the game's field of view
+void foliageTreeFadeMaths() {
+  using namespace FoliageTree;
+  using FoliageWind::Both;
+  using FoliageWind::Params;
+  using FoliageWind::Scene;
+  using FoliageWind::pack;
+  using Tempest::Vec3;
+
+  require(TreeWindFade::parse("",true) && !TreeWindFade::parse("",false) && !TreeWindFade::parse("0",true) && TreeWindFade::parse("1",false),
+          "the fade is on by default; OPENGOTHIC_TREE_WIND_FADE wins over [INTERNAL] treeWindFade");
+
+  Params bark, leaf, tuft;
+  bark.on = true; bark.anchor = FoliageWind::AnchorTree; bark.translucency = 0.f; bark.flutter = 0.f;
+  leaf.on = true; leaf.anchor = FoliageWind::AnchorTree;
+  tuft.on = true;
+  const uint32_t barkBits = pack(bark,Both), leafBits = pack(leaf,Both), tuftBits = pack(tuft,Both);
+  const Vec3 upright[3] = {Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1)};
+  const Vec3 place(34731,4015,1367);
+  const auto color = [](uint32_t r, uint32_t g, uint32_t b, uint32_t a) { return r | (g<<8) | (b<<16) | (a<<24); };
+  Scene gust;
+  gust.wind  = Tempest::Vec4(0,1,1,1);
+  gust.phase = Tempest::Vec4(0.1f,0.8125f,0.149f,0.512f);
+  gust.swing = Tempest::Vec4(0.31f,0.f,1.f,0.f);
+
+  // the pixels a unit of the tangent is: the projection's [1][1] is the cotangent of half the field of view
+  const float projY = 1.f/std::tan(0.5f*67.5f*float(M_PI)/180.f);
+  const float k1440 = fadeScale(projY,1440), k1080 = fadeScale(-projY,1080);
+  require(std::abs(k1440-1077.5f)<0.5f && std::abs(k1080-808.1f)<0.5f && fadeScale(projY,0)==0.f,
+          "a pixel is the same share of the view whichever way the projection's Y points");
+
+  // no fade: without the scale, and for a tuft at any distance
+  for(const float d:{1.f,3000.f,50000.f}) {
+    const Fade off = fade(leafBits,1807.f,1.f,d,0.f), line = fade(tuftBits,85.f,1.f,d,k1440);
+    require(off.trunk==1.f && off.branch==1.f && off.leaf==1.f && line.trunk==1.f && line.branch==1.f && line.leaf==1.f,
+            "with the fade off, and for a tuft, the wind is whole at any distance");
+    }
+  {
+  const Vec3 p(10,-85,4);
+  require(move(p,color(255,255,255,255),tuftBits,85.f,upright,place,gust,FoliageFront::Front(),false,Fade{0.f,0.f,0.f})==
+          FoliageWind::bend(p,tuftBits,85.f,upright,place,gust),"a tuft does not read the fade");
+  }
+
+  // the vertices of a tree: the trunk's top, the end of a low bough with its needles, a middle one, the leader
+  struct Vert { Vec3 p; uint32_t c; };
+  const auto verts = [&](float h) {
+    return std::array<Vert,5>{{{Vec3(0,h,0),color(0,0,0,255)},
+                               {Vec3(0.25f*h,0.2f*h,0.05f*h),color(255,40,255,255)},
+                               {Vec3(-0.1f*h,0.5f*h,0.12f*h),color(200,190,255,255)},
+                               {Vec3(0.02f*h,0.97f*h,0.f),color(120,77,200,255)},
+                               {Vec3(0.05f*h,0.3f*h,-0.2f*h),color(255,140,0,255)}}};
+    };
+
+  for(const float h:{1807.f,600.f})
+    for(const float scale:{1.f,1.4f})
+      for(const float k:{k1440,k1080}) {
+        const Vec3 axis[3] = {Vec3(scale,0,0), Vec3(0,scale,0), Vec3(0,0,scale)};
+        const auto vs      = verts(h);
+        // where each motion is whole to and gone from, cm: found by walking away from the tree
+        float leafFull = 0, leafNone = 0, branchFull = 0, branchNone = 0, trunkFull = 0, trunkNone = 0;
+        Fade  before = fade(leafBits,h,scale,100.f,k);
+        std::array<Vec3,5> was;
+        for(size_t i=0; i<vs.size(); ++i)
+          was[i] = move(vs[i].p,vs[i].c,leafBits,h,axis,place,gust,FoliageFront::Front(),false,before);
+        require(before.trunk==1.f && before.branch==1.f && before.leaf==1.f,"at the tree the wind is whole");
+        for(float d=100.f; d<=60000.f; d+=5.f) {
+          const Fade f = fade(leafBits,h,scale,d,k), fb = fade(barkBits,h,scale,d,k);
+          require(f.trunk==fb.trunk && f.branch==fb.branch && f.leaf==fb.leaf,
+                  "the bark and the leaves of one tree fade alike: a bough does not part from its needles");
+          require(f.trunk>=f.branch && f.branch>=f.leaf && f.leaf>=0.f && f.trunk<=1.f,
+                  "the needles are never ahead of the branches, the branches never ahead of the trunk");
+          require(f.trunk<=before.trunk && f.branch<=before.branch && f.leaf<=before.leaf,"farther off there is no more of the wind");
+          // 5 cm on: no step of the fade, and none of the pose
+          require(before.trunk-f.trunk<0.012f && before.branch-f.branch<0.012f && before.leaf-f.leaf<0.012f,
+                  "the fade has no jump at its thresholds");
+          for(size_t i=0; i<vs.size(); ++i) {
+            const Vec3 r = move(vs[i].p,vs[i].c,leafBits,h,axis,place,gust,FoliageFront::Front(),false,f);
+            require((r-was[i]).length()*scale*k/d<0.05f,"a step away moves no vertex by a twentieth of a pixel: the pose has no jump");
+            was[i] = r;
+            // the sphere of the tree holds the motion: by the fade of the bounds, which is no less
+            const Fade g = fadeBound(leafBits,h,scale,d,k);
+            require(g.trunk>=f.trunk && g.branch>=f.branch && g.leaf>=f.leaf &&
+                    g.trunk==std::floor(g.trunk*FadeBoundSteps)/FadeBoundSteps && fadeCode(g)<=fadeCode(Fade()) &&
+                    (r-vs[i].p).length()<=travel(leafBits,h,g)+1e-3f,
+                    "the bounds grow by no less than the faded wind moves a vertex, in whole steps");
+            if(f.none())
+              require(r==vs[i].p,"past the last threshold a vertex is not moved at all");
+            }
+          if(f.leaf==1.f)   leafFull   = d;
+          if(f.branch==1.f) branchFull = d;
+          if(f.trunk==1.f)  trunkFull  = d;
+          if(f.leaf>0.f)    leafNone   = d;
+          if(f.branch>0.f)  branchNone = d;
+          if(f.trunk>0.f)   trunkNone  = d;
+          before = f;
+          }
+        require(leafFull<leafNone && branchFull<branchNone && trunkFull<trunkNone,"each motion fades over a band, not at a line");
+        require(fadeBound(leafBits,h,scale,60000.f,k).none() && travel(leafBits,h,fadeBound(leafBits,h,scale,60000.f,k))==0.f &&
+                fadeCode(fadeBound(leafBits,h,scale,60000.f,k))==0,"far off the sphere has no room for the wind");
+        require(leafNone<=branchNone && branchNone<=trunkNone && leafFull<=branchFull && branchFull<=trunkFull && trunkNone<60000.f,
+                "the needles stop first, the branches next, the trunk last, and then there is no wind");
+        require(leafFull>=1500.f,"the needles tremble whole at 15 m at the least");
+        if(h==1807.f && scale==1.f && k==k1440)
+          require(std::abs(leafFull-2690.f)<20.f && std::abs(leafNone-4310.f)<20.f && std::abs(branchFull-10150.f)<60.f &&
+                  std::abs(branchNone-16920.f)<60.f && std::abs(trunkFull-14600.f)<60.f && std::abs(trunkNone-23365.f)<60.f,
+                  "the spruce of 18 m at 1440p: the needles to 27..43 m, the boughs to 101..169 m, the trunk to 146..234 m");
+        if(h==600.f && scale==1.f)
+          require(branchNone==leafNone,"a small tree's boughs go fewer pixels than its needles and yet do not stop before them");
+        }
+
+  // near, the answer is the one without the fade to the bit; and the fade is what the three motions are times
+  {
+  const float h = 1807.f;
+  const auto  vs = verts(h);
+  const Fade  near = fade(leafBits,h,1.f,2600.f,k1440);
+  require(near.trunk==1.f && near.branch==1.f && near.leaf==1.f,"before the first threshold nothing fades");
+  for(const auto& v:vs) {
+    const Vec3 plain = move(v.p,v.c,leafBits,h,upright,place,gust);
+    require(move(v.p,v.c,leafBits,h,upright,place,gust,FoliageFront::Front(),false,near)==plain &&
+            bend(v.p,v.c,leafBits,h,upright,place,gust,FoliageFront::Front(),true,near)==bend(v.p,v.c,leafBits,h,upright,place,gust,FoliageFront::Front(),true),
+            "near the tree the faded rule is the rule itself, this frame and the previous one");
+    // the trunk alone: a bough's end goes with the trunk and no farther
+    const Vec3 trunkOnly = move(v.p,v.c,leafBits,h,upright,place,gust,FoliageFront::Front(),false,Fade{1.f,0.f,0.f});
+    require(trunkOnly==move(v.p,color(0,0,0,255),barkBits,h,upright,place,gust),
+            "with the branches and the needles gone a vertex moves as the trunk under it");
+    }
+  const Vec3 tip(0.25f*h,0.2f*h,0.05f*h);
+  const Vec3 rest = move(tip,color(0,0,0,255),barkBits,h,upright,place,gust);
+  const Vec3 full = move(tip,color(255,40,0,255),barkBits,h,upright,place,gust);
+  const Vec3 half = move(tip,color(255,40,0,255),barkBits,h,upright,place,gust,FoliageFront::Front(),false,Fade{1.f,0.5f,0.f});
+  require((full-rest).length()>10.f && ((half-rest)-(full-rest)*0.5f).length()<1e-2f,"half the fade is half the bough's way");
+  require(travel(leafBits,h,Fade())==travel(leafBits,h) && travel(barkBits,h,Fade())==travel(barkBits,h) &&
+          travel(tuftBits,85.f,Fade{0.f,0.f,0.f})==FoliageWind::travel(tuftBits,85.f) &&
+          travel(leafBits,h,Fade{1.f,0.f,0.f})<travel(leafBits,h) && travel(leafBits,h,Fade{0.f,0.f,0.f})==0.f,
+          "the bounds of a tree with all of its wind are what they were; a tuft's do not read the fade");
+  }
+  }
+
 void foliageTreeMaths() {
   crownLightMaths();
   hizOccluderRule();
@@ -420,6 +560,8 @@ void foliageTreeMaths() {
           travel(tuftBits,85.f)==FoliageWind::travel(tuftBits,85.f) && FoliageTree::travel(tuft,boxMin,boxMax)==FoliageWind::travel(tuft,boxMin,boxMax),
           "the line anchor moves and grows its bounds as FoliageWind does");
   }
+
+  foliageTreeFadeMaths();
   }
 
 // materials.json "foliage": {"anchor": "tree"}

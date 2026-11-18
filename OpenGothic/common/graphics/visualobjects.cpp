@@ -161,6 +161,7 @@ void VisualObjects::Item::setDeformation(const Tempest::Vec4* vertices, size_t p
     if(auto mesh=obj.bucketId->staticMesh) {
       owner->clustersMem[obj.clusterId].r = mesh->bbox.rConservative+obj.bucketId->mat.waveMaxAmplitude+
                                             FoliageTree::travel(obj.bucketId->mat.foliage,mesh->bbox.bbox[0],mesh->bbox.bbox[1]);
+      obj.treeFade = FoliageTree::fadeCode(FoliageTree::Fade());
       owner->clustersMem.markClusters(obj.clusterId);
       }
     owner->updateInstance(id);
@@ -415,6 +416,11 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     obj.strandWider    = 1;
     objectsStrand.insert(id);
     }
+  if(FoliageTree::isTree(mat.foliage) && FoliageWind::moves(FoliageWind::pack(mat.foliage,FoliageWind::enabled()))) {
+    obj.tree     = true;
+    obj.treeFade = FoliageTree::fadeCode(FoliageTree::Fade());
+    objectsTree.insert(id);
+    }
 
   if(type==DrawCommands::Morph) {
     obj.objMorphAnim = instanceMem.alloc(sizeof(MorphDesc)*Resources::MAX_MORPH_LAYERS);
@@ -561,6 +567,8 @@ void VisualObjects::free(size_t id) {
     objectsMorph.erase(id);
   if(obj.strandMeshlets>0)
     objectsStrand.erase(id);
+  if(obj.tree)
+    objectsTree.erase(id);
 
   obj = Object();
   while(objects.size()>0) {
@@ -815,6 +823,37 @@ void VisualObjects::preFrameUpdate() {
   preFrameUpdateWind();
   preFrameUpdateMorph();
   preFrameUpdateStrands();
+  preFrameUpdateTrees();
+  }
+
+// The wind of a tree fades with the distance (FoliageTree::fade; tree-wind.md, section 4), and a tree with less
+// wind needs less room for it. The sphere of a cluster is the instance's own, so it is set by the fade the tree
+// has in this frame: the frustum test of every view and the pages of the virtual shadow map go by it. The camera
+// and the scale are those the shaders of this frame get (SceneGlobals::commitUbo is ahead of this), the fade is
+// taken with a margin and in steps (fadeBound), so the sphere is never less than the motion. The box of the
+// bucket is one for all the instances of a mesh and keeps the whole of the travel
+void VisualObjects::preFrameUpdateTrees() {
+  if(objectsTree.empty())
+    return;
+  const float px = scene.foliageFade();
+  for(auto id:objectsTree) {
+    auto&       obj  = objects[id];
+    const auto* mesh = obj.bucketId->staticMesh;
+    if(mesh==nullptr || obj.deformCount>0)
+      continue; // a deformed mesh sets its sphere by its points
+    const auto&    mat   = obj.bucketId->mat;
+    const uint32_t bits  = FoliageWind::pack(mat.foliage, FoliageWind::enabled());
+    const float    reach = FoliageTree::reach(mat.foliage, mesh->bbox.bbox[0], mesh->bbox.bbox[1]);
+    const Vec3     at    = Vec3(obj.pos.at(3,0), obj.pos.at(3,1), obj.pos.at(3,2));
+    const float    scale = Vec3(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2)).length();
+    const auto     fade  = FoliageTree::fadeBound(bits, reach, scale, (at-scene.camPos()).length(), px);
+    const uint16_t code  = FoliageTree::fadeCode(fade);
+    if(code==obj.treeFade)
+      continue;
+    obj.treeFade = code;
+    clustersMem[obj.clusterId].r = mesh->bbox.rConservative + mat.waveMaxAmplitude + FoliageTree::travel(bits, reach, fade);
+    clustersMem.markClusters(obj.clusterId);
+    }
   }
 
 void VisualObjects::preFrameUpdateWind() {

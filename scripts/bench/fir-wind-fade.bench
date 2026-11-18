@@ -1,0 +1,93 @@
+# The fade of a tree's wind with the distance (reports/engine/2026-11-16-modern-trees/tree-wind.md, section 4), on
+# the modern spruce A of the probe of fir-probe.bench (scripts/content/fir_set.py probe; run with
+# OPENGOTHIC_CONTENT=<that set>), at noon. Six standing clips of 20 s on one line of sight from the south-south-west,
+# each from 3 s before the peak of a gust, as fir-wind.bench. The name of a clip is the camera's distance to the
+# spruce's root in metres, the measure the fade takes. At 1920x1080 the needles of this spruce (18 m) fade from
+# 20 to 32 m, its boughs from 76 to 127 m, its trunk from 110 to 175 m:
+#   fade-15   before the first threshold: the motion is that of a run without the fade;
+#   fade-26   the needles at four tenths of their flutter;
+#   fade-45   the needles stand, the boughs and the trunk go in full;
+#   fade-100  the boughs at four tenths of their way;
+#   fade-140  the boughs stand, the trunk at four tenths of its lean;
+#   fade-190  beyond the last threshold: the spruce and its shadow stand.
+# Run twice, with OPENGOTHIC_TREE_WIND_FADE=0 and without, and put the clips side by side. Far cameras stand 10 to
+# 25 m over the ground: lower, the crowns of the original's trees and the hill hide the spruce. The cameras stand by
+# PROBE of the script (spruce A: 41250, 3323.5, 650): change both together.
+#   OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen scripts/bench.sh fir-wind-fade
+# @timeout 1200
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+set time 12 0
+
+# the hero stands behind the first two views
+goto pos 39400 3790 -2000
+clear 3000
+streaming wait
+grass wait
+cam at 40500 3618 -649 41250 4100 650
+wait 5000
+foliage wait-gust 3000 0
+rec fade-15
+wait 20000
+stop
+wait 500
+
+cam at 40000 3924 -1515 41250 4200 650
+wait 2000
+foliage wait-gust 3000 0
+rec fade-26
+wait 20000
+stop
+wait 500
+
+# from here on the hero stands on the ground under the camera
+goto pos 39150 3850 -2987
+clear 3000
+streaming wait
+grass wait
+cam at 39150 4816 -2987 41250 4200 650
+wait 4000
+foliage wait-gust 3000 0
+rec fade-45
+wait 20000
+stop
+wait 500
+
+goto pos 36500 3900 -7577
+clear 3000
+streaming wait
+grass wait
+cam at 36500 6365 -7577 41250 4200 650
+wait 4000
+foliage wait-gust 3000 0
+rec fade-100
+wait 20000
+stop
+wait 500
+
+goto pos 34600 5575 -10868
+clear 3000
+streaming wait
+grass wait
+cam at 34600 7540 -10868 41250 4200 650
+wait 4000
+foliage wait-gust 3000 0
+rec fade-140
+wait 20000
+stop
+wait 500
+
+goto pos 32200 6480 -15025
+clear 3000
+streaming wait
+grass wait
+cam at 32200 8945 -15025 41250 4200 650
+wait 4000
+foliage wait-gust 3000 0
+rec fade-190
+wait 20000
+stop
+wait 500
