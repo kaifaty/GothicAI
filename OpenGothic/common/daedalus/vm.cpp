@@ -136,6 +136,7 @@ namespace daedalus {
 		}
 
 		// the same as the BE instruction
+		if (_m_external_observer) _m_external_observer(*sym);
 		StackGuard guard {this, sym->rtype()};
 		auto cb = _m_externals.find(sym);
 		if (cb == _m_externals.end()) {
@@ -303,6 +304,7 @@ namespace daedalus {
 				}
 
 				// Guard against exceptions during external invocation.
+				if (_m_external_observer) _m_external_observer(*sym);
 				StackGuard guard {this, sym->rtype()};
 
 				auto cb = _m_externals.find(sym);
@@ -813,6 +815,11 @@ namespace daedalus {
 		}
 
 		return {std::get<DaedalusSymbol*>(v.value), v.index, v.context};
+	}
+
+	DaedalusStackFrame const& DaedalusVm::stack_frame(uint16_t depth) const {
+		if (depth >= _m_stack_ptr) throw DaedalusVmException {"stack frame depth out of range"};
+		return _m_stack[_m_stack_ptr - depth - 1];
 	}
 
 	bool DaedalusVm::top_is_reference() const {

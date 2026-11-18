@@ -27,6 +27,12 @@ struct NpcCounts {
 // Assigned NPC member elements and ordered engine/deferred-script calls.
 NpcCounts writeNpcs(const Program& program, const std::filesystem::path& file);
 int verifyNpcs(const Program& program, const std::filesystem::path& file);
+struct PlacementCounts {
+  size_t total = 0, captured = 0, steps = 0, deferred = 0;
+  };
+// Ordered STARTUP engine calls and state-dependent helpers retained in the VM.
+PlacementCounts writePlacements(const Program& program, const std::filesystem::path& file);
+int verifyPlacements(const Program& program, const std::filesystem::path& file);
 struct RoutineCounts {
   size_t total = 0, captured = 0;
   };

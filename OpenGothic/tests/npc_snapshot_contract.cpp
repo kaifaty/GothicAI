@@ -5,7 +5,9 @@
 #include "programdata.h"
 #include "itemdefinitions.h"
 #include "npcdefinitions.h"
+#include "placementdefinitions.h"
 #include "game/npcdefinitionruntime.h"
+#include "game/placementdefinitionruntime.h"
 #include "game/itemdefinitionruntime.h"
 #include "routinedefinitions.h"
 #include "game/routinedefinitionruntime.h"
@@ -578,6 +580,78 @@ void npcDefinitions(const fs::path& dir) {
   environment(present ? previous.c_str() : nullptr);
   }
 
+void placementDefinitions(const fs::path& dir) {
+  const auto program=NpcDefinitionFixture::program();
+  const auto base=dir/"placement-definitions",file=base/"definitions"/program.sha256/"placement.json";
+  const auto counts=NpcSnapshot::writePlacements(program,file);
+  check(counts.total==5 && counts.captured==3,"placement corpus preserves captured and refused startup functions");
+  check(NpcSnapshot::verifyPlacements(program,file)==0,"every placement verifies from disk against a fresh VM");
+  const auto library=PlacementDefinitions::read(base,program.sha256);
+  check(library.placements.at("STARTUP_GLOBAL").steps.size()==1 &&
+        library.placements.at("STARTUP_GLOBAL").steps[0].function=="GAME_INITGERMAN",
+        "an ignored external result at the void function boundary is captured");
+  check(library.uncaptured.at("STARTUP_MUTABLE_ROOT")=="game_state_write: CHAPTER",
+        "a startup root writing mutable state retains the complete VM path");
+  check(library.uncaptured.at("STARTUP_ERROR_ROOT").starts_with("script_error:"),
+        "a suppressed script error in the startup root retains the complete VM path");
+  const auto& steps=library.placements.at("STARTUP_TEST").steps;
+  check(steps.size()==6,"nested placement is expanded in its original call order");
+  check(steps[0].function=="WLD_INSERTNPC" && steps[1].function=="WLD_INSERTITEM",
+        "nested insertion precedes the state-dependent helper");
+  check(steps[2].function=="PLACE_DEPENDENT" && steps[2].deferred,
+        "mutable-global helper is deferred at its original position");
+  check(steps[3].function=="WLD_ASSIGNROOMTOGUILD" && !steps[3].deferred && steps[3].args[1].integer==7,
+        "the order-dependent step remains after the deferred helper");
+  check(steps[0].args[0].kind==PlacementDefinitions::Value::Kind::Symbol && steps[0].args[0].text=="NPC_NO_ID",
+        "placement arguments name program symbols rather than VM indices");
+  const auto& errorSteps=library.placements.at("STARTUP_ERROR_HELPER").steps;
+  check(errorSteps.size()==3 && errorSteps[1].function=="PLACE_SCRIPT_ERROR" && errorSteps[1].deferred,
+        "a lenient VM script error defers the helper without dropping adjacent calls");
+  const auto second=dir/"placement-identical.json";
+  NpcSnapshot::writePlacements(program,second);
+  std::ifstream a(file,std::ios::binary),b(second,std::ios::binary);
+  check(std::string(std::istreambuf_iterator<char>(a),{})==std::string(std::istreambuf_iterator<char>(b),{}),
+        "two placement imports are byte-identical");
+  auto other=program;
+  for(auto& symbol:other.data.symbols)
+    if(symbol.name=="POINT") symbol.string_values[0]="OTHER_WP";
+  const auto encoded=ProgramData::encodeProgram(other.data);
+  other.name=encoded.name; other.sha256=encoded.sha256;
+  NpcSnapshot::writePlacements(other,base/"definitions"/other.sha256/"placement.json");
+
+  const auto* setting=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
+  const bool present=setting!=nullptr;
+  const std::string previous=setting ? setting : "";
+  auto environment=[](const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("OPENGOTHIC_PLACEMENT_RECORDS",value ? value : "")==0,"set placement records environment");
+#else
+    check((value ? setenv("OPENGOTHIC_PLACEMENT_RECORDS",value,1) : unsetenv("OPENGOTHIC_PLACEMENT_RECORDS"))==0,
+          "set placement records environment");
+#endif
+    };
+  try {
+    const auto script=DaedalusScript::from_program(program.data);
+    environment(nullptr);
+    check(PlacementDefinitionRuntime::enabled() && PlacementDefinitionRuntime::load(base,script,program.sha256).placements.size()==3,
+          "placement records are enabled by default through the game's shared choice");
+    environment("0");
+    check(!PlacementDefinitionRuntime::enabled() && PlacementDefinitionRuntime::load(base/"absent",script,program.sha256).placements.empty(),
+          "zero disables placement records without reading the base");
+    environment("1");
+    check(PlacementDefinitionRuntime::enabled() && PlacementDefinitionRuntime::load(base,script,program.sha256).placements.size()==3,
+          "nonzero enables placement records");
+    const auto otherScript=DaedalusScript::from_program(other.data);
+    const auto selected=PlacementDefinitionRuntime::load(base,otherScript,other.sha256);
+    const auto startup=otherScript.find_symbol_by_name("STARTUP_TEST")->index();
+    const auto& argument=selected.placements.at(startup).front().args[1];
+    check(otherScript.find_symbol_by_index(argument.literal)->get_string(argument.literalIndex)=="OTHER_WP",
+          "placement selection follows the loaded program SHA");
+    }
+  catch(...) { environment(present ? previous.c_str() : nullptr); throw; }
+  environment(present ? previous.c_str() : nullptr);
+  }
+
 void itemDefinitions(const fs::path& dir) {
   auto p=itemProgram();
   const auto base=dir/"definitions-fixture";
@@ -988,6 +1062,7 @@ void fixture(const fs::path& dir) {
   spellLayout();
   itemDefinitions(dir);
   npcDefinitions(dir);
+  placementDefinitions(dir);
   itemSelection(dir);
   routineDefinitions(dir);
   routineSelection(dir);

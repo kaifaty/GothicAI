@@ -143,6 +143,35 @@ inline NpcSnapshot::Program program() {
   f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::PUSHV,f.find("C_NPC.LEVEL")); f.op(Op::MOVI); f.op(Op::RSR);
   const auto initialRead=f.symbol("NPC_INITIAL_READ",Type::INSTANCE,0,Flag::CONST,int32_t(npcClass)); f.begin(initialRead);
   f.op(Op::PUSHV,f.find("C_NPC.ID")); f.op(Op::PUSHV,f.find("C_NPC.LEVEL")); f.op(Op::MOVI); f.op(Op::RSR);
+  const auto insertNpc=f.fn("WLD_INSERTNPC",{Type::INT,Type::STRING},true);
+  const auto insertItem=f.fn("WLD_INSERTITEM",{Type::INT,Type::STRING},true);
+  const auto guild=f.fn("WLD_ASSIGNROOMTOGUILD",{Type::STRING,Type::INT},true);
+  const auto mob=f.fn("WLD_SETMOBROUTINE",{Type::INT,Type::INT,Type::STRING,Type::INT},true);
+  const auto nested=f.fn("PLACE_NESTED"); f.begin(nested);
+  f.op(Op::PUSHI,npc); f.op(Op::PUSHV,point); f.op(Op::BE,insertNpc);
+  f.op(Op::PUSHI,item); f.op(Op::PUSHV,point); f.op(Op::BE,insertItem); f.op(Op::RSR);
+  const auto dependentPlacement=f.fn("PLACE_DEPENDENT"); f.begin(dependentPlacement);
+  f.op(Op::PUSHV,point); f.op(Op::PUSHV,chapter); f.op(Op::BE,guild); f.op(Op::RSR);
+  const auto startup=f.fn("STARTUP_TEST"); f.begin(startup);
+  f.call(nested); f.call(dependentPlacement);
+  // Reordering the deferred helper changes the final guild as well as the trace.
+  f.op(Op::PUSHV,point); f.op(Op::PUSHI,7); f.op(Op::BE,guild);
+  f.op(Op::PUSHI,8); f.op(Op::PUSHI,15); f.op(Op::PUSHV,point); f.op(Op::PUSHI,1); f.op(Op::BE,mob);
+  f.op(Op::PUSHI,trailerItem); f.op(Op::PUSHV,point); f.op(Op::BE,insertItem); f.op(Op::RSR);
+  const auto error=f.fn("PLACE_SCRIPT_ERROR"); f.begin(error);
+  f.op(Op::PUSHI,0); f.op(Op::PUSHI,1); f.op(Op::DIV); f.op(Op::RSR);
+  const auto startupError=f.fn("STARTUP_ERROR_HELPER"); f.begin(startupError);
+  f.op(Op::PUSHI,item); f.op(Op::PUSHV,point); f.op(Op::BE,insertItem);
+  f.call(error);
+  f.op(Op::PUSHI,trailerItem); f.op(Op::PUSHV,point); f.op(Op::BE,insertItem); f.op(Op::RSR);
+  const auto startupGlobal=f.fn("STARTUP_MUTABLE_ROOT"); f.begin(startupGlobal);
+  f.set(chapter,9); f.op(Op::RSR);
+  const auto startupErrorRoot=f.fn("STARTUP_ERROR_ROOT"); f.begin(startupErrorRoot);
+  f.op(Op::PUSHI,0); f.op(Op::PUSHI,1); f.op(Op::DIV); f.op(Op::RSR);
+  const auto german=f.fn("GAME_INITGERMAN",{},true,Type::INT);
+  const auto globalStartup=f.fn("STARTUP_GLOBAL"); f.begin(globalStartup);
+  // The real STARTUP_GLOBAL discards this external's return at the void function boundary.
+  f.op(Op::BE,german); f.op(Op::RSR);
   const auto encoded=ProgramData::encodeProgram(f.p);
   return {std::move(f.p),encoded.name,encoded.sha256};
   }

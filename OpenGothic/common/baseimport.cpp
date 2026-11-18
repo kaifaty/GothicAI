@@ -785,6 +785,8 @@ void build(const fs::path& gothic, const fs::path& out, const Progress& progress
   require(convertRoutineDefinitions(out)==0,"routine definition import failed");
   if(progress) progress("base import: NPC definitions");
   require(convertNpcDefinitions(out)==0,"NPC definition import failed");
+  if(progress) progress("base import: placement definitions");
+  require(convertPlacementDefinitions(out)==0,"placement definition import failed");
   if(progress) progress("base import: dialog line library");
   require(convertOutputUnits(gothic,out/"outputunits",false)==0,"dialog line library import failed");
   if(progress) progress("base import: sounds and speech");

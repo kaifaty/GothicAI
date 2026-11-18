@@ -622,13 +622,13 @@ void GameSession::initScripts(bool firstTime) {
     vm->startupFloor().begin();
     if(vm->hasSymbolName("startup_global")) {
       LoadProbe::Startup::Detail::Scope call("script_function",[]{return std::string("STARTUP_GLOBAL");});
-      vm->getVm().call_function("startup_global");
+      vm->runStartup("startup_global");
       }
 
     string_frm startup("startup_", name);
     if(vm->hasSymbolName(startup)) {
       LoadProbe::Startup::Detail::Scope call("script_function",[&]{return std::string(std::string_view(startup));});
-      vm->getVm().call_function(startup);
+      vm->runStartup(startup);
       }
     }
 
