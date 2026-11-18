@@ -1938,8 +1938,10 @@ boundaries, first differences and source analysis are in the
 `gothic-npc-day-contract` checks nested VM calls, random ownership, totals, repeated JSON bytes and
 actual engine queue observation on a synthetic program, without game data. The synthetic fixture of
 `gothic-placed-items-contract` additionally exercises `invokeState` through the real `Hlp_Random`,
-`GameScript::rand` and measurement probe. Repeated probe intervals in one VM retain inactive call
-observer links and their collectors; removable VM observers are outside this measuring step.
+`GameScript::rand` and measurement probe, and verifies JSONL commands from both regular and overlay
+`Npc::aiPush` queues. The day contract also checks that merged `LookAtNpc` commands are both traced.
+Repeated probe intervals in one VM retain inactive call observer links and their collectors;
+removable VM observers are tracked in [#1550](https://github.com/kaifaty/GothicAI/issues/1550).
 
 
 `scripts/npc_day_parity.py` matches samples by time and key and leaves the hero out, with his events

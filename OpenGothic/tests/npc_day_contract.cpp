@@ -14,13 +14,12 @@ void check(bool value, const char* message) {
   if(!value) throw std::runtime_error(message);
   }
 struct Sink final : NpcActivityProbe {
-  unsigned commands=0;
+  std::vector<AiQueue::AiAction> commands;
   void phaseBegin(const Npc*,std::string_view) override {}
   void phaseEnd(int) override {}
   void random(const Npc*,uint32_t,uint32_t,bool) override {}
   void queued(const Npc*,const AiQueue::AiAction& a) override {
-    ++commands;
-    check(a.act==AI_UseMob && a.s0=="SMITH_ANVIL" && a.i0==1,"queue retains action arguments");
+    commands.push_back(a);
     }
   void point(const Npc&,const WayPoint*,const WayPoint*) override {}
   void mob(const Npc&,const Interactive&,bool) override {}
@@ -108,7 +107,17 @@ int main() {
     queue.pushBack(AiQueue::aiUseMob("SMITH_ANVIL",1),actor);
     NpcActivityProbe::instance=nullptr;
     queue.pushBack(AiQueue::aiUseMob("SMITH_ANVIL",1),actor);
-    check(sink.commands==1 && queue.size()==2,"engine enqueue trace observes every enabled command without changing queue");
+    check(sink.commands.size()==1 && queue.size()==2,"engine enqueue trace observes every enabled command without changing queue");
+    check(sink.commands[0].act==AI_UseMob && sink.commands[0].s0=="SMITH_ANVIL" && sink.commands[0].i0==1,
+          "queue retains action arguments");
+    NpcActivityProbe::instance=&sink;
+    queue.pushBack(AiQueue::aiLookAtNpc(nullptr),actor);
+    queue.pushBack(AiQueue::aiLookAtNpc(const_cast<Npc*>(actor)),actor);
+    NpcActivityProbe::instance=nullptr;
+    check(sink.commands.size()==3 && queue.size()==3,"merged LookAtNpc commands are both traced");
+    check(sink.commands[1].act==AI_LookAtNpc && sink.commands[1].target==nullptr &&
+          sink.commands[2].act==AI_LookAtNpc && sink.commands[2].target==actor,
+          "merged LookAtNpc trace retains both original targets");
     std::cout<<"NPC day contract passed: "<<assertions<<" assertions\n";
     return 0;
     }
