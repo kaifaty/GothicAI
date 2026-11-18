@@ -168,6 +168,17 @@ void updateCamera(const CameraContext& ctx,World& w, Npc& pl) {
       }
     return;
     }
+  if(ctx.camera.cam==C_Fly) {
+    // cam fly: the position and the target go along straight lines in game time; TAA keeps its history
+    const float t   = std::min(1.f,float(ctx.time-ctx.camera.flyStart)/float(std::max<uint64_t>(ctx.camera.flyDuration,1)));
+    const Vec3  org = ctx.camera.flyFrom      +(ctx.camera.flyTo      -ctx.camera.flyFrom      )*t;
+    const Vec3  tgt = ctx.camera.flyFromTarget+(ctx.camera.flyToTarget-ctx.camera.flyFromTarget)*t;
+    lookFrom(ctx,org,tgt);
+    ctx.camera.camTarget = tgt;
+    if(t>=1.f)
+      ctx.camera.cam = C_Hold;
+    return;
+    }
   if(ctx.camera.cam==C_Water) {
     lookFrom(ctx,ctx.camera.camPos,ctx.water.cameraTarget);
     return;
@@ -775,7 +786,19 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
       // cam at <x y z> <tx ty tz>: from a point of the world at another, then held; a cut
       ctx.camera.cam        = C_Hold;
       ctx.camera.cutPending = true;
-      lookFrom(ctx, Vec3(num(a,2,0),num(a,3,0),num(a,4,0)), Vec3(num(a,5,0),num(a,6,0),num(a,7,0)));
+      ctx.camera.camTarget  = Vec3(num(a,5,0),num(a,6,0),num(a,7,0));
+      lookFrom(ctx, Vec3(num(a,2,0),num(a,3,0),num(a,4,0)), ctx.camera.camTarget);
+      }
+    else if(m=="fly" && a.size()>8) {
+      // cam fly <x y z> <tx ty tz> <ms>: from where `cam at` or the last fly left the camera, along straight lines to
+      // a point and its target in that many ms of game time, then held; no cut, so a clip of the way has no jump
+      ctx.camera.flyFrom       = ctx.camera.camPos;
+      ctx.camera.flyFromTarget = ctx.camera.camTarget;
+      ctx.camera.flyTo         = Vec3(num(a,2,0),num(a,3,0),num(a,4,0));
+      ctx.camera.flyToTarget   = Vec3(num(a,5,0),num(a,6,0),num(a,7,0));
+      ctx.camera.flyStart      = ctx.time;
+      ctx.camera.flyDuration   = uint64_t(std::max(1.f,num(a,8,1000)));
+      ctx.camera.cam           = C_Fly;
       }
     else if(m=="shoulder" || m=="two" || (m=="face" && a.size()>2 && !isNumber(a[2]))) {
       // cam shoulder <npc> [dist 120] [height 15] [shoulder 1|-1]

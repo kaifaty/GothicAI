@@ -99,6 +99,7 @@ enum CamMode : uint8_t {
   C_NpcFace,  // the npc's face, from the hero's side
   C_Two,      // the hero and the npc from the side
   C_Arrow,    // from the side of the newest arrow's way, going along with it (overlay trail records it)
+  C_Fly,      // along a straight line to a point and its target in a time, without a cut (`cam fly`)
   };
 
 inline constexpr int Fps = 30;
@@ -1240,6 +1241,9 @@ struct CameraBench {
   Tempest::PointF      camTurnAngles;
   float       camTurnDegrees = 0;
   uint64_t    camTurnStart = 0, camTurnDuration = 0;
+  Tempest::Vec3        camTarget;                // where `cam at` and `cam fly` look now
+  Tempest::Vec3        flyFrom, flyFromTarget, flyTo, flyToTarget;
+  uint64_t    flyStart = 0, flyDuration = 0;
 
   bool        rec       = false;
   bool        recVideo  = false;
