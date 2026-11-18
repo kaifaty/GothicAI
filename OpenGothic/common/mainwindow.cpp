@@ -1605,7 +1605,7 @@ void MainWindow::render(){
       profile.flag(FrameProfile::Flag::CaptureRequested);
       // filming draws every frame of the video into one image: a new one each step costs an allocation
       auto   tex = Bench::withUi() ? screenshotWithUi(std::move(captureImage))
-                                       : renderer.screenshoot(cmdId,std::move(captureImage));
+                                       : renderer.screenshoot(cmdId,std::move(captureImage),!Bench::filming());
       Pixmap pm;
       if(!tex.isEmpty()) {
         pm = device.readPixels(textureCast<const Texture2d&>(tex));

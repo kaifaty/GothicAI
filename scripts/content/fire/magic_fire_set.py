@@ -36,7 +36,8 @@ BURST = {'ppsScaleKeys_S': '', 'ppsIsLooping': 0, 'ppsIsSmooth': 0, 'ppsFPS': 0.
 # the spells' own atlases (explosion_atlas.py, Unity Labs CC0): texture name -> (place in the part, built file)
 ATLASES = {'OWN_EXPLOSION_FIRE.TGA': ('own-explosion-fire/albedo.dds', 'explosion-fire.dds'),
            'OWN_EXPLOSION_SMOKE.TGA': ('own-explosion-smoke/albedo.dds', 'explosion-smoke.dds'),
-           'OWN_FIREBALL.TGA': ('own-fireball/albedo.dds', 'fireball-loop.dds')}
+           'OWN_FIREBALL.TGA': ('own-fireball/albedo.dds', 'fireball-loop.dds'),
+           'OWN_FIRE_TRAIL.TGA': ('own-fire-trail/albedo.dds', 'fire-trail.dds')}
 BLAST_BOOK = {'cols': 8, 'rows': 4, 'frames': 25, 'fps': 16, 'once': True}
 TORCH = ROOT / 'reports/content/remaster/wall-torch-model/content/particles.d/wall-torch-fire.json'
 
@@ -252,6 +253,62 @@ def fireball() -> list:
     ]
 
 
+def flight(name, tag, k) -> list:
+    """The fire ball's flight (MFX_IFB_PFXTRAIL) k times its size."""
+    return [
+        {'name': f'{tag}_HEAD', 'base': 'OWN_BALL_HEAD', 'set': {'visSizeStart_S': sz(k, 30, 30), 'shpDim_S': sz(k, 3)}},
+        {'name': f'{tag}_FLAMES', 'base': 'OWN_BALL_FLAMES', 'set': {'shpDim_S': sz(k, 6), 'visSizeStart_S': sz(k, 62, 62)}},
+        {'name': f'{tag}_LICKS', 'base': 'OWN_BALL_LICKS', 'set': {'shpDim_S': sz(k, 16), 'visSizeStart_S': sz(k, 20, 28)}},
+        {'name': f'{tag}_ROOT', 'base': 'OWN_BALL_ROOT', 'set': {'visSizeStart_S': sz(k, 70, 90), **foot(90 * k)}},
+        {'name': f'{tag}_EMBERS', 'base': 'OWN_BALL_EMBERS', 'set': {'ppsValue': round(220.0 * k), 'shpDim_S': sz(k, 12)}},
+        haze(f'{tag}_HEAT', 5.0, inherit=1.0, ppsValue=24.0, lspPartAvg=170.0, lspPartVar=40.0, shpDim_S=sz(k, 10),
+             visSizeStart_S=sz(k, 120, 120), visSizeEndScale=1.2),
+        haze(f'{tag}_WAKE', 8.0, inherit=0.1, ppsValue=45.0, lspPartAvg=520.0, lspPartVar=100.0, shpDim_S=sz(k, 10),
+             visSizeStart_S=sz(k, 70, 70), visSizeEndScale=2.0),
+        {'name': name, 'base': 'OWN_HAND_FLAME', 'replaces': True,
+         'with': [f'{tag}_{part}' for part in ('HEAD', 'FLAMES', 'LICKS', 'ROOT', 'EMBERS', 'HEAT', 'WAKE')],
+         'set': {'visSizeStart_S': sz(k, 80, 170), **foot(170 * k)},
+         'lean': {'rise': 1.8, 'max_deg': 87, 'response': 0.03, 'along': 0.3, 'grow': 0.3, 'grow_from': 0.25}},
+    ]
+
+
+def spread(name, k) -> list:
+    """The storm's splash at the hit (MFX_FIRESTORM_SPREAD*, storm.md): gobs of the ball's fire thrown out on arcs,
+    each a ball of the looping fire that burns down with a streak of fire behind it. The engine's zone of the
+    spread's damage is the emitter's sphere (CollisionZone), so the record keeps the game's 10 cm and its one key."""
+    return [
+        {'name': name, 'base': 'OWN_BALL_FLAMES', 'replaces': True, 'inherit': 0.0, 'drag': 0.9,
+         'set': {**BURST, 'ppsValue': round(28.0 * k), 'shpType_S': 'SPHERE', 'shpIsVolume': 1, 'shpDim_S': '10',
+                 'shpScaleKeys_S': '1', 'shpOffsetVec_S': '0 0 0', 'dirMode_S': 'DIR', 'dirFOR_S': 'WORLD',
+                 'dirAngleHead': 0.0, 'dirAngleHeadVar': 179.0, 'dirAngleElev': 25.0, 'dirAngleElevVar': 60.0,
+                 'velAvg': round(0.5 * k ** 0.5, 3), 'velVar': 0.15, 'flyGravity_S': '0 -0.0005 0',
+                 'visSizeStart_S': sz(k, 36, 36), 'visSizeEndScale': 0.6, 'visAlphaStart': 230.0,
+                 'visTexColorStart_S': '255 175 95', 'visTexColorEnd_S': '200 60 15',
+                 'lspPartAvg': 1000.0, 'lspPartVar': 250.0,
+                 'trlTexture_S': 'OWN_FIRE_TRAIL.TGA', 'trlWidth': round(13.0 * k, 2), 'trlFadeSpeed': 0.45}},
+    ]
+
+
+def firestorm() -> list:
+    """The fire storm and pyrokinesis (FIRESTORM, PYROKINESIS; storm.md): the two spells share the ball in the hand,
+    its four flashes of the charge and its flight; the hit is the charged ball's explosion at level 3
+    (MFX_FIREBALL_COLLIDE3) and a splash of burning gobs, larger for pyrokinesis."""
+    effects = charge_ball('MFX_FIRESTORM_INIT', 'OWN_FS_HAND', 1.1)
+    for level, k in ((1, 1.0), (2, 1.2), (3, 1.45), (4, 1.7)):
+        effects += [
+            {'name': f'OWN_FS_STEP{level}_SPARKS', 'base': 'OWN_BOLT_HIT_SPARKS',
+             'set': {'ppsValue': round(40.0 * k), 'velAvg': round(0.3 * k ** 0.5, 3), 'velVar': 0.15}},
+            {'name': f'OWN_FS_STEP{level}_LICKS', 'base': 'MFX_FIREBOLT_COLLIDE',
+             'set': {'ppsValue': round(20.0 * k), 'visSizeStart_S': sz(k, 13, 18), 'velAvg': round(0.25 * k ** 0.5, 3)}},
+            {'name': f'MFX_FIRESTORM_INVESTBLAST{level}', 'base': 'OWN_BOLT_HIT_FLASH', 'replaces': True,
+             'with': [f'OWN_FS_STEP{level}_SPARKS', f'OWN_FS_STEP{level}_LICKS'],
+             'set': {'ppsValue': 3.0, 'visSizeStart_S': sz(k, 45, 45)}},
+        ]
+    effects += flight('MFX_FIRESTORM_CAST', 'OWN_FS_FLY', 1.3)
+    effects += spread('MFX_FIRESTORM_SPREAD_SMALL', 1.0) + spread('MFX_FIRESTORM_SPREAD', 1.3)
+    return effects
+
+
 def body_fire() -> list:
     """The fire on a burning body (body-fire.md, concept A: the body burns like a wick).
 
@@ -300,8 +357,9 @@ def body_fire() -> list:
 
 def cmd_build(_args) -> int:
     PARTICLES.parent.mkdir(parents=True, exist_ok=True)
-    PARTICLES.write_text(json.dumps({'format': 1, 'effects': firebolt() + fireball() + charged_fireball() + body_fire()}, indent=1) + '\n')
-    print(f'{PARTICLES.relative_to(ROOT)}: {len(firebolt()) + len(fireball()) + len(charged_fireball()) + len(body_fire())} effects')
+    effects = firebolt() + fireball() + charged_fireball() + firestorm() + body_fire()
+    PARTICLES.write_text(json.dumps({'format': 1, 'effects': effects}, indent=1) + '\n')
+    print(f'{PARTICLES.relative_to(ROOT)}: {len(effects)} effects')
     return 0
 
 

@@ -7,6 +7,7 @@
 #include <Tempest/Texture2d>
 #include <Tempest/Vec>
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -23,11 +24,25 @@
 #include "asset/material.h"
 #include "asset/worldmesh.h"
 #include "graphics/grass/grassborder.h"
+#include "graphics/grass/grassdiag.h"
 #include "graphics/grass/grassplace.h"
 #include "graphics/grass/grasswaste.h"
 #include "worldchunkmanifest.h"
 
 class SceneGlobals;
+
+namespace Grass {
+
+template<class Draw>
+void orderDraws(std::vector<Draw>& draws) {
+  if(orderOff())
+    return;
+  std::stable_sort(draws.begin(), draws.end(), [](const Draw& a, const Draw& b) {
+    return a.cell->dist < b.cell->dist;
+    });
+  }
+
+}
 
 // The grass round the camera (reports/engine/2026-11-14-grass-system). The streaming of the landscape gives each
 // chunk's mesh as it reads it (addChunk); the field keeps the summary of its ground under materials with `grass`,

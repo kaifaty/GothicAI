@@ -42,9 +42,18 @@ class Renderer final {
     void dbgDraw(Tempest::Painter& painter);
 
     // reuse: an image of an earlier call to draw into again, if its size still fits (a video frame every step)
-    Tempest::Attachment screenshoot(uint8_t frameId, Tempest::Attachment&& reuse = Tempest::Attachment());
+    Tempest::Attachment screenshoot(uint8_t frameId, Tempest::Attachment&& reuse = Tempest::Attachment(),
+                                    bool benchShot = false);
 
   private:
+    struct TreeOcclusionProbe {
+      Tempest::StorageImage occluderDepth;
+      Tempest::StorageImage mainDepth;
+      };
+    TreeOcclusionProbe* treeProbe = nullptr;
+    uint32_t treeProbeIndex = 0;
+    void captureTreeOcclusion(Tempest::Attachment& result, uint8_t fId, WorldView& view, const Camera& camera);
+
     enum Quality : uint8_t {
       None,
       VolumetricLQ,
@@ -102,7 +111,8 @@ class Renderer final {
     void drawGBuffer      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void drawGWater       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void drawShadowMap    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
-    void drawShadowResolve(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
+    void drawShadowResolve(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view,
+                           bool useGrassContactMask, uint32_t grassContactStudy);
     void drawLights       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawSky          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawAmbient      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
@@ -255,6 +265,8 @@ class Renderer final {
     Tempest::Attachment       gbufDiffuse;
     Tempest::Attachment       gbufNormal;
     Tempest::Attachment       gbufOrm;
+    Tempest::StorageImage     grassContactMask;
+    Tempest::Attachment       grassContactDiagnostic;
 
     struct Shadow {
       Tempest::RenderPipeline* directLightPso = nullptr;

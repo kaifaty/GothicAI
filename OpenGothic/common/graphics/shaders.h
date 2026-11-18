@@ -70,6 +70,7 @@ class Shaders {
     // Blood on the GBuffer (physics stage 8, step 4c): albedo RGB, and roughness with material maps
     Tempest::RenderPipeline  bloodDecal, bloodDecalAlbedo; // with and without the ORM target
     Tempest::RenderPipeline  grass;                        // blades into the G-buffer; only with material maps
+    Tempest::ComputePipeline grassContactMask;
     Tempest::RenderPipeline  sun;
     Tempest::ComputePipeline cloudsLut, fogOcclusion, fogOcclusionEmpty;
     Tempest::ComputePipeline fogViewLut3d, fogViewLutSep;
@@ -135,6 +136,7 @@ class Shaders {
 
     // Virtual shadow
     Tempest::ComputePipeline vsmVisibilityPass;
+    Tempest::ComputePipeline vsmCullMeshlets; // the meshlets of the visibility pass's candidates: count, then write
     Tempest::ComputePipeline vsmClear, vsmClearOmni, vsmCullLights, vsmMarkPages, vsmMarkOmniPages, vsmPostprocessOmni;
     Tempest::ComputePipeline vsmTrimPages, vsmSortPages, vsmListPages, vsmClumpPages, vsmAllocPages, vsmAlloc2Pages, vsmMergePages;
     Tempest::ComputePipeline vsmPackDraw0, vsmPackDraw1;

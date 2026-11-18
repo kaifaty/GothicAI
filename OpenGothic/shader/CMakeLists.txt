@@ -288,6 +288,7 @@ add_shader(blood_decal_orm.frag      blood/blood_decal.frag -DMATERIAL_MAPS)
 # grass round the camera (reports/engine/2026-11-14-grass-system): blades into the G-buffer with material maps
 add_shader(grass.vert                grass/grass.vert)
 add_shader(grass.frag                grass/grass.frag)
+add_shader(grass_contact_mask.comp   grass/grass_contact_mask.comp)
 
 add_shader(irradiance.comp           lighting/irradiance.comp)
 add_shader(sky_exposure.comp         lighting/sky_exposure.comp)
@@ -460,6 +461,7 @@ add_shader(vsm_merge_pages.comp      virtual_shadow/vsm_merge_pages.comp)
 add_shader(vsm_pack_draws0.comp      virtual_shadow/vsm_pack_draws.comp   -DPASS0)
 add_shader(vsm_pack_draws1.comp      virtual_shadow/vsm_pack_draws.comp   -DPASS1)
 add_shader(vsm_visibility_pass.comp  virtual_shadow/vsm_visibility_pass.comp -DVIRTUAL_SHADOW)
+add_shader(vsm_cull_meshlets.comp    virtual_shadow/vsm_cull_meshlets.comp)
 # virtual shadows: omni lights
 add_shader(vsm_cull_lights.comp      virtual_shadow/vsm_cull_lights.comp)
 add_shader(vsm_mark_omni_pages.comp  virtual_shadow/vsm_mark_omni_pages.comp)

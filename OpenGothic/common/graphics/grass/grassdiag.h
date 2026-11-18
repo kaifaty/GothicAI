@@ -1,7 +1,12 @@
 #pragma once
 
+#include <Tempest/Log>
+
+#include <array>
+#include <charconv>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 
 // What the look of the grass is measured with (reports/engine/2026-11-14-grass-system, "Круг правки вида"). Nothing
 // here changes a frame until a bench asks: `grass parts <mask>`, OPENGOTHIC_GRASS_PATCH, OPENGOTHIC_GRASS_FINE and
@@ -59,6 +64,15 @@ inline uint32_t trackPartsOff() {
   return (benchPartsOff() & PartTrackMask) | (neutralOff ? PartTrackNeutral : 0u);
   }
 
+// OPENGOTHIC_GRASS_ORDER=0: submit grass draws in cell traversal order
+inline bool orderOff() {
+  static const bool value = [] {
+    const char* e = std::getenv("OPENGOTHIC_GRASS_ORDER");
+    return e!=nullptr && e[0]=='0' && e[1]=='\0';
+    }();
+  return value;
+  }
+
 // OPENGOTHIC_GRASS_SQUARES=0: a cell is drawn and thinned whole, as before the squares (reports/engine/2026-11-17-
 // grass-cost): the pair of their measure
 inline bool squaresOff() {
@@ -102,6 +116,35 @@ inline int32_t forcedPatch() {
     return int32_t(v<0 ? 0 : (v>65535 ? 65535 : v));
     }();
   return value;
+  }
+
+constexpr uint8_t MaxSegments = 4;
+
+// OPENGOTHIC_GRASS_LINKS sets the three distances in cm where broad blades lose a link.
+inline uint8_t broadLinks(float dist) {
+  static constexpr std::array<uint32_t, MaxSegments-1> defaults = {1000, 2500, 4500};
+  static const auto thresholds = [] {
+    const char* e = std::getenv("OPENGOTHIC_GRASS_LINKS");
+    if(e==nullptr)
+      return defaults;
+    const char* end = e+std::strlen(e);
+    auto parsed = defaults;
+    for(size_t i=0; i<parsed.size(); ++i) {
+      const auto [next, error] = std::from_chars(e,end,parsed[i]);
+      const char separator = i+1==parsed.size() ? '\0' : ',';
+      if(error!=std::errc{} || *next!=separator || (i>0 && parsed[i]<=parsed[i-1])) {
+        Tempest::Log::e("Invalid OPENGOTHIC_GRASS_LINKS. Expected three increasing distances in cm. Using defaults.");
+        return defaults;
+        }
+      e = next+1;
+      }
+    return parsed;
+    }();
+  uint8_t links = MaxSegments;
+  for(uint32_t to:thresholds)
+    if(dist>=float(to))
+      --links;
+  return links;
   }
 
 }

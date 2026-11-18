@@ -145,6 +145,7 @@ void Shaders::compileShaders() noexcept {
     sh      = GothicShader::get("grass.frag.sprv");
     auto fs = device.shader(sh.data,sh.len);
     grass   = device.pipeline(Triangles,state,vs,fs);
+    grassContactMask = computeShader("grass_contact_mask.comp.sprv");
     }
 
   directLight      = postEffect(string_frm("direct_light", materialMaps),    RenderState::ZTestMode::NoEqual);
@@ -399,6 +400,7 @@ void Shaders::compileShaders() noexcept {
 
   if(Shaders::isVsmSupported()) {
     vsmVisibilityPass  = computeShader("vsm_visibility_pass.comp.sprv");
+    vsmCullMeshlets    = computeShader("vsm_cull_meshlets.comp.sprv");
     vsmClear           = computeShader("vsm_clear.comp.sprv");
     vsmClearOmni       = computeShader("vsm_clear_omni.comp.sprv");
     vsmCullLights      = computeShader("vsm_cull_lights.comp.sprv");

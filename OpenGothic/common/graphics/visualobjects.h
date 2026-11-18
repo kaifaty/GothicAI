@@ -1,5 +1,7 @@
 #pragma once
 
+#include <iosfwd>
+
 #include "drawbuckets.h"
 #include "drawclusters.h"
 #include "drawcommands.h"
@@ -124,6 +126,7 @@ class VisualObjects final {
 
     void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
     void visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    void writeTreeOcclusionProbe(std::ostream& out);
     void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
