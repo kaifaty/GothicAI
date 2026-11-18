@@ -205,6 +205,8 @@ struct Bucket {
                      // BK_WINDOW: the window's share and hours (WindowGlow::pack)
   float foliageReach; // the largest arm of its mesh at rest, from the X axis; of a tree, its height; bbox is grown by the travel
                       // BK_TRACK: the record's wander, fade and raggedness (Grass::pack of grasstrack.h)
+  uint  meshletSpheres; // where the spheres of its mesh's meshlets start in DrawBuckets::meshletSpheres, meshlet i at
+                        // +i; VSM_NO_SPHERES (0xFFFFFFFF) for none (vsm_cull_meshlets.comp)
   };
 
 #endif

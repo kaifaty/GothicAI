@@ -3,6 +3,7 @@
 #include <Tempest/Application>
 #include <Tempest/Log>
 #include <cstring>
+#include <string>
 
 #include "graphics/drawcommands.h"
 #include "frameprofile.h"
@@ -49,7 +50,8 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   auto& pageData = usesZBuffer(vsm.pageData, shadowFormat,        8192, 8192);
 
   auto  pageCount   = uint32_t(vsm.pageData.w()/VSM_PAGE_SIZE) * uint32_t(vsm.pageData.h()/VSM_PAGE_SIZE);
-  auto& pageList    = usesSsbo(vsm.pageList,    shaders.vsmClear.sizeofBuffer(0, pageCount));
+  // zeroed when made: vsm_clear.comp takes the bins drawn the frame before from it (admitBits), none on the first
+  auto& pageList    = usesSsboInit(vsm.pageList, shaders.vsmClear.sizeofBuffer(0, pageCount));
   auto& pageListTmp = usesSsbo(vsm.pageListTmp, shaders.vsmAllocPages.sizeofBuffer(3, pageCount));
 
   const uint32_t lightsTotal  = omniLights ? uint32_t(wview.lights().size()) : 0;
@@ -176,12 +178,14 @@ void Renderer::logVsmStats(const WorldView& wview) {
     return;
   vsm.statsTime = now;
 
-  struct Header {
+  struct Header { // VsmHeader of vsm_common.glsl
     uint32_t pageCount, meshletCount, counterM, counterV;
     uint32_t pagePerMip[16];
     int32_t  pageBbox[16][4];
     uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax;
-    uint32_t pairSpill;
+    uint32_t pairSpill, candidateCount, clusterPairs;
+    uint32_t admitBits[9], admitPrevBits[9]; // VSM_BIN_WORDS
+    uint32_t pairDemand[16+16*16];          // VSM_PAIR_BINS: the lamps by distance, then the sun's mips by ring
     } h = {};
   uint32_t visibleLights = 0;
   auto& device = Resources::device();
@@ -191,14 +195,40 @@ void Renderer::logVsmStats(const WorldView& wview) {
 
   const uint32_t poolPages = uint32_t(vsm.pageData.w()/VSM_PAGE_SIZE) * uint32_t(vsm.pageData.h()/VSM_PAGE_SIZE);
   const uint32_t dropped   = h.pageListCount>h.pagePlaced ? h.pageListCount-h.pagePlaced : 0;
+  const uint32_t cap       = DrawCommands::vsmPairCap();
+  uint64_t demand = 0;
+  for(auto d:h.pairDemand)
+    demand += d;
+  // meshletCount: the pairs drawn; demand: the pairs the meshlets' test keeps, whole clusters: before it (a cluster's
+  // all meshlets in every entry its sphere touches); OVERFLOW: the demand is past the cap and classes are dropped
   Log::i("vsm stats: pageCount = ", h.pageCount, "/", poolPages,
          ", entries = ", h.pageListCount, " (sun ", h.pageListCount-h.pageOmniCount, ", pageOmniCount ", h.pageOmniCount, ")",
          ", placed = ", h.pagePlaced, ", dropped = ", dropped,
-         ", meshletCount = ", h.meshletCount, "/", DrawCommands::vsmPairCap(),
-         (h.meshletCount>DrawCommands::vsmPairCap() ? " OVERFLOW" : ""),
+         ", meshletCount = ", h.meshletCount, "/", cap,
+         ", demand = ", demand, (demand>cap ? " OVERFLOW" : ""), " (whole clusters ", h.clusterPairs, ")",
+         ", candidates = ", h.candidateCount, (h.candidateCount>cap ? " LOST" : ""),
          ", spilled = ", h.pairSpill,
          ", lights = ", visibleLights, "/", uint32_t(wview.lights().size()),
          ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
+  // the pairs of the lamps and of each sun's mip with any, and how many of them the bins left out this frame
+  // (vsm_cull_meshlets.comp) did not draw
+  const auto drawn = [&](uint32_t bin) { return (h.admitBits[bin/32] & (1u << (bin%32)))!=0; };
+  std::string classes;
+  for(uint32_t c=0; c<17; ++c) {
+    const uint32_t first = c==0 ? 0 : 16+(c-1)*16;
+    uint32_t sum = 0, left = 0;
+    for(uint32_t bin=first; bin<first+16; ++bin) {
+      sum += h.pairDemand[bin];
+      if(!drawn(bin))
+        left += h.pairDemand[bin];
+      }
+    if(sum==0)
+      continue;
+    classes += (c==0 ? std::string(" lamps ") : " mip" + std::to_string(c-1) + " ") + std::to_string(sum);
+    if(left>0)
+      classes += " (left out " + std::to_string(left) + ")";
+    }
+  Log::i("vsm pairs by class:", classes);
 
   // the lamp filter's counters of one frame (light_vsm_probe), then the next frame is counted
   if(lights.directLightPso!=&Shaders::inst().lightsVsmProbe || vsm.lampProbe.isEmpty())

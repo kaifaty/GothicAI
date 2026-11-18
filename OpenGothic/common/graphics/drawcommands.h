@@ -14,6 +14,8 @@ class DrawCommands {
   public:
     // Meshlet-page pairs the VSM visibility pass may emit a frame: VSM_MAX_MESHLETS in vsm_common.glsl
     static constexpr uint32_t VsmMaxMeshlets = 512*1024;
+    // workgroups of vsm_cull_meshlets.comp: each takes the candidates one after another
+    static constexpr uint32_t VsmCullGroups  = 2048;
     static uint32_t vsmPairCap(); // VsmMaxMeshlets, or OPENGOTHIC_VSM_PAIRS for a study
     // the sun's virtual shadow map for a forward-lit draw, or the 1x1x1 table that sends it to the cascades
     static void bindSunVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene,
@@ -154,6 +156,7 @@ class DrawCommands {
     std::vector<uint32_t>    orderIds, orderNext;
     Tempest::StorageBuffer   orderSsbo;
     Tempest::StorageBuffer   vsmIndirectCmd;
+    Tempest::StorageBuffer   vsmCandidates; // vsm_visibility_pass.comp: a cluster and a page entry, for the meshlets' pass
 
     // the frame profile's counters of the main view (visibility_stats.comp): the GPU's sums, and per frame slot their
     // host-visible copy and whether it holds a frame not read yet
