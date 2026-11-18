@@ -30,7 +30,23 @@ struct Waste final {
   size_t subDrawn[Subs]     = {};
   size_t subTriangles[Subs] = {};
   size_t subDraws[Subs]     = {}; // draw calls: a batch of a square with a blade to draw
+
+  // The submitted blades by the bands of their own distance from the camera (grass.vert's): 0-10, 10-24, 24-48 m
+  // and beyond (reports/engine/2026-11-18-grass-volume: what a layer of volume over the far ground would take over).
+  // Their triangles under each set of the broad blades' link bounds of step 1b of docs/grass-plan.md
+  static constexpr size_t Bands    = 4;
+  static constexpr float  BandCm[Bands-1] = {1000.f, 2400.f, 4800.f};
+  static constexpr size_t LinkSets = 3;
+  static constexpr float  LinkCm[LinkSets][3] = {{1000.f, 2500.f, 4500.f}, {800.f, 1200.f, 2400.f}, {600.f, 900.f, 1800.f}};
+  size_t bandBlades[Bands]                       = {};
+  size_t bandFine[Bands]                         = {}; // of them the short sward's fine blades
+  size_t bandShown[Bands]                        = {}; // of them neither gone into the ground nor wholly out of view
+  size_t bandTriangles[LinkSets][Bands]          = {};
+  size_t bandShownTriangles[LinkSets][Bands]     = {};
   };
+
+size_t  wasteBand(float dist);
+uint8_t wasteLinks(size_t set, float cellDist); // a broad blade's under Waste::LinkCm[set]
 
 // What decides the count and the links of a batch at a distance (GrassField::draw and grass.vert)
 struct WasteRule final {
@@ -52,6 +68,7 @@ struct WasteCell final {
   float         size = 0;      // cm
   float         minY = 0, maxY = 0; // cm: of the cell's box in the view's test
   float         pad  = 0;      // cm: of that box in x and z
+  float         dist = 0;      // cm: across to the cell's nearest point, of its links (Grass::broadLinks)
   };
 
 // drawn: the blades of a batch the field has just submitted, by rank; links: of each

@@ -25,6 +25,18 @@ std::string grassFields(const GrassField* field) {
       waste += std::string(i==0 ? "" : ",")+"{\"cm\":"+std::to_string(int(Grass::Waste::SubCm[i]))+
                ",\"blades\":"+std::to_string(w.subDrawn[i])+",\"triangles\":"+std::to_string(w.subTriangles[i])+
                ",\"draws\":"+std::to_string(w.subDraws[i])+"}";
+    waste += "],\"bands\":[";
+    auto sets = [](const size_t (&v)[Grass::Waste::LinkSets][Grass::Waste::Bands], size_t band) {
+      std::string s = "[";
+      for(size_t i=0; i<Grass::Waste::LinkSets; ++i)
+        s += std::string(i==0 ? "" : ",")+std::to_string(v[i][band]);
+      return s+"]";
+      };
+    for(size_t i=0; i<Grass::Waste::Bands; ++i)
+      waste += std::string(i==0 ? "" : ",")+"{\"from_cm\":"+std::to_string(i==0 ? 0 : int(Grass::Waste::BandCm[i-1]))+
+               ",\"blades\":"+std::to_string(w.bandBlades[i])+",\"fine\":"+std::to_string(w.bandFine[i])+
+               ",\"shown\":"+std::to_string(w.bandShown[i])+",\"triangles\":"+sets(w.bandTriangles,i)+
+               ",\"shown_triangles\":"+sets(w.bandShownTriangles,i)+"}";
     waste += "]}";
     }
   return "\"field\":true,\"ready\":"+std::string(field->ready() ? "true" : "false")+
