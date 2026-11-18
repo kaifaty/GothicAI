@@ -16,7 +16,7 @@
 //
 //   offset size  header field
 //        0    4  magic "GWCB"
-//        4    4  version (2)
+//        4    4  version (3; version 2 has only sections 1–5)
 //        8    4  0x01020304 (byte order check)
 //       12    4  header size (144)
 //       16    8  file size
@@ -40,14 +40,27 @@
 //      4     88 materials  source u32; name, texture, detail object (offset, size u32); twelve f32;
 //                          twelve u8 (see Material)
 //      5      1 strings    bytes the materials' names point into
+//      6     48 clusters   center f32 x3, radius f32; level, material, refined group, parent group,
+//                          vertex offset, index offset, vertex count, triangle count u32
+//      7     20 groups     center f32 x3, radius and error in centimetres f32
+//      8      1 indices    meshlet-local triangle indices u8
+//      9      4 vertex indices  meshlet-local vertex to graph vertex u32
+//     10      8 vertex refs     chunk position and feature indices u32
 //
 // Positions, features and materials are in first use: the order in which the
 // GLB's triangles (by ordinal, then corner) first name them. A position or
 // feature is one per distinct source key and value, as readWorldChunks keys them.
+// In v3 the directory begins immediately after the header and sections 6–10
+// follow all of the base sections, so readers can leave their bytes on disk.
+// Cluster material IDs index section 4. Group IDs index section 7, or use
+// ClusterLod::NoGroup for a level-0 cluster's refined group. The cluster offsets
+// count records in sections 9 and 8, respectively. Graph vertices are unique
+// (position, feature) pairs in first use, using only the data in sections 1–2.
 //
 // The structs only view these bytes: their layouts are checked at compile time
 // against the table above, and the writer stores field by field.
 
+#include "graphics/mesh/clusterlod.h"
 #include "worldchunkmanifest.h"
 
 #include <array>
@@ -62,10 +75,11 @@
 
 namespace wcb {
 
-constexpr uint32_t Version    = 2;
-constexpr uint32_t HeaderSize = 144;
-constexpr uint32_t None       = 0xFFFFFFFFu; // no source key: geometry an edit added, or a material world.json lacks
-constexpr uint32_t Added      = 0xFFFFFFFFu; // Triangle::order of geometry an edit added
+constexpr uint32_t Version       = 3;
+constexpr uint32_t LegacyVersion = 2;
+constexpr uint32_t HeaderSize     = 144;
+constexpr uint32_t None           = 0xFFFFFFFFu; // no source key: geometry an edit added, or a material world.json lacks
+constexpr uint32_t Added          = 0xFFFFFFFFu; // Triangle::order of geometry an edit added
 
 struct Position {
   float    x, y, z;   // engine centimetres
@@ -77,6 +91,22 @@ struct Feature {
   uint32_t light;
   float    nx, ny, nz;
   uint32_t source;    // the GLB's _FEATURE, or None
+  };
+
+struct VertexRef {
+  uint32_t position, feature;
+  };
+
+struct HierarchyView {
+  std::span<const VertexRef>           vertices;
+  std::span<const ClusterLod::Cluster> clusters;
+  std::span<const ClusterLod::Group>   groups;
+  std::span<const uint32_t>            vertexIndices;
+  std::span<const uint8_t>             indices;
+
+  size_t byteSize() const {
+    return vertices.size_bytes()+clusters.size_bytes()+groups.size_bytes()+vertexIndices.size_bytes()+indices.size_bytes();
+    }
   };
 
 // The array index is the triangle's ordinal in its GLB traversal (ChunkTable::triangleSources).
@@ -218,9 +248,10 @@ struct CookedChunkData {
   std::vector<wcb::Feature>                       features;
   std::vector<wcb::Triangle>                      triangles;
   std::vector<std::pair<uint32_t,asset::Material>> materials; // source index or None, and record, in first use
+  wcb::HierarchyView                              hierarchy;
   };
 
-std::vector<uint8_t> encodeCookedChunk(const CookedChunkData& data);
+std::vector<uint8_t> encodeCookedChunk(const CookedChunkData& data, uint32_t version = wcb::Version);
 
 // A validated view over the bytes of one .wcb. Opening checks the header, the
 // directory and every section once: bounds, strides, counts, the local indices
@@ -230,15 +261,17 @@ class CookedChunk {
   public:
     // Throws std::runtime_error "cooked chunk <name>: <section>: <reason>".
     static CookedChunk open(std::span<const uint8_t> bytes, const std::string& name,
-                            std::shared_ptr<const void> owner = {});
-    // One read of the file, then open.
-    static CookedChunk read(const std::filesystem::path& path);
+                            std::shared_ptr<const void> owner = {}, bool readHierarchy = true);
+    // Without hierarchy, reads only the base sections of a v3 file.
+    static CookedChunk read(const std::filesystem::path& path, bool readHierarchy = false);
 
+    uint32_t                       version()   const { return formatVersion; }
     const wcb::Header&             header()    const { return head; }
     std::span<const wcb::Position> positions() const { return positionSpan; }
     std::span<const wcb::Feature>  features()  const { return featureSpan; }
     std::span<const wcb::Triangle> triangles() const { return triangleSpan; }
     std::span<const wcb::Material> materials() const { return materialSpan; }
+    wcb::HierarchyView             hierarchy() const { return hierarchyView; }
     std::string_view               string(const wcb::StringRef& ref) const;
     asset::Material                material(size_t i) const;
     size_t                         byteSize() const { return bytes.size(); }
@@ -246,6 +279,10 @@ class CookedChunk {
     uint32_t                       added() const { return addedCount; }
 
   private:
+    static CookedChunk openRecords(std::span<const uint8_t> bytes, const std::string& name,
+                                   std::shared_ptr<const void> owner, std::span<const wcb::SectionView> sections,
+                                   bool readHierarchy);
+
     std::shared_ptr<const void>    owner;
     std::span<const uint8_t>       bytes;
     wcb::Header                    head;
@@ -254,6 +291,8 @@ class CookedChunk {
     std::span<const wcb::Triangle> triangleSpan;
     std::span<const wcb::Material> materialSpan;
     std::span<const uint8_t>       stringSpan;
+    wcb::HierarchyView             hierarchyView;
+    uint32_t                       formatVersion = 0;
     uint32_t                       addedCount = 0;
   };
 

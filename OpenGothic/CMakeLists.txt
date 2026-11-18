@@ -187,7 +187,6 @@ include(cmake/BaseImport.cmake)
 # Runtime manifest reading, cooked chunks, world cloth and the MSVC flag: one list for every build with the base.
 include(cmake/BaseRuntime.cmake)
 include(cmake/VideoImport.cmake)
-include(cmake/ClusterLod.cmake)
 # Compile the builder with a replaceable simplifier call in the CPU test only.
 add_executable(gothic-cluster-lod-test EXCLUDE_FROM_ALL tests/cluster_lod_test.cpp common/graphics/mesh/clusterlod.cpp)
 target_include_directories(gothic-cluster-lod-test PRIVATE common)

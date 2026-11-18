@@ -18,7 +18,6 @@ include(../../OpenGothic/cmake/BaseImport.cmake)
 # runtime manifest reading, cooked chunks, world cloth and the MSVC flag (one list with the game)
 include(../../OpenGothic/cmake/BaseRuntime.cmake)
 include(../../OpenGothic/cmake/VideoImport.cmake)
-include(../../OpenGothic/cmake/ClusterLod.cmake)
 add_subdirectory(../../OpenGothic/common/daedalus daedalus)
 if(MSVC)
   # M_PI in the Bink decoder; OpenGothic/CMakeLists.txt defines this for every target
@@ -57,7 +56,7 @@ if(NOT MSVC)
 endif()
 # Offline particle checks (check-particles) use the game's particlecontent loader and VM without writing base data.
 # Definitions import executes item constructors through the shared snapshot library.
-target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus gothic-cluster-lod)
+target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus)
 
 target_link_libraries(content-convert PRIVATE gothic-npc-snapshot)
 add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp

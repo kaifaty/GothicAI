@@ -44,7 +44,7 @@ bool grassCommand(const std::vector<std::string>& a,World& w) {
   if(a.size()<2 || a[0]!="grass" || (a[1]!="wait" && a[1]!="stats" && a[1]!="parts"))
     return false;
   if(a[1]=="parts") {
-    Grass::partsOff() = uint32_t(num(a,2,0)) & Grass::PartAll;
+    Grass::benchPartsOff() = (a.size()>2 ? uint32_t(std::strtoul(a[2].c_str(),nullptr,10)) : 0u) & Grass::PartAll;
     return true;
     }
   const GrassField* field = w.view()!=nullptr ? w.view()->grassField() : nullptr;

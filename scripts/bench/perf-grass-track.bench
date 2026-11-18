@@ -1,0 +1,136 @@
+# The cart track's GBuffer cost on the original perf-meadow views 5 and 1.
+# Each diagnostic sample removes one part; -noroad keeps the verge and painted road.
+# Run with OPENGOTHIC_GPU_PASSES=1 and read the GBuffer row in report.json.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+# Match perf-meadow's cleared space around the hero before sampling the views.
+goto pos 41701 3320 795
+clear 3000
+
+# View 5: standing on the track, the game's camera looking upslope.
+goto pos 41940 3300 -317
+face -122
+wait 20000
+grass stats
+perf sample perf-grass-track/view-5
+wait 8000
+perf stop
+grass parts 16384
+wait 2000
+perf sample perf-grass-track/view-5-noroad
+wait 8000
+perf stop
+grass parts 65536
+wait 2000
+perf sample perf-grass-track/view-5-nowander
+wait 8000
+perf stop
+grass parts 131072
+wait 2000
+perf sample perf-grass-track/view-5-nofade
+wait 8000
+perf stop
+grass parts 262144
+wait 2000
+perf sample perf-grass-track/view-5-noragged
+wait 8000
+perf stop
+grass parts 524288
+wait 2000
+perf sample perf-grass-track/view-5-noorm
+wait 8000
+perf stop
+grass parts 1048576
+wait 2000
+perf sample perf-grass-track/view-5-nocolor
+wait 8000
+perf stop
+grass parts 2097152
+wait 2000
+perf sample perf-grass-track/view-5-nospots
+wait 8000
+perf stop
+grass parts 4194304
+wait 2000
+perf sample perf-grass-track/view-5-notone
+wait 8000
+perf stop
+grass parts 8388608
+wait 2000
+perf sample perf-grass-track/view-5-noribbonnormal
+wait 8000
+perf stop
+grass parts 16777216
+wait 2000
+perf sample perf-grass-track/view-5-nolayernormal
+wait 8000
+perf stop
+grass parts 0
+
+# View 1: the densest view, 60 cm over the ground by the track.
+goto pos 41701 3320 795
+cam at 41452 3421 -168 40003 3790 -1503
+wait 20000
+grass stats
+perf sample perf-grass-track/view-1
+wait 8000
+perf stop
+grass parts 16384
+wait 2000
+perf sample perf-grass-track/view-1-noroad
+wait 8000
+perf stop
+grass parts 65536
+wait 2000
+perf sample perf-grass-track/view-1-nowander
+wait 8000
+perf stop
+grass parts 131072
+wait 2000
+perf sample perf-grass-track/view-1-nofade
+wait 8000
+perf stop
+grass parts 262144
+wait 2000
+perf sample perf-grass-track/view-1-noragged
+wait 8000
+perf stop
+grass parts 524288
+wait 2000
+perf sample perf-grass-track/view-1-noorm
+wait 8000
+perf stop
+grass parts 1048576
+wait 2000
+perf sample perf-grass-track/view-1-nocolor
+wait 8000
+perf stop
+grass parts 2097152
+wait 2000
+perf sample perf-grass-track/view-1-nospots
+wait 8000
+perf stop
+grass parts 4194304
+wait 2000
+perf sample perf-grass-track/view-1-notone
+wait 8000
+perf stop
+grass parts 8388608
+wait 2000
+perf sample perf-grass-track/view-1-noribbonnormal
+wait 8000
+perf stop
+grass parts 16777216
+wait 2000
+perf sample perf-grass-track/view-1-nolayernormal
+wait 8000
+perf stop
+grass parts 0
