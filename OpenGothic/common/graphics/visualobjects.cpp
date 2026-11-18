@@ -871,7 +871,7 @@ void VisualObjects::preFrameUpdateTrees() {
     }
   }
 
-std::pair<uint32_t,uint32_t> VisualObjects::drawnMeshlets(const Object& obj) const {
+std::pair<uint32_t,uint32_t> VisualObjects::drawnMeshlets(Object& obj) {
   const uint32_t first = obj.iboOff/PackedMesh::MaxInd;
   if(obj.strandMeshlets>0)
     return {first, obj.strandMeshlets};

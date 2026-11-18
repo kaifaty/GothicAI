@@ -235,7 +235,7 @@ class VisualObjects final {
     void     preFrameUpdateTrees();
     void     preFrameUpdateLevels();
     // the meshlets the object's cluster draws while visible: [first, first+count) of its bucket's mesh
-    std::pair<uint32_t,uint32_t> drawnMeshlets(const Object& obj) const;
+    std::pair<uint32_t,uint32_t> drawnMeshlets(Object& obj);
 
     size_t   implAlloc();
     void     free(size_t id);
