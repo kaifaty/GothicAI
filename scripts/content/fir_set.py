@@ -323,7 +323,8 @@ def forest_layout(count: int) -> list[dict]:
 
 def ground_heights(world: Path, points: np.ndarray, reach: float = 50.) -> np.ndarray:
     """The height of the ground (GROUND classes of the world mesh) under each (x, z): the lowest of the highest
-    surface at the point and at four points `reach` cm round it, so a trunk on a slope does not hang over it."""
+    surface at the point and at four points `reach` cm round it, so a trunk on a slope does not hang over it.
+    NaN where there is no ground under the point itself (a house: the farm south-east of the hill)."""
     sys.path.insert(0, str(HERE / 'world'))
     from landscape_tuft_spots import chunk
     from world_classes import material_class
@@ -348,9 +349,7 @@ def ground_heights(world: Path, points: np.ndarray, reach: float = 50.) -> np.nd
             y = l0 * a[near, 1] + l1 * b[near, 1] + (1 - l0 - l1) * c[near, 1]
             height[k] = y[inside].max()
     height = height.reshape(len(points), len(offsets))
-    if np.isnan(height[:, 0]).any():
-        raise SystemExit(f'no ground under {points[np.isnan(height[:, 0])][:5].tolist()}')
-    return np.nanmin(height, axis=1)
+    return np.where(np.isnan(height[:, 0]), np.nan, np.nanmin(height, axis=1))
 
 
 def newest_base() -> Path:
@@ -372,6 +371,9 @@ def forest(args) -> int:
     base = args.base or newest_base()
     points = np.array([(t['x'], t['z']) for t in layout] + [LONE])
     height = ground_heights(base / 'worlds' / WORLD, points)
+    if np.isnan(height[-1]):
+        raise SystemExit(f'no ground under the lone spruce at {LONE}')
+    standing = [(t, y) for t, y in zip(layout, height) if not np.isnan(y)]
     work, output = stage(args.source, args.set)
     materials = add_materials(work, config, args.textures)
 
@@ -401,7 +403,7 @@ def forest(args) -> int:
     rewrite(work / 'meshes/meshes.json', meshes)
     added = [dict(key=f'tree-cost-{t["column"]}-{t["row"]}', kind='mesh', visual=f'{VISUAL}_{t["spruce"]}',
                   position=[round(t['x'], 1), round(float(y), 1), round(t['z'], 1)], yaw_deg=t['yaw'], collision='none')
-             for t, y in zip(layout, height)]
+             for t, y in standing]
     if args.sample:
         added.append(dict(key='tree-cost-lone', kind='mesh', visual=f'{VISUAL}_4',
                           position=[LONE[0], round(float(height[-1]), 1), LONE[1]], yaw_deg=0., collision='none'))
@@ -409,6 +411,8 @@ def forest(args) -> int:
     layer.write_text(json.dumps(dict(format=1, add=added), indent=1) + '\n')
     per_spruce = {s['visual']: s['triangles'] for s in spruces}
     report = dict(set=args.set, source=args.source, base=base.name, share=args.share, count=args.count,
+                  standing=len(standing), without_ground=[[t['column'], t['row']] for t, y in zip(layout, height)
+                                                          if np.isnan(y)],
                   sample=args.sample, triangles=sum(per_spruce[a['visual']] for a in added), spruces=spruces,
                   materials=materials, grid=dict(x0=X0, z0=Z0, step=STEP, side=SIDE, jitter=JITTER, seed=FOREST_SEED),
                   lone=dict(position=[LONE[0], round(float(height[-1]), 1), LONE[1]]))
