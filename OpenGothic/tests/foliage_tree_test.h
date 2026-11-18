@@ -105,7 +105,9 @@ void foliageTreeMaths() {
   require(swayRates(0.3f,100.f).first==swayRates(0.3f,TreeHeightMin).first &&
           swayRates(0.3f,9000.f).first==swayRates(0.3f,TreeHeightMax).first,"the height is taken between 3 and 60 m");
 
-  float topMin = 1e9f, topMax = -1e9f, sideMax = 0.f, nodMin = 1e9f, nodMax = -1e9f, tremble = 0.f;
+  // what the end of a branch 1.8 m long gives way at full pressure, without the gusts
+  const float give18 = 180.f*BranchGive*std::sqrt(180.f/BranchLong);
+  float topMin = 1e9f, topMax = -1e9f, sideMax = 0.f, sweepMin = 1e9f, sweepMax = -1e9f, tremble = 0.f, still = 1e9f, inner = 0.f, leader = 0.f;
   for(int i=0; i<240; ++i) {
     const float at   = float(i)/240.f;
     const Scene gust = wind(1.f,at);
@@ -143,45 +145,153 @@ void foliageTreeMaths() {
     // without a branch's and a leaf's weight a vertex goes with the trunk only: no phase or openness moves it
     const Vec3 onTrunk = move(fork,color(0,0,0,255),leafBits,H,upright,place,gust);
     require(onTrunk==move(fork,color(0,213,0,7),leafBits,H,upright,place,gust) && std::abs(onTrunk.length()-fork.length())<1e-2f &&
-            std::abs((onTrunk.z-fork.z) - top.z*(640.f/H)*(640.f/H))<0.5f && onTrunk!=move(fork,color(255,0,0,255),leafBits,H,upright,place,gust) &&
-            onTrunk!=move(fork,color(0,0,255,255),leafBits,H,upright,place,gust),
+            std::abs((onTrunk.z-fork.z) - top.z*(640.f/H)*(640.f/H))<0.5f && onTrunk!=move(fork,color(255,0,0,255),leafBits,H,upright,place,gust),
             "with R = 0 and B = 0 the vertex goes with the trunk alone");
+    // the needles of the leader, which is no branch, tremble too
+    leader = std::max(leader,(move(fork,color(0,0,255,255),leafBits,H,upright,place,gust)-onTrunk).length());
 
-    // the branch: the end nods and gives way, the base stands on the trunk
+    // the branch across the wind: the end gives way down the wind, the base stands on the trunk
     const Vec3 twig(180,600,0);
     const Vec3 held = move(twig,color(0,90,0,255),barkBits,H,upright,place,gust);
     const Vec3 free = move(twig,color(255,90,0,255),barkBits,H,upright,place,gust);
-    nodMin = std::min(nodMin,free.y-held.y);
-    nodMax = std::max(nodMax,free.y-held.y);
-    require((free-held).length()<=H*(BranchLean+BranchSway+BranchNod)+1e-3f,"a branch's end goes no farther than its share of the height");
-    // a branch that points down the wind is not pushed along itself
-    const Vec3 lee(0,600,180);
-    const Vec3 leeMove = move(lee,color(255,90,0,255),barkBits,H,upright,place,gust) - move(lee,color(0,90,0,255),barkBits,H,upright,place,gust);
-    require(std::abs(leeMove.z)<0.05f*H*BranchLean && std::abs(leeMove.x)<1e-3f,"a branch keeps its length: the wind does not push it along itself");
+    sweepMin = std::min(sweepMin,free.z-held.z);
+    sweepMax = std::max(sweepMax,free.z-held.z);
+    require(std::abs(free.y-held.y)<1e-3f && std::abs(free.x-held.x)<1e-3f,
+            "a branch across the wind goes down the wind: not up, and not along itself");
+    require((free-held).length()<=H*BranchReach*BranchGive*BranchTopK*(1.f+BranchGust)+1e-3f,"a branch's end goes no farther than its bound");
+    // a branch that points down the wind is not pushed along itself: its end rises; one that points against it dips
+    const Vec3 lee(0,600,180), fore(0,600,-180);
+    const Vec3 leeMove  = move(lee,color(255,90,0,255),barkBits,H,upright,place,gust)  - move(lee,color(0,90,0,255),barkBits,H,upright,place,gust);
+    const Vec3 foreMove = move(fore,color(255,90,0,255),barkBits,H,upright,place,gust) - move(fore,color(0,90,0,255),barkBits,H,upright,place,gust);
+    require(leeMove.y>0.2f*give18 && std::abs(leeMove.z)<0.05f*leeMove.y && std::abs(leeMove.x)<1e-3f,
+            "a branch keeps its length: the wind does not push it along itself, the lee branch's end rises");
+    require(foreMove.y<-0.2f*give18 && std::abs(foreMove.z)<0.05f*-foreMove.y && std::abs(foreMove.x)<1e-3f,
+            "the windward branch's end dips");
+    // up and down is the same push as along the wind, not a motion of its own: their ratio does not change
+    const Vec3  slant(127,600,127);
+    const Vec3  slantMove = move(slant,color(255,90,0,255),barkBits,H,upright,place,gust) - move(slant,color(0,90,0,255),barkBits,H,upright,place,gust);
+    const float firm      = 2.f*127.f*127.f/(2.f*127.f*127.f + H*BranchAxis*H*BranchAxis);
+    require(slantMove.z>0.f && std::abs(slantMove.y - slantMove.z*BranchLift*firm*0.70710678f/(1.f-0.5f*firm))<2e-3f,
+            "a branch goes up by the same push that takes it down the wind");
 
-    // the leaf: its free edge trembles by a centimetre or two, the stalk stays on the branch
+    // the needles: the free edge trembles by a centimetre in a gust's crest, the stalk stays on the branch
     const Vec3 card(150,700,40);
     const Vec3 stalk = move(card,color(200,90,0,255),leafBits,H,upright,place,gust);
     const Vec3 edge  = move(card,color(200,90,255,255),leafBits,H,upright,place,gust);
     tremble = std::max(tremble,(edge-stalk).length());
-    require((edge-stalk).length()<=0.5f*(LeafCalm+LeafWind*LeafMaxQ)*(LeafUp+LeafSide)+0.02f,"a leaf trembles within its bound");
+    still   = std::min(still,(edge-stalk).length());
+    inner   = std::max(inner,(move(card,color(40,90,255,255),leafBits,H,upright,place,gust)-move(card,color(40,90,0,255),leafBits,H,upright,place,gust)).length());
+    require((edge-stalk).length()<=0.5f*LeafMax*(LeafUp+LeafSide)+0.02f,"a needle trembles within its bound");
     }
   require(topMin>0.02f*H && topMax<0.04f*H && topMax-topMin>0.005f*H && sideMax>0.001f*H && sideMax<0.004f*H,
           "in a gust the top of a tree of 12 m leans 3 % of its height down the wind and sways about that");
-  require(nodMin<-0.004f*H && nodMax>0.004f*H,"a branch's end nods up and down");
-  require(tremble>0.5f && tremble<1.1f,"a leaf's edge trembles by about a centimetre");
+  require(sweepMin>0.45f*give18 && sweepMax<1.55f*give18 && sweepMax-sweepMin>0.4f*give18,
+          "in a gust a branch's end is held down the wind and swings about that with the gusts: it does not wave back");
+  require(tremble>0.5f && tremble<1.05f && still<0.01f,"a needle's edge trembles by about a centimetre in a crest and stands between them");
+  require(inner>0.1f && inner<=LeafInner*tremble+0.02f && leader>0.1f && leader<=LeafInner*tremble+0.02f,
+          "the needles by the trunk and on the leader tremble less than those on a branch's end");
 
-  // the breeze: the lean is the pressure's share of the gust's, the branches nearly stand
+  // the breeze: the lean is the pressure's share of the gust's; the branches and the needles go by the pressure too
   {
-  float lean = 0.f, nod = 0.f;
+  float lean = 0.f, sweep = 0.f, shake = 0.f;
   for(int i=0; i<240; ++i) {
     const Scene calm = wind(0.15f,float(i)/240.f);
-    lean = std::max(lean,move(Vec3(0,H,0),color(0,0,0,255),barkBits,H,upright,place,calm).z);
-    nod  = std::max(nod,std::abs(move(Vec3(180,600,0),color(255,90,0,255),barkBits,H,upright,place,calm).y -
-                                 move(Vec3(180,600,0),color(0,90,0,255),barkBits,H,upright,place,calm).y));
+    lean  = std::max(lean,move(Vec3(0,H,0),color(0,0,0,255),barkBits,H,upright,place,calm).z);
+    sweep = std::max(sweep,(move(Vec3(180,600,0),color(255,90,0,255),barkBits,H,upright,place,calm) -
+                            move(Vec3(180,600,0),color(0,90,0,255),barkBits,H,upright,place,calm)).length());
+    shake = std::max(shake,(move(Vec3(150,700,40),color(200,90,255,255),leafBits,H,upright,place,calm) -
+                            move(Vec3(150,700,40),color(200,90,0,255),leafBits,H,upright,place,calm)).length());
     }
   require(lean>0.003f*H && lean<0.008f*H,"between gusts the top leans a fraction of a percent of the height");
-  require(nod<0.003f*H,"between gusts the branches nearly stand");
+  require(sweep>0.f && sweep<=0.16f*sweepMax,"between gusts the branches nearly stand");
+  require(shake<=0.16f*tremble+0.01f,"between gusts the needles nearly stand");
+  }
+
+  // the length: a short branch goes less than a long one, and quicker
+  {
+  const Vec3 longEnd(450,300,0), shortEnd(60,1100,0);
+  float      farLong = 0.f, farShort = 0.f, wasLong = 0.f, wasShort = 0.f, upLong = 0.f, upShort = 0.f;
+  int        turnsLong = 0, turnsShort = 0;
+  for(int i=0; i<6000; ++i) {
+    const Scene gust = wind(1.f,float(i)/6000.f);
+    const float a = (move(longEnd,color(255,90,0,255),barkBits,H,upright,place,gust)  - move(longEnd,color(0,90,0,255),barkBits,H,upright,place,gust)).z;
+    const float b = (move(shortEnd,color(255,90,0,255),barkBits,H,upright,place,gust) - move(shortEnd,color(0,90,0,255),barkBits,H,upright,place,gust)).z;
+    farLong  = std::max(farLong,a);
+    farShort = std::max(farShort,b);
+    if(i>0) {
+      if((a-wasLong)*upLong<0.f)
+        ++turnsLong;
+      if((b-wasShort)*upShort<0.f)
+        ++turnsShort;
+      if(a!=wasLong)
+        upLong = a-wasLong;
+      if(b!=wasShort)
+        upShort = b-wasShort;
+      }
+    wasLong  = a;
+    wasShort = b;
+    }
+  require(farLong>30.f && farLong<60.f && farShort>1.f && farShort<0.1f*farLong,
+          "the end of a branch 4.5 m long goes tens of centimetres, that of one 0.6 m long a few: by the length, not by the tree's height");
+  require(turnsLong>=30 && turnsLong<=80 && turnsShort>=2*turnsLong,
+          "a long branch swings a few times in ten seconds, a short one at least twice as often");
+  }
+
+  // the world's gust through the crown: the front comes to the windward branch before the lee one, at 5 m/s; in the
+  // lull between two gusts a branch's travel is a small share of the gust's
+  {
+  const uint64_t period = 6000, cycle = uint64_t(double(period)/FoliageFront::RateGust);
+  const Vec3     foreEnd(300,600,-300), leeEnd(300,600,300);
+  const float    lullShare = 0.35f;
+  for(uint64_t from=400000; from<400000+3*cycle; from+=cycle) {
+    const uint64_t peak = from + FoliageFront::untilGust(from,period,place.z);
+    std::vector<float> fores, lees;
+    float  gustFar = 0.f, lullFar = 0.f, gustShake = 0.f, lullShake = 0.f;
+    for(int64_t dt=-int64_t(cycle)/2; dt<int64_t(cycle)/2; dt+=25) {
+      const uint64_t tick  = uint64_t(int64_t(peak)+dt);
+      const auto     front = FoliageFront::make(tick,period,true,1.f,false);
+      Scene          sc    = FoliageWind::scene(tick,period,true,1.f,false);
+      const auto     here  = FoliageFront::atPlace(front,sc,place.z);
+      sc.wind.z  = here.pressure;
+      sc.swing.y = here.swing;
+      sc.swing.z = here.flutter;
+      const float fore = (move(foreEnd,color(255,90,0,255),barkBits,H,upright,place,sc,front) - move(foreEnd,color(0,90,0,255),barkBits,H,upright,place,sc,front)).length();
+      const float lee  = (move(leeEnd,color(255,90,0,255),barkBits,H,upright,place,sc,front)  - move(leeEnd,color(0,90,0,255),barkBits,H,upright,place,sc,front)).length();
+      const float shake = (move(foreEnd,color(255,90,255,255),leafBits,H,upright,place,sc,front) - move(foreEnd,color(255,90,0,255),leafBits,H,upright,place,sc,front)).length();
+      fores.push_back(fore);
+      lees.push_back(lee);
+      // the gust is over the tree within 4.5 s of its peak and lingers a second more; the rest of the cycle is the lull
+      const bool lull = dt<-5000 || dt>6500;
+      (lull ? lullFar   : gustFar)   = std::max(lull ? lullFar   : gustFar,   std::max(fore,lee));
+      (lull ? lullShake : gustShake) = std::max(lull ? lullShake : gustShake, shake);
+      // with the front the previous frame's vertex is that of the previous frame's wind
+      if(dt==0) {
+        auto before = FoliageFront::make(tick-33,period,true,1.f,false);
+        auto both   = front;
+        both.phase.z = before.phase.x;
+        both.phase.w = before.phase.y;
+        require(move(leeEnd,color(255,90,0,255),barkBits,H,upright,place,sc,both,true)==move(leeEnd,color(255,90,0,255),barkBits,H,upright,place,sc,before) &&
+                move(leeEnd,color(255,90,0,255),barkBits,H,upright,place,sc,both,true)!=move(leeEnd,color(255,90,0,255),barkBits,H,upright,place,sc,both),
+                "the previous frame's branch stands where the previous frame's front had it");
+        }
+      }
+    // when a branch's gust is: the middle of its travel over what the lull has of it
+    const auto middle = [&](const std::vector<float>& far) {
+      double sum = 0, at = 0;
+      for(size_t i=0; i<far.size(); ++i) {
+        const double over = std::max(0.0, double(far[i]) - double(lullShare*gustFar));
+        sum += over;
+        at  += over*double(i)*25.0;
+        }
+      return at/sum;
+      };
+    const double lag = middle(lees) - middle(fores);
+    require(lag>800.0 && lag<1600.0,
+            ("the gust comes to a branch 6 m down the wind 1.2 s later: "+std::to_string(lag)).c_str());
+    require(gustFar>10.f && lullFar<=lullShare*gustFar,
+            ("in the lull a branch's travel is no more than a third of the gust's: "+std::to_string(lullFar)+" of "+std::to_string(gustFar)).c_str());
+    require(gustShake>0.8f && lullShake<=lullShare*gustShake,("in the lull the needles nearly stand: "+std::to_string(lullShake)+" of "+std::to_string(gustShake)).c_str());
+    }
   }
 
   // the bounds: no vertex of any colour leaves the travel in any wind, whichever way the tree is turned
@@ -199,13 +309,48 @@ void foliageTreeMaths() {
       sc.wind  = Tempest::Vec4(std::sin(a),std::cos(a),rnd(),1.f);
       sc.phase = Tempest::Vec4(rnd(),rnd(),rnd(),rnd());
       sc.swing = Tempest::Vec4(rnd(),0.065f*rnd(),2.f*rnd(),0.f);
+      // with the front and without it, this frame's and the previous one's
+      auto front = FoliageFront::make(123456,6000,true,1.f,false);
+      front.phase = Tempest::Vec4(rnd(),rnd(),rnd(),rnd());
+      front.k.w   = (i%3)==0 ? 0.f : 1.f;
       const Vec3 p(boxMin.x+(boxMax.x-boxMin.x)*rnd(), H*rnd(), boxMin.z+(boxMax.z-boxMin.z)*rnd());
       const uint32_t c = color(uint32_t(rnd()*255.99f),uint32_t(rnd()*255.99f),uint32_t(rnd()*255.99f),uint32_t(rnd()*255.99f));
-      const Vec3 r = move(p,c,bits,H,(i%2)==0 ? upright : turned,place+Vec3(float(i)*37.f,0,float(i)*11.f),sc);
+      const Vec3 r = move(p,c,bits,H,(i%2)==0 ? upright : turned,place+Vec3(float(i)*37.f,0,float(i)*11.f),sc,front,(i%5)==0);
       require((r-p).length()<=grow,"the bounds' travel covers the vertex in any wind");
       }
     }
-  require(travel(barkBits,H)>0.09f*H && travel(barkBits,H)<0.12f*H,"a tree's bounds grow by a tenth of its height");
+  require(travel(barkBits,H)>0.12f*H && travel(barkBits,H)<0.14f*H,"a tree's bounds grow by an eighth of its height");
+
+  // a tree of 60 m with boughs longer than BranchTopK allows and wider than BranchReach of its height: what the
+  // branch adds to the trunk's move stays within the branch's share of the travel, and comes near it
+  {
+  const float tall = 6000.f, wide = 0.6f*tall;
+  for(const Params& m:{bark,strong}) {
+    const uint32_t bits = pack(m,Both);
+    const float    most = tall*FoliageWind::packedWind(bits)*BranchReach*BranchGive*BranchTopK*(1.f + BranchGust);
+    float          far  = 0.f;
+    for(int i=0; i<4000; ++i) {
+      const float a = rnd()*6.2831853f;
+      Scene sc;
+      sc.wind  = Tempest::Vec4(std::sin(a),std::cos(a),rnd(),1.f);
+      sc.phase = Tempest::Vec4(rnd(),rnd(),rnd(),rnd());
+      sc.swing = Tempest::Vec4(rnd(),0.065f*rnd(),2.f*rnd(),0.f);
+      auto front = FoliageFront::make(123456,6000,true,1.f,false);
+      front.phase = Tempest::Vec4(rnd(),rnd(),rnd(),rnd());
+      front.k.w   = (i%3)==0 ? 0.f : 1.f;
+      const Vec3     p(wide*(2.f*rnd()-1.f), tall*rnd(), wide*(2.f*rnd()-1.f));
+      const uint32_t R = (i%2)==0 ? 255u : uint32_t(rnd()*255.99f), G = uint32_t(rnd()*255.99f);
+      const Vec3*    axes = (i%2)==0 ? upright : turned;
+      const Vec3     at   = place+Vec3(float(i)*37.f,0,float(i)*11.f);
+      const Vec3     onTrunk = move(p,color(0,G,0,255),bits,tall,axes,at,sc,front);
+      const Vec3     r       = move(p,color(R,G,0,255),bits,tall,axes,at,sc,front);
+      far = std::max(far,(r-onTrunk).length());
+      require((r-onTrunk).length()<=most*1.001f && (r-p).length()<=travel(bits,tall),
+              "a long branch of a wide crown stays within the branch's share of the bounds' travel");
+      }
+    require(far>0.8f*most,"the branch's share of the bounds' travel is what a long branch does reach");
+    }
+  }
 
   // equal ticks give equal answers; no wind and the wind half off leave the tree at rest
   const Scene same = FoliageWind::scene(4242,10000,true,1.f,false);

@@ -249,10 +249,11 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
   // world's wind, as a tuft or as a tree, in every pass alike, so the shadow moves with them. The normal stays
   const uint foliage = (bucket[bucketId].flags & BK_FOLIAGE)!=0u ? bucket[bucketId].foliage : 0u;
   if(foliageMoves(foliage)) {
-    // the gust comes to the tuft's place when the front does (foliageFrontAt)
+    // the gust comes to the tuft's place when the front does (foliageFrontAt); a tree reads it at every vertex
     const vec3 at = foliageFrontAt(obj.mat[3].z, scene.foliageFront.xy, scene.foliageFrontK, scene.foliageWind, scene.foliageSwing);
     v.pos = foliageMove(v.pos, v.color, foliage, bucket[bucketId].foliageReach, obj.mat,
-                        vec4(scene.foliageWind.xy, at.x, scene.foliageWind.w), scene.foliagePhase, vec4(scene.foliageSwing.x, at.y, at.z, 0.0));
+                        vec4(scene.foliageWind.xy, at.x, scene.foliageWind.w), scene.foliagePhase, vec4(scene.foliageSwing.x, at.y, at.z, 0.0),
+                        scene.foliageFront.xy, scene.foliageFrontK);
     }
 #endif
 
@@ -398,7 +399,7 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
                                      scene.foliageSwingPrev);
       local = foliageMove(local, v.color, foliage, bucket[bucketId].foliageReach, obj.mat,
                           vec4(scene.foliageWindPrev.xy, at.x, scene.foliageWindPrev.w), scene.foliagePhasePrev,
-                          vec4(scene.foliageSwingPrev.x, at.y, at.z, 0.0));
+                          vec4(scene.foliageSwingPrev.x, at.y, at.z, 0.0), scene.foliageFront.zw, scene.foliageFrontK);
       }
 #endif
     // prev.mat*local' - mat*local = (prev.mat - mat)*local' + mat*(local' - local); v.pos is this frame's local
