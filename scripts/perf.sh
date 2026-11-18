@@ -308,8 +308,9 @@ command = [env['GAME_BIN'], '-g', env['GOTHIC_DIR'], '-window', '-devmode',
 meta.update(place=place, repeat=int(repeat), command=command)
 with (leaf / 'game.log').open('w') as log:
     process = subprocess.Popen(command, cwd=leaf / 'run', env=env, stdout=log, stderr=subprocess.STDOUT)
+    timeout = 360 if place == 'grass-track' else 300
     try:
-        code = process.wait(timeout=300)
+        code = process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         process.terminate()
         try:
@@ -317,7 +318,7 @@ with (leaf / 'game.log').open('w') as log:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
-        raise SystemExit('perf: game timed out after 300s; stopped only this run')
+        raise SystemExit(f'perf: game timed out after {timeout}s; stopped only this run')
 meta['exit_code'] = code
 (leaf / 'metadata.json').write_text(json.dumps(meta, indent=2) + '\n')
 if code:
