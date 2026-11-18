@@ -7,6 +7,10 @@ set time 12 0
 overlay off
 ui off
 view full
+# Start both takes beyond all landscape rings before warming the first camera.
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
 goto pos 36500 3900 -7577
 cam at 40000 4724 -1515 41250 3350 650
 streaming wait
@@ -23,6 +27,10 @@ shot far
 wait 100
 
 cluster-lod mask on
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
+goto pos 36500 3900 -7577
 cam at 40000 4724 -1515 41250 3350 650
 streaming wait
 rec mask
@@ -48,6 +56,10 @@ on: wait 100
 on: cluster-lod normal
 
 # Timing is from ordinary submitted frames after all capture work.
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
+goto pos 36500 3900 -7577
 cam at 38907 4994 -1252 42532 2685 438
 streaming wait
 cadence normal

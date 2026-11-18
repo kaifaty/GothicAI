@@ -501,6 +501,25 @@ PackedMesh::PackedMesh(const WorldChunkMesh& source, std::span<const uint32_t> m
 
   std::vector<uint64_t> excluded;
   std::vector<bool> blocked(hierarchy.groups.size());
+#ifndef CONTENT_CONVERT_PACKED_MESH
+  // The base's texture classification is baked. A replacement texture or
+  // material map can still turn an opaque surface into a card at runtime.
+  std::vector<int8_t> rigidMaterial(chunk.materials().size(), -1);
+  Resources::TextureLoadScope textureLoadScope(true);
+  for(const auto& c : hierarchy.clusters) {
+    if(c.level!=0 || std::isinf(hierarchy.groups[c.parentGroup].errorCm))
+      continue;
+    auto& rigid = rigidMaterial[c.material];
+    if(rigid<0) {
+      const auto id = materialMap[source.clusterMaterialIds[c.material]];
+      const auto material = Resources::loadMaterial(source.mesh.materials[id], true);
+      rigid = int8_t(material.alpha==Material::AlphaTest || material.twoSided!=Material::TwoSided::Off);
+      }
+    if(rigid!=0)
+      blocked[c.parentGroup] = true;
+    }
+#endif
+
   if(source.mesh.polygons.material_indices.size()!=chunk.triangles().size()) {
     excluded.resize(hierarchy.clusters.size());
     std::vector<bool> present(chunk.triangles().size());
@@ -537,9 +556,11 @@ PackedMesh::PackedMesh(const WorldChunkMesh& source, std::span<const uint32_t> m
       }
     if(!missing.empty())
       throw std::runtime_error("LOD 0 does not contain every triangle extracted into cloth");
+    }
 
-    // A replacement of any excluded triangle could put cloth back. Walk the
-    // transitions from children to parents using the validated group indices.
+  // A replacement of an excluded or rigid face would undo the level-0
+  // decision. Walk the transitions from children to parents.
+  if(std::ranges::any_of(blocked, [](bool value) { return value; })) {
     std::vector<std::pair<uint32_t,uint32_t>> parents;
     for(const auto& c:hierarchy.clusters)
       if(c.level!=0)

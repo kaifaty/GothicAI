@@ -1,10 +1,11 @@
 #pragma once
 
 // The cooked binary chunk (.wcb): one cell of the world mesh, beside its GLB
-// with the same stem (chunks/4_-2.glb -> chunks/4_-2.wcb). It holds only what
-// follows from that GLB and the world's world.json: the source keys the GLB
+// with the same stem (chunks/4_-2.glb -> chunks/4_-2.wcb). Its base records
+// follow from that GLB and the world's world.json: the source keys the GLB
 // carries (_VERTEX, _FEATURE, a material's world.json index), indices into the
-// file's own arrays and each triangle's GLB order. What depends on the whole
+// file's own arrays and each triangle's GLB order. The hierarchy also uses
+// the base texture formats for the materials of the cell. What depends on the whole
 // world and override set — the stitched ids of moved and added geometry, the
 // appended materials, a triangle's place in the stitched mesh — lies in the
 // set's index (worldchunkindex.h). So a cell cooked once stays valid when
@@ -16,7 +17,7 @@
 //
 //   offset size  header field
 //        0    4  magic "GWCB"
-//        4    4  version (3; version 2 has only sections 1–5)
+//        4    4  version (4; version 2 has only sections 1–5)
 //        8    4  0x01020304 (byte order check)
 //       12    4  header size (144)
 //       16    8  file size
@@ -50,8 +51,9 @@
 // Positions, features and materials are in first use: the order in which the
 // GLB's triangles (by ordinal, then corner) first name them. A position or
 // feature is one per distinct source key and value, as readWorldChunks keys them.
-// In v3 the directory begins immediately after the header and sections 6–10
+// In v3 and v4 the directory begins immediately after the header and sections 6–10
 // follow all of the base sections, so readers can leave their bytes on disk.
+// Version 4 uses the same layout and marks the hierarchy with preserved thin surfaces.
 // Cluster material IDs index section 4. Group IDs index section 7, or use
 // ClusterLod::NoGroup for a level-0 cluster's refined group. The cluster offsets
 // count records in sections 9 and 8, respectively. Graph vertices are unique
@@ -75,7 +77,8 @@
 
 namespace wcb {
 
-constexpr uint32_t Version       = 3;
+constexpr uint32_t Version       = 4;
+constexpr uint32_t OldHierarchyVersion = 3; // its geometry is still readable
 constexpr uint32_t LegacyVersion = 2;
 constexpr uint32_t HeaderSize     = 144;
 constexpr uint32_t None           = 0xFFFFFFFFu; // no source key: geometry an edit added, or a material world.json lacks
@@ -262,7 +265,7 @@ class CookedChunk {
     // Throws std::runtime_error "cooked chunk <name>: <section>: <reason>".
     static CookedChunk open(std::span<const uint8_t> bytes, const std::string& name,
                             std::shared_ptr<const void> owner = {}, bool readHierarchy = true);
-    // Without hierarchy, reads only the base sections of a v3 file.
+    // Reads only the base sections unless reading a v4 hierarchy was requested.
     static CookedChunk read(const std::filesystem::path& path, bool readHierarchy = false);
 
     uint32_t                       version()   const { return formatVersion; }

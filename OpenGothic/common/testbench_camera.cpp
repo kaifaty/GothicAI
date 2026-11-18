@@ -20,6 +20,7 @@
 #include "graphics/renderer.h"
 #include "graphics/mesh/footik.h"
 #include "graphics/mesh/skeleton.h"
+#include "world/chunkresidency.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 
@@ -1114,8 +1115,18 @@ void capture(const CameraContext& ctx,Pixmap& frame, float uiScale) {
       std::filesystem::create_directories(dir);
     const auto name = (dir/(std::to_string(ctx.camera.recFrame)+".png")).string();
     frame.save(name.c_str());
+    std::string residency;
+    size_t pending = 0;
+    if(const auto* cells = Gothic::inst().world()->chunkResidency()) {
+      const auto count = cells->table().entries.size();
+      residency.reserve(count);
+      for(size_t i=0; i<count; ++i)
+        residency.push_back(char('0' + int(cells->desired(i))));
+      pending = cells->stats().pending;
+      }
     event("cluster_lod_mask", "\"camera_cm\":"+ragdollVector(ctx.camera.camPos)+
-          ",\"view_projection\":"+ragdollMatrix(Gothic::inst().camera()->viewProj()));
+          ",\"view_projection\":"+ragdollMatrix(Gothic::inst().camera()->viewProj())+
+          ",\"residency\":"+jsonStr(residency)+",\"pending\":"+std::to_string(pending));
     ++ctx.camera.recFrame;
     return;
     }

@@ -205,13 +205,6 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide, int me
       keepArchives(source,out/"worlds"/c.name);
       require(written.triangles==c.after,"world "+c.name+": written triangle count differs");
       c.chunksAfter = written.chunks.size();
-      // Cooked chunks (.wcb) beside the GLBs, the world's index (chunks.wci) and world cloth bundle (cloth.wcl),
-      // listed in base-files.json like every chunk file.
-      const auto cooked = cookWorldChunks(out/"worlds"/c.name);
-      std::cout << c.name << ": " << c.before << " -> " << c.after << " triangles (x" << factor << "), "
-                << c.chunksBefore << " -> " << c.chunksAfter << " chunks; cooked: GLB " << cooked.glbBytes
-                << " bytes, .wcb " << cooked.wcbBytes << " bytes, index " << cooked.indexBytes << " bytes, cloth "
-                << cooked.clothBytes << " bytes (" << cooked.clothSurfaces << " surfaces)" << std::endl;
       }
 
     // Static meshes that fit the format after the split; the rest is linked below.
@@ -253,6 +246,15 @@ int build(const fs::path& baseArg, const fs::path& outArg, int subdivide, int me
       ++copied;
       }
     std::cout << unlisted << " files of the source are not in its manifest: skipped" << std::endl;
+
+    // Bake beside the GLBs now that their texture index and DDS files are in the copy.
+    for(const auto& c:counts) {
+      const auto cooked = cookWorldChunks(out/"worlds"/c.name);
+      std::cout << c.name << ": " << c.before << " -> " << c.after << " triangles (x" << factor << "), "
+                << c.chunksBefore << " -> " << c.chunksAfter << " chunks; cooked: GLB " << cooked.glbBytes
+                << " bytes, .wcb " << cooked.wcbBytes << " bytes, index " << cooked.indexBytes << " bytes, cloth "
+                << cooked.clothBytes << " bytes (" << cooked.clothSurfaces << " surfaces)" << std::endl;
+      }
 
     std::string json = "{\n  \"format\": \"gothic-stress-base\",\n  \"version\": 1,\n  \"subdivide\": " +
                        std::to_string(subdivide) + ",\n  \"source\": {\"fingerprint\": \"" + identity.fingerprint +

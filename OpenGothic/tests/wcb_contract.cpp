@@ -3,7 +3,7 @@
 // overrides and the base's NEWWORLD; a cell's .wcb is byte for byte the same
 // whatever other cells and overrides the set holds (the override question of
 // docs/landscape-plan.md, Д3, tasks 2 and 2b); a second cook rewrites nothing
-// unchanged, and two cooks into the same files at once both finish; v3
+// unchanged, and two cooks into the same files at once both finish; v4
 // hierarchies verify byte for byte, their visibility cuts match selectCut, v2
 // still reads, and malformed, stale and mismatched files are rejected.
 // Needs GOTHIC_DIR and a ready base for NEWWORLD.
@@ -666,17 +666,41 @@ size_t checkVisibilityCuts(const CookedChunk& chunk, const fs::path& path, Tempe
   }
 
 void hierarchyRoundTrip(const fs::path& root) {
-  const auto dir=root/"hierarchy";
+  const auto base=root/"hierarchy";
+  const auto dir=base/"worlds"/"CONTRACT";
+  const auto textures=base/"textures";
+  fs::create_directories(textures);
+  writeText(textures/"textures.json",R"({"textures":{"OPAQUE":"opaque.dds","MASKED":"masked.dds"}})");
+  for(const auto& [name,fourcc,size]:{std::tuple{"opaque.dds","DXT1",136u},std::tuple{"masked.dds","DXT3",144u}}) {
+    std::vector<uint8_t> dds(size);
+    std::copy_n("DDS ",4,dds.begin());
+    put32(dds,4,124);
+    put32(dds,12,4);
+    put32(dds,16,4);
+    put32(dds,76,32);
+    std::copy_n(fourcc,4,dds.begin()+84);
+    gothicglb::writeFile(textures/name,dds.data(),dds.size());
+    }
   writeWorldChunks(selectionMesh(),fixtureSource,dir);
+  std::vector<asset::Material> materials(4);
+  for(auto& material:materials)
+    material.color.a=255;
+  materials[0].texture="opaque.tga";
+  materials[1].texture="masked.tga";
+  materials[2].texture="missing.tga";
+  materials[3].texture="opaque.tga";
+  materials[3].dont_collapse=true;
+  require(clusterLodLockedMaterials(dir,materials)==std::vector<uint8_t>{0,1,1,1},
+          "the texture index must distinguish opaque, alpha-tested, missing and explicitly locked materials");
   cookWorldChunks(dir);
   const auto path=dir/"chunks/0_0.wcb";
   const auto bytes=fileBytes(path);
-  require(get32(bytes,4)==3 && get32(bytes,124)==10,"the cook must write v3 with ten sections");
+  require(get32(bytes,4)==wcb::Version && get32(bytes,124)==10,"the cook must write v4 with ten sections");
   const auto chunk=CookedChunk::open(bytes,path.string());
   const auto hierarchy=chunk.hierarchy();
   require(hierarchy.vertices.size()==3 && hierarchy.clusters.size()==1 && hierarchy.groups.size()==1 &&
           hierarchy.vertexIndices.size()==3 && hierarchy.indices.size()==3,"a single triangle's cooked hierarchy");
-  require(verifyCookedWorld(dir,{},{},true).empty(),"the v3 hierarchy must match a fresh build");
+  require(verifyCookedWorld(dir,{},{},true).empty(),"the v4 hierarchy must match a fresh build");
   checkVisibilityCuts(chunk,path);
 
   constexpr size_t baseSections=5, hierarchyDirectory=baseSections*wcb::EntrySize;
@@ -706,6 +730,14 @@ void hierarchyRoundTrip(const fs::path& root) {
   expectThrows(readHierarchy,{"0_0.wcb","local indices","invalid cluster triangle range"},
                "a cluster triangle range past the local index section");
 
+  // The v3 layout is still usable for level 0, even if its graph is unusable.
+  put32(changed,4,wcb::OldHierarchyVersion);
+  gothicglb::writeFile(path,changed.data(),changed.size());
+  const auto previous=CookedChunk::read(path,true);
+  require(previous.version()==wcb::OldHierarchyVersion && previous.hierarchy().byteSize()==0 &&
+          previous.byteSize()<changed.size() && differingFields(chunk,previous).empty(),
+          "v3 must read only the original positions, features, triangles and materials");
+
   auto legacy=bytes;
   legacy.resize(size_t(get64(bytes,strings+16)+get64(bytes,strings+24)));
   const auto newSections=legacy.begin()+wcb::HeaderSize+baseSections*wcb::EntrySize;
@@ -726,7 +758,7 @@ void hierarchyRoundTrip(const fs::path& root) {
             "the file reader must accept v2 without a hierarchy");
     require(differingFields(chunk,old).empty(),"v2 keeps the same positions, features, triangles and materials");
     }
-  std::puts("Cluster hierarchy: v3 round trip and byte verification, bad indices rejected, v2 file reads in both modes");
+  std::puts("Cluster hierarchy: v4 round trip and byte verification, bad indices rejected, v2 and v3 read as geometry");
   }
 
 void rejections(const fs::path& root) {

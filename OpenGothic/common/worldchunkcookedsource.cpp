@@ -309,7 +309,7 @@ WorldChunkMesh CookedChunkSource::readCell(size_t cell, std::span<const uint32_t
           auto path = world.glb.path;
           path.replace_extension(".wcb");
           const auto graph = mesh->clusterHierarchy->hierarchy();
-          Tempest::Log::i("[cluster-lod] read ",path.string()," (v3): ",uint64_t(graph.clusters.size()),
+          Tempest::Log::i("[cluster-lod] read ",path.string()," (v",mesh->clusterHierarchy->version(),"): ",uint64_t(graph.clusters.size()),
                           " clusters, ",uint64_t(graph.groups.size())," groups");
           }
         }

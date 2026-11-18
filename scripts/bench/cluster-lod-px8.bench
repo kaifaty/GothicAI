@@ -7,6 +7,10 @@ set time 12 0
 overlay off
 ui off
 view full
+# Drop the camera's Far margin and the hero/camera Near exit rings before each take.
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
 goto pos 36500 3900 -7577
 cam at 20000 19000 -35000 41250 3350 650
 streaming wait
@@ -16,6 +20,10 @@ rec mask-base
 cam fly 13000 34000 -50000 41250 3350 650 8000
 wait 8000
 stop
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
+goto pos 36500 3900 -7577
 cam at 20000 19000 -35000 41250 3350 650
 streaming wait
 cluster-lod normal

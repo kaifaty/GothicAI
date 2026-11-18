@@ -52,6 +52,10 @@ def compare(reference, candidate, edge, output):
         for index, (a, b) in enumerate(zip(before, after)):
             if a["view_projection"] != b["view_projection"]:
                 raise ValueError(f"frame {index}: camera projections differ ({a['camera_cm']} / {b['camera_cm']})")
+            if a.get("residency") != b.get("residency"):
+                raise ValueError(f"frame {index}: Near/Far landscape residency differs")
+            if a.get("pending", 0) or b.get("pending", 0):
+                raise ValueError(f"frame {index}: landscape cells still loading ({a['pending']} / {b['pending']})")
             base = read_coverage(reference / f"{index}.png")
             cut = read_coverage(candidate / f"{index}.png")
             if base.shape != cut.shape:
