@@ -38,12 +38,31 @@ void Effect::setupLight(World& owner) {
   if(key!=nullptr && !key->lightPresetName.empty())
     lightPresetName = &key->lightPresetName;
 
+  Vec3 pos3 = {pos.at(3,0),pos.at(3,1),pos.at(3,2)};
+  if(ownPfx!=nullptr && ownPfx->lightRange>0) {
+    const auto* pfxDecl = ownPfx;
+    // an own effect's light (particles.d "light") instead of the game's preset, a point a metre wide
+    asset::LightPreset own;
+    own.light_type              = asset::LightType::POINT;
+    own.range                   = pfxDecl->lightRange;
+    own.color                   = asset::Color(uint8_t(pfxDecl->lightColor.x),uint8_t(pfxDecl->lightColor.y),uint8_t(pfxDecl->lightColor.z),255);
+    own.quality                 = asset::LightQuality::LOW;
+    own.on                      = true;
+    own.range_animation_scale   = pfxDecl->lightKeys;
+    own.range_animation_fps     = pfxDecl->lightFps;
+    own.range_animation_smooth  = true;
+    own.can_move                = true;
+    light = owner.addLight(own);
+    light.setRangeOnce(true);  // the keys are the fire's stages: the last one stays when the particles outlive it
+    light.setPosition(pos3);
+    return;
+    }
+
   if(lightPresetName->empty()) {
     light = LightGroup::Light();
     return;
     }
 
-  Vec3 pos3 = {pos.at(3,0),pos.at(3,1),pos.at(3,2)};
   light = owner.addLight(*lightPresetName);
   light.setPosition(pos3);
   if(key!=nullptr && key->lightRange>0)
@@ -70,6 +89,7 @@ void Effect::setupPfx(World& owner) {
   if(pfxDecl==nullptr)
     return;
 
+  ownPfx = pfxDecl;
   pfx = PfxEmitter(owner,pfxDecl);
   // an own effect born on the body's surface (particles.d, shpType_S MESH: the fire on a burning body) gets the
   // mesh as the game's "=" effects do

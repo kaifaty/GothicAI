@@ -121,6 +121,7 @@ class WorldView {
     MeshObjects::Mesh   addDecalView (const asset::VisualDecal& vob);
     LightGroup::Light   addLight     (const asset::VLight& vob, const uint64_t timeOffset);
     LightGroup::Light   addLight     (std::string_view preset, const uint64_t timeOffset);
+    LightGroup::Light   addLight     (const asset::LightPreset& preset, const uint64_t timeOffset);
 
     void                dbgClusters(Tempest::Painter& p, Tempest::Vec2 wsz);
 

@@ -397,6 +397,7 @@
    "name": "OWN_BODY_TALL",
    "base": "OWN_HAND_LICKS",
    "inherit": 0.85,
+   "wind": 0.2,
    "set": {
     "ppsScaleKeys_S": "0.3 0.7 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0.9 0.7 0.5 0.3",
     "ppsFPS": 6.0,
@@ -553,10 +554,57 @@
    }
   },
   {
+   "name": "MFX_MAGICFIRE_HUMANSMOKE",
+   "base": "MFX_MAGICFIRE_HUMANSMOKE",
+   "replaces": true,
+   "set": {},
+   "light": {
+    "range": 450,
+    "color": [
+     255,
+     150,
+     60
+    ],
+    "fps": 6.0,
+    "keys": [
+     0.4,
+     0.8,
+     1,
+     0.94,
+     1.05,
+     0.97,
+     1.03,
+     0.93,
+     1,
+     1.06,
+     0.95,
+     1.02,
+     0.96,
+     1.04,
+     0.93,
+     1,
+     1.05,
+     0.96,
+     1.02,
+     0.94,
+     1,
+     0.97,
+     1.03,
+     0.95,
+     0.8,
+     0.55,
+     0.3,
+     0.1,
+     0
+    ]
+   }
+  },
+  {
    "name": "MFX_MAGICFIRE_HUMANBURN",
    "base": "OWN_HAND_LICKS",
    "replaces": true,
    "inherit": 0.92,
+   "wind": 0.1,
    "with": [
     "OWN_BODY_TALL",
     "OWN_BODY_SMOKE",

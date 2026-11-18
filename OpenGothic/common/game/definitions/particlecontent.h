@@ -66,8 +66,15 @@ struct Motion {
   float plumeHeight   = 0;
   float plumeRise     = 0;
   float plumeWind     = 0;  // the flame's own "wind" share: its lean differs from the smoke's drift
+  // "light": a spell effect (graphics/effect) of this particle effect brings a point light of lightRange cm and the
+  // colour lightColor (0..255) instead of the game's preset. lightKeys are the range's scale over the effect's
+  // life at lightFps keys a second (a fire that spreads, holds and dies down); none: the full range. 0: off
+  float lightRange    = 0;
+  float lightColor[3] = {};
+  std::vector<float> lightKeys;
+  float lightFps      = 0;
 
-  bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0 && hdrTo==0 && hazeShift==0 && leanRise==0 && inherit==0 && wind==0 && plumeHeight==0; }
+  bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0 && hdrTo==0 && hazeShift==0 && leanRise==0 && inherit==0 && wind==0 && plumeHeight==0 && lightRange==0; }
   };
 
 struct Result {

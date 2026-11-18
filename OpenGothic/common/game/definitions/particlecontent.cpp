@@ -128,6 +128,25 @@ void readMotion(const Json& entry, Motion& motion) {
     motion.plumeRise  =number(member(plume,"rise"),"plume.rise",0.1,20,"0.1..20");
     motion.plumeWind  =number(member(plume,"wind"),"plume.wind",0,2,"0..2");
     }
+  if(entry.HasMember("light")) {
+    const auto& light=entry["light"];
+    fields(light,{"range","color","keys","fps"});
+    motion.lightRange=number(member(light,"range"),"light.range",50,2000,"50..2000");
+    const auto& color=member(light,"color");
+    require(color.IsArray() && color.Size()==3,"light.color: expected [r,g,b]");
+    for(rapidjson::SizeType i=0; i<3; ++i)
+      motion.lightColor[i]=number(color[i],"light.color",0,255,"0..255");
+    motion.lightKeys.clear();
+    motion.lightFps=0;
+    if(light.HasMember("keys")) {
+      const auto& keys=light["keys"];
+      require(keys.IsArray() && keys.Size()>=2 && keys.Size()<=64,"light.keys: expected 2..64 numbers");
+      for(const auto& k:keys.GetArray())
+        motion.lightKeys.push_back(number(k,"light.keys",0,2,"0..2"));
+      motion.lightFps=number(member(light,"fps"),"light.fps",0.1,60,"0.1..60");
+      }
+    else require(!light.HasMember("fps"),"light.fps: needs light.keys");
+    }
   if(entry.HasMember("haze")) {
     const auto& haze=entry["haze"];
     fields(haze,{"shift","cell"});
@@ -209,7 +228,7 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
       decltype(result.motions) pendingMotions;
       decltype(result.with) pendingWith;
       for(const auto& entry:effects.GetArray()) {
-        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze","lean","inherit","wind","plume","replaces","with"});
+        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze","lean","inherit","wind","plume","light","replaces","with"});
         const auto name=text(member(entry,"name"));
         require(!name.empty() && std::all_of(name.begin(),name.end(),[](char c) {
           return (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_';
