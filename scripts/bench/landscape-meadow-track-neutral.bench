@@ -1,5 +1,5 @@
 # Alternate the neutral path in one session, resetting the temporal history before each shot.
-# The two camera setups match landscape-meadow-track-cheap.bench.
+# Compare the two render paths on the track and from 30 m along the road.
 seed 73013
 cheat god
 overlay off

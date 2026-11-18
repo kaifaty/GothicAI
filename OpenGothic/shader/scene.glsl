@@ -54,6 +54,7 @@ struct SceneDesc {
   uint  vsmLampSides;    // VSM lamps: a cube face keeps the far side (1), both of the world mesh (2), of objects too (3)
   uint  vsmStudy;        // bench `vsm study <bits>`: VSM_STUDY_* below (0 in the game)
   uint  viewFlags;       // VF_* below: the occluder pass, TAA, shadow views
+                         // Bits 16–25 carry Grass::Part for the cart track (grass/grass_track.glsl).
   float fogSkyVis;       // the sky seen from the camera under GI, 0..1 (fog_sky_vis.comp); 1 without it
   float lampNearKnee;    // a lamp's light never passes this many times its light at the range (light.frag); 0 off
   float dayHour;         // 0..24 of the game's day: the evening of the windows (materials/window_glow.glsl)
@@ -68,11 +69,9 @@ struct SceneDesc {
   // the travelling front of the gust (foliageFrontAt, foliage_wind.glsl; common/graphics/foliagefront.h)
   vec4  foliageFront;     // xy: 0..1 of the turns of the wind speed's two terms at z=0; zw: the previous frame's
   vec4  foliageFrontK;    // xy: their turns per cm of z; z: the wind's scale; w: 1 when the front runs
-  // a tree's wind fades with the distance (foliageTreeFade, materials/foliage_tree.glsl): the pixels of the main
+  // a tree's wind fades with the distance (foliageTreeFade, materials/foliage_tree.glsl): x the pixels of the main
   // view a unit of the tangent is, in every view; 0 without the fade
-  float foliageFadeScale;
-  uint  grassTrackPartsOff; // track diagnostics from grass parts; see grass/grass_track.glsl
-  uvec2 grassTrackPadding;
+  vec4  foliageFade;
   // grass (grass/grass_common.glsl): x full density to here, cm; y the blades go into the ground from here; z the
   // ring's radius; w 1 with blades, 0.5 the ground's mark alone, 0 off
   vec4  grassRing;

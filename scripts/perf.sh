@@ -308,9 +308,8 @@ command = [env['GAME_BIN'], '-g', env['GOTHIC_DIR'], '-window', '-devmode',
 meta.update(place=place, repeat=int(repeat), command=command)
 with (leaf / 'game.log').open('w') as log:
     process = subprocess.Popen(command, cwd=leaf / 'run', env=env, stdout=log, stderr=subprocess.STDOUT)
-    timeout = 360 if place == 'grass-track' else 300
     try:
-        code = process.wait(timeout=timeout)
+        code = process.wait(timeout=300)
     except subprocess.TimeoutExpired:
         process.terminate()
         try:
@@ -318,20 +317,20 @@ with (leaf / 'game.log').open('w') as log:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
-        raise SystemExit(f'perf: game timed out after {timeout}s; stopped only this run')
+        raise SystemExit('perf: game timed out after 300s; stopped only this run')
 meta['exit_code'] = code
 (leaf / 'metadata.json').write_text(json.dumps(meta, indent=2) + '\n')
 if code:
     raise SystemExit(f'perf: {place} exited {code}; see {leaf / "game.log"}')
 PY
-    python3 - "$LEAF" "$place" "$ROOT/scripts/bench/perf-$place.bench" <<'PY'
+    python3 - "$LEAF" "$place" <<'PY'
 import csv
 import json
 from pathlib import Path
 import re
 import sys
 
-leaf, place, scenario = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+leaf, place = Path(sys.argv[1]), sys.argv[2]
 try:
     timing = json.loads((leaf / 'appcadence.csv.json').read_text())
     if not timing['complete'] or timing['frames'] <= 0 or timing['overflow']:
@@ -341,7 +340,8 @@ try:
     if not rows or any(int(row.get('overflow', 0)) for row in rows):
         raise ValueError('empty or overflowed frame profile')
     if place == 'grass-track':
-        segments_expected = re.findall(r'^perf sample (perf-grass-track/\S+)$', scenario.read_text(), re.M)
+        segments_expected = [f'perf-{place}/view-{view}{suffix}'
+                             for view in (5, 1) for suffix in ('', '-before', '-noroad')]
     else:
         segments_expected = [f'perf-{place}/view-{view}' for view in range(1, 5)]
     for segment in segments_expected:

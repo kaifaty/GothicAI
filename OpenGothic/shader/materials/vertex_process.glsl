@@ -251,7 +251,7 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
   // far off a tree's wind fades, and past that its vertices are not moved at all (foliageTreeFade): by the main
   // camera, whose place every view's scene keeps, so the tree and its shadow fade as one
   const vec3 treeFade = foliageMoves(foliage) ? foliageTreeFade(foliage, bucket[bucketId].foliageReach, obj.mat,
-                                                                scene.camPos, scene.foliageFadeScale) : vec3(0.0);
+                                                                scene.camPos, scene.foliageFade.x) : vec3(0.0);
   if(treeFade.x>0.0) {
     // the gust comes to the tuft's place when the front does (foliageFrontAt); a tree reads it at every vertex
     const vec3 at = foliageFrontAt(obj.mat[3].z, scene.foliageFront.xy, scene.foliageFrontK, scene.foliageWind, scene.foliageSwing);

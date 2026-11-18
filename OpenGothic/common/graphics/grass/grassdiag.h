@@ -37,9 +37,8 @@ enum Part : uint32_t {
   PartTrackForm   = 1u << 23,
   PartTrackGrain  = 1u << 24,
   PartTrackNeutral = 1u << 25,
-  PartTrackWanderLod = 1u << 26,
-  PartTrackOrmLod = 1u << 27,
-  PartAll         = (1u << 28) - 1u,
+  PartAll         = (1u << 26) - 1u,
+  PartTrackMask   = PartAll & ~0xFFFFu,
   };
 
 inline uint32_t& benchPartsOff() {
@@ -47,22 +46,17 @@ inline uint32_t& benchPartsOff() {
   return mask;
   }
 
-// SceneDesc::grassRing.w carries the low bits as 1 + 2*mask. The track bits have their own integer.
+// SceneDesc::grassRing.w carries the low bits as 1 + 2*mask. The track bits use SceneDesc::viewFlags.
 inline uint32_t partsOff() {
   return benchPartsOff() & 0xFFFFu;
   }
 
 inline uint32_t trackPartsOff() {
-  static const uint32_t mask = [] {
-    const auto off = [](const char* name) {
-      const char* value = std::getenv(name);
-      return value!=nullptr && value[0]=='0' && value[1]=='\0';
-      };
-    return (off("OPENGOTHIC_GRASS_TRACK_NEUTRAL") ? PartTrackNeutral : 0u) |
-           (off("OPENGOTHIC_GRASS_TRACK_WANDER")  ? PartTrackWanderLod : 0u) |
-           (off("OPENGOTHIC_GRASS_TRACK_ORM")     ? PartTrackOrmLod : 0u);
+  static const bool neutralOff = [] {
+    const char* value = std::getenv("OPENGOTHIC_GRASS_TRACK_NEUTRAL");
+    return value!=nullptr && value[0]=='0' && value[1]=='\0';
     }();
-  return mask | (benchPartsOff() & ~0xFFFFu);
+  return (benchPartsOff() & PartTrackMask) | (neutralOff ? PartTrackNeutral : 0u);
   }
 
 // OPENGOTHIC_GRASS_SQUARES=0: a cell is drawn and thinned whole, as before the squares (reports/engine/2026-11-17-
