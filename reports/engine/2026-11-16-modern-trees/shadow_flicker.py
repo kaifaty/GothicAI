@@ -5,7 +5,7 @@ For every frame: the mean luma (0..255, BT.601) of the slope under the camera an
 dark when the slope's mean falls more than a third below the reference: the median slope of --ref clips (a run
 whose sun is known to be right), or else the 90th percentile of the clip itself.
 
-  shadow_flicker.py <clip.mp4> [--ref <clip.mp4> ...] [--json out.json] [--sheet sheet.png]
+  shadow_flicker.py <clip.mp4> [--ref <clip.mp4> ...] [--json out.json]
 
 The slope is a box in fractions of the frame (--slope x0 y0 x1 y1), the hill under the camera of view near-30.
 """
