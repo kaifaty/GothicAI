@@ -141,23 +141,23 @@ void cullCandidate(const uint c) {
   barrier();
   }
 
-// The bins drawn this frame, in their order: lamps by distance, then the sun's mips from the finest, each by the ring
-// from the centre. A bin goes in whole while the sum stays within the cap, else it is left out and the next is tried.
-// The demand is counted before any pair is written, so the order the GPU runs its groups in decides nothing: a still
-// camera leaves out the same bins every frame. A bin not drawn the frame before goes in only under 7/8 of the cap, so
-// a demand at the edge does not switch a ring of pages on and off.
+// The bins drawn this frame: the first ones in their order - lamps by distance, then the sun's mips from the finest,
+// each by the ring from the centre - while the sum stays within the cap; the first bin past it and all after it are
+// left out. The demand is counted before any pair is written, so the order the GPU runs its groups in decides nothing:
+// a still camera leaves out the same bins every frame. A bin left out the frame before goes in only under 7/8 of the
+// cap, so a demand at the edge does not switch a ring of pages on and off; a bin drawn the frame before keeps the
+// whole cap. A greedy fill that tried the next bins past one that does not fit switched big rings of the coarse mips
+// on and off with the demand of the near ones (a2-f1024 of «Второй круг»)
 void admit() {
   for(uint i=0; i<VSM_BIN_WORDS; ++i)
     sAdmit[i] = 0;
   uint sum = 0;
   for(uint bin=0; bin<VSM_PAIR_BINS; ++bin) {
-    const uint d = vsm.header.pairDemand[bin];
-    if(d==0)
-      continue;
+    const uint d     = vsm.header.pairDemand[bin];
     const bool drawn = (vsm.header.admitPrevBits[bin/32] & (1u << (bin%32)))!=0u;
     const uint limit = drawn ? push.pairCap : push.pairCap - push.pairCap/8u;
     if(d > limit || sum > limit - d)
-      continue;
+      break;
     sum += d;
     sAdmit[bin/32] |= 1u << (bin%32);
     }

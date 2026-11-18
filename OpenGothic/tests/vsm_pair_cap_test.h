@@ -5,8 +5,8 @@
 // shadow-flicker.md): the engine's own vsm_visibility_pass.comp, vsm_cull_meshlets.comp and vsm_pack_draws.comp on
 // four page entries - mip 0, mip 1, a lamp's face and mip 2 - and two clusters. An object's cluster keeps the meshlets
 // whose own spheres touch an entry; a cluster of one meshlet goes whole. The bins of pairs go in whole in their order,
-// lamps first, as long as they fit the cap, exactly at it too; one that does not is left out and the next is tried,
-// the same ones however the GPU runs; a bin left out the frame before needs 1/8 of the cap spare.
+// lamps first, as long as they fit the cap, exactly at it too; the first one that does not and all after it are left
+// out, the same ones however the GPU runs; a bin left out the frame before needs 1/8 of the cap spare.
 // Before, the object went with all its meshlets into every entry, and past the cap the order of the GPU's groups chose
 // which pairs dropped: the shadow over a forest flickered from frame to frame.
 void vsmPairCapRecords(Tempest::Device& device) {
@@ -30,9 +30,9 @@ void vsmPairCapRecords(Tempest::Device& device) {
     uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax, pairSpill;
     uint32_t candidateCount, clusterPairs, admitBits[9], admitPrevBits[9], pairDemand[16+16*16];
     };
-  const auto bits = [](std::initializer_list<uint32_t> bins) {
+  const auto prefix = [](uint32_t bins) { // the first bins drawn, the rest left out
     std::array<uint32_t,9> ret = {};
-    for(auto b:bins)
+    for(uint32_t b=0; b<bins; ++b)
       ret[b/32] |= 1u << (b%32);
     return ret;
     };
@@ -221,7 +221,7 @@ void vsmPairCapRecords(Tempest::Device& device) {
   require(all.header.pairDemand[Sun0]==4 && all.header.pairDemand[Sun1]==5 && all.header.pairDemand[Lamp]==5 &&
           all.header.pairDemand[Sun2]==4, "the demand of each bin: the meshlets whose spheres touch its entries");
   require(all.header.clusterPairs==4*6+3*1, "whole clusters would ask a pair for each meshlet in each entry");
-  require(admitted(all)==bits({Lamp, Sun0, Sun1, Sun2}) && all.header.meshletCount==18 && all.header.pairSpill==0,
+  require(admitted(all)==prefix(16+16*16) && all.header.meshletCount==18 && all.header.pairSpill==0,
           "with room for all every bin is drawn");
   require(pairsOf(all, 0, 0)==ids({0, 1, 5}) && pairsOf(all, 0, 1)==ids({0, 1, 2, 5}) &&
           pairsOf(all, 0, 2)==ids({0, 1, 2, 5}) && pairsOf(all, 0, 3)==ids({0, 1, 2, 5}),
@@ -229,18 +229,23 @@ void vsmPairCapRecords(Tempest::Device& device) {
   require(pairsOf(all, 1, 0).size()==1 && pairsOf(all, 1, 1).size()==1 && pairsOf(all, 1, 2).size()==1 &&
           pairsOf(all, 1, 3).empty(), "a cluster without spheres goes whole into each entry");
 
-  // a cap of 13: the lamp's 5 and mip 0's 4 go in, mip 1's 5 would make 14 and is left out, mip 2's 4 make 13, exactly
-  // the cap, and go in
+  // a cap of 13: the lamp's 5 and mip 0's 4 go in, mip 1's 5 would make 14: it and all after it are left out, mip 2's 4
+  // too, though they would fit
   const Frame edge = run(false, 13, admitted(all), 0, zero, older);
-  require(admitted(edge)==bits({Lamp, Sun0, Sun2}) && edge.header.meshletCount==13 && edge.header.pairSpill==0,
-          "bins go in whole in their order, lamps first, up to the cap and exactly at it; one past it is left out");
+  require(admitted(edge)==prefix(Sun1) && edge.header.meshletCount==9 && edge.header.pairSpill==0,
+          "bins go in whole in their order, lamps first; the first past the cap and all after it are left out");
   require(pairsOf(edge, 0, 0)==ids({0, 1, 5}) && pairsOf(edge, 0, 1).empty() && pairsOf(edge, 0, 2)==ids({0, 1, 2, 5}) &&
-          pairsOf(edge, 0, 3)==ids({0, 1, 2, 5}) && pairsOf(edge, 1, 1).empty(),
+          pairsOf(edge, 0, 3).empty() && pairsOf(edge, 1, 1).empty(),
           "a bin left out has no pair, the bins drawn all theirs");
 
   // a cap of 14 holds the lamp, mip 0 and mip 1 (14), but mip 1 was left out the frame before and needs 14 under 7/8
-  // of the cap: it stays out, and mip 2 stays in
+  // of the cap: it stays out
   const Frame held = run(false, 14, admitted(edge), 0, zero, older);
-  require(admitted(held)==admitted(edge) && held.header.meshletCount==13,
+  require(admitted(held)==prefix(Sun1) && held.header.meshletCount==9,
           "a bin left out the frame before needs an eighth of the cap spare to come back");
+
+  // drawn the frame before, mip 1 keeps the whole cap: 14 pairs, exactly the cap
+  const Frame exact = run(false, 14, prefix(Sun2), 0, zero, older);
+  require(admitted(exact)==prefix(Sun2) && exact.header.meshletCount==14 && exact.header.pairSpill==0,
+          "a bin drawn the frame before goes in up to the cap and exactly at it");
   }

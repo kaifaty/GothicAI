@@ -19,8 +19,8 @@ const int VSM_CLIPMAP_SIZE  = VSM_PAGE_SIZE * VSM_PAGE_TBL_SIZE;
 // pairs and of candidates are sized to it (DrawCommands::VsmMaxMeshlets; OPENGOTHIC_VSM_PAIRS sets another cap for a
 // study, DrawCommands::vsmPairCap). The visibility pass lists a cluster for each page entry its sphere touches; the
 // meshlets' pass (vsm_cull_meshlets.comp) keeps an object's meshlets whose own spheres touch the entry. The pairs go by
-// bins: when the frame asks more than the cap, whole bins are left out by their order, the same ones in every frame
-// (vsm_cull_meshlets.comp) - reports/engine/2026-11-16-modern-trees/shadow-flicker.md, «Второй круг»
+// bins: when the frame asks more than the cap, the last bins in their order are left out whole, the same ones in every
+// frame (vsm_cull_meshlets.comp) - reports/engine/2026-11-16-modern-trees/shadow-flicker.md, «Второй круг»
 const uint VSM_MAX_MESHLETS = 512u*1024u;
 // A slot the meshlets' pass reserved and found no meshlet for (it never should): the packing skips it, so the slot does
 // not keep an older frame's pair (vsm_cull_meshlets.comp, vsm_pack_draws.comp)
