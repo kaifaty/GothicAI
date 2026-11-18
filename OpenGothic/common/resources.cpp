@@ -650,14 +650,14 @@ std::vector<Resources::MeshLevel> Resources::implLoadMeshLevels(std::string_view
 
 void Resources::implLoadMeshImpostor(std::string_view key, const MeshImpostor& source, StaticMesh& mesh) {
   try {
+    const bool graphics = hasGraphicsDevice();
     for(const auto& sub:mesh.sub) {
       const auto& mat = sub.material;
-      if((mat.alpha!=Material::Solid && mat.alpha!=Material::AlphaTest) || mat.hasFrameAnimation() ||
+      if(!mat.isSolid() || (graphics && mat.tex==nullptr) || mat.hasFrameAnimation() ||
          mat.hasUvAnimation() || mat.hasProjection() || mat.antitile!=Material::Antitile::Off ||
          mat.emissive>0.f || mat.hair || mat.strand || mat.eye)
         throw std::runtime_error("unsupported material "+sub.texName);
       }
-    const bool graphics = hasGraphicsDevice();
     if(graphics && !device().properties().hasSamplerFormat(TextureFormat::DXT5))
       throw std::runtime_error("the graphics device cannot sample DXT5 atlases");
     StaticMesh::Impostor stage;
