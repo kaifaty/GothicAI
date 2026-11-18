@@ -1,5 +1,8 @@
 #include "graphics/mesh/clusterlod.h"
 
+#undef meshopt_simplifyWithAbsoluteAttributes
+#include "meshoptimizer.h"
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -11,6 +14,53 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+
+namespace {
+
+enum class SimplifierFault { None, MixedMaterialWedge, OpenBoundary };
+SimplifierFault simplifierFault = SimplifierFault::None;
+
+}
+
+// The test target routes the builder's simplifier call here. Every other call
+// uses the real simplifier result unchanged.
+extern "C" size_t clusterLodTestSimplifyWithAbsoluteAttributes(
+    unsigned int* destination, const unsigned int* indices, size_t indexCount,
+    const float* positions, size_t vertexCount, size_t positionStride,
+    const float* attributes, size_t attributeStride, const float* weights, size_t attributeCount,
+    const unsigned char* locks, const unsigned int* tags, size_t targetIndexCount,
+    unsigned int options, float* resultError, float* positionError) {
+  const auto count = meshopt_simplifyWithAbsoluteAttributes(destination,indices,indexCount,
+                        positions,vertexCount,positionStride,attributes,attributeStride,weights,attributeCount,
+                        locks,tags,targetIndexCount,options,resultError,positionError);
+  if(simplifierFault==SimplifierFault::OpenBoundary && count>=6 && count*100<=indexCount*85) {
+    simplifierFault = SimplifierFault::None;
+    return count-3;
+    }
+  if(simplifierFault!=SimplifierFault::MixedMaterialWedge || !tags || count*100>indexCount*85)
+    return count;
+
+  const auto position = [&](unsigned int vertex) {
+    const auto bytes = reinterpret_cast<const char*>(positions) + size_t(vertex)*positionStride;
+    return std::span(reinterpret_cast<const float*>(bytes),3);
+    };
+  const auto simplified = std::span(destination,count);
+  for(size_t i=0; i<count; ++i) {
+    const auto wedge = simplified[i];
+    // Keep the triangle's leading material, position topology and both
+    // materials' sets of surviving positions unchanged.
+    if(i%3==0 || std::ranges::count(simplified,wedge)<2)
+      continue;
+    for(const auto other : simplified) {
+      if(tags[wedge]!=tags[other] && std::ranges::equal(position(wedge),position(other))) {
+        simplified[i] = other;
+        simplifierFault = SimplifierFault::None;
+        return count;
+        }
+      }
+    }
+  return count;
+  }
 
 namespace {
 
@@ -43,7 +93,7 @@ Vertex groundVertex(Model model, float x, float z, size_t chart) {
   if(model==Model::Hill) {
     const float dx = (x-2100.f)/2050.f, dz = (z-3800.f)/1800.f;
     const float hill = std::max(0.f,1.f-dx*dx-dz*dz);
-    y = 900.f*hill*hill + 28.f*hill*std::sin(x*0.025f)*std::sin(z*0.026f);
+    y = 1000.f*hill*hill + 28.f*hill*std::sin(x*0.025f)*std::sin(z*0.026f);
     }
   return {{x,y,z}, chart>=3 ? Point{0.f,0.8f,0.6f} : Point{0.f,1.f,0.f},
           {x/6400.f,z/6400.f+(chart>=2 ? 7.f : 0.f)}, chart>=1 ? 0xffe0c080u : 0xffffffffu};
@@ -191,6 +241,7 @@ using Segment = std::array<Point, 2>;
 
 struct EdgeUse {
   std::array<uint32_t, 2> materials{NoGroup,NoGroup};
+  double hillAreaFlux = 0.0;
   int balance = 0, count = 0;
   bool materialInterface() const { return count==2 && materials[0]!=materials[1]; }
   };
@@ -214,12 +265,27 @@ struct Surface {
   std::vector<Face>      faces;
   std::array<double, 3>  area{};
   std::array<bool, 2>    touches{};
+  double                hillHeightScale = 1.0;
+  double                hillProjectedPerimeter = 0.0;
+  double                hillBackfaceArea = 0.0;
+  size_t                hillBackfaces = 0;
+  bool                  hillHasVerticalFace = false;
 
   void add(const Fixture& fixture, const Vertex& a, const Vertex& b, const Vertex& c, uint32_t material) {
     const std::array<Vertex, 3> triangle = {a,b,c};
     const auto [nx,ny,nz] = cross(difference(b.position,a.position),difference(c.position,a.position));
-    const double faceArea = std::hypot(double(nx),double(ny),double(nz))*0.5;
+    const double twiceArea = std::hypot(double(nx),double(ny),double(nz));
+    const double faceArea = twiceArea*0.5;
     require(faceArea>0.0,"degenerate triangle in a cut");
+    if(fixture.model==Model::Hill) {
+      if(ny>0.f)
+        hillHeightScale = std::max(hillHeightScale,twiceArea/double(ny));
+      if(ny<0.f) {
+        hillBackfaceArea -= double(ny)*0.5;
+        ++hillBackfaces;
+        }
+      hillHasVerticalFace |= ny==0.f;
+      }
     if(fixture.model==Model::Seams) {
       const float z = (a.position[2]+b.position[2]+c.position[2])/3.f;
       const size_t chart = size_t(z>=float(ChartCuts[1])*CellCm) + size_t(z>=float(ChartCuts[2])*CellCm)
@@ -253,6 +319,11 @@ struct Surface {
       vertices.insert(from);
       const bool forward = from<to;
       auto& use = edges[forward ? Edge{from,to} : Edge{to,from}];
+      if(fixture.model==Model::Hill) {
+        const auto delta = difference(triangle[j].position,triangle[i].position);
+        use.hillAreaFlux += (double(nx)*delta[2]-double(nz)*delta[0])/twiceArea;
+        hillProjectedPerimeter += std::hypot(double(delta[0]),double(delta[2]));
+        }
       if(use.count<2)
         use.materials[size_t(use.count)] = material;
       ++use.count;
@@ -260,6 +331,24 @@ struct Surface {
       }
     }
 
+  double hillAreaVariation() const {
+    double sum = 0.0;
+    for(const auto& [edge,use] : edges)
+      if(use.count==2)
+        sum += std::abs(use.hillAreaFlux);
+    return sum;
+    }
+
+  double hillInteriorLength() const {
+    double sum = 0.0;
+    for(const auto& [edge,use] : edges) {
+      if(use.count!=2)
+        continue;
+      const auto delta = difference(std::bit_cast<Point>(edge[1]),std::bit_cast<Point>(edge[0]));
+      sum += std::hypot(double(delta[0]),double(delta[2]));
+      }
+    return sum;
+    }
   void addReferenceFace(const Vertex& a, const Vertex& b, const Vertex& c, uint32_t material) {
     Face face{{a.position,b.position,c.position},{},{},material};
     for(size_t k=0; k<3; ++k) {
@@ -415,13 +504,31 @@ bool checkSurface(const Fixture& fixture, const Surface& source, const Reference
   for(const auto& point : frozen)
     require(surface.vertices.contains(point),"frozen vertex changed or disappeared in a cut");
 
-  const double relativeTolerance = fixture.model==Model::Hill ? 0.04 : 0.005;
+  double hillTolerance = 0.0;
+  if(fixture.model==Model::Hill) {
+    require(!source.hillHasVerticalFace && source.hillBackfaces==0,"the reference hill must be an upward height field");
+    const double heightError = cutError*source.hillHeightScale;
+    if(surface.hillHasVerticalFace || surface.hillBackfaces!=0) {
+      // Project vertically onto L0. Negative crossings add a pair of sheets.
+      const double crossings = 1.0 + 2.0*double(surface.hillBackfaces);
+      const double perimeter = surface.hillProjectedPerimeter + 2.0*crossings*source.hillInteriorLength();
+      hillTolerance = heightError*perimeter + 2.0*source.hillHeightScale*surface.hillBackfaceArea;
+      }
+    else {
+      // Convexity bounds the area change by the first variation on the larger surface.
+      const auto& larger = source.area[0]>=surface.area[0] ? source : surface;
+      hillTolerance = heightError*larger.hillAreaVariation();
+      }
+    }
   for(size_t m=0; m<source.area.size(); ++m) {
     const auto [length,components] = reference.materials[m];
     const double tubeArea = 2*cutError*length + std::numbers::pi*cutError*cutError*double(components);
-    const double tolerance = fixture.model==Model::Seams
-                           ? tubeArea + source.area[m]*16*std::numeric_limits<float>::epsilon()
-                           : source.area[m]*relativeTolerance;
+    const double roundoff = source.area[m]*16*std::numeric_limits<float>::epsilon();
+    double tolerance = source.area[m]*0.005;
+    if(fixture.model==Model::Seams)
+      tolerance = tubeArea + roundoff;
+    if(fixture.model==Model::Hill)
+      tolerance = hillTolerance + roundoff;
     require(std::abs(surface.area[m]-source.area[m])<=tolerance,"material area changed beyond tolerance");
     }
   checkJunctions(surface);
@@ -571,6 +678,58 @@ size_t checkFixture(Model model) {
   return mixedCuts;
   }
 
+void checkOpenBoundaryRejection() {
+  Fixture mesh{Model::Flat,{},{},{}};
+  addGround(mesh,0,4,0,4,0,0);
+  BuildStats stats;
+  simplifierFault = SimplifierFault::OpenBoundary;
+  buildWithStats(mesh.vertices,mesh.triangles,mesh.boundary,stats);
+  require(simplifierFault==SimplifierFault::None,"the simplifier fault did not remove a triangle");
+  require(stats.stoppedGroups[size_t(StopReason::Boundary)]==1,
+          "the builder accepted a replacement with a changed open boundary");
+  }
+
+void checkLockedPositionRejection() {
+  Fixture mesh{Model::Flat,{},{},{}};
+  addGround(mesh,0,3,0,3,0,0);
+  const auto lockedVertex = uint32_t(mesh.vertices.size());
+  // A small closed tetrahedron can disappear even when one vertex never moves.
+  for(const auto& p : {Point{240,200,240},Point{280,200,240},Point{240,200,280},Point{240,240,240}})
+    mesh.vertices.push_back({p,{0,1,0},{p[0]/6400.f,p[2]/6400.f},0xffffffffu});
+  mesh.triangles.insert(mesh.triangles.end(),{
+    {{lockedVertex,lockedVertex+1,lockedVertex+2},0}, {{lockedVertex,lockedVertex+2,lockedVertex+3},0},
+    {{lockedVertex,lockedVertex+3,lockedVertex+1},0}, {{lockedVertex+1,lockedVertex+3,lockedVertex+2},0}});
+  mesh.boundary.resize(mesh.vertices.size());
+  mesh.boundary[lockedVertex] = 1;
+
+  const auto graph = build(mesh.vertices,mesh.triangles,mesh.boundary);
+  const auto cut = selectCut(graph,{{},1080.f,1.6f},Infinity);
+  require(std::ranges::any_of(cut,[&](uint32_t id) {
+    const auto& cluster = graph.clusters[id];
+    const auto vertices = std::span(graph.vertexIndices).subspan(cluster.vertexOffset,cluster.vertexCount);
+    return std::ranges::find(vertices,lockedVertex)!=vertices.end();
+    }),"the builder lost a locked position while preserving the open edges");
+  }
+
+void checkMixedMaterialWedge() {
+  const auto mesh = makeFixture(Model::Seams);
+  BuildStats stats;
+  simplifierFault = SimplifierFault::MixedMaterialWedge;
+  const auto graph = buildWithStats(mesh.vertices,mesh.triangles,mesh.boundary,stats);
+  require(simplifierFault==SimplifierFault::None,"the simplifier fault did not inject a mixed-material wedge");
+  require(stats.stoppedGroups[size_t(StopReason::Material)]>0,
+          "the builder did not reject the mixed-material triangle");
+
+  std::vector<uint32_t> materials(mesh.vertices.size());
+  for(const auto& triangle : mesh.triangles)
+    for(const auto vertex : triangle.vertices)
+      materials[vertex] = triangle.material;
+  for(const auto& cluster : graph.clusters)
+    for(size_t i=0; i<cluster.vertexCount; ++i)
+      require(materials[graph.vertexIndices[cluster.vertexOffset+i]]==cluster.material,
+              "a mixed-material wedge reached the graph");
+  }
+
 void checkDisappearingMaterial() {
   constexpr uint32_t Grid = 4, IslandMaterial = 1;
   Fixture mesh{Model::Flat,{},{},{}};
@@ -650,6 +809,9 @@ int main() {
     require(std::abs(projectError({{{0,0,1500},100.f},5.f},view)-5.f/1400.f*600.f)<0.00001f,
             "pixel projection is missing the sphere, perspective or screen-height factor");
     require(projectError({{{0,0,0},100.f},5.f},view)==3000.f,"pixel projection is missing the near-distance clamp");
+    checkOpenBoundaryRejection();
+    checkLockedPositionRejection();
+    checkMixedMaterialWedge();
     checkDisappearingMaterial();
     checkAccumulatedContourDrift();
     const float nearError = attributeErrorWithDetachedFace(1024.f);
