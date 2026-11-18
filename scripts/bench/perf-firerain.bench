@@ -1,0 +1,90 @@
+# The fire rain's cost (reports/content/remaster/magic-fire/rain.md) on the meadow east of the tavern: four casts, each
+# measured for 8 s from 0.6 s after the cast, while its gobs fall, land and burn on the grass (the rain lasts 6.5 s):
+# the whole rain from 18 m aside at night (view-1), at the hero from 4.5 m at night (view-2), the whole rain from 18 m
+# aside at noon (view-3), the camera inside the rain at a man's height looking up into the falling gobs (view-4).
+# Compare sets with scripts/perf-content.sh A B firerain. Animated draws are hidden on both sides.
+seed 73013
+cheat god
+set time 22 0
+cadence normal
+overlay off
+ui off
+view full
+view hide animated morph
+goto NW_TAVERNE_TROLLAREA_03
+clear 3000
+stats mana 3000 circle 6
+equip ItRu_Firerain
+tap spell
+# Ten real seconds after the teleport for loading and native simulation.
+wait 10000
+set time 22 0
+watch player
+cam follow 1800 450 70
+wait 2000
+cam hold
+wait 1000
+press action
+wait 1500
+press forward
+wait 300
+release forward
+wait 300
+release action
+wait 600
+perf sample perf-firerain/view-1
+wait 8000
+perf stop
+wait 1500
+cam follow 450 160 40
+wait 2000
+cam hold
+wait 1000
+press action
+wait 1500
+press forward
+wait 300
+release forward
+wait 300
+release action
+wait 600
+perf sample perf-firerain/view-2
+wait 8000
+perf stop
+wait 1500
+set time 12 0
+cam follow 1800 450 70
+wait 2000
+cam hold
+wait 1000
+press action
+wait 1500
+press forward
+wait 300
+release forward
+wait 300
+release action
+wait 600
+perf sample perf-firerain/view-3
+wait 8000
+perf stop
+wait 1500
+cam look 900
+cam follow 300 170 150
+wait 2000
+cam hold
+wait 1000
+press action
+wait 1500
+press forward
+wait 300
+release forward
+wait 300
+release action
+wait 600
+perf sample perf-firerain/view-4
+wait 8000
+perf stop
+wait 1500
+# the app cadence window is 30 s from `cadence normal`: let it end
+cadence wait

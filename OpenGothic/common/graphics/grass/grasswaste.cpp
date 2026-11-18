@@ -23,6 +23,22 @@ size_t WasteRule::ranks(float dist) const {
   return size_t(std::min(256.f, std::ceil(256.f*rankShare*full/std::max(dist-rootsBeyond,1.f))));
   }
 
+size_t wasteBand(float dist) {
+  size_t band = 0;
+  for(float to:Waste::BandCm)
+    if(dist>=to)
+      ++band;
+  return band;
+  }
+
+uint8_t wasteLinks(size_t set, float cellDist) {
+  uint8_t links = MaxSegments;
+  for(float to:Waste::LinkCm[set])
+    if(cellDist>=to)
+      --links;
+  return links;
+  }
+
 uint8_t WasteRule::links(float dist) const {
   if(fine)
     return uint8_t(dist<full ? 2 : 1);
@@ -68,6 +84,9 @@ void countWaste(Waste& out, const Frustrum& fr, const Vec3& cam, const WasteRule
 
   const size_t tris   = size_t(2*links-1);
   const float  margin = float(CellMargin)/float(Unit);
+  size_t setTris[Waste::LinkSets] = {};
+  for(size_t s=0; s<Waste::LinkSets; ++s)
+    setTris[s] = rule.fine ? tris : size_t(2*wasteLinks(s,cell.dist)-1);
   for(const auto& b:drawn) {
     const float lx = float(b.w[0] & 0x3FFFu)/float(Unit), lz = float((b.w[0] >> 14) & 0x3FFFu)/float(Unit);
     const Vec3  root(cell.origin.x + lx, cell.origin.y + float((b.w[1] & 0xFFFFu)*2u)/float(Unit), cell.origin.z + lz);
@@ -80,6 +99,7 @@ void countWaste(Waste& out, const Frustrum& fr, const Vec3& cam, const WasteRule
     const float grow = std::clamp((rule.full/std::max(d,1.f)*1.12f - rank)/0.12f, 0.f, 1.f);
     const float t    = std::clamp((d-rule.fadeFrom)/(rule.radius-rule.fadeFrom), 0.f, 1.f);
     h *= grow*(1.f - t*t*(3.f-2.f*t));
+    bool shown = false;
     if(h<=0.05f) {
       ++out.gone;
       out.goneTriangles += tris;
@@ -87,6 +107,17 @@ void countWaste(Waste& out, const Frustrum& fr, const Vec3& cam, const WasteRule
     else if(!fr.testPoint(root.x, root.y+0.5f*h, root.z, 0.5f*h+20.f)) {
       ++out.out;
       out.outTriangles += tris;
+      }
+    else
+      shown = true;
+
+    const size_t band = wasteBand(d);
+    ++out.bandBlades[band];
+    out.bandFine[band]  += rule.fine ? 1 : 0;
+    out.bandShown[band] += shown ? 1 : 0;
+    for(size_t s=0; s<Waste::LinkSets; ++s) {
+      out.bandTriangles[s][band]      += setTris[s];
+      out.bandShownTriangles[s][band] += shown ? setTris[s] : 0;
       }
 
     for(size_t s=0; s<Waste::Subs; ++s) {
