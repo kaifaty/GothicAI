@@ -329,6 +329,12 @@ std::map<uint32_t, ContourPoint> contourPoints(const Boundary& edges) {
   }
 
 float Builder::materialError(const MaterialContours& original, const Indices& simplified, const Boundary& open) const {
+  for(size_t i = 0; i < simplified.size(); i += 3) {
+    const auto material = materials[simplified[i]];
+    if(material != materials[simplified[i+1]] || material != materials[simplified[i+2]])
+      return Infinity;
+    }
+
   const auto replacement = materialContours(simplified, open);
   std::map<uint32_t, std::set<uint32_t>> surviving;
   for(uint32_t wedge : simplified)

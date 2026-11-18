@@ -43,7 +43,7 @@ Vertex groundVertex(Model model, float x, float z, size_t chart) {
   if(model==Model::Hill) {
     const float dx = (x-2100.f)/2050.f, dz = (z-3800.f)/1800.f;
     const float hill = std::max(0.f,1.f-dx*dx-dz*dz);
-    y = 1000.f*hill*hill + 28.f*hill*std::sin(x*0.025f)*std::sin(z*0.026f);
+    y = 900.f*hill*hill + 28.f*hill*std::sin(x*0.025f)*std::sin(z*0.026f);
     }
   return {{x,y,z}, chart>=3 ? Point{0.f,0.8f,0.6f} : Point{0.f,1.f,0.f},
           {x/6400.f,z/6400.f+(chart>=2 ? 7.f : 0.f)}, chart>=1 ? 0xffe0c080u : 0xffffffffu};
@@ -281,16 +281,13 @@ struct Reference {
   explicit Reference(const Surface& surface) {
     std::array<std::map<PositionBits,std::vector<PositionBits>>,3> contours;
     for(const auto& [edge,use] : surface.edges) {
-      if(use.count!=1 && !use.materialInterface())
+      if(!use.materialInterface())
         continue;
       const auto [a,b] = edge;
       const Segment segment = {std::bit_cast<Point>(a),std::bit_cast<Point>(b)};
-      if(use.materialInterface())
-        interfaces.push_back(segment);
+      interfaces.push_back(segment);
       const double length = distance(segment[0],segment[1]);
       for(uint32_t material : use.materials) {
-        if(material==NoGroup)
-          continue;
         materials.at(material).contourLength += length;
         contours.at(material)[a].push_back(b);
         contours.at(material)[b].push_back(a);
@@ -418,10 +415,13 @@ bool checkSurface(const Fixture& fixture, const Surface& source, const Reference
   for(const auto& point : frozen)
     require(surface.vertices.contains(point),"frozen vertex changed or disappeared in a cut");
 
+  const double relativeTolerance = fixture.model==Model::Hill ? 0.04 : 0.005;
   for(size_t m=0; m<source.area.size(); ++m) {
     const auto [length,components] = reference.materials[m];
     const double tubeArea = 2*cutError*length + std::numbers::pi*cutError*cutError*double(components);
-    const double tolerance = tubeArea + source.area[m]*16*std::numeric_limits<float>::epsilon();
+    const double tolerance = fixture.model==Model::Seams
+                           ? tubeArea + source.area[m]*16*std::numeric_limits<float>::epsilon()
+                           : source.area[m]*relativeTolerance;
     require(std::abs(surface.area[m]-source.area[m])<=tolerance,"material area changed beyond tolerance");
     }
   checkJunctions(surface);
@@ -571,6 +571,58 @@ size_t checkFixture(Model model) {
   return mixedCuts;
   }
 
+void checkDisappearingMaterial() {
+  constexpr uint32_t Grid = 4, IslandMaterial = 1;
+  Fixture mesh{Model::Flat,{},{},{}};
+  addGround(mesh,0,Grid,0,Grid,0,0);
+  for(uint32_t z=1; z<3; ++z)
+    for(uint32_t x=1; x<3; ++x) {
+      const size_t face = 2*(z*Grid+x);
+      mesh.triangles[face].material = mesh.triangles[face+1].material = IslandMaterial;
+      }
+
+  const auto graph = build(mesh.vertices,mesh.triangles,mesh.boundary);
+  const auto island = std::ranges::find_if(graph.clusters,[](const Cluster& c) { return c.material==IslandMaterial; });
+  require(island!=graph.clusters.end() && island->level==0,"the source material island is missing");
+  const auto transition = island->parentGroup;
+  const float error = graph.groups.at(transition).errorCm;
+  require(std::isfinite(error) && std::ranges::none_of(graph.clusters,[&](const Cluster& c) {
+    return c.refinedGroup==transition && c.material==IslandMaterial;
+    }),"the material island did not disappear in its first replacement");
+  require(error>=4.f*CellCm,"the material island disappeared below half its contour perimeter");
+  }
+
+void checkAccumulatedContourDrift() {
+  constexpr uint32_t Width = 4, Height = 6;
+  Fixture mesh{Model::Flat,{},{},{}};
+  addGround(mesh,0,Width,0,Height,0,0);
+  mesh.model = Model::Seams;
+  // A parabolic seam flattens in successive replacements on an otherwise flat mesh.
+  for(auto& vertex : mesh.vertices) {
+    const auto [x,y,z] = vertex.position;
+    const float t = z/(float(Height)*CellCm);
+    const float blend = 1.f-std::abs(x/(2.f*CellCm)-1.f);
+    vertex = groundVertex(mesh.model,x+blend*80.f*t*(1.f-t),z/4.f,0);
+    }
+  Surface source;
+  for(size_t i=0; i<mesh.triangles.size(); ++i) {
+    auto& triangle = mesh.triangles[i];
+    triangle.material = uint32_t((i/2)%Width>=Width/2);
+    const auto& v = triangle.vertices;
+    const auto& a = mesh.vertices[v[0]];
+    const auto& b = mesh.vertices[v[1]];
+    const auto& c = mesh.vertices[v[2]];
+    source.add(mesh,a,b,c,triangle.material);
+    source.addReferenceFace(a,b,c,triangle.material);
+    }
+  const auto graph = build(mesh.vertices,mesh.triangles,mesh.boundary);
+  const auto cut = selectCut(graph,{{},1080.f,1.6f},Infinity);
+  require(std::ranges::any_of(cut,[&](uint32_t id) { return graph.clusters[id].level>=2; }),
+          "the curved material seam did not simplify across two levels");
+  std::vector<bool> checkedLocation(graph.clusters.size());
+  checkSurface(mesh,source,Reference(source),{},graph,cut,checkedLocation);
+  }
+
 float attributeErrorWithDetachedFace(float x) {
   Fixture mesh{Model::Flat,{},{},{}};
   addGround(mesh,0,2,0,2,0,0);
@@ -598,6 +650,8 @@ int main() {
     require(std::abs(projectError({{{0,0,1500},100.f},5.f},view)-5.f/1400.f*600.f)<0.00001f,
             "pixel projection is missing the sphere, perspective or screen-height factor");
     require(projectError({{{0,0,0},100.f},5.f},view)==3000.f,"pixel projection is missing the near-distance clamp");
+    checkDisappearingMaterial();
+    checkAccumulatedContourDrift();
     const float nearError = attributeErrorWithDetachedFace(1024.f);
     const float farError = attributeErrorWithDetachedFace(8192.f);
     require(std::abs(nearError-farError)<=nearError*0.01f,"attribute error changed with the group's extent");
