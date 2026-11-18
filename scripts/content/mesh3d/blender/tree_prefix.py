@@ -16,13 +16,13 @@ RAYS = tree_density.RAYS
 LUMA = np.array((.2126, .7152, .0722))
 # Extra samples on either side of the nominal budget, with intermediate heights between the old switches.
 SWEEP = {
-    400: (.20, .25, .33, .50, .67),
+    400: (.20, .25, .33, .50, .67, .80),
     300: (.25, .33),
-    200: (.08, .125, .1875, .25, .33),
+    200: (.08, .125, .1875, .25, .33, .50, .80),
     150: (.125, .1875),
-    100: (.04, .0625, .09375, .125, .1875),
+    100: (.04, .0625, .09375, .125, .1875, .25, .50, .80),
     75: (.0625, .09375),
-    50: (.025, .04, .0625, .09375, .125),
+    50: (.025, .04, .0625, .09375, .125, .1875, .25, .50, .80),
 }
 CHECKPOINTS = (400, 200, 100, 50)
 VIEWS = ((0, 0), (180, 0), (90, 0), (270, 0), (0, 30))
@@ -64,41 +64,6 @@ def projection(full, px, azimuth, elevation):
     return project, shape, ppm
 
 
-def fragments(points, index, shape, uv, mask):
-    """Yield alpha-covered rays with face ID, flat pixel, depth, UV and barycentric weights."""
-    triangles = points[index]
-    low = np.floor(triangles[:, :, :2].min(axis=1)).astype(int)
-    span = np.maximum(1, np.ceil(triangles[:, :, :2].max(axis=1)).astype(int) - low)
-    buckets = np.ceil(np.log2(span)).astype(int)
-    for wide, tall in np.unique(buckets, axis=0):
-        chosen = np.flatnonzero((buckets == (wide, tall)).all(axis=1))
-        ox, oy = np.meshgrid(np.arange(2**wide) + .5, np.arange(2**tall) + .5)
-        ox, oy = ox.ravel(), oy.ravel()
-        step = max(1, 400_000 // len(ox))
-        for start in range(0, len(chosen), step):
-            faces = chosen[start:start + step]
-            a, b, c = triangles[faces].transpose(1, 2, 0)
-            x, y = low[faces, 0, None] + ox, low[faces, 1, None] + oy
-            area = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
-            valid = np.abs(area) > 1e-9
-            divisor = np.where(valid, area, 1)[:, None]
-            dx, dy = x - c[0, :, None], y - c[1, :, None]
-            w0 = ((b[1] - c[1])[:, None] * dx + (c[0] - b[0])[:, None] * dy) / divisor
-            w1 = ((c[1] - a[1])[:, None] * dx + (a[0] - c[0])[:, None] * dy) / divisor
-            w2 = 1 - w0 - w1
-            inside = valid[:, None] & (w0 >= 0) & (w1 >= 0) & (w2 >= 0)
-            inside &= (x >= 0) & (x < shape[1]) & (y >= 0) & (y < shape[0])
-            face, ray = np.nonzero(inside)
-            weights = np.column_stack((w0[face, ray], w1[face, ray], w2[face, ray]))
-            ids = faces[face]
-            texel = (uv[index[ids]] * weights[:, :, None]).sum(axis=1)
-            mx, my = texture_indices(texel, mask.shape)
-            covered = mask[my, mx]
-            depth = (triangles[ids, :, 2] * weights).sum(axis=1).astype(np.float32)
-            pixel = y[face, ray].astype(int) * shape[1] + x[face, ray].astype(int)
-            yield ids[covered], pixel[covered], depth[covered], texel[covered], weights[covered]
-
-
 def texture_indices(uv, shape):
     x = np.clip((uv[:, 0] * shape[1]).astype(int), 0, shape[1] - 1)
     y = np.clip((uv[:, 1] * shape[0]).astype(int), 0, shape[0] - 1)
@@ -117,7 +82,8 @@ def rank_cards(full, wood, leaves, mask, by_face, costs):
         depth = bark.copy()
         front = np.full(bark.size, -1, int)
         keys = []
-        for face, pixel, z, _, _ in fragments(project(leaves['position']), leaves['index'], shape, leaves['uv'], mask):
+        points = project(leaves['position'])
+        for face, pixel, z, _, _ in tree_density.fragments(points, leaves['index'], shape, leaves['uv'], mask):
             visible = z < bark[pixel]
             owner = by_face[face]
             keys.append((owner[visible] * bark.size + pixel[visible]))
@@ -167,13 +133,23 @@ def render(leaves, project, shape, wood_depth, mask, atlas_luma):
     luma = np.zeros(canopy.size)
     openness = np.zeros(canopy.size)
     index = leaves['index']
-    for face, pixel, z, uv, weights in fragments(project(leaves['position']), index, shape, leaves['uv'], mask):
+    points = project(leaves['position'])
+    for face, pixel, z, u, v in tree_density.fragments(points, index, shape, leaves['uv'], mask):
         np.minimum.at(canopy, pixel, z)
         front = (z == canopy[pixel]) & (z < wood_depth[pixel])
-        x, y = texture_indices(uv[front], atlas_luma.shape)
-        luma[pixel[front]] = atlas_luma[y, x]
-        opened = leaves['colour'][index[face[front]], 3] / 255.
-        openness[pixel[front]] = (opened * weights[front]).sum(axis=1)
+        visible_pixels = pixel[front]
+        x, y = texture_indices(np.column_stack((u[front], v[front])), atlas_luma.shape)
+        luma[visible_pixels] = atlas_luma[y, x]
+        corners = index[face[front]]
+        a, b, c = points[corners, :2].transpose(1, 0, 2)
+        y, x = np.divmod(visible_pixels, shape[1])
+        dx, dy = x + .5 - c[:, 0], y + .5 - c[:, 1]
+        ab, bc, ca = a - b, b - c, c - a
+        area = ab[:, 0] * bc[:, 1] - ab[:, 1] * bc[:, 0]
+        w0 = (bc[:, 1] * dx - bc[:, 0] * dy) / area
+        w1 = (ca[:, 1] * dx - ca[:, 0] * dy) / area
+        opened = leaves['colour'][corners, 3] / 255.
+        openness[visible_pixels] = w0 * opened[:, 0] + w1 * opened[:, 1] + (1 - w0 - w1) * opened[:, 2]
     seen = canopy < wood_depth
     hits = (seen | np.isfinite(wood_depth)).reshape(shape[0] // RAYS, RAYS, shape[1] // RAYS, RAYS)
     solid = hits.sum(axis=(1, 3)) > RAYS * RAYS // 2
