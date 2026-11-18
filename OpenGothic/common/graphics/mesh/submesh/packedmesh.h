@@ -102,8 +102,8 @@ class PackedMesh {
 
   private:
     Tempest::Vec3 mBbox[2];
-    // where the mesh's own vertices, indices and 8-bit indices end once levels follow them
-    size_t        mainEnd[3] = {};
+    // where the mesh's own vertices, indices, 8-bit indices and meshlet bounds end once levels follow them
+    size_t        mainEnd[4] = {};
 
     struct Prim {
       uint32_t primId = 0;

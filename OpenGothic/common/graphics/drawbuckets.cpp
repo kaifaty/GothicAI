@@ -81,6 +81,7 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const AnimMesh& mesh) {
   }
 
 void DrawBuckets::invalidate(const StaticMesh& mesh) {
+  spheres.forget(mesh);
   for(auto& bucket:bucketsCpu)
     if(bucket.staticMesh==&mesh) {
       bucket = Bucket();
@@ -222,6 +223,7 @@ void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
 
 bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   currentFrame=fId;
+  spheres.commit(cmd,fId);
   const auto generation=Resources::textureGeneration();
   if(!bucketsDurtyBit) {
     const auto& bank=textureDesc[fId];
@@ -266,6 +268,9 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       bx.bboxRadius = i.staticMesh->drawn.rConservative;
       bx.bbox[0]    = Vec4(drawn[0].x,drawn[0].y,drawn[0].z,0.f);
       bx.bbox[1]    = Vec4(drawn[1].x,drawn[1].y,drawn[1].z,0.f);
+      // what the shadow pages draw (DrawCommands::drawVsm) takes its object's meshlets by their spheres
+      if(i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest)
+        bx.meshletSpheres = spheres.place(*i.staticMesh);
       if(i.staticMesh->morph.anim!=nullptr)
         bx.flags |= BK_MORPH;
       else if(i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest) {
@@ -435,6 +440,9 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       bx.flags |= BK_WATER;
     bucket.push_back(bx);
     }
+
+  // the spheres of the meshes placed above, in this frame's commands before its shadow pages
+  spheres.commit(cmd,fId);
 
   auto& device = Resources::device();
   Resources::recycle(std::move(bucketsGpu));
