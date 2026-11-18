@@ -16,11 +16,6 @@ layout(binding = 0, std430) buffer CB0 {
 layout(binding = 1, r32ui) uniform uimage3D pageTbl;
 layout(binding = 2, r32ui) uniform uimage3D pageTblDepth;
 
-layout(push_constant, std430) uniform Push {
-  uint pairCap;   // DrawCommands::vsmPairCap
-  uint pairBias;  // 0: the pair bias stays 0 (OPENGOTHIC_VSM_PAIR_BIAS=0, Renderer::Settings::vsmPairBias)
-  } push;
-
 void main() {
   const ivec3 at   = ivec3(gl_GlobalInvocationID);
   const ivec3 size = imageSize(pageTbl);
@@ -32,9 +27,6 @@ void main() {
   imageStore(pageTblDepth, at, uvec4(0xFFFFFFFF));
 
   if(at==ivec3(0)) {
-    // the last frame's count of pairs is still here: it sets the bias of this frame's pages
-    // (the buffer starts zeroed: Renderer::drawVsm)
-    header.pairBias     = push.pairBias!=0u ? vsmPairBiasNext(header.pairBias, header.meshletCount, push.pairCap) : 0.0;
     header.pairSpill    = 0;
     header.pageCount    = 0;
     header.meshletCount = 0;

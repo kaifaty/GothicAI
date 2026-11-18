@@ -49,8 +49,7 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   auto& pageData = usesZBuffer(vsm.pageData, shadowFormat,        8192, 8192);
 
   auto  pageCount   = uint32_t(vsm.pageData.w()/VSM_PAGE_SIZE) * uint32_t(vsm.pageData.h()/VSM_PAGE_SIZE);
-  // zeroed: the header keeps the pair bias from frame to frame (vsm_clear.comp)
-  auto& pageList    = usesSsboInit(vsm.pageList, shaders.vsmClear.sizeofBuffer(0, pageCount));
+  auto& pageList    = usesSsbo(vsm.pageList,    shaders.vsmClear.sizeofBuffer(0, pageCount));
   auto& pageListTmp = usesSsbo(vsm.pageListTmp, shaders.vsmAllocPages.sizeofBuffer(3, pageCount));
 
   const uint32_t lightsTotal  = omniLights ? uint32_t(wview.lights().size()) : 0;
@@ -62,11 +61,9 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
 
   cmd.setFramebuffer({});
   cmd.setDebugMarker("VSM-pages");
-  struct ClearPush { uint32_t pairCap; uint32_t pairBias; } clearPush = {DrawCommands::vsmPairCap(), settings.vsmPairBias ? 1u : 0u};
   cmd.setBinding(0, pageList);
   cmd.setBinding(1, pageTbl);
   cmd.setBinding(2, pageHiZ);
-  cmd.setPushData(clearPush);
   cmd.setPipeline(shaders.vsmClear);
   cmd.dispatchThreads(size_t(pageTbl.w()), size_t(pageTbl.h()), size_t(pageTbl.d()));
 
@@ -94,7 +91,6 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   cmd.setBinding(3, zbuffer,     Sampler::nearest());
   cmd.setBinding(4, pageTbl);
   cmd.setBinding(5, pageHiZ);
-  cmd.setBinding(6, pageList);
   cmd.setPushData(settings.vsmMipBias);
   cmd.setPipeline(shaders.vsmMarkPages);
   cmd.dispatchThreads(zbuffer.size());
@@ -185,7 +181,6 @@ void Renderer::logVsmStats(const WorldView& wview) {
     uint32_t pagePerMip[16];
     int32_t  pageBbox[16][4];
     uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax;
-    float    pairBias;
     uint32_t pairSpill;
     } h = {};
   uint32_t visibleLights = 0;
@@ -201,7 +196,7 @@ void Renderer::logVsmStats(const WorldView& wview) {
          ", placed = ", h.pagePlaced, ", dropped = ", dropped,
          ", meshletCount = ", h.meshletCount, "/", DrawCommands::vsmPairCap(),
          (h.meshletCount>DrawCommands::vsmPairCap() ? " OVERFLOW" : ""),
-         ", pair bias = ", h.pairBias, ", spilled = ", h.pairSpill,
+         ", spilled = ", h.pairSpill,
          ", lights = ", visibleLights, "/", uint32_t(wview.lights().size()),
          ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
 

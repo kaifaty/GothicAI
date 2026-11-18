@@ -16,7 +16,6 @@ const uint NumThreads = gl_WorkGroupSize.x*gl_WorkGroupSize.y*gl_WorkGroupSize.z
 layout(push_constant, std430) uniform UboPush {
   int  meshletCount;
   uint pairCap;  // DrawCommands::vsmPairCap
-  uint study;    // STUDY: 1 the reserved tail is left as it was, 2 coarse mips first
   } push;
 layout(binding = 0, std140) uniform UboScene    { SceneDesc   scene;         };
 layout(binding = 1, std430) buffer Payload      { uvec4       payload[];     };
@@ -132,13 +131,13 @@ int shadowMeshlets(const Cluster cluster) {
 bool emitCluster(const Cluster cluster, int meshletCount, uint page) {
   const uint at = atomicAdd(vsm.header.meshletCount, meshletCount);
   if(at+meshletCount > push.pairCap) {
-    // The counter runs on past the cap, so the frame's demand is known (the pair bias); the slots this cluster
-    // reserved below the cap are not written with its pairs. Left as they were, they held an older frame's pairs,
-    // which the packing counted to their draws past the ranges it had laid out for them: a draw then took the
-    // meshlets of another, of another vertex layout, and drew them into whole pages (shadow-flicker.md)
-    if((push.study & 1u)==0u)
-      for(uint i=at; i<push.pairCap; ++i)
-        payload[i] = uvec4(VSM_PAIR_SKIP);
+    // The slots this cluster reserved below the cap get no pairs of it. Left as they were, they held an older
+    // frame's pairs, which the packing counted to their draws past the ranges it had laid out from this frame's
+    // counts: a draw then took the next draw's pairs, meshlets of another bucket read in its own vertex layout, and
+    // garbage triangles filled whole pages with the nearest depth, black shadow in pieces of pages
+    // (reports/engine/2026-11-16-modern-trees/shadow-flicker.md)
+    for(uint i=at; i<push.pairCap; ++i)
+      payload[i] = uvec4(VSM_PAIR_SKIP);
     return false;
     }
   for(int i=0; i<meshletCount; ++i)
@@ -387,7 +386,5 @@ void main() {
     mainOmniLights();
     return;
     }
-  if((push.study & 2u)!=0u)
-    mainSunLight(VSM_PAGE_MIPS-1-gl_GlobalInvocationID.y); else
-    mainSunLight(gl_GlobalInvocationID.y);
+  mainSunLight(gl_GlobalInvocationID.y);
   }

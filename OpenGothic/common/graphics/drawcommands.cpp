@@ -14,15 +14,14 @@
 
 using namespace Tempest;
 
-// STUDY: OPENGOTHIC_VSM_PAIRS (cap), OPENGOTHIC_VSM_PAIRSTUDY (bits)
-static uint32_t envU32(const char* name, uint32_t def) {
-  if(const char* e = std::getenv(name); e!=nullptr && *e!='\0')
-    return uint32_t(std::strtoul(e, nullptr, 0));
-  return def;
-  }
-
+// OPENGOTHIC_VSM_PAIRS=<n>: another cap of the VSM meshlet-page pairs, for a study (the demand of a scene without the
+// cap, an overflow without a forest); the buffers follow it
 uint32_t DrawCommands::vsmPairCap() {
-  static const uint32_t cap = std::max<uint32_t>(1024u, envU32("OPENGOTHIC_VSM_PAIRS", VsmMaxMeshlets));
+  static const uint32_t cap = [] {
+    const char* e = std::getenv("OPENGOTHIC_VSM_PAIRS");
+    const unsigned long v = (e!=nullptr && *e!='\0') ? std::strtoul(e, nullptr, 0) : 0;
+    return v==0 ? VsmMaxMeshlets : uint32_t(std::clamp<unsigned long>(v, 1024u, 16u*1024u*1024u));
+    }();
   return cap;
   }
 
@@ -413,11 +412,9 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   usesSsbo(view.vsmClusters, visClustersSz);
   usesSsbo(view.visClusters, visClustersSz);
 
-  static const uint32_t study = envU32("OPENGOTHIC_VSM_PAIRSTUDY", 0);
-  struct Push { uint32_t meshletCount; uint32_t pairCap; uint32_t study; } push = {};
+  struct Push { uint32_t meshletCount; uint32_t pairCap; } push = {};
   push.meshletCount = uint32_t(clusters.size());
   push.pairCap      = cap;
-  push.study        = study;
 
   cmd.setBinding(T_Scene,    scene.uboGlobal[SceneGlobals::V_Vsm]);
   cmd.setBinding(T_Payload,  view.vsmClusters); //unsorted clusters
