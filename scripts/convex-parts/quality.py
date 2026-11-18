@@ -65,7 +65,7 @@ def max_coverage_error(vertices, parts):
     return worst
 
 
-def _ray_hits(origin, direction, triangles):
+def _ray_distances(origin, direction, triangles):
     edge1 = triangles[:, 1] - triangles[:, 0]
     edge2 = triangles[:, 2] - triangles[:, 0]
     p = np.cross(np.broadcast_to(direction, edge2.shape), edge2)
@@ -77,7 +77,76 @@ def _ray_hits(origin, direction, triangles):
     q = np.cross(delta, edge1)
     v = q @ direction * inverse
     t = np.einsum("ij,ij->i", edge2, q) * inverse
-    return bool(np.any(valid & (u >= -1e-8) & (v >= -1e-8) & (u + v <= 1 + 1e-8) & (t > 1e-5)))
+    return t[valid & (u >= -1e-8) & (v >= -1e-8) & (u + v <= 1 + 1e-8) & (t > 1e-5)]
+
+
+def _ray_hits(origin, direction, triangles):
+    return _ray_distances(origin, direction, triangles).size > 0
+
+
+def _tabletop_levels(surface, normals, area):
+    flat = (np.abs(normals[:, 1]) >= .98 * area) & (area > 1e-8)
+    heights = surface[:, :, 1].mean(axis=1)
+    levels = []
+    for i in sorted(np.flatnonzero(flat), key=heights.__getitem__):
+        if not levels or heights[i] - levels[-1]["y"] > 1:
+            levels.append(dict(y=heights[i], bottom=float("inf"), area=0., normal=0., triangles=[]))
+        level = levels[-1]
+        level["bottom"] = min(level["bottom"], surface[i, :, 1].min())
+        level["area"] += area[i]
+        level["normal"] += normals[i, 1]
+        level["triangles"].append(int(i))
+    broad = max((level["area"] for level in levels), default=0.) * .25
+    return [level for level in levels if level["area"] >= broad]
+
+
+def tabletop_cut(vertices, triangles):
+    """A broad tabletop's underside, with room for the 2 cm coverage tolerance."""
+    surface = vertices[triangles]
+    normals = np.cross(surface[:, 1] - surface[:, 0], surface[:, 2] - surface[:, 0])
+    levels = _tabletop_levels(surface, normals, np.linalg.norm(normals, axis=1))
+    if not levels:
+        return None
+    top = levels[-1]
+    middle = (vertices[:, 1].min() + vertices[:, 1].max()) * .5
+    for level in reversed(levels[:-1]):
+        if level["y"] > middle and level["normal"] * top["normal"] < 0:
+            return level["bottom"] - 2
+    return None
+
+
+def table_overhang_widths(vertices, triangles, parts, height):
+    """Widths of unsupported collision at the ends of the area under a tabletop."""
+    lower, upper = vertices.min(axis=0), vertices.max(axis=0)
+    # The apron is reached from the short ends, along the table's longer axis.
+    if upper[2] - lower[2] > upper[0] - lower[0]:
+        vertices = vertices[:, [2, 1, 0]]
+        parts = [part[:, [2, 1, 0]] for part in parts]
+        lower, upper = lower[[2, 1, 0]], upper[[2, 1, 0]]
+    y = np.arange(height - 15, height)
+    z = np.arange(lower[2] + .33 * (upper[2] - lower[2]), lower[2] + .67 * (upper[2] - lower[2]))
+    yz = np.stack(np.meshgrid(y, z, indexing="ij"), axis=-1).reshape(-1, 2)
+    surface = vertices[triangles]
+    widths = np.zeros(len(parts))
+    planes = [ConvexHull(part).equations for part in parts]
+    for sign, start in ((1, lower[0] - 1), (-1, upper[0] + 1)):
+        direction = np.array([sign, 0., 0.])
+        source = np.array([np.min(_ray_distances(np.array([start, yy, zz]), direction, surface), initial=np.inf)
+                           for yy, zz in yz])
+        has_apron = source < (upper[0] - lower[0]) * .25 + 1
+        for i, equations in enumerate(planes):
+            dx = equations[:, 0] * sign
+            d = yz @ equations[:, 1:3].T + equations[:, 0] * start + equations[:, 3]
+            near, far = dx < -1e-9, dx > 1e-9
+            first = np.max(-d[:, near] / dx[near], axis=1)
+            last = np.min(-d[:, far] / dx[far], axis=1)
+            intersects = (first <= last + 1e-6) & np.all(d[:, ~(near | far)] <= 1e-6, axis=1)
+            early = (intersects & has_apron & (source - first > 5)).reshape(len(y), len(z))
+            edges = np.diff(np.pad(early.astype(np.int8), ((0, 0), (1, 1))), axis=1)
+            # At 1 cm spacing, a run of N rays covers at least N - 1 cm.
+            runs = np.nonzero(edges == -1)[1] - np.nonzero(edges == 1)[1]
+            widths[i] = max(widths[i], runs.max(initial=0) - 1)
+    return widths
 
 
 def void_checks(vertices, triangles, parts, cls):
@@ -94,22 +163,13 @@ def void_checks(vertices, triangles, parts, cls):
 
     normals = np.cross(surface[:, 1] - surface[:, 0], surface[:, 2] - surface[:, 0])
     area2 = np.linalg.norm(normals, axis=1)
-    horizontal = (np.abs(normals[:, 1]) >= .98 * area2) & (area2 > 1e-8)
     if cls == "table":
         # Fix the centre from the highest broad tabletop plane, independently
         # of output. A small raised trim must not change the specified height.
-        planes = []
-        for index in sorted(np.flatnonzero(horizontal), key=lambda i: float(surface[i, :, 1].mean())):
-            height = float(surface[index, :, 1].mean())
-            if not planes or height - planes[-1]["y"] > 1:
-                planes.append({"y": height, "triangles": [int(index)], "area": float(area2[index])})
-            else:
-                planes[-1]["triangles"].append(int(index))
-                planes[-1]["area"] += float(area2[index])
+        planes = _tabletop_levels(surface, normals, area2)
         if not planes:
             return [check((lower + upper) * .5, "tabletop-detector-failed", detector_error=True, passed=False)]
-        broadest = max(plane["area"] for plane in planes)
-        plane = max((plane for plane in planes if plane["area"] >= broadest * .25), key=lambda p: p["y"])
+        plane = planes[-1]
         extent = surface[plane["triangles"]].reshape(-1, 3)
         center = (extent.min(axis=0) + extent.max(axis=0)) * .5
         center[1] = (lower[1] + plane["y"]) * .5
@@ -117,7 +177,7 @@ def void_checks(vertices, triangles, parts, cls):
     if cls != "cupboard":
         return []
 
-    indices = np.flatnonzero(horizontal)
+    indices = np.flatnonzero((np.abs(normals[:, 1]) >= .98 * area2) & (area2 > 1e-8))
     # Group coplanar faces, then the two faces of each shelf board (<= 5 cm).
     levels = []
     for index in sorted(indices, key=lambda i: float(surface[i, :, 1].mean())):

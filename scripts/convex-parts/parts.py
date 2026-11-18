@@ -20,7 +20,10 @@ import zlib
 import numpy as np
 from scipy.spatial import ConvexHull, QhullError
 
-from quality import max_coverage_error, void_checks
+from quality import max_coverage_error, table_overhang_widths, tabletop_cut, void_checks
+
+
+TABLE_OVERHANG_WIDTH_CM = 10
 
 
 def read_mesh(path):
@@ -98,6 +101,55 @@ def decompose(points, mesh_file, output, executable):
     return parts
 
 
+def _height_intersections(surface, height):
+    a = surface.reshape(-1, 3)
+    b = np.roll(surface, -1, axis=1).reshape(-1, 3)
+    # Order endpoints consistently when two triangles share an edge.
+    rises = a[:, 1] < b[:, 1]
+    low = np.where(rises[:, None], a, b)
+    high = np.where(rises[:, None], b, a)
+    crosses = (low[:, 1] < height) & (height < high[:, 1])
+    low, high = low[crosses], high[crosses]
+    fraction = (height - low[:, 1]) / (high[:, 1] - low[:, 1])
+    section = low + fraction[:, None] * (high - low)
+    section[:, 1] = height
+    return section
+
+
+def refit_table_overhang(points, triangles, parts, index, height):
+    """Remove an unsupported wedge and retain the original tabletop cap."""
+    old = parts[index]
+    if not old[:, 1].min() < height < old[:, 1].max():
+        raise ValueError("overhang hull does not cross the tabletop cut")
+    hull = ConvexHull(old)
+    # For the lower hull, use the actual source section. Intersecting the old
+    # hull instead would keep the unsupported slope we are trying to remove.
+    support = np.vstack((points[points[:, 1] <= height], _height_intersections(points[triangles], height)))
+    equations = hull.equations
+    inside = np.max(support @ equations[:, :3].T + equations[:, 3], axis=1) <= 1e-4
+    lower = np.unique(np.vstack((old[old[:, 1] < height], support[inside])), axis=0)
+    cap = np.unique(np.vstack((old[old[:, 1] >= height], _height_intersections(old[hull.simplices], height))), axis=0)
+    lower = lower[ConvexHull(lower).vertices]
+    fixed = parts.copy()
+    fixed[index] = lower
+    if len(parts) < 16:
+        return [*fixed, cap[ConvexHull(cap).vertices]]
+
+    # Recover one slot by joining the cap to the tabletop hull with the
+    # smallest added volume. Lower supports keep their own collision shapes.
+    neighbors = []
+    for i, part in enumerate(parts):
+        if part[:, 1].min() >= height:
+            merged = np.vstack((cap, part))
+            combined = ConvexHull(merged)
+            neighbors.append((combined.volume - ConvexHull(part).volume, i, merged[combined.vertices]))
+    if not neighbors:
+        raise ValueError("overhang repair has no tabletop hull to join within 16 parts")
+    _, neighbor, fixed_cap = min(neighbors, key=lambda candidate: candidate[:2])
+    fixed[neighbor] = fixed_cap
+    return fixed
+
+
 def visuals(args):
     rules = []
     for line in args.rules.read_text().splitlines():
@@ -168,6 +220,24 @@ def main():
                 write_parts(candidate, glb, parts)
             # Validate precisely the float coordinates that will be loaded.
             parts = read_parts(candidate, glb)
+            overhang_width = None
+            repaired_overhang = False
+            if args.content and cls == "table" and len(parts) > 1:
+                height = tabletop_cut(points, triangles)
+                if height is not None:
+                    widths = table_overhang_widths(points, triangles, parts, height)
+                    overhang_width = widths.max()
+                    if overhang_width >= TABLE_OVERHANG_WIDTH_CM and not args.verify:
+                        try:
+                            parts = refit_table_overhang(points, triangles, parts, int(widths.argmax()), height)
+                        except (ValueError, QhullError) as error:
+                            raise ValueError(f"{visual}: could not repair tabletop overhang: {error}") from error
+                        write_parts(candidate, glb, parts)
+                        parts = read_parts(candidate, glb)
+                        overhang_width = table_overhang_widths(points, triangles, parts, height).max()
+                        repaired_overhang = True
+                    if overhang_width >= TABLE_OVERHANG_WIDTH_CM:
+                        raise ValueError(f"{visual}: unsupported tabletop overhang spans {overhang_width:g} cm")
             parts_volume = sum(ConvexHull(part).volume for part in parts)
             coverage = max_coverage_error(points, parts)
             voids = void_checks(points, triangles, parts, cls) if split and not fallback_reason else []
@@ -183,7 +253,7 @@ def main():
                                          parts_volume_cm3=parts_volume, void_spheres=voids,
                                          main_gates_passed=not reasons)
                 if reasons:
-                    if args.verify:
+                    if args.verify or repaired_overhang:
                         raise ValueError(f"{visual}: cached compound fails main gates: {', '.join(reasons)}")
                     fallback_reason = ", ".join(reasons)
                     parts = [points[hull.vertices]]
@@ -204,6 +274,8 @@ def main():
                        passed=True,
                        source_size=len(glb), source_crc32=f"{zlib.crc32(glb):08x}", cache=str(cache.resolve()),
                        cache_sha256=hashlib.sha256(candidate.read_bytes()).hexdigest(), elapsed_s=time.monotonic() - start)
+            if overhang_width is not None:
+                row["unsupported_overhang_width_cm"] = float(overhang_width)
             rows.append(row)
             print(json.dumps(row, sort_keys=True), flush=True)
     if not rows:
