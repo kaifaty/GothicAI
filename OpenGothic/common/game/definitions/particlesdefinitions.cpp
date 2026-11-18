@@ -54,6 +54,12 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
     if(book->second.yaw)
       p->visYawAlign = true;
     p->flipSteady = book->second.steady;
+    p->flipOnce   = book->second.once;
+    }
+  if(const auto w=content.with.find(cname); w!=content.with.end()) {
+    for(const auto& other:w->second)
+      if(const auto* fx=implGet(other,relaxed))
+        p->with.push_back(fx);
     }
   if(const auto m=content.motions.find(cname); m!=content.motions.end()) {
     // particles.d units to the engine's cm and ms

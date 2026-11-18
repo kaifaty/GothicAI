@@ -21,6 +21,7 @@ struct Flipbook {
   bool  yaw    = false;  // upright card turning only about the vertical (a flame seen from above stays standing)
   bool  steady = false;  // the emitter places ppsValue particles once; they never age, fade or move and play the
                          // atlas by the emitter's clock: a flame tongue that stays at its log instead of being reborn
+  bool  once   = false;  // the atlas plays once over the particle's life, from its first frame (a burst, a puff)
   };
 
 // Own motion and look of the particles (pfxmotion.h, pfxbucket.cpp, pfx.vert), in the units of particles.d;
@@ -70,6 +71,8 @@ struct Result {
   std::map<std::string,std::shared_ptr<Def::ParticleEffect>> effects;
   std::map<std::string,Flipbook> flipbooks;
   std::map<std::string,Motion> motions;
+  // "with": own effects every emitter of this one brings along at its place (flame + tongues + sparks + smoke)
+  std::map<std::string,std::vector<std::string>> with;
   std::vector<std::string> errors;
   };
 

@@ -467,6 +467,9 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
     p.dir = p.dir*velocity/l;
     }
 
+  if(emitter.trail.quadLength()>0 && !decl.useEmittersFOR)
+    p.pos -= emitter.trail*randf();
+
   if(decl.plumeCm>0 && !decl.useEmittersFOR) {
     // born on the leaning flame (particles.d "plume"): plumeCm along it instead of straight over the fire, and
     // with the wind the flame's gas has taken
@@ -664,6 +667,9 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
           getBlock(emitter).lean = Vec3(side.x,cs,side.z)*len;
           }
         }
+      // a fast emitter (a flying bolt) drops its tail along the way of the tick, not in a clump per frame
+      emitter.trail    = (emitter.carried && decl.inherit>0 && decl.inherit<1 &&
+                          moved.quadLength()<=LeanJumpCm*LeanJumpCm) ? moved : Vec3();
       emitter.steadyAt = emitter.pos;
       emitter.carried  = true;
       }
@@ -852,10 +858,12 @@ void PfxBucket::buildSsbo() {
         const uint32_t seed   = uint32_t(pId+p.offset)*2654435761u ^ uint32_t(ps.maxLife)*40503u;
         const float    frames = float(decl.flipFrames);
         const float    age    = decl.flipSteady ? float(p.timeTotal%3600000u) : float(ps.maxLife-ps.life);
-        const float    t      = age*decl.flipFps/1000.f + float(seed%997u)/997.f*frames;
+        // once: the whole atlas over the particle's life, from the first frame, the last one held
+        const float    t      = decl.flipOnce ? std::min(age/float(std::max<uint16_t>(ps.maxLife,1))*frames, frames-1.f)
+                                              : age*decl.flipFps/1000.f + float(seed%997u)/997.f*frames;
         const float    f      = std::fmod(t, frames);
         const uint32_t f0     = uint32_t(f)%decl.flipFrames;
-        const uint32_t f1     = (f0+1)%decl.flipFrames;
+        const uint32_t f1     = decl.flipOnce ? std::min<uint32_t>(f0+1,decl.flipFrames-1u) : (f0+1)%decl.flipFrames;
         const uint32_t blend  = uint32_t((f-std::floor(f))*127.f+0.5f);
         px.bits0 |= 1u << 6;
         px.bits0 |= uint32_t(decl.flipCols-1) << 7 | uint32_t(decl.flipRows-1) << 10;

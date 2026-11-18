@@ -29,6 +29,9 @@ PfxEmitter::PfxEmitter(World& world, const ParticleFx* decl) {
 
 PfxEmitter::PfxEmitter(PfxObjects& owner, const ParticleFx* decl)
   :slot(owner,decl) {
+  if(decl!=nullptr)
+    for(const auto* other:decl->with)
+      extra.emplace_back(owner,other);
   }
 
 PfxEmitter::PfxEmitter(World& world, const asset::VirtualObject& vob) {
@@ -63,6 +66,7 @@ PfxEmitter::PfxEmitter(PfxEmitter && b)
 
 PfxEmitter& PfxEmitter::operator=(PfxEmitter &&b) {
   slot = std::move(b.slot);
+  extra = std::move(b.extra);
   std::swap(zone,  b.zone);
   std::swap(cpuDecl,b.cpuDecl);
   std::swap(cpuWorld,b.cpuWorld);
@@ -89,6 +93,10 @@ void PfxEmitter::setPosition(const Vec3& pos) {
   auto guard = slot.lock();
   slot.setPosition(pos);
   zone.setPosition(pos);
+  for(auto& i:extra) {
+    auto g = i.lock();
+    i.setPosition(pos);
+    }
   }
 
 bool PfxEmitter::renderPosition(Vec3& out) const {
@@ -97,10 +105,14 @@ bool PfxEmitter::renderPosition(Vec3& out) const {
 
 void PfxEmitter::setTarget(const Npc* tg) {
   slot.setTarget(tg);
+  for(auto& i:extra)
+    i.setTarget(tg);
   }
 
 void PfxEmitter::setDirection(const Matrix4x4& d) {
   slot.setDirection(d);
+  for(auto& i:extra)
+    i.setDirection(d);
   }
 
 void PfxEmitter::setActive(bool act) {
@@ -115,6 +127,8 @@ void PfxEmitter::setActive(bool act) {
     return;
     }
   slot.setActive(act);
+  for(auto& i:extra)
+    i.setActive(act);
   }
 
 bool PfxEmitter::isActive() const {
@@ -129,10 +143,14 @@ void PfxEmitter::setLooped(bool loop) {
     return;
     }
   slot.setLooped(loop);
+  for(auto& i:extra)
+    i.setLooped(loop);
   }
 
 void PfxEmitter::setMesh(const MeshObjects::Mesh* mesh, const Pose* pose, const std::vector<Tempest::Matrix4x4>* skin) {
   slot.setMesh(mesh,pose,skin);
+  for(auto& i:extra)
+    i.setMesh(mesh,pose,skin);
   }
 
 void PfxEmitter::setPhysicsEnable(World& p, std::function<void (Npc&)> cb) {
@@ -169,6 +187,9 @@ bool PfxEmitter::isAlive() const {
                                     : cpuStopped+cpuDecl->maxLifetime();
     return now<until;
     }
+  for(auto& i:extra)
+    if(i.isAlive())
+      return true;
   return slot.isAlive();
   }
 
@@ -176,4 +197,6 @@ void PfxEmitter::setObjMatrix(const Matrix4x4 &mt) {
   setPosition (mt.at(3,0),mt.at(3,1),mt.at(3,2));
   setDirection(mt);
   slot.setShapeMatrix(mt);
+  for(auto& i:extra)
+    i.setShapeMatrix(mt);
   }

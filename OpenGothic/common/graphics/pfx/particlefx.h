@@ -115,6 +115,8 @@ class ParticleFx final {
     uint8_t       flipFrames = 0;
     float         flipFps    = 0.f;
     bool          flipSteady = false;  // ParticleContent::Flipbook::steady
+    bool          flipOnce   = false;  // ParticleContent::Flipbook::once
+    std::vector<const ParticleFx*> with; // particles.d "with": effects an emitter of this one brings along
     // own motion and look (particles.d "curl", "drag", "stretch", "minPixels"; ParticleContent::Motion)
     PfxMotion::Params motion;
     float         stretchMs = 0.f;  // a velocity-oriented sprite grows by |v|*stretchMs along its path

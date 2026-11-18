@@ -178,6 +178,8 @@ uint64_t ParticleFx::effectPrefferedTime() const {
   auto v0   = prefferedTime;
   auto v1   = ppsCreateEm==nullptr ? 0 : ppsCreateEmDelay+ppsCreateEm->effectPrefferedTime();
   auto time = std::max(v0,v1);
+  for(const auto* other:with)
+    time = std::max(time,other->effectPrefferedTime());
 
   time = std::max<uint64_t>(1,time); // sleep spell has pfx burst effect with zero life span
   return time;

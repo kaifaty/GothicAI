@@ -38,6 +38,7 @@ class PfxBucket {
       Tempest::Vec3 pos          = {};
       Tempest::Vec3 steadyAt     = {}; // where the emitter was when its particles were last carried
       bool          carried      = false; // steadyAt is set
+      Tempest::Vec3 trail        = {}; // the emitter's way in this tick: particles of a tail are born along it
       // the air that passes the emitter, cm/ms: minus its own motion, through a spring (particles.d "lean")
       Tempest::Vec3 air          = {};
       Tempest::Vec3 airRate      = {};
