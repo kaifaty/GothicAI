@@ -199,6 +199,37 @@ jobs:
           Add-Content $env:GITHUB_ENV "PACKAGE_NAME=$name"
           Add-Content $env:GITHUB_ENV "PACKAGE_DIR=$dist"
 
+      - name: Reject ProgramData from both platform links
+        if: inputs.release == 'none'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          . ./scripts/windows/common.ps1
+          Import-VsEnvironment (Find-VisualStudio)
+          $env:PATH = "$(Join-Path $env:VULKAN_SDK 'Bin');$env:PATH"
+          $file = Join-Path $env:GITHUB_WORKSPACE 'OpenGothic/common/sha256.cpp'
+          $original = [IO.File]::ReadAllBytes($file)
+          $source = [IO.File]::ReadAllText($file)
+          $signature = 'void Sha256::update(const void* data, size_t size) {'
+          if (-not $source.Contains($signature)) { throw 'Missing Sha256::update injection site' }
+          $source = "#include `"programdata.h`"`n" + $source.Replace($signature, "$signature`n  (void)ProgramData::readIndex(std::filesystem::path(`"debt-1324`"));")
+          try {
+            [IO.File]::WriteAllText($file, $source)
+            foreach ($target in 'engine-platform-link', 'engine-island') {
+              $out = & cmake --build OpenGothic/build --target $target 2>&1 | Out-String
+              $rc = $LASTEXITCODE
+              $out -split '\r?\n' | Select-Object -Last 28 | ForEach-Object { Write-Host $_ }
+              $trace = Join-Path $env:GITHUB_WORKSPACE "OpenGothic/build/$target-Release.map.link.log"
+              if ($rc -eq 0 -or $out -notmatch 'gothic-base-runtime\(programdata\.cpp\.obj\)' -or
+                  $out -notmatch 'from\s+common/programdata\.cpp\s+belongs to gothic' -or
+                  -not (Select-String -Quiet -LiteralPath $trace -Pattern 'Loaded .*gothic-base-runtime\.lib\([^)]*programdata\.cpp\.obj\)')) {
+                throw "$target did not reject the expected mixed-runtime object (exit $rc)"
+              }
+              Write-Host "MSVC negative probe passed for $target, rejected programdata.cpp.obj"
+            }
+          } finally {
+            [IO.File]::WriteAllBytes($file, $original)
+          }
+
       - name: Hand the archive to the release job
         if: ${{ inputs.release != 'none' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
