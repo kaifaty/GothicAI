@@ -202,3 +202,53 @@ def test_spruce_a_is_built_as_before_and_thin_is_a_separate_step(config):
         assert thinned.metrics['thin']['card_growth'] == pytest.approx(thinned.metrics['thin']['cards_share'] ** -.5,
                                                                        abs=1e-3)
     assert digest(fir_tree.build(config)) == digest(tree)
+
+
+@pytest.mark.parametrize(('px', 'old_share'), [(400, .5), (200, .25), (100, .125), (50, 1 / 32)])
+def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, config, px, old_share):
+    tree = spruce['tree']
+    before = digest(tree)
+    normals = [part['normal'].copy() for part in tree.parts]
+    mask = tree_density.load_mask(HERE / config['atlas']['mask'])
+    _, boughs = tree.parts
+    source_colour = boughs['colour']
+    starts = [card['first'] for card in tree.cards]
+    positions = boughs['position'][boughs['index']]
+    areas = np.linalg.norm(np.cross(positions[:, 1] - positions[:, 0], positions[:, 2] - positions[:, 0]), axis=1)
+    source_areas = np.bincount(np.searchsorted(starts, boughs['index'][:, 0], side='right') - 1, weights=areas)
+
+    # The repository carries the cutout mask. Give it a varied RGB sheet for the offline test.
+    atlas = np.empty(mask.shape + (4,), np.uint8)
+    atlas[..., :3] = config['palette']['needles_srgb']
+    atlas[:mask.shape[0] // 2, :, :3] += 1
+    atlas[:, :mask.shape[1] // 2, :3] -= 1
+    atlas[..., 3] = mask * 255
+
+    assert [settings['px'] for settings in config['levels']] == [400, 200, 100, 50]
+    settings = next(level for level in config['levels'] if level['px'] == px)
+    level = fir_tree.design_level(tree, settings, mask, atlas)
+    level_wood, level_boughs = level.parts
+    triangles = sum(len(part['index']) for part in level.parts)
+    assert triangles <= int(tree.metrics['triangles'] * settings['share'])
+    assert triangles <= fir_tree.thin(tree, old_share, seed=4).metrics['triangles']
+    assert (level_wood['owner'] == 0).all()
+    assert any(len(card['members']) > 1 for card in level.cards)
+    assert sum(card['count'] for card in level.cards) == len(level_boughs['colour'])
+    for card in level.cards:
+        source = card['source']
+        members = card['members']
+        assert source in members
+        assert source_areas[source] == pytest.approx(max(source_areas[members]), rel=1e-6), card
+        original = tree.cards[source]
+        retained = level_boughs['colour'][card['first']:card['first'] + card['count']]
+        assert float(retained[:, 3].max()) / 255 >= settings['min_open'], card
+        np.testing.assert_array_equal(retained, source_colour[original['first']:original['first'] + original['count']])
+    assert digest(tree) == before
+    for part, original in zip(tree.parts, normals):
+        np.testing.assert_array_equal(part['normal'], original)
+
+    comparison = tree_density.compare_level(tree.parts, level.parts, mask, atlas, px)
+    assert len(comparison['views']) == 5
+    openings = {view['view']: view['background_level'] - view['background_full'] for view in comparison['views']}
+    assert max(map(abs, openings.values())) <= .01, (px, openings)
+    assert abs(comparison['tone']['relative']) <= .005, (px, comparison['tone'])
