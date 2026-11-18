@@ -68,9 +68,11 @@ struct SceneDesc {
   // the travelling front of the gust (foliageFrontAt, foliage_wind.glsl; common/graphics/foliagefront.h)
   vec4  foliageFront;     // xy: 0..1 of the turns of the wind speed's two terms at z=0; zw: the previous frame's
   vec4  foliageFrontK;    // xy: their turns per cm of z; z: the wind's scale; w: 1 when the front runs
-  // a tree's wind fades with the distance (foliageTreeFade, materials/foliage_tree.glsl): x the pixels of the main
+  // a tree's wind fades with the distance (foliageTreeFade, materials/foliage_tree.glsl): the pixels of the main
   // view a unit of the tangent is, in every view; 0 without the fade
-  vec4  foliageFade;
+  float foliageFadeScale;
+  uint  grassTrackPartsOff; // track diagnostics from grass parts; see grass/grass_track.glsl
+  uvec2 grassTrackPadding;
   // grass (grass/grass_common.glsl): x full density to here, cm; y the blades go into the ground from here; z the
   // ring's radius; w 1 with blades, 0.5 the ground's mark alone, 0 off
   vec4  grassRing;

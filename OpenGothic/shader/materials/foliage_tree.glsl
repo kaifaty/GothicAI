@@ -70,7 +70,7 @@ const float FoliageTreeFadeTrunkNone  = 2.5;
 // main view the most of it is at the tree's root: the needles' LeafMax, the end of the longest branch the rule
 // lets a tree of this height have, the lean of the top, all at a wind and a flutter of one, so the bark and the
 // leaves of a tree fade as one body. camPos: the main camera's, in every view, so the shadow fades with its tree;
-// pxPerTan: the pixels a unit of the tangent is there (SceneDesc::foliageFade.x), 0 without the fade
+// pxPerTan: the pixels a unit of the tangent is there (SceneDesc::foliageFadeScale), 0 without the fade
 vec3 foliageTreeFade(uint bits, float reach, mat4x3 mat, vec3 camPos, float pxPerTan) {
   if((bits >> 24)!=FoliageAnchorTree || pxPerTan<=0.0)
     return vec3(1.0);

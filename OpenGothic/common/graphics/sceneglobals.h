@@ -94,8 +94,8 @@ class SceneGlobals final {
     const Tempest::Vec3       clipInfo() const;
     // the eye of the main view and the size of the frame it is drawn into (the levels of strands, VisualObjects)
     Tempest::Vec3             camPos()    const { return uboGlobalCpu.camPos;    }
-    // SceneDesc::foliageFade.x of the frame (commitUbo): the scale of the tree's wind fade, 0 without it
-    float                     foliageFade() const { return uboGlobalCpu.foliageFade.x; }
+    // SceneDesc::foliageFadeScale of the frame (commitUbo): the scale of the tree's wind fade, 0 without it
+    float                     foliageFade() const { return uboGlobalCpu.foliageFadeScale; }
     // SceneDesc::grassRing: the field of grass says where its blades end (GrassField); zero without it
     void                      setGrassRing(const Tempest::Vec4& ring) { uboGlobalCpu.grassRing = ring; }
     // the last frame drew blades: the sun's screen ray over them runs in the next (graphics/grasscontact.h)
@@ -206,7 +206,9 @@ class SceneGlobals final {
       // the travelling front of the gust (graphics/foliagefront.h) and the grass ring (graphics/grass/grassparams.h)
       Tempest::Vec4                   foliageFront;
       Tempest::Vec4                   foliageFrontK;
-      Tempest::Vec4                   foliageFade; // x: FoliageTree::fadeScale of the main view (commitUbo), 0 off
+      float                           foliageFadeScale = 0; // FoliageTree::fadeScale of the main view (commitUbo), 0 off
+      uint32_t                        grassTrackPartsOff = 0;
+      uint32_t                        grassTrackPadding[2] = {};
       Tempest::Vec4                   grassRing;
       // the houses whose windows fade with their lamps (HouseLights::pack): three vectors a house
       Tempest::Vec4                   house[3*HouseLights::MaxHouses];
