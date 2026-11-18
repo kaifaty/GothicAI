@@ -25,7 +25,8 @@ if(DEFINED PLATFORM_CAPTURE_LOG)
       -DPLATFORM_CAPTURE_APPEND=ON -P "${CMAKE_CURRENT_LIST_FILE}" --)
     execute_process(COMMAND "${CMAKE_COMMAND}" -E env VERBOSE=1 ${command} RESULT_VARIABLE result)
   else()
-    execute_process(COMMAND "${CMAKE_COMMAND}" -E env VERBOSE=1 ${command}
+    # The checker reads the English archive-extraction diagnostics.
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E env VSLANG=1033 ${command}
       OUTPUT_VARIABLE output ERROR_VARIABLE output RESULT_VARIABLE result)
     # The manifest wrapper can invoke the linker more than once; keep every pass.
     file(APPEND "${PLATFORM_CAPTURE_LOG}" "${output}")
