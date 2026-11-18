@@ -1,6 +1,6 @@
 # Spruce A at noon, in the forest from fir_set.py and on its own at LONE (48500,6383.1,500).
 # The lone spruce's 18.47 m bounds, 67.5 degree vertical FOV and 1080 render lines give 99.6 and 49.8 px.
-# For reference impostor stills, change the first `impostor off` to `impostor force`.
+# Each lone view captures the mesh followed by the impostor at the same camera.
 # Forest cameras follow perf-trees.bench from the rock hill through its 300 m view to about 400 m.
 # Both `forest-300-*` samples hold the same view and switch only the representation.
 # @timeout 360
@@ -21,12 +21,21 @@ foliage wait-lull 1500 500
 wait 1500
 shot lone-100px
 wait 200
+impostor force
+wait 300
+shot lone-100px-on
+wait 200
+impostor off
 
 cam at 18500 7267 500 48500 7267 500
 streaming wait
 foliage wait-lull 1500 500
 wait 1500
 shot lone-50px
+wait 200
+impostor force
+wait 300
+shot lone-50px-on
 wait 200
 impostor auto
 deterministic off
