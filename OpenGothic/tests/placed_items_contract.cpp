@@ -990,10 +990,10 @@ std::vector<uint8_t> placementSnapshot(World& world,bool variables) {
     Tempest::MemWriter writer(bytes);
     Serialize out(writer);
     world.save(out);
+    out.setEntry("placement/quests"); world.script().saveQuests(out);
+    out.setEntry("placement/perceptions"); world.script().savePerc(out);
     if(variables) {
       out.setEntry("placement/variables"); world.script().saveVar(out);
-      out.setEntry("placement/quests"); world.script().saveQuests(out);
-      out.setEntry("placement/perceptions"); world.script().savePerc(out);
       }
     }
   return bytes;

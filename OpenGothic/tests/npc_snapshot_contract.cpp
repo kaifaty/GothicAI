@@ -600,7 +600,7 @@ void placementDefinitions(const fs::path& dir) {
         "nested insertion precedes the state-dependent helper");
   check(steps[2].function=="PLACE_DEPENDENT" && steps[2].deferred,
         "mutable-global helper is deferred at its original position");
-  check(steps[3].function=="WLD_ASSIGNROOMTOGUILD" && !steps[3].deferred && steps[3].args[1].integer==7,
+  check(steps[3].function=="WLD_SETGUILDATTITUDE" && !steps[3].deferred && steps[3].args[1].integer==2,
         "the order-dependent step remains after the deferred helper");
   check(steps[0].args[0].kind==PlacementDefinitions::Value::Kind::Symbol && steps[0].args[0].text=="NPC_NO_ID",
         "placement arguments name program symbols rather than VM indices");

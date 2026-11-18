@@ -145,17 +145,17 @@ inline NpcSnapshot::Program program() {
   f.op(Op::PUSHV,f.find("C_NPC.ID")); f.op(Op::PUSHV,f.find("C_NPC.LEVEL")); f.op(Op::MOVI); f.op(Op::RSR);
   const auto insertNpc=f.fn("WLD_INSERTNPC",{Type::INT,Type::STRING},true);
   const auto insertItem=f.fn("WLD_INSERTITEM",{Type::INT,Type::STRING},true);
-  const auto guild=f.fn("WLD_ASSIGNROOMTOGUILD",{Type::STRING,Type::INT},true);
+  const auto guild=f.fn("WLD_SETGUILDATTITUDE",{Type::INT,Type::INT,Type::INT},true);
   const auto mob=f.fn("WLD_SETMOBROUTINE",{Type::INT,Type::INT,Type::STRING,Type::INT},true);
   const auto nested=f.fn("PLACE_NESTED"); f.begin(nested);
   f.op(Op::PUSHI,npc); f.op(Op::PUSHV,point); f.op(Op::BE,insertNpc);
   f.op(Op::PUSHI,item); f.op(Op::PUSHV,point); f.op(Op::BE,insertItem); f.op(Op::RSR);
   const auto dependentPlacement=f.fn("PLACE_DEPENDENT"); f.begin(dependentPlacement);
-  f.op(Op::PUSHV,point); f.op(Op::PUSHV,chapter); f.op(Op::BE,guild); f.op(Op::RSR);
+  f.op(Op::PUSHI,1); f.op(Op::PUSHV,chapter); f.op(Op::PUSHI,2); f.op(Op::BE,guild); f.op(Op::RSR);
   const auto startup=f.fn("STARTUP_TEST"); f.begin(startup);
   f.call(nested); f.call(dependentPlacement);
   // Reordering the deferred helper changes the final guild as well as the trace.
-  f.op(Op::PUSHV,point); f.op(Op::PUSHI,7); f.op(Op::BE,guild);
+  f.op(Op::PUSHI,1); f.op(Op::PUSHI,2); f.op(Op::PUSHI,2); f.op(Op::BE,guild);
   f.op(Op::PUSHI,8); f.op(Op::PUSHI,15); f.op(Op::PUSHV,point); f.op(Op::PUSHI,1); f.op(Op::BE,mob);
   f.op(Op::PUSHI,trailerItem); f.op(Op::PUSHV,point); f.op(Op::BE,insertItem); f.op(Op::RSR);
   const auto error=f.fn("PLACE_SCRIPT_ERROR"); f.begin(error);
@@ -172,6 +172,21 @@ inline NpcSnapshot::Program program() {
   const auto globalStartup=f.fn("STARTUP_GLOBAL"); f.begin(globalStartup);
   // The real STARTUP_GLOBAL discards this external's return at the void function boundary.
   f.op(Op::BE,german); f.op(Op::RSR);
+  const auto guildClass=f.symbol("C_GILVALUES",Type::CLASS);
+  f.p.symbols[guildClass].class_size=sizeof(IGuildValues);
+  for(const char* field:{"WATER_DEPTH_KNEE","WATER_DEPTH_CHEST","JUMPUP_HEIGHT","SWIM_TIME","DIVE_TIME",
+      "STEP_HEIGHT","JUMPLOW_HEIGHT","JUMPMID_HEIGHT","SLIDE_ANGLE","SLIDE_ANGLE2","DISABLE_AUTOROLL",
+      "SURFACE_ALIGN","CLIMB_HEADING_ANGLE","CLIMB_HORIZ_ANGLE","CLIMB_GROUND_ANGLE","FIGHT_RANGE_BASE",
+      "FIGHT_RANGE_FIST","FIGHT_RANGE_G","FIGHT_RANGE_1HS","FIGHT_RANGE_1HA","FIGHT_RANGE_2HS","FIGHT_RANGE_2HA",
+      "FALLDOWN_HEIGHT","FALLDOWN_DAMAGE","BLOOD_DISABLED","BLOOD_MAX_DISTANCE","BLOOD_AMOUNT","BLOOD_FLOW",
+      "BLOOD_EMITTER","BLOOD_TEXTURE","TURN_SPEED"}) {
+    const bool text=std::string_view(field)=="BLOOD_EMITTER" || std::string_view(field)=="BLOOD_TEXTURE";
+    f.symbol(std::string("C_GILVALUES.")+field,text ? Type::STRING : Type::INT,66,Flag::MEMBER,int32_t(guildClass));
+    }
+  const auto guildMax=f.symbol("GIL_MAX",Type::INT,1,Flag::CONST);
+  f.p.symbols[guildMax].int_values[0]=66;
+  const auto guildValues=f.symbol("GIL_VALUES",Type::INSTANCE,0,Flag::CONST,int32_t(guildClass));
+  f.begin(guildValues); f.op(Op::RSR);
   const auto encoded=ProgramData::encodeProgram(f.p);
   return {std::move(f.p),encoded.name,encoded.sha256};
   }
