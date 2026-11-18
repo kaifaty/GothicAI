@@ -989,7 +989,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   if(grassStudy!=GrassContact::None) {
     // Capture the shader's classes directly, before any exposure, fog or antialiasing.
-    grassContactDiagnostic = Resources::device().attachment(TextureFormat::RGBA8, zbuffer.w(), zbuffer.h());
+    grassContactDiagnostic = Resources::device().attachment(TextureFormat::RGBA8, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
     cmd.setFramebuffer({{grassContactDiagnostic, Vec4(), Tempest::Preserve}}, {zbuffer, Tempest::Readonly});
     drawShadowResolve(cmd, wview, buildGrassMask, grassStudy);
     }
