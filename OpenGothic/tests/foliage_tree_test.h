@@ -73,6 +73,8 @@ void hizOccluderRule() {
           "a tree's alpha-tested leaves are no occluder, its solid bark stays one");
   require(!canopy(leaf,false) && !canopy(tuft,true) && !canopy(Params(),true),
           "a solid leaf, a tuft and the original's alpha-tested leaves (no `foliage`) stay occluders");
+  }
+
 // The fade of the tree's wind with the distance (the note's section 4; FoliageTree::fade, foliageTreeFade of the
 // shader, graphics/treewindfade.h): the spruce of 18 m of the probe and one of 6 m, seen at 2560x1440 and at
 // 1920x1080 with the game's field of view
@@ -210,7 +212,6 @@ void foliageTreeFadeMaths() {
           travel(tuftBits,85.f,Fade{0.f,0.f,0.f})==FoliageWind::travel(tuftBits,85.f) &&
           travel(leafBits,h,Fade{1.f,0.f,0.f})<travel(leafBits,h) && travel(leafBits,h,Fade{0.f,0.f,0.f})==0.f,
           "the bounds of a tree with all of its wind are what they were; a tuft's do not read the fade");
-  }
   }
 
 void foliageTreeMaths() {
