@@ -21,7 +21,7 @@
 
 using namespace Tempest;
 
-bool VisualObjects::benchImpostors = false;
+VisualObjects::BenchImpostors VisualObjects::benchImpostors = BenchImpostors::Auto;
 
 static RtScene::Category toRtCategory(DrawCommands::Type t) {
   switch (t) {
@@ -943,7 +943,7 @@ void VisualObjects::preFrameUpdateLevels() {
     if(mesh==nullptr)
       continue;
     const size_t n = std::min(mesh->levels.size(), MeshLevels::MaxLevels);
-    const bool canImpostor = obj.impostorShadowCmd!=uint16_t(-1);
+    const bool canImpostor = obj.impostorShadowCmd!=uint16_t(-1) && benchImpostors!=BenchImpostors::Off;
     uint8_t level = 0;
     if(obj.deformCount==0 && py!=0.f && resY>0) {
       float px[MeshLevels::MaxLevels+1] = {};
@@ -956,7 +956,7 @@ void VisualObjects::preFrameUpdateLevels() {
       obj.pos.project(middle);
       const float scale  = Vec3(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2)).length();
       const float height = MeshLevels::screenHeight((box[1].y-box[0].y)*scale, (middle-scene.camPos()).length(), py, resY);
-      if(canImpostor && benchImpostors && obj.visible) {
+      if(canImpostor && benchImpostors==BenchImpostors::Force && obj.visible) {
         level = uint8_t(n+1);
         } else {
         level = MeshLevels::pick(px, n+size_t(canImpostor), obj.level, height);

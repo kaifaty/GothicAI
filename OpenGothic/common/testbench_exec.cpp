@@ -214,8 +214,15 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   if(c=="water-film" && waterFilmCommand(waterFilmContext(),a,w,pl)) return;
   else if(c=="cloth" && clothCommand(clothContext(),a,w,pl)) return;
   else if(c=="foliage" && foliageCommand(a,w)) return;
-  else if(c=="impostor" && a.size()==2 && (a[1]=="force" || a[1]=="auto")) {
-    VisualObjects::benchImpostors = (a[1]=="force");
+  else if(c=="impostor" && a.size()==2) {
+    if(a[1]=="force")
+      VisualObjects::benchImpostors = VisualObjects::BenchImpostors::Force;
+    else if(a[1]=="off")
+      VisualObjects::benchImpostors = VisualObjects::BenchImpostors::Off;
+    else if(a[1]=="auto")
+      VisualObjects::benchImpostors = VisualObjects::BenchImpostors::Auto;
+    else
+      arenaAbort("impostor expects force, off, or auto");
     }
   else if(c=="grass" && grassCommand(a,w)) return;
   else if(waterCommand(bench.water,waterContext(),a,w,pl,ctrl)) return;
