@@ -1440,7 +1440,10 @@ void indexCases(const Fixture& fixture) {
 void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool dxt5 = false,
                   uint32_t side = 4, uint32_t mips = 1);
 
-constexpr std::string_view impostorLevel = R"({"impostor":{"albedo":"test/atlas.dds","surface":"test/atlas.dds","orm":"test/atlas.dds"},"px":49})";
+std::string impostorLevel(int px = 49) {
+  return R"({"impostor":{"albedo":"test/atlas.dds","surface":"test/atlas.dds","orm":"test/atlas.dds"},"px":)"+
+         std::to_string(px)+"}";
+  }
 
 // The two switches are read once, so their settings and environment cases need fresh processes.
 int levelSwitchChild(std::string_view mode) {
@@ -1459,7 +1462,7 @@ int levelSwitchChild(std::string_view mode) {
   glbFile(fixture.root/"meshes/test/lod1.glb");
   alphaDdsFile(fixture.root/"meshes/test/atlas.dds",false,true,MeshLevels::ImpostorAtlasSize,MeshLevels::ImpostorMipCount);
   fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400},)"+
-                std::string(impostorLevel)+"]}}");
+                impostorLevel()+"]}}");
   Resources resources;
   fixture.mount();
   const auto* proto = Resources::loadMesh("own_mesh.3ds");
@@ -1559,13 +1562,6 @@ void levelCases(const Fixture& fixture) {
   require(MeshLevels::pick(px,count,0,49)==4 && MeshLevels::pick(px,count,4,1000)==0,"a jump must cross every threshold at once");
   require(MeshLevels::pick(px,0,0,1)==0 && MeshLevels::pick(px,1,0,50)==1,
           "a record without levels must draw the mesh at any height; one level must be the last");
-  const float impostorPx[] = {400,200,100,50,49};
-  constexpr auto stageCount = std::size(impostorPx);
-  require(MeshLevels::pick(impostorPx,stageCount,4,49.f)==4 && MeshLevels::pick(impostorPx,stageCount,4,48.9f)==5 &&
-          MeshLevels::pick(impostorPx,stageCount,5,53.8f)==5 &&
-          MeshLevels::pick(impostorPx,stageCount,5,49.f * MeshLevels::Hysteresis)==4,
-          "the impostor must enter below its threshold and return to the last GLB after hysteresis");
-
   // the field
   const auto root = fixture.root/"meshes/test";
   glbFile(root/"own.glb");
@@ -1637,12 +1633,34 @@ void levelCases(const Fixture& fixture) {
       require(mesh.rtSlice(sub.iboOffset,sub.iboLength)==mesh.levels.back().sub[0],
               "rays must still use the last 3D level");
       }
+    if(expectedPx>0.f) {
+      const auto before = mesh.pickLevel(4,49.f,true);
+      const auto entered = mesh.pickLevel(before.stage,48.9f,true);
+      const auto held = mesh.pickLevel(entered.stage,53.8f,true);
+      const auto returned = mesh.pickLevel(held.stage,49.f * MeshLevels::Hysteresis,true);
+      require(before==MeshLevels::Selection{4,4} && !before.impostor() &&
+              entered==MeshLevels::Selection{5,4} && entered.impostor() && held==entered && returned==before,
+              "the impostor must enter below its threshold, keep level four for shadows and return after hysteresis");
+      require(mesh.pickLevel(held.stage,48.9f,false)==before,
+              "a disabled impostor must return to the last GLB");
+      }
     };
-  const std::string tail = ","+std::string(impostorLevel)+"]";
+  const std::string tail = ","+impostorLevel()+"]";
   loadImpostor(four+tail,4,49.f);
+  {
+    size_t rejected = 0;
+    Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+      if(mode==Tempest::Log::Error && std::string_view(text).find("px must be positive and less than the last GLB level's px")!=std::string_view::npos)
+        ++rejected;
+      });
+    struct LogReset { ~LogReset() { Tempest::Log::setOutputCallback({}); } } reset;
+    for(int px:{50,0,-1})
+      loadImpostor(four+","+impostorLevel(px)+"]",4,0.f);
+    require(rejected==3,"equal and nonpositive impostor thresholds must be rejected without discarding the GLBs");
+  }
   loadImpostor(four+R"(,{"impostor":{"albedo":"../atlas.dds"},"px":49}])",4,0.f);
-  loadImpostor("["+std::string(impostorLevel)+R"(,{"glb":"test/lod1.glb","px":50}])",1,0.f);
-  loadImpostor("["+std::string(impostorLevel)+"]",0,0.f);
+  loadImpostor("["+impostorLevel()+R"(,{"glb":"test/lod1.glb","px":50}])",1,0.f);
+  loadImpostor("["+impostorLevel()+"]",0,0.f);
   alphaDdsFile(atlas,false,true); // valid DDS, incompatible atlas dimensions and mip chain
   loadImpostor(four+tail,4,0.f);
   std::filesystem::remove(atlas);

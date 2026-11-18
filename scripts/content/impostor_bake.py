@@ -12,11 +12,13 @@ The frame grid and packed channels match shader/materials/impostor.*.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import importlib.util
 import io
 import json
 import math
+import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -336,13 +338,19 @@ def atomic_write(path: Path, data: bytes) -> None:
 
 
 def bake(content: Path, visual: str, px: float) -> dict:
+    # Lock a stable file beside the index, whose inode changes on each atomic write.
+    with (content / 'meshes' / 'meshes.json.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _bake(content, visual, px)
+
+
+def _bake(content: Path, visual: str, px: float) -> dict:
     meshes = content / 'meshes'
     index = meshes / 'meshes.json'
     records = json.loads(index.read_text())
     record = records[visual]
     levels = record['levels']
-    if levels and 'impostor' in levels[-1]:
-        levels.pop()
+    previous = levels.pop()['impostor'] if levels and 'impostor' in levels[-1] else {}
     if not levels or not math.isfinite(px) or not 0 < px < levels[-1]['px']:
         raise ValueError('the impostor threshold must be positive and below the final triangle level')
     full = path_in(meshes, record['glb'])
@@ -364,6 +372,19 @@ def bake(content: Path, visual: str, px: float) -> dict:
         atlases[name] = path.relative_to(meshes).as_posix()
     levels.append(dict(impostor=atlases, px=px))
     atomic_write(index, (json.dumps(records, indent=2) + '\n').encode())
+    if previous and full.parent.resolve().is_relative_to(meshes.resolve()):
+        referenced = {Path(path) for record in records.values() if record.get('levels')
+                      for path in record['levels'][-1].get('impostor', {}).values()}
+        for layer in LAYERS:
+            if layer not in previous:
+                continue
+            relative = Path(previous[layer])
+            if relative.is_absolute() or relative in referenced:
+                continue
+            path = meshes / relative
+            pattern = re.escape(f'{full.stem}.impostor-{layer}-') + r'[0-9a-f]{16}\.dds'
+            if path.parent == full.parent and re.fullmatch(pattern, path.name):
+                path.unlink(missing_ok=True)
     return dict(visual=visual, source=coarse.relative_to(meshes).as_posix(), px=px, atlases=atlases,
                 sha256=hashes, size=FRAMES * TILE, frames=FRAMES**2, mips=MIPS,
                 triangles=sum(len(prim.positions) for prim in primitives))

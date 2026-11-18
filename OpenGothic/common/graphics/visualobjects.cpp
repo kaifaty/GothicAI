@@ -433,7 +433,6 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     for(size_t i=0; i<mesh.sub.size() && i<NoLevels; ++i)
       if(mesh.sub[i].iboOffset==iboOff && mesh.sub[i].iboLength==iboLen) {
         obj.levelSub = uint8_t(i);
-        obj.level    = 0;
         objectsLevels.insert(id);
         if(type==DrawCommands::Static && mesh.impostor.px>0.f)
           setImpostorShadow(obj, true);
@@ -895,7 +894,7 @@ void VisualObjects::writeTreeOcclusionProbe(std::ostream& out) {
     const bool canopy = HiZOccluders::canopy(mat.foliage, mat.alpha==Material::AlphaTest);
     const float grow = mat.hasMaterialMaps() ? FoliageTree::travel(mat.foliage, mesh.bbox.bbox[0], mesh.bbox.bbox[1]) : 0.f;
     const float currentGrow = cluster.r - mesh.drawn.rConservative - mat.waveMaxAmplitude;
-    out << cluster.instanceId << ' ' << unsigned(obj.level) << ' ' << cluster.meshletCount << ' ' << canopy
+    out << cluster.instanceId << ' ' << unsigned(obj.level.stage) << ' ' << cluster.meshletCount << ' ' << canopy
         << ' ' << cluster.pos.x << ' ' << cluster.pos.y << ' ' << cluster.pos.z << ' ' << cluster.r;
     for(size_t i=0; i<16; ++i)
       out << ' ' << obj.pos.data()[i];
@@ -910,7 +909,7 @@ std::pair<uint32_t,uint32_t> VisualObjects::drawnMeshlets(Object& obj) {
   if(obj.strandMeshlets>0)
     return {first, obj.strandMeshlets};
   if(const auto* mesh = obj.bucketId->staticMesh)
-    return mesh->levelMeshlets(obj.iboOff, obj.iboLen, std::min<size_t>(obj.level, mesh->levels.size()));
+    return mesh->levelMeshlets(obj.iboOff, obj.iboLen, obj.level.glb);
   return {first, obj.iboLen/PackedMesh::MaxInd};
   }
 
@@ -942,26 +941,18 @@ void VisualObjects::preFrameUpdateLevels() {
     const auto* mesh = obj.bucketId->staticMesh;
     if(mesh==nullptr)
       continue;
-    const size_t n = std::min(mesh->levels.size(), MeshLevels::MaxLevels);
     const bool canImpostor = obj.impostorShadowCmd!=uint16_t(-1) && benchImpostors!=BenchImpostors::Off;
-    uint8_t level = 0;
+    MeshLevels::Selection level;
     if(obj.deformCount==0 && py!=0.f && resY>0) {
-      float px[MeshLevels::MaxLevels+1] = {};
-      for(size_t i=0; i<n; ++i)
-        px[i] = mesh->levels[i].px;
-      if(canImpostor)
-        px[n] = mesh->impostor.px;
       const auto& box    = mesh->bbox.bbox;
       Vec3        middle = (box[0]+box[1])*0.5f;
       obj.pos.project(middle);
       const float scale  = Vec3(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2)).length();
       const float height = MeshLevels::screenHeight((box[1].y-box[0].y)*scale, (middle-scene.camPos()).length(), py, resY);
-      if(canImpostor && benchImpostors==BenchImpostors::Force && obj.visible) {
-        level = uint8_t(n+1);
-        } else {
-        level = MeshLevels::pick(px, n+size_t(canImpostor), obj.level, height);
-        }
-      if(level>n && obj.levelSub==0 && obj.visible && drawStatic) {
+      const bool forceImpostor = canImpostor && benchImpostors==BenchImpostors::Force && obj.visible;
+      // The forced bench view selects below every threshold.
+      level = mesh->pickLevel(obj.level.stage, forceImpostor ? 0.f : height, canImpostor);
+      if(level.impostor() && obj.levelSub==0 && obj.visible && drawStatic) {
         const Vec3 x(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2));
         const Vec3 y(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
         const Vec3 z(obj.pos.at(2,0), obj.pos.at(2,1), obj.pos.at(2,2));
@@ -971,10 +962,10 @@ void VisualObjects::preFrameUpdateLevels() {
           impostorDraws.push_back(id);
         }
       }
-    if(obj.levelSub==0 && level<=n)
-      ++count[level];
+    if(obj.levelSub==0 && !level.impostor())
+      ++count[level.glb];
     auto& c = clustersMem[obj.clusterId];
-    const auto command = level>n ? obj.impostorShadowCmd : obj.cmdId;
+    const auto command = level.impostor() ? obj.impostorShadowCmd : obj.cmdId;
     if(level==obj.level && c.commandId==command)
       continue;
     obj.level = level;

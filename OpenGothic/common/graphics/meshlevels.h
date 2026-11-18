@@ -33,6 +33,14 @@ constexpr uint32_t ImpostorMipCount  = 5;
 // level back and forth
 constexpr float  Hysteresis = 1.1f;
 
+struct Selection {
+  uint8_t stage = 0;
+  uint8_t glb   = 0;
+
+  bool impostor() const { return stage!=glb; }
+  bool operator==(const Selection&) const = default;
+  };
+
 inline bool parse(std::string_view env, bool ini) {
   return env.empty() ? ini : env!="0";
   }

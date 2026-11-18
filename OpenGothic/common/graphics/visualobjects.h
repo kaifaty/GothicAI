@@ -6,6 +6,7 @@
 #include "drawclusters.h"
 #include "drawcommands.h"
 #include "instancestorage.h"
+#include "meshlevels.h"
 #include "texturescreendemand.h"
 
 #include <filesystem>
@@ -203,7 +204,7 @@ class VisualObjects final {
       bool                tree           = false; // a tree in the wind: its sphere follows the wind's fade
       uint16_t            treeFade       = 0;     // ...the fade its sphere is grown by now (preFrameUpdateTrees)
       uint8_t             levelSub       = NoLevels; // its submesh of a mesh with levels of detail (meshlevels.h)
-      uint8_t             level          = 0;     // ...the level its cluster draws now: 0 the mesh itself
+      MeshLevels::Selection level;                // ...the stage selected for this instance, 0 the mesh itself
       bool                isGhost       = false;
       bool                visible       = true;
       Resources::TextureCategory textureCategory = Resources::TextureCategory::Dynamic;

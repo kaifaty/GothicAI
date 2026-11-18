@@ -1,6 +1,8 @@
 """The forest of the cost stand (scripts/content/fir_set.py forest, reports/engine/2026-11-16-modern-trees/tree-cost.md):
 the forests of 64, 256 and 1 024 spruces nest, every place keeps its spruce and yaw, the grid is STEP apart."""
 import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import numpy as np
 import pytest
@@ -70,6 +72,8 @@ def test_the_levels_are_the_field_the_engine_takes_and_keep_the_spruces_material
 
 
 def test_baking_the_same_mesh_level_produces_identical_atlases(tmp_path, monkeypatch):
+    # Match the shader's frame grid and the engine's DDS dimensions before shrinking the fixture.
+    assert (impostor_bake.FRAMES, impostor_bake.TILE, impostor_bake.PADDING, impostor_bake.MIPS) == (12, 128, 16, 5)
     monkeypatch.setattr(impostor_bake, 'FRAMES', 4)
     monkeypatch.setattr(impostor_bake, 'TILE', 16)
     monkeypatch.setattr(impostor_bake, 'PADDING', 4)
@@ -91,9 +95,20 @@ def test_baking_the_same_mesh_level_produces_identical_atlases(tmp_path, monkeyp
     }}))
     source = {'glb': 'level.glb', 'px': 50}
     index = meshes / 'meshes.json'
-    index.write_text(json.dumps({'OWN_LEAF': {'glb': 'base.glb', 'levels': [source]}}))
+    visuals = ('OWN_LEAF', 'OWN_ALIAS')
+    index.write_text(json.dumps({visual: {'glb': 'base.glb', 'levels': [source]} for visual in visuals}))
 
-    first = impostor_bake.bake(tmp_path, 'OWN_LEAF', 49)
+    start = Barrier(2)
+
+    def bake_visual(visual):
+        start.wait(timeout=10)
+        return impostor_bake.bake(tmp_path, visual, 49)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, alias = pool.map(bake_visual, visuals)
+    assert first['atlases'] == alias['atlases']
+    entry = {'impostor': first['atlases'], 'px': 49}
+    assert [record['levels'] for record in json.loads(index.read_text()).values()] == [[source, entry]] * 2
     paths = {layer: meshes / path for layer, path in first['atlases'].items()}
     atlases = {layer: path.read_bytes() for layer, path in paths.items()}
     coverage = impostor_bake.dds_mips(paths['albedo'])[0][..., 3]
@@ -102,7 +117,16 @@ def test_baking_the_same_mesh_level_produces_identical_atlases(tmp_path, monkeyp
         path.unlink()
     assert impostor_bake.bake(tmp_path, 'OWN_LEAF', 49) == first
     assert {layer: path.read_bytes() for layer, path in paths.items()} == atlases
-    assert json.loads(index.read_text())['OWN_LEAF']['levels'] == [source, {'impostor': first['atlases'], 'px': 49}]
+
+    part['position'][2, 2] = 1
+    tree_glb.write(meshes / 'level.glb', [part])
+    updated = impostor_bake.bake(tmp_path, 'OWN_LEAF', 49)
+    assert updated['atlases'] != first['atlases']
+    assert all(path.exists() for path in paths.values())
+    assert impostor_bake.bake(tmp_path, 'OWN_ALIAS', 49)['atlases'] == updated['atlases']
+    assert set(meshes.glob('*.impostor-*.dds')) == {meshes / path for path in updated['atlases'].values()}
+    entry = {'impostor': updated['atlases'], 'px': 49}
+    assert [record['levels'] for record in json.loads(index.read_text()).values()] == [[source, entry]] * 2
 
 
 def test_tree_occlusion_probe_detects_clear_depth_outside_the_projected_box():

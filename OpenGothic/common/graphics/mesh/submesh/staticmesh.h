@@ -17,6 +17,7 @@
 
 class PackedMesh;
 class LandscapeRange;
+namespace MeshLevels { struct Selection; }
 
 // Pages keep their buffers and addresses while individual chunk ranges recycle.
 class LandscapePages final {
@@ -109,6 +110,7 @@ class StaticMesh {
     std::pair<size_t,size_t>              rtSlice(size_t iboOffset, size_t iboLen) const;
     // The meshlets (first, count) the submesh at this slice draws at a level of detail: 0 or one the mesh has not, its own
     std::pair<uint32_t,uint32_t>          levelMeshlets(size_t iboOffset, size_t iboLen, size_t level) const;
+    MeshLevels::Selection                pickLevel(uint8_t previous, float height, bool allowImpostor) const;
 
     const Tempest::StorageBuffer& vboBuffer() const;
     const Tempest::StorageBuffer& ibo8Buffer() const;
