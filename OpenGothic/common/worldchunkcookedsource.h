@@ -19,12 +19,13 @@
 // one line per world load, none when it is missing; a cell whose .wcb is there
 // but cannot be used logs one line and reads its GLB from then on. A missing
 // .wcb is not logged. OPENGOTHIC_WCB=0 at world load turns the cooked path off.
+// OPENGOTHIC_CLUSTER_LOD=0 skips the hierarchy sections even on the cooked path.
 // The game writes no cooked file. A healthy cooked read does not hash the GLB,
 // so it does not notice a same-length edit. The cook removes the index before it
 // writes cells and writes it last (worldchunkcook.h), so an interrupted cook
 // leaves no index; an older index put back by hand beside newer cells is
-// outside this contract, and content-convert verify-cooked-world finds it (it
-// compares each cell's hash with the index).
+// outside this contract. content-convert verify-cooked-world compares the GLB
+// hashes in the cells and the index, then checks the rebuilt geometry and graph.
 // After a catalogue start (worldchunkcatalogue.h) there are no totals of
 // readWorldChunks to compare: the start loads the index it validated itself
 // (loadCatalogue), every GLB had its entry's length. A cell that falls back uses
