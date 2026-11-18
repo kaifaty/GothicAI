@@ -5,9 +5,13 @@
 // and the processor's mirror of the wind's travelling front against the scene's wind. CPU only: no device, no game
 // data.
 #include "graphics/foliagefront.h"
+#include "graphics/grass/grassdiag.h"
+#include "graphics/grass/grassfield.h"
 #include "graphics/grass/grassparams.h"
 #include "graphics/grass/grassplace.h"
+#include "graphics/grass/grasswaste.h"
 
+#include <Tempest/Log>
 #include <rapidjson/document.h>
 
 #include <algorithm>
@@ -21,8 +25,12 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
+
+#include <sys/wait.h>
+#include <unistd.h>
 
 // the meadow's own ground: grass_cover_test.cpp
 size_t grassCoverTests();
@@ -129,6 +137,14 @@ void switches() {
   require(full.full<full.fadeFrom && full.fadeFrom<full.radius && low.full<low.fadeFrom && low.fadeFrom<low.radius &&
           low.radius<full.radius && low.density<full.density && full.density==1.f,
           "the ring of the low quality is smaller and thinner");
+
+  setenv("OPENGOTHIC_GRASS_LINKS","750,1750,3000",1);
+  const Grass::WasteRule waste;
+  require(Grass::broadLinks(749.f)==4 && Grass::broadLinks(750.f)==3 &&
+          Grass::broadLinks(1750.f)==2 && Grass::broadLinks(3000.f)==1 && waste.links(1750.f)==2,
+          "drawing and waste counting use the configured grass link thresholds");
+  unsetenv("OPENGOTHIC_GRASS_LINKS");
+  require(Grass::broadLinks(750.f)==3, "grass link thresholds are read once");
   }
 
 // ---- the ground of the tests ----
@@ -230,6 +246,62 @@ std::string at(int32_t cx, int32_t cz) {
   }
 
 constexpr int32_t U = Grass::Unit;
+
+void drawOrder(bool disabled) {
+  struct Cell final {
+    float dist;
+    };
+  struct Draw final {
+    const Cell* cell;
+    uint32_t table;
+    bool operator==(const Draw&) const = default;
+    };
+  const Cell farther{2500.f}, closer{300.f}, tied{300.f};
+  std::vector<Draw> draws = {{&farther,0}, {&farther,32}, {&closer,64}, {&closer,96}};
+  // Forty draws at the same distance exercise ties beyond std::sort's small-range insertion sort.
+  for(uint32_t i=0; i<38; ++i)
+    draws.push_back({&tied,(i+4)*32});
+  auto expected = draws;
+  Grass::orderDraws(draws);
+  if(disabled) {
+    require(draws==expected, "OPENGOTHIC_GRASS_ORDER=0 must keep cell traversal order");
+    } else {
+    std::rotate(expected.begin(), expected.begin()+2, expected.end());
+    require(draws==expected, "grass draws must be near first, preserving batch order and span offsets");
+    }
+  }
+
+void environmentFallbacks() {
+  // Each child sets its environment before the first use of the cached switches.
+  for(const char* links:{"3000,1750,750", "750,1750,3000x"}) {
+    const auto child = fork();
+    require(child>=0, "cannot fork grass environment test");
+    if(child==0) {
+      try {
+        require(setenv("OPENGOTHIC_GRASS_ORDER","0",1)==0, "cannot set grass order switch");
+        drawOrder(true);
+        require(setenv("OPENGOTHIC_GRASS_LINKS",links,1)==0, "cannot set invalid grass link thresholds");
+        size_t errors = 0;
+        Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+          if(mode==Tempest::Log::Error && std::string_view(text).find("OPENGOTHIC_GRASS_LINKS")!=std::string_view::npos)
+            ++errors;
+          });
+        require(Grass::broadLinks(999.f)==4 && Grass::broadLinks(1000.f)==3 &&
+                Grass::broadLinks(2500.f)==2 && Grass::broadLinks(4500.f)==1,
+                "invalid grass link thresholds must restore defaults");
+        require(errors==1, "invalid grass link thresholds must be logged once");
+        _exit(0);
+        }
+      catch(const std::exception& e) {
+        std::cerr << "grass environment test failed: " << e.what() << '\n';
+        _exit(1);
+        }
+      }
+    int status = 0;
+    require(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0,
+            std::string("grass environment test failed for ")+links);
+    }
+  }
 
 // ---- the placement ----
 
@@ -759,11 +831,14 @@ void windFront() {
 
 int main() {
   try {
+    environmentFallbacks();
     records();
     bucketBits();
     switches();
     patches();
     tufts();
+    require(unsetenv("OPENGOTHIC_GRASS_ORDER")==0, "cannot clear grass order switch");
+    drawOrder(false);
     placementRepeats();
     placementGround();
     placementEdge();

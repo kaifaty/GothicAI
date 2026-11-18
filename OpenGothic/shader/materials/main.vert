@@ -239,7 +239,7 @@ vec4  processVertex(out Varyings var, uint instanceOffset, const uint meshletId,
   }
 
 #if defined(GL_VERTEX_SHADER)
-void vertexShader(const uvec4 task) {
+void vertexShader(const uvec4 task, const uint materialRef) {
   const uint  instanceId = task.x;
   const uint  meshletId  = task.y;
   const uint  bucketId   = task.z;
@@ -255,7 +255,7 @@ void vertexShader(const uvec4 task) {
     }
 
 #if defined(MAT_VARYINGS)
-  bucketIdOut = bucketId;
+  bucketIdOut = materialRef;
 #endif
 
   Varyings var;
@@ -267,7 +267,7 @@ void vertexShader(const uvec4 task) {
 #endif
   }
 #else
-void meshShader(const uvec4 task) {
+void meshShader(const uvec4 task, const uint materialRef) {
   const uint  instanceId = task.x;
   const uint  meshletId  = task.y;
   const uint  bucketId   = task.z;
@@ -282,7 +282,7 @@ void meshShader(const uvec4 task) {
   SetMeshOutputsEXT(vertCount, primCount);
 
 #if defined(MAT_VARYINGS)
-  bucketIdOut[laneID] = bucketId;
+  bucketIdOut[laneID] = materialRef;
 #endif
 
   Varyings var;
@@ -371,15 +371,22 @@ void main() {
   const uint firstMeshlet = push.firstMeshlet;
 #endif
 
-  const uvec4 task = payload[workIndex + firstMeshlet];
+  const uint payloadId = workIndex + firstMeshlet;
+  const uvec4 task     = payload[payloadId];
+  uint materialRef     = task.z;
+#if defined(MAT_MOTION)
+  // The probe uses the existing flat output to recover both the bucket and instance.
+  if((scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u)
+    materialRef = payloadId;
+#endif
 
 #if defined(VIRTUAL_SHADOW)
   initVsm(task);
 #endif
 
 #if defined(GL_VERTEX_SHADER)
-  vertexShader(task);
+  vertexShader(task, materialRef);
 #else
-  meshShader(task);
+  meshShader(task, materialRef);
 #endif
   }

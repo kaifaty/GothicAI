@@ -5,6 +5,7 @@
 #include <cstdlib>
 
 #include "graphics/dynamic/frustrum.h"
+#include "graphics/grass/grassdiag.h"
 
 using namespace Tempest;
 
@@ -25,11 +26,7 @@ size_t WasteRule::ranks(float dist) const {
 uint8_t WasteRule::links(float dist) const {
   if(fine)
     return uint8_t(dist<full ? 2 : 1);
-  uint8_t s = maxSegments;
-  for(size_t i=0; i<segmentsN; ++i)
-    if(dist>=segmentsTo[i])
-      --s;
-  return s;
+  return broadLinks(dist);
   }
 
 void countWaste(Waste& out, const Frustrum& fr, const Vec3& cam, const WasteRule& rule, const WasteCell& cell,

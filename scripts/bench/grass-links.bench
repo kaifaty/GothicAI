@@ -1,0 +1,64 @@
+# Four still-air views from grass-frames.bench, plus a view along the meadow and a run in natural wind.
+# Run once per OPENGOTHIC_GRASS_LINKS value on Ryzen at 2560x1440 with meadow content.
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+set time 12 0
+cloth wind calm
+goto NW_TAVERNE_TROLLAREA_03
+clear 3000
+face wp NW_TAVERNE_TROLLAREA_05
+streaming wait
+grass wait
+wait 5000
+shot meadow-1
+grass stats
+wait 200
+goto NW_TAVERNE_TROLLAREA_04
+cam at 38907 4994 -1252 42532 2685 438
+grass wait
+wait 4000
+shot far
+grass stats
+wait 200
+cam game
+goto pos 41701 3320 795
+face 0
+grass wait
+wait 5000
+shot game-verge-across
+grass stats
+wait 200
+goto pos 40003 3790 -1503
+cam at 40503 3581 -902 41503 3480 -902
+grass wait
+wait 4000
+shot stone
+grass stats
+wait 200
+
+# From the southern slope, looking northeast along the grassy side of the track.
+cam at 41100 3900 -1600 42350 3300 2150
+grass wait
+wait 4000
+shot meadow-along
+grass stats
+wait 200
+
+cloth wind natural
+cam game
+goto NW_TAVERNE_TROLLAREA_02
+face wp NW_TAVERNE_TROLLAREA_03
+grass wait
+wait 3000
+rec meadow-run
+wait 300
+walkto NW_TAVERNE_TROLLAREA_05
+walkto NW_TAVERNE_TROLLAREA_08
+wait 17500
+stop

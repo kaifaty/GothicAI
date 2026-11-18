@@ -162,6 +162,12 @@ StaticMesh::StaticMesh(const PackedMesh& mesh) {
 
   initSubMeshes(mesh);
 
+  if(!mesh.vertices.empty() && mesh.meshletBounds.size()*PackedMesh::MaxVert==mesh.vertices.size()) {
+    meshletSpheres.reserve(mesh.meshletBounds.size());
+    for(auto& b:mesh.meshletBounds)
+      meshletSpheres.emplace_back(b.pos.x, b.pos.y, b.pos.z, b.r);
+    }
+
   if(Resources::hasGraphicsDevice() && Shaders::options().doRtScene) {
     LoadProbe::Vobs::Scope probe("mesh_gpu");
     for(size_t i=0;i<mesh.subMeshes.size();++i) {
@@ -203,6 +209,7 @@ StaticMesh& StaticMesh::operator=(StaticMesh&& other) {
   bbox=other.bbox;
   drawn=other.drawn;
   levels=std::move(other.levels);
+  meshletSpheres=std::move(other.meshletSpheres);
   pageRange=std::move(other.pageRange);
   return *this;
   }

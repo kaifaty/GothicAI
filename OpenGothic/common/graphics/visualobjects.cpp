@@ -13,6 +13,8 @@
 #include "graphics/mesh/submesh/animmesh.h"
 #include "frameprofile.h"
 #include "graphics/meshlevels.h"
+#include "graphics/hizoccluders.h"
+#include <ostream>
 #include "loadprobe.h"
 #include "physics/worldwind.h"
 #include "shaders.h"
@@ -868,6 +870,28 @@ void VisualObjects::preFrameUpdateTrees() {
     obj.treeFade = code;
     clustersMem[obj.clusterId].r = mesh->drawn.rConservative + mat.waveMaxAmplitude + FoliageTree::travel(bits, reach, fade);
     clustersMem.markClusters(obj.clusterId);
+    }
+  }
+
+void VisualObjects::writeTreeOcclusionProbe(std::ostream& out) {
+  for(auto id : objectsLevels) {
+    auto& obj = objects[id];
+    const auto& bucket = *obj.bucketId;
+    const auto& mat = bucket.mat;
+    if(!FoliageTree::isTree(mat.foliage))
+      continue;
+    const auto& mesh = *bucket.staticMesh;
+    const auto& cluster = clustersMem[obj.clusterId];
+    const bool canopy = HiZOccluders::canopy(mat.foliage, mat.alpha==Material::AlphaTest);
+    const float grow = mat.hasMaterialMaps() ? FoliageTree::travel(mat.foliage, mesh.bbox.bbox[0], mesh.bbox.bbox[1]) : 0.f;
+    const float currentGrow = cluster.r - mesh.drawn.rConservative - mat.waveMaxAmplitude;
+    out << cluster.instanceId << ' ' << unsigned(obj.level) << ' ' << cluster.meshletCount << ' ' << canopy
+        << ' ' << cluster.pos.x << ' ' << cluster.pos.y << ' ' << cluster.pos.z << ' ' << cluster.r;
+    for(size_t i=0; i<16; ++i)
+      out << ' ' << obj.pos.data()[i];
+    for(const auto& v : mesh.drawn.bbox)
+      out << ' ' << v.x << ' ' << v.y << ' ' << v.z;
+    out << ' ' << grow << ' ' << currentGrow << '\n';
     }
   }
 

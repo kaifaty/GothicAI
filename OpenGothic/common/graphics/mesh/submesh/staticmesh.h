@@ -127,6 +127,9 @@ class StaticMesh {
     Bounds                          drawn;
     std::vector<Level>              levels;
     float                           strandWidth = 0; // PackedMesh::strandWidth
+    // the sphere of each meshlet in the mesh's space (centre, radius), levels included: the shadow pages take an
+    // object's meshlets by them (graphics/meshletspheres.h); empty for the landscape and meshes without them
+    std::vector<Tempest::Vec4>      meshletSpheres;
 
   private:
     void initSubMeshes(const PackedMesh& mesh);
