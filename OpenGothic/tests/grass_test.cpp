@@ -288,7 +288,8 @@ void environmentFallbacks() {
             ++errors;
           });
         require(Grass::broadLinks(799.f)==4 && Grass::broadLinks(800.f)==3 &&
-                Grass::broadLinks(1200.f)==2 && Grass::broadLinks(2400.f)==1,
+                Grass::broadLinks(1199.f)==3 && Grass::broadLinks(1200.f)==2 &&
+                Grass::broadLinks(2399.f)==2 && Grass::broadLinks(2400.f)==1,
                 "unset or invalid grass link thresholds must use defaults");
         require(errors==size_t(links!=nullptr), "only invalid grass link thresholds must be logged once");
         _exit(0);
