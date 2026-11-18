@@ -1,6 +1,7 @@
 #include "sceneglobals.h"
 #include "graphics/foliagefront.h"
 #include "graphics/contactao.h"
+#include "graphics/grass/grassdiag.h"
 #include "graphics/grasscontact.h"
 #include "graphics/hizoccluders.h"
 #include "graphics/lampcontact.h"
@@ -278,6 +279,7 @@ void SceneGlobals::commitUbo(uint8_t fId) {
   // the tree's wind fades by its size in the main view's pixels, in the shadow views as well (graphics/treewindfade.h)
   uboGlobalCpu.foliageFade = Tempest::Vec4(TreeWindFade::enabled() ? FoliageTree::fadeScale(proj.at(1,1), uboGlobalCpu.screenRes.y) : 0.f,
                                            0.f, 0.f, 0.f);
+  uboGlobalCpu.viewFlags = (uboGlobalCpu.viewFlags & ~Grass::PartTrackMask) | (Grass::benchPartsOff() & Grass::PartTrackMask);
   UboGlobal perView[V_Count];
   uboGlobalPf[fId][V_Main].update(&uboGlobalCpu);
 

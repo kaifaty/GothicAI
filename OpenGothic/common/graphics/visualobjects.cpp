@@ -21,6 +21,8 @@
 
 using namespace Tempest;
 
+VisualObjects::BenchImpostors VisualObjects::benchImpostors = BenchImpostors::Auto;
+
 static RtScene::Category toRtCategory(DrawCommands::Type t) {
   switch (t) {
     case DrawCommands::Landscape: return RtScene::Landscape;
@@ -431,8 +433,9 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     for(size_t i=0; i<mesh.sub.size() && i<NoLevels; ++i)
       if(mesh.sub[i].iboOffset==iboOff && mesh.sub[i].iboLength==iboLen) {
         obj.levelSub = uint8_t(i);
-        obj.level    = 0;
         objectsLevels.insert(id);
+        if(type==DrawCommands::Static && mesh.impostor.px>0.f)
+          setImpostorShadow(obj, true);
         break;
         }
 
@@ -569,6 +572,8 @@ void VisualObjects::free(size_t id) {
   const uint32_t numCluster = (obj.type==DrawCommands::Landscape ? meshletCount : 1);
 
   drawCmd.addClusters(obj.cmdId, -meshletCount);
+  if(obj.impostorShadowCmd!=uint16_t(-1))
+    setImpostorShadow(obj, false);
   clustersMem.free(obj.clusterId, numCluster);
   if(Shaders::options().doRtScene) {
     // the slot goes at the next frame; a reused id is marked again by its new object
@@ -811,6 +816,8 @@ void VisualObjects::setAsGhost(size_t id, bool g) {
 
   const uint32_t meshletCount = (obj.iboLen/PackedMesh::MaxInd);
   drawCmd.addClusters(obj.cmdId, -meshletCount);
+  if(obj.impostorShadowCmd!=uint16_t(-1))
+    setImpostorShadow(obj, false);
 
   mat.alpha   = g ? Material::Ghost : obj.alpha;
   obj.isGhost = g;
@@ -821,6 +828,8 @@ void VisualObjects::setAsGhost(size_t id, bool g) {
 
   obj.cmdId = drawCmd.commandId(mat, cx.type, obj.bucketId.toInt());
   drawCmd.addClusters(obj.cmdId, +meshletCount);
+  if(!g && obj.type==DrawCommands::Static && obj.levelSub!=NoLevels && obj.bucketId->staticMesh->impostor.px>0.f)
+    setImpostorShadow(obj, true);
 
   const uint32_t numCluster = (obj.type==DrawCommands::Landscape ? meshletCount : 1);
   for(size_t i=0; i<numCluster; ++i) {
@@ -888,7 +897,7 @@ void VisualObjects::writeTreeOcclusionProbe(std::ostream& out) {
     const bool canopy = HiZOccluders::canopy(mat.foliage, mat.alpha==Material::AlphaTest);
     const float grow = mat.hasMaterialMaps() ? FoliageTree::travel(mat.foliage, mesh.bbox.bbox[0], mesh.bbox.bbox[1]) : 0.f;
     const float currentGrow = cluster.r - mesh.drawn.rConservative - mat.waveMaxAmplitude;
-    out << cluster.instanceId << ' ' << unsigned(obj.level) << ' ' << cluster.meshletCount << ' ' << canopy
+    out << cluster.instanceId << ' ' << unsigned(obj.level.stage) << ' ' << cluster.meshletCount << ' ' << canopy
         << ' ' << cluster.pos.x << ' ' << cluster.pos.y << ' ' << cluster.pos.z << ' ' << cluster.r;
     for(size_t i=0; i<16; ++i)
       out << ' ' << obj.pos.data()[i];
@@ -903,43 +912,68 @@ std::pair<uint32_t,uint32_t> VisualObjects::drawnMeshlets(Object& obj) {
   if(obj.strandMeshlets>0)
     return {first, obj.strandMeshlets};
   if(const auto* mesh = obj.bucketId->staticMesh)
-    return mesh->levelMeshlets(obj.iboOff, obj.iboLen, obj.level);
+    return mesh->levelMeshlets(obj.iboOff, obj.iboLen, obj.level.glb);
   return {first, obj.iboLen/PackedMesh::MaxInd};
+  }
+
+void VisualObjects::setImpostorShadow(Object& obj, bool enable) {
+  const auto& mesh = *obj.bucketId->staticMesh;
+  const auto count = mesh.levelMeshlets(obj.iboOff, obj.iboLen, mesh.levels.size()).second;
+  if(enable) {
+    obj.impostorShadowCmd = drawCmd.commandId(obj.bucketId->mat, obj.type, obj.bucketId.toInt(), true);
+    if(obj.impostorShadowCmd!=uint16_t(-1))
+      drawCmd.addClusters(obj.impostorShadowCmd, count);
+    } else {
+    drawCmd.addClusters(obj.impostorShadowCmd, -count);
+    obj.impostorShadowCmd = uint16_t(-1);
+    }
   }
 
 // Levels of detail of own meshes (meshlevels.h): once a frame each object of a mesh with levels is measured on the
 // main view — the height of its mesh's box times its scale, at the distance of the box's middle, by the projection
-// the shaders of this frame get — and its cluster is given the slice of the level for that height. Every pass reads
-// the cluster: the main view, the occluders and the shadows draw that level. A deformed object keeps the mesh itself
+// the shaders of this frame get. When an impostor takes over the G-buffer, its cluster keeps the last 3D level
+// for shadows alone. A deformed object keeps the mesh itself.
 void VisualObjects::preFrameUpdateLevels() {
   uint64_t count[1+MeshLevels::MaxLevels] = {};
+  impostorDraws.clear();
   const float py   = scene.proj.at(1,1);
   const int   resY = scene.screenRes().y;
+  const bool drawStatic = (DrawCommands::hiddenTypes & (1u << DrawCommands::Static))==0;
   for(auto id:objectsLevels) {
     auto&       obj  = objects[id];
     const auto* mesh = obj.bucketId->staticMesh;
     if(mesh==nullptr)
       continue;
-    uint8_t level = 0;
+    const bool canImpostor = obj.impostorShadowCmd!=uint16_t(-1) && benchImpostors!=BenchImpostors::Off;
+    MeshLevels::Selection level;
     if(obj.deformCount==0 && py!=0.f && resY>0) {
-      float px[MeshLevels::MaxLevels] = {};
-      const size_t n = std::min(mesh->levels.size(), MeshLevels::MaxLevels);
-      for(size_t i=0; i<n; ++i)
-        px[i] = mesh->levels[i].px;
       const auto& box    = mesh->bbox.bbox;
       Vec3        middle = (box[0]+box[1])*0.5f;
       obj.pos.project(middle);
       const float scale  = Vec3(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2)).length();
       const float height = MeshLevels::screenHeight((box[1].y-box[0].y)*scale, (middle-scene.camPos()).length(), py, resY);
-      level = MeshLevels::pick(px, n, obj.level, height);
+      const bool forceImpostor = canImpostor && benchImpostors==BenchImpostors::Force && obj.visible;
+      // The forced bench view selects below every threshold.
+      level = mesh->pickLevel(obj.level.stage, forceImpostor ? 0.f : height, canImpostor);
+      if(level.impostor() && obj.levelSub==0 && obj.visible && drawStatic) {
+        const Vec3 x(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2));
+        const Vec3 y(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
+        const Vec3 z(obj.pos.at(2,0), obj.pos.at(2,1), obj.pos.at(2,2));
+        const float scaleBound = std::sqrt(Vec3::dotProduct(x,x) + Vec3::dotProduct(y,y) + Vec3::dotProduct(z,z));
+        const float radius = (box[1]-box[0]).length()*0.5f*scaleBound;
+        if(scene.frustrum[SceneGlobals::V_Main].testPoint(middle,radius))
+          impostorDraws.push_back(id);
+        }
       }
-    if(obj.levelSub==0)
-      ++count[level];
-    if(level==obj.level)
+    if(obj.levelSub==0 && !level.impostor())
+      ++count[level.glb];
+    auto& c = clustersMem[obj.clusterId];
+    const auto command = level.impostor() ? obj.impostorShadowCmd : obj.cmdId;
+    if(level==obj.level && c.commandId==command)
       continue;
     obj.level = level;
     const auto range = drawnMeshlets(obj);
-    auto&      c     = clustersMem[obj.clusterId];
+    c.commandId    = command;
     c.firstMeshlet = range.first;
     c.meshletCount = obj.visible ? range.second : 0u;
     clustersMem.markClusters(obj.clusterId);
@@ -950,6 +984,7 @@ void VisualObjects::preFrameUpdateLevels() {
   FrameProfile::add(FrameProfile::Amount::MeshLevel2, count[2]);
   FrameProfile::add(FrameProfile::Amount::MeshLevel3, count[3]);
   FrameProfile::add(FrameProfile::Amount::MeshLevel4, count[4]);
+  FrameProfile::add(FrameProfile::Amount::MeshImpostors, impostorDraws.size());
   }
 
 void VisualObjects::preFrameUpdateWind() {
@@ -1092,10 +1127,59 @@ void VisualObjects::drawWater(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Water);
   }
 
-void VisualObjects::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd) {
+void VisualObjects::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
   // return;
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Solid);
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::AlphaTest);
+  drawImpostors(cmd, fId);
+  }
+
+void VisualObjects::drawImpostors(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  if(impostorDraws.empty() || (DrawCommands::hiddenTypes & (1u << DrawCommands::Static))!=0)
+    return;
+
+  const auto meshOf = [this](size_t id) { return objects[id].bucketId->staticMesh; };
+  std::sort(impostorDraws.begin(), impostorDraws.end(), [&](size_t a, size_t b) {
+    return std::less<const StaticMesh*>()(meshOf(a), meshOf(b));
+    });
+  impostorInstances.resize(impostorDraws.size());
+  const uint32_t lightFlags = (CrownLight::enabled() ? 0u : 1u) |
+                              ((FoliageWind::enabled() & FoliageWind::Light)!=0 ? 0u : 2u);
+  for(size_t i=0; i<impostorDraws.size(); ++i) {
+    const auto& obj = objects[impostorDraws[i]];
+    auto& instance  = impostorInstances[i];
+    std::copy_n(obj.pos.data(), 16, instance.transform);
+    instance.info[0] = clustersMem[obj.clusterId].instanceId;
+    instance.info[1] = lightFlags;
+    }
+
+  auto& buffer = impostorBuffer[fId];
+  const size_t bytes = impostorInstances.size()*sizeof(ImpostorInstance);
+  if(buffer.byteSize()<bytes) {
+    Resources::recycle(std::move(buffer));
+    buffer = Resources::device().ssbo(Tempest::BufferHeap::Upload, Tempest::Uninitialized, std::max<size_t>(4096,bytes+bytes/2));
+    }
+  buffer.update(impostorInstances.data(), 0, bytes);
+
+  const auto sampler = Sampler::trillinear(ClampMode::ClampToEdge);
+  cmd.setPipeline(Shaders::inst().impostor);
+  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(1, buffer);
+  for(size_t first=0; first<impostorDraws.size();) {
+    const auto* mesh = meshOf(impostorDraws[first]);
+    size_t end = first+1;
+    while(end<impostorDraws.size() && meshOf(impostorDraws[end])==mesh)
+      ++end;
+    const Vec3 lo = mesh->bbox.bbox[0], hi = mesh->bbox.bbox[1];
+    const Vec3 center = (lo+hi)*0.5f;
+    cmd.setPushData(Vec4(center.x, center.y, center.z, (hi-lo).length()*0.5f));
+    cmd.setBinding(2, mesh->impostor.textures[0], sampler);
+    cmd.setBinding(3, mesh->impostor.textures[1], sampler);
+    if(Shaders::options().doMaterialMaps)
+      cmd.setBinding(4, mesh->impostor.textures[2], sampler);
+    cmd.draw(nullptr, 0, 6, first, end-first);
+    first = end;
+    }
   }
 
 void VisualObjects::drawShadow(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int layer) {

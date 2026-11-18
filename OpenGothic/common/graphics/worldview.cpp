@@ -834,7 +834,7 @@ void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, b
     grass->draw(cmd,fId);
     cmd.setDebugMarker("GBuffer");
     }
-  visuals.drawGBuffer(cmd);
+  visuals.drawGBuffer(cmd, fId);
   if(!landscapeOnly)
     pfxGroup.drawGBuffer(cmd, fId);
   }

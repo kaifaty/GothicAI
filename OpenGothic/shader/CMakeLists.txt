@@ -125,6 +125,10 @@ add_shader(visibility_pass_hiz_ordered.comp    materials/visibility_pass.comp -D
 add_shader(visibility_pass_hiz_cr_ordered.comp materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DLARGE -DORDERED)
 add_shader(visibility_stats.comp           materials/visibility_stats.comp)
 
+add_shader(impostor.vert     materials/impostor.vert)
+add_shader(impostor.frag     materials/impostor.frag)
+add_shader(impostor_orm.frag materials/impostor.frag -DMATERIAL_MAPS)
+
 # mesh & vertex
 add_geom_shader(main_lnd       "-DMESH_TYPE=0" -DFLAT_NORMAL)
 add_geom_shader(main_lnd_f     "-DMESH_TYPE=0" -DFLAT_NORMAL -DFORWARD)

@@ -256,19 +256,19 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
     }
   }
 
-uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId) {
+uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId, bool shadowOnly) {
   const bool bindlessSys = Shaders::options().doBindless;
   const bool bindless    = bindlessSys && (!m.hasFrameAnimation() || type==Landscape);
 
-  auto pMain    = Shaders::inst().materialPipeline(m, type, Shaders::T_Main,   bindless);
+  auto pMain    = shadowOnly ? nullptr : Shaders::inst().materialPipeline(m, type, Shaders::T_Main, bindless);
   auto pShadow  = Shaders::inst().materialPipeline(m, type, Shaders::T_Shadow, bindless);
   auto pVsm     = Shaders::inst().materialPipeline(m, type, Shaders::T_Vsm,    bindless);
-  auto pHiZ     = Shaders::inst().materialPipeline(m, type, Shaders::T_Depth,  bindless);
-  if(pMain==nullptr && pShadow==nullptr && pHiZ==nullptr)
+  auto pHiZ     = shadowOnly ? nullptr : Shaders::inst().materialPipeline(m, type, Shaders::T_Depth, bindless);
+  if(pMain==nullptr && pShadow==nullptr && pVsm==nullptr && pHiZ==nullptr)
     return uint16_t(-1);
 
   for(size_t i=0; i<cmd.size(); ++i) {
-    if(cmd[i].pMain!=pMain || cmd[i].pShadow!=pShadow || cmd[i].pHiZ!=pHiZ)
+    if(cmd[i].pMain!=pMain || cmd[i].pShadow!=pShadow || cmd[i].pVsm!=pVsm || cmd[i].pHiZ!=pHiZ)
       continue;
     if(!bindless && cmd[i].bucketId!=bucketId)
       continue;
