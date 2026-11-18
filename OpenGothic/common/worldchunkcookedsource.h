@@ -19,12 +19,13 @@
 // one line per world load, none when it is missing; a cell whose .wcb is there
 // but cannot be used logs one line and reads its GLB from then on. A missing
 // .wcb is not logged. OPENGOTHIC_WCB=0 at world load turns the cooked path off.
+// OPENGOTHIC_CLUSTER_LOD=0 skips the hierarchy sections even on the cooked path.
 // The game writes no cooked file. A healthy cooked read does not hash the GLB,
 // so it does not notice a same-length edit. The cook removes the index before it
 // writes cells and writes it last (worldchunkcook.h), so an interrupted cook
 // leaves no index; an older index put back by hand beside newer cells is
-// outside this contract, and content-convert verify-cooked-world finds it (it
-// compares each cell's hash with the index).
+// outside this contract. content-convert verify-cooked-world compares the GLB
+// hashes in the cells and the index, then checks the rebuilt geometry and graph.
 // After a catalogue start (worldchunkcatalogue.h) there are no totals of
 // readWorldChunks to compare: the start loads the index it validated itself
 // (loadCatalogue), every GLB had its entry's length. A cell that falls back uses
@@ -39,6 +40,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -80,6 +82,10 @@ class CookedChunkSource {
               const WorldCellManifest& manifest, std::span<const WorldChunkFile> files, const asset::WorldMesh& mesh);
     // The catalogue start's load: the index and set it validated, every cell on the cooked path. Logs nothing.
     void loadCatalogue(CookedIndex validated, CookedSet loaded, const WorldCellManifest& manifest);
+    // Set at world load, before reads. A recognized environment value takes precedence over the INI.
+    void configureClusterLod(bool enabled) const;
+    void setResident(size_t cell, bool resident) const;
+    std::shared_ptr<const CookedChunk> clusterHierarchy(size_t cell) const;
     // Cell i from its .wcb, or from glb() when the cooked path cannot be taken
     // or currentFile is set. Throws, naming the file, for a source ordinal past
     // the cell's triangles. Safe to call from several threads at once.
@@ -106,6 +112,15 @@ class CookedChunkSource {
     std::vector<ChunkId>                       cells;
     std::unique_ptr<std::atomic<uint8_t>[]>    states;
     mutable std::atomic<uint64_t>              cookedReads {0}, glbReads {0}, cookedNs {0}, glbNs {0};
+    mutable bool                               readHierarchy = true;
+    mutable std::atomic_flag                   loggedHierarchy {};
+
+    struct ResidentHierarchy {
+      uint64_t generation = 0; // odd while the cell is in Near or Far
+      std::shared_ptr<const CookedChunk> chunk;
+      };
+    mutable std::mutex                         residencyMutex;
+    mutable std::vector<ResidentHierarchy>     residentHierarchies;
 
     struct Landscape {
       std::span<const uint32_t> exclusions;

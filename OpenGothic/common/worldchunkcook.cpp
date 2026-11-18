@@ -11,6 +11,7 @@
 #include <cstring>
 #include <fstream>
 #include <functional>
+#include <unordered_map>
 #include <stdexcept>
 #include <thread>
 #include <tuple>
@@ -38,6 +39,63 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr uint32_t Unset = 0xFFFFFFFFu;
+
+struct ChunkHierarchy {
+  std::vector<wcb::VertexRef> vertices;
+  ClusterLod::Graph graph;
+
+  wcb::HierarchyView view() const {
+    return {vertices,graph.clusters,graph.groups,graph.vertexIndices,graph.indices};
+    }
+  };
+
+ChunkHierarchy buildHierarchy(std::span<const wcb::Position> positions, std::span<const wcb::Feature> features,
+                              std::span<const wcb::Triangle> triangles) {
+  ChunkHierarchy out;
+  std::unordered_map<uint64_t,uint32_t> local;
+  std::vector<ClusterLod::Vertex> vertices;
+  std::vector<ClusterLod::Triangle> input;
+  input.reserve(triangles.size());
+  // Assign IDs in GLB corner order. The lookup table's order is never used.
+  for(const auto& triangle:triangles) {
+    ClusterLod::Triangle t {{},triangle.material};
+    for(size_t c=0;c<t.vertices.size();++c) {
+      const auto p = triangle.vertex[c], f = triangle.feature[c];
+      const auto key = (uint64_t(p)<<32) | f;
+      const auto [it,inserted] = local.try_emplace(key,uint32_t(vertices.size()));
+      if(inserted) {
+        const auto& position = positions[p];
+        const auto& feature = features[f];
+        const auto argb = feature.light;
+        const auto rgba = (argb&0xff00ff00u) | ((argb&0x00ff0000u)>>16) | ((argb&0x000000ffu)<<16);
+        vertices.push_back({{position.x,position.y,position.z},{feature.nx,feature.ny,feature.nz},
+                            {feature.u,feature.v},rgba});
+        out.vertices.push_back({p,f});
+        }
+      t.vertices[c] = it->second;
+      }
+    input.push_back(t);
+    }
+  // The builder preserves open borders. Cooking never needs neighbouring cells.
+  out.graph = ClusterLod::build(vertices,input,std::vector<uint8_t>(vertices.size()));
+  return out;
+  }
+
+template<class T>
+bool sameSection(std::span<const T> a, std::span<const T> b) {
+  const auto bytes = std::as_bytes(a);
+  const auto expected = std::as_bytes(b);
+  return std::equal(bytes.begin(),bytes.end(),expected.begin(),expected.end());
+  }
+
+const char* differentSection(const wcb::HierarchyView& a, const wcb::HierarchyView& b) {
+  if(!sameSection(a.clusters,b.clusters))           return "clusters";
+  if(!sameSection(a.groups,b.groups))               return "groups";
+  if(!sameSection(a.indices,b.indices))             return "indices";
+  if(!sameSection(a.vertexIndices,b.vertexIndices)) return "vertex indices";
+  if(!sameSection(a.vertices,b.vertices))           return "vertex references";
+  return nullptr;
+  }
 
 [[noreturn]] void fail(const std::string& reason) {
   throw std::runtime_error("cooked world: " + reason);
@@ -411,6 +469,8 @@ CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDi
     index.cells.push_back(ic);
     addedNext += added;
 
+    const auto hierarchy = buildHierarchy(data.positions,data.features,data.triangles);
+    data.hierarchy = hierarchy.view();
     const auto encoded = encodeCookedChunk(data);
     if(writeCookedFile(cookedChunkPath(dir,overrideDir,entry.file,outDir),encoded,removeIndex))
       ++stats.written;
@@ -420,6 +480,7 @@ CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDi
     stats.triangles += data.triangles.size();
     stats.glbBytes  += bytes.size();
     stats.wcbBytes  += encoded.size();
+    stats.hierarchyBytes += data.hierarchy.byteSize();
     }
   if(addedNext!=n)
     fail("the cells hold "+std::to_string(addedNext)+" triangles, the stitched mesh "+std::to_string(n));
@@ -539,7 +600,7 @@ CookedWorld readCookedWorld(const fs::path& dir, const fs::path& overrideDir, co
   world.cells.reserve(world.manifest.cells.size());
   for(size_t i=0;i<world.manifest.cells.size();++i) {
     const auto& file = world.manifest.cells[i].drawFile();
-    auto chunk = CookedChunk::read(cookedChunkPath(dir,overrideDir,file,outDir));
+    auto chunk = CookedChunk::read(cookedChunkPath(dir,overrideDir,file,outDir),true);
     checkCookedCell(chunk,i,world.manifest,world.index,chunkGlbPath(dir,overrideDir,file));
     world.cells.push_back(std::move(chunk));
     }
@@ -579,10 +640,26 @@ std::string verifyCookedWorld(const fs::path& dir, const fs::path& overrideDir, 
   ChunkTable expectedTable, actualTable;
   auto expected = readWorldChunks(dir,overrideDir,&expectedTable);
   const auto world = readCookedWorld(dir,overrideDir,outDir);
-  if(hash) {
-    for(size_t i=0;i<world.cells.size();++i) {
-      const auto& file = world.manifest.cells[i].drawFile();
-      const auto stale = cookedChunkStale(world.cells[i],chunkGlbPath(dir,overrideDir,file),true);
+  for(size_t i=0;i<world.cells.size();++i) {
+    const auto& chunk = world.cells[i];
+    const auto& file = world.manifest.cells[i].drawFile();
+    const auto glb = chunkGlbPath(dir,overrideDir,file);
+    if(chunk.version()==wcb::Version) {
+      try {
+        const auto source = recoverIndexedChunk(glb,world.index,i,world.manifest.materials);
+        const auto fresh = buildHierarchy(source.positions(),source.features(),source.triangles());
+        if(const auto* part = differentSection(chunk.hierarchy(),fresh.view()))
+          return file+": cluster hierarchy "+part+" differ from a rebuild from the GLB";
+        }
+      catch(const std::runtime_error&) {
+        const auto stale = cookedChunkStale(chunk,glb,true);
+        if(!stale.empty())
+          return file+": "+stale;
+        throw;
+        }
+      }
+    else if(hash) {
+      const auto stale = cookedChunkStale(chunk,glb,true);
       if(!stale.empty())
         return file+": "+stale;
       }

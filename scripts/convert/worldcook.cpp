@@ -63,11 +63,12 @@ int cook(const Options& o) {
   const auto started = Clock::now();
   const auto stats = cookWorldChunks(o.world,o.content,o.out);
   std::printf("%s: %zu cells, %llu triangles cooked; %zu .wcb written, %zu left unchanged; index %s %s; "
-              "GLB %llu bytes, .wcb %llu bytes, index %llu bytes (%.1f s)\n",
+              "GLB %llu bytes, .wcb %llu bytes (%llu hierarchy), index %llu bytes (%.1f s)\n",
               o.world.string().c_str(),stats.cells,static_cast<unsigned long long>(stats.triangles),stats.written,
               stats.left,cookedIndexPath(o.world,o.content,o.out).string().c_str(),
               stats.indexWritten ? "written" : "left unchanged",static_cast<unsigned long long>(stats.glbBytes),
-              static_cast<unsigned long long>(stats.wcbBytes),static_cast<unsigned long long>(stats.indexBytes),
+              static_cast<unsigned long long>(stats.wcbBytes),static_cast<unsigned long long>(stats.hierarchyBytes),
+              static_cast<unsigned long long>(stats.indexBytes),
               ms(started,Clock::now())/1000.0);
   std::printf("world cloth bundle %s %s: %zu surfaces, %llu triangles taken out of the cells, %llu bytes\n",
               cookedClothPath(o.world,o.content,o.out).string().c_str(),stats.clothWritten ? "written" : "left unchanged",
@@ -86,7 +87,8 @@ int verify(const Options& o) {
     }
   const auto manifest = readWorldChunkManifest(o.world);
   std::printf("%s: %zu cooked cells and the index assemble into readWorldChunks' mesh and chunk table; every GLB "
-              "matches its chunk's length and SHA-256; the world cloth bundle equals a fresh island search (%.1f s)\n",
+              "matches its chunk's length and SHA-256; v3 hierarchy sections match rebuilt bytes; "
+              "the world cloth bundle equals a fresh island search (%.1f s)\n",
               o.world.string().c_str(),manifest.cells.size(),ms(started,Clock::now())/1000.0);
   return 0;
   }
@@ -211,6 +213,7 @@ int timeWorld(const Options& o) {
   size_t triangles = 0, collisionTriangles = 0;
   uint64_t nearTriangles = 0;
   uint64_t nearCooked = 0;
+  uint64_t nearHierarchyBytes = 0, nearHierarchyStorage = 0;
   size_t clothSurfaces = 0, clothTriangles = 0;
   for(int run=0;run<runs;++run) {
     auto t0 = Clock::now();
@@ -351,9 +354,14 @@ int timeWorld(const Options& o) {
     series[Index].values.push_back(ms(t4,t5));
     const auto nearIndex = CookedIndex::read(indexPath);
     checkCookedIndex(nearIndex,manifest);
+    nearHierarchyBytes = nearHierarchyStorage = 0;
     for(const auto i:nearCells) {
-      const auto chunk = CookedChunk::read(wcbs[i]);
+      const auto chunk = CookedChunk::read(wcbs[i],true);
       checkCookedCell(chunk,i,manifest,nearIndex,glbs[i]);
+      if(chunk.version()==wcb::Version) {
+        nearHierarchyBytes += chunk.hierarchy().byteSize();
+        nearHierarchyStorage += sizeof(CookedChunk)+chunk.byteSize();
+        }
       }
     series[CookedNear].values.push_back(ms(t5,Clock::now()));
     }
@@ -392,6 +400,9 @@ int timeWorld(const Options& o) {
                 double(start->position.y),double(start->position.z),startCell.x,startCell.z,nearCells.size(),
                 static_cast<unsigned long long>(nearTriangles),static_cast<unsigned long long>(nearGlb),
                 static_cast<unsigned long long>(nearWcb));
+    if(nearHierarchyStorage!=0)
+      std::printf("Near cluster hierarchy: %llu payload bytes, %llu bytes including retained .wcb backing and views\n",
+                  static_cast<unsigned long long>(nearHierarchyBytes),static_cast<unsigned long long>(nearHierarchyStorage));
     }
   else
     std::printf("no start point in %s\n",o.world.string().c_str());

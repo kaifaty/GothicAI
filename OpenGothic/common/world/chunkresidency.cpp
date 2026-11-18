@@ -1,4 +1,5 @@
 #include "chunkresidency.h"
+#include "worldchunkcookedsource.h"
 
 #include <algorithm>
 #include <cmath>
@@ -110,6 +111,8 @@ void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& came
     if(next==previous)
       continue;
     states[i]=next;
+    if(chunks.source && (previous==State::Outside || next==State::Outside))
+      chunks.source->cooked().setResident(i,next!=State::Outside);
     ++transitions;
     ++counters.totalTransitions;
     if(next==State::Near || previous==State::Near)
