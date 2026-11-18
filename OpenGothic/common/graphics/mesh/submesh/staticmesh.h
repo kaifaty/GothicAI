@@ -5,6 +5,7 @@
 #include <Tempest/Device>
 #include <Tempest/AccelerationStructure>
 
+#include <array>
 #include <vector>
 #include <memory>
 
@@ -16,6 +17,7 @@
 
 class PackedMesh;
 class LandscapeRange;
+namespace MeshLevels { struct Selection; }
 
 // Pages keep their buffers and addresses while individual chunk ranges recycle.
 class LandscapePages final {
@@ -73,6 +75,11 @@ class StaticMesh {
       std::vector<std::pair<size_t,size_t>> sub;
       };
 
+    struct Impostor {
+      float                              px = 0;
+      std::array<Tempest::Texture2d,3>     textures; // albedo/coverage, normal/depth, ORM
+      };
+
     struct Morph {
       std::string            name;
       size_t                 numFrames       = 0;
@@ -103,6 +110,7 @@ class StaticMesh {
     std::pair<size_t,size_t>              rtSlice(size_t iboOffset, size_t iboLen) const;
     // The meshlets (first, count) the submesh at this slice draws at a level of detail: 0 or one the mesh has not, its own
     std::pair<uint32_t,uint32_t>          levelMeshlets(size_t iboOffset, size_t iboLen, size_t level) const;
+    MeshLevels::Selection                pickLevel(uint8_t previous, float height, bool allowImpostor) const;
 
     const Tempest::StorageBuffer& vboBuffer() const;
     const Tempest::StorageBuffer& ibo8Buffer() const;
@@ -126,6 +134,7 @@ class StaticMesh {
     // bbox itself is the mesh's, as a tree's height for the wind is. The same as bbox without levels
     Bounds                          drawn;
     std::vector<Level>              levels;
+    Impostor                        impostor;
     float                           strandWidth = 0; // PackedMesh::strandWidth
     // the sphere of each meshlet in the mesh's space (centre, radius), levels included: the shadow pages take an
     // object's meshlets by them (graphics/meshletspheres.h); empty for the landscape and meshes without them
