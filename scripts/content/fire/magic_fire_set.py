@@ -129,7 +129,7 @@ def body_fire() -> list:
             'ppsIsLooping': 0, 'ppsIsSmooth': 1}
     return [
         # tall tongues: born on the mesh as the short ones, they rise higher and join over the shoulders into the plume
-        {'name': 'OWN_BODY_TALL', 'base': 'OWN_HAND_LICKS', 'inherit': 0.5,
+        {'name': 'OWN_BODY_TALL', 'base': 'OWN_HAND_LICKS', 'inherit': 0.85,
          'set': {**burn, 'ppsValue': 9.0, 'shpType_S': 'MESH', 'shpIsVolume': 0, 'shpDim_S': '0 0 0',
                  'shpOffsetVec_S': '0 0 0', 'visSizeStart_S': '34 60', 'visSizeEndScale': 0.75, 'lspPartAvg': 560.0,
                  'lspPartVar': 140.0, 'velAvg': 0.05, 'velVar': 0.02, 'flyGravity_S': '0 0.00012 0'}},
@@ -145,7 +145,7 @@ def body_fire() -> list:
              **up, shpOffsetVec_S='0 50 0', visSizeStart_S='60 60', visSizeEndScale=1.5, flyGravity_S='0 0.0001 0'),
         # the short tongues on the clothes: born on the body's mesh, they rise and go out. Each of the seven emitters
         # brings a seventh of the smoke, the embers and the hot air, over its own bone
-        {'name': 'MFX_MAGICFIRE_HUMANBURN', 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.6,
+        {'name': 'MFX_MAGICFIRE_HUMANBURN', 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.92,
          'with': ['OWN_BODY_TALL', 'OWN_BODY_SMOKE', 'OWN_BODY_EMBERS', 'OWN_BODY_HEAT'],
          'set': {**burn, 'ppsValue': 30.0, 'shpType_S': 'MESH', 'shpIsVolume': 0, 'shpDim_S': '0 0 0', 'shpOffsetVec_S': '0 0 0',
                  'visSizeStart_S': '24 40', 'visSizeEndScale': 0.7, 'lspPartAvg': 380.0, 'lspPartVar': 100.0,
