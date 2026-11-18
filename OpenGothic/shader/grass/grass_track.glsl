@@ -62,26 +62,29 @@ const uint GrassPartTrackOrmLod    = 1u << 27;
 // the crust's lattice, turned the other way from the loose earth's
 vec2 grassCrustUv(vec2 xz) { return vec2(0.84805*xz.x - 0.52992*xz.y, 0.52992*xz.x + 0.84805*xz.y); }
 
-bool grassTrackSubpixelWander(float wander, vec3 t, vec3 b, float det, vec2 edge,
+bool grassTrackSubpixelWander(vec3 pos, float wander, vec3 t, vec3 b, float det, vec2 edge,
                              vec2 duvdx, vec2 duvdy, vec3 dpdx, vec3 dpdy) {
-  const float uvDet = abs(duvdx.x*duvdy.y - duvdx.y*duvdy.x);
-  if(uvDet<=1e-12)
+  const float uvDet = duvdx.x*duvdy.y - duvdx.y*duvdy.x;
+  if(abs(uvDet)<=1e-12)
     return false;
   // The slow noises have independent signs; the same quick noise is added to x and subtracted from z.
   const vec2 slow = abs(vec2(t.x,b.x)) + abs(vec2(t.z,b.z));
   const vec2 quick = 0.3*abs(vec2(t.x-t.z,b.x-b.z));
   const vec2 uvMax = min(vec2(0.1), (slow + quick)*(wander/abs(det)))*edge;
-  const mat2 inverseUv = mat2(abs(vec2(duvdy.y,duvdx.y)), abs(vec2(duvdy.x,duvdx.x)));
-  const vec2 pixelMax = (inverseUv*uvMax)/uvDet;
-  // dpdx/dpdy connect samples one pixel apart. Account for the maximum change of their perspective divisor.
-  const vec3 clipW = vec3(scene.viewProject[0].w, scene.viewProject[1].w, scene.viewProject[2].w);
-  const vec2 depthStep = abs(vec2(dot(clipW,dpdx), dot(clipW,dpdy)));
-  const float depth = 1.0/gl_FragCoord.w;
-  const float minDepth = depth - dot(pixelMax, depthStep);
-  const vec2 resolution = max(vec2(1.0), vec2(2560.0,1440.0)*scene.screenResInv);
-  const vec2 upper = pixelMax*(depth + depthStep)*resolution;
-  // Leave a margin for numerical error in the inverse of the derivatives.
-  return minDepth>0.0 && length(upper)<0.98*minDepth;
+  // The finite differences give the affine UV-to-world transform even on a perspective triangle.
+  const vec3 axisU = (dpdx*duvdy.y - dpdy*duvdx.y)/uvDet;
+  const vec3 axisV = (dpdy*duvdx.x - dpdx*duvdy.x)/uvDet;
+  const vec4 u = scene.viewProject*vec4(axisU, 0.0);
+  const vec4 v = scene.viewProject*vec4(axisV, 0.0);
+  const vec4 p = scene.viewProject*vec4(pos, 1.0);
+  const float minDepth = p.w - dot(abs(vec2(u.w,v.w)), uvMax);
+  if(minDepth<=0.0)
+    return false;
+  // Bound the difference after perspective division in both screen axes, with a margin for rounding.
+  const vec2 ndc = p.xy/p.w;
+  const vec2 upper = abs(u.xy - ndc*u.w)*uvMax.x + abs(v.xy - ndc*v.w)*uvMax.y;
+  const vec2 halfResolution = 0.5*max(vec2(2560.0,1440.0), vec2(scene.screenRes));
+  return length(upper*halfResolution)<0.98*minDepth;
   }
 
 // tex: the crust's maps in the bindless arrays, then the loose earth's, then the ribbon's; crustK, looseK: repeats
@@ -117,7 +120,7 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
     const vec2  f = fract(uv);
     const vec2  edge = smoothstep(vec2(0.0), vec2(0.08), min(f, 1.0-f));
     const bool subpixel = far>=1.0 && (partsOff & GrassPartTrackWanderLod)==0u &&
-                          grassTrackSubpixelWander(wander, t, b, det, edge, duvdx, duvdy, dpdx, dpdy);
+                          grassTrackSubpixelWander(pos, wander, t, b, det, edge, duvdx, duvdy, dpdx, dpdy);
     if(!subpixel) {
       const float quick = grassTrackNoise(place,2560,0x73u)*0.3;
       const vec3  w = vec3(grassTrackNoise(place,11200,0x71u) + quick, 0.0,
