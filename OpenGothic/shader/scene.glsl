@@ -133,6 +133,7 @@ const uint VF_LAMP_CONTACT = 0x10; // lamps darken what their shadow map is too 
 const uint VF_CONTACT_AO = 0x20; // the light of the GI probes takes the short occlusion of ssao.comp (lighting/rt/probe_ambient.frag)
 const uint VF_GRASS_CONTACT = 0x40; // blades shade the ground and each other by the sun's screen ray (grass/grass_contact.glsl)
 const uint VF_CROWN_MASK = 0x80; // a crown shows its openness as a colour instead of its albedo (OPENGOTHIC_CROWN_LIGHT=mask)
+const uint VF_HIZ_NO_CANOPY = 0x100; // the occluder pass leaves the crowns of trees out, BK_CANOPY (graphics/hizoccluders.h)
 const uint VF_HAIR_DEBUG = 0x4; // hair pixels show the strand's direction as a colour instead of light (OPENGOTHIC_HAIR_DEBUG=1)
 
 const uint BK_SOLID = 0x1;
@@ -159,6 +160,7 @@ const uint BK_TRACK = 0x100000; // a road's own material: two layers by world po
 const uint BK_TWO_SIDED = 0x200000; // an object's mesh drawn from both sides: the shadow pages' mesh shader keeps both (main.vert)
 const uint BK_TWO_SIDED_FLIP = 0x400000; // the side away from the winding is lit by the normal turned to the eye (main.frag)
 const uint BK_CROWN = 0x800000; // a tree's crown: the openness of the vertex darkens it into the depth (lighting/crown_light.glsl)
+const uint BK_CANOPY = 0x1000000; // a tree's alpha-tested leaves: no occluder under VF_HIZ_NO_CANOPY (graphics/hizoccluders.h)
 
 // Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
 // evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).

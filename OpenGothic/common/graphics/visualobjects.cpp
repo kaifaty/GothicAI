@@ -932,6 +932,10 @@ void VisualObjects::visibilityPass(Tempest::Encoder<Tempest::CommandBuffer> &cmd
   drawCmd.visibilityPass(cmd, pass);
   }
 
+void VisualObjects::visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  drawCmd.visibilityStats(cmd, fId);
+  }
+
 void VisualObjects::visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   drawCmd.visibilityVsm(cmd);
   }

@@ -123,6 +123,7 @@ class VisualObjects final {
     void postFrameupdate();
 
     void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
+    void visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);

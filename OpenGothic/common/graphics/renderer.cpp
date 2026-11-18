@@ -947,6 +947,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   buildHiZ(cmd);
 
   wview.visibilityPass(cmd, 1);
+  wview.visibilityStats(cmd, fId);
   drawGBuffer(cmd, fId, wview);
   const auto* world = GameServices::inst().bloodDecalSource();
   if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
