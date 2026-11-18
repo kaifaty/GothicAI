@@ -39,8 +39,8 @@ other value of the field, the side away from the winding lit by the normal turne
 the triangles twice under a one-sided record, as fir-probe-2 has them.
 
 `--levels` adds the levels of detail of the engine (reports/engine/2026-11-16-modern-trees/tree-lod.md) to each
-spruce: LEVELS, thin() of the spruce to 1/2, 1/4 and 1/8 of its triangles, drawn under 400, 200 and 100 pixels of
-its height on screen, each a GLB of its own beside the spruce's (<VISUAL>_L1.glb ...) and the record's field
+spruce: LEVELS, thin() of the spruce to 1/2, 1/4, 1/8 and 1/32 of its triangles, drawn under 400, 200, 100 and 50
+pixels of its height on screen, each a GLB of its own beside the spruce's (<VISUAL>_L1.glb ...) and the record's field
 `"levels": [{"glb": ..., "px": 400}, ...]`. They are stands of thin(), not levels whose look is accepted; without
 the flag the set is written as before.
 
@@ -99,8 +99,8 @@ PROBE = (((38700., 3456.2, 1000.), 40., 1.2, 33),
 X0, Z0, STEP, SIDE, JITTER, NEST_ROW = 51500., -16060., 660., 32, 150., 8
 # The levels of detail of --levels: the share of the spruce's triangles thin() keeps and the pixels of its height on
 # screen under which the level is drawn. By the silhouettes of tree-cost.md: 1/2 is not told from the spruce up to
-# 200 px, 1/4 up to 100, 1/8 at 50; each threshold is one step before that, at twice the height
-LEVELS = ((.5, 400), (.25, 200), (.125, 100))
+# 200 px, 1/4 up to 100, 1/8 at 50. The fourth level cuts the farthest spruces to 1/32 below 50 px.
+LEVELS = ((.5, 400), (.25, 200), (.125, 100), (1 / 32, 50))
 FOREST_SEED = 20261118
 LONE = (48500., 500.)
 GROUND = ('ground', 'rock')     # the material classes a root stands on
@@ -272,7 +272,6 @@ def write_levels(folder: Path, visual: str, full, seed: int, extras: dict) -> tu
     """The GLBs of LEVELS of the spruce `full` beside its own: the field `levels` of its record and their numbers."""
     sys.path.insert(0, str(BLENDER))
     import fir_tree
-    import tree_check
     import tree_glb
     field, numbers = [], []
     for number, (share, px) in enumerate(LEVELS, 1):
@@ -280,10 +279,10 @@ def write_levels(folder: Path, visual: str, full, seed: int, extras: dict) -> tu
         glb = folder / f'{visual}_L{number}.glb'
         tree_glb.write(glb, [{k: v for k, v in p.items() if k != 'owner'} for p in tree.parts], visual,
                        extras=dict(extras, share=share, level=number))
-        read = tree_check.check(glb)
+        triangles = {part['name']: len(part['index']) for part in tree_glb.read(glb)}
         field.append(dict(glb=f'{FOLDER}/{glb.name}', px=px))
-        numbers.append(dict(level=number, share=share, px=px, triangles=read['triangles_total'],
-                            triangles_by_material=read['triangles'], thin=tree.metrics.get('thin'),
+        numbers.append(dict(level=number, share=share, px=px, triangles=sum(triangles.values()),
+                            triangles_by_material=triangles, thin=tree.metrics.get('thin'),
                             bytes=glb.stat().st_size))
     return field, numbers
 

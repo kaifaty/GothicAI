@@ -696,11 +696,12 @@ def build(config: dict, seed: int | None = None, scale: float = 1., pairs: bool 
 def thin(tree: Tree, share: float, seed: int = 0) -> Tree:
     """A copy of the tree with about `share` of its triangles, for measuring what fewer triangles buy.
 
-    Both materials lose the same share. The bark keeps the trunk and the dead stubs and then the longest
-    branches. The cards are kept at random, p of them, and each is scaled about its centre by 1 / sqrt(p): the
-    cards cover the area all of them covered, so the crown keeps its density (the background through the outline
-    of spruce A: 10.6 % full, 11.5 / 12.4 / 14.8 % at 1/2, 1/4 and 1/8) and about the pixels it fills, and a
-    thinned tree differs from the full one in its triangles more than in its overdraw. Keeping the outline's
+    Both materials target the same share. The bark keeps the trunk and the dead stubs and then the longest
+    branches. If the trunk and stubs exceed that share, the cards give up the excess while keeping at least
+    the first card if initially affordable. The cards are kept at random, p of them, and each is scaled about
+    its centre by 1 / sqrt(p): the cards cover the area all of them covered, so the crown keeps its density
+    (the background through the outline of spruce A: 10.6 % full, 11.5 / 12.4 / 14.8 % at 1/2, 1/4 and 1/8)
+    and about the pixels it fills, so the triangle count changes more than its overdraw. Keeping the outline's
     cards first (by A) left holes: 23-24 % at 1/4 and 1/8. The grown cards of the outline reach further out, so
     the cards are then brought back to the crown's width about the trunk's axis. Branches, phases and wind
     weights stay as they are; a card's stem leaves its branch's axis by the growth of the card."""
@@ -724,13 +725,13 @@ def thin(tree: Tree, share: float, seed: int = 0) -> Tree:
     # bark: the trunk (owner 0) and the stubs, then the branches from the longest
     owner = bark['owner'][bark['index'][:, 0]]
     lengths = {b.number: b.length for b in tree.branches}
-    budget = share * len(bark['index'])
+    bark_budget = share * len(bark['index'])
     keep = owner <= tree.stubs
     for number in sorted(lengths, key=lambda n: -lengths[n]):
         if number <= tree.stubs:
             continue
         mine = owner == number
-        if keep.sum() + mine.sum() > budget:
+        if keep.sum() + mine.sum() > bark_budget:
             break
         keep |= mine
     bark = keep_triangles(bark, keep)
@@ -741,7 +742,10 @@ def thin(tree: Tree, share: float, seed: int = 0) -> Tree:
     card = np.searchsorted(first, boughs['index'][:, 0], side='right') - 1
     triangles = np.bincount(card, minlength=len(first))
     order = rng.permutation(len(first))
-    taken = np.cumsum(triangles[order]) <= share * len(boughs['index'])
+    bough_budget = share * len(boughs['index'])
+    bark_excess = max(0., len(bark['index']) - bark_budget)
+    spare_bough_budget = max(0., bough_budget - triangles[order[0]])
+    taken = np.cumsum(triangles[order]) <= bough_budget - min(bark_excess, spare_bough_budget)
     chosen = np.zeros(len(first), bool)
     chosen[order[taken]] = True
     p = chosen.sum() / len(first)

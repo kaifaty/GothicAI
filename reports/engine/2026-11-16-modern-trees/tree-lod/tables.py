@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The price table of tree-lod.md from the runs of run.sh: per view the frame, GBuffer, VSM-rendering, GI-Lighting,
-triangles and the spruces at each level (the profile's mesh_level0..3), levels off and on.
+triangles and the spruces at each level (the profile's mesh_level0..4), levels off and on.
 
     python3 reports/engine/2026-11-16-modern-trees/tree-lod/tables.py /run/folder
 
@@ -24,7 +24,7 @@ def main() -> int:
     folder = Path(sys.argv[1])
     runs = {v: json.loads((folder / v / 'round-1/report.json').read_text())['places']['trees']['views']
             for v in ('L-off', 'L-on')}
-    print('| Вид | кадр, мс | ' + ' | '.join(f'`{p}`, мс' for p in PASSES) + ' | треуг., млн | елей на уровнях 0/1/2/3 |')
+    print('| Вид | кадр, мс | ' + ' | '.join(f'`{p}`, мс' for p in PASSES) + ' | треуг., млн | елей на уровнях 0/1/2/3/4 |')
     print('|---|---|' + '---|' * len(PASSES) + '---|---|')
     for view, name in VIEWS.items():
         cells = []
@@ -34,7 +34,7 @@ def main() -> int:
             cells.append(f'{fmt(pair[0])} → {fmt(pair[1])}')
         tri = [runs[v][view]['amounts']['triangles']['per_frame'] / 1e6 for v in ('L-off', 'L-on')]
         amounts = runs['L-on'][view]['amounts']
-        levels = '/'.join(f"{amounts.get(f'mesh_level{i}', {}).get('per_frame', 0.):.0f}" for i in range(4))
+        levels = '/'.join(f"{amounts.get(f'mesh_level{i}', {}).get('per_frame', 0.):.0f}" for i in range(5))
         tris = ' → '.join(f'{t:.1f}'.replace('.', ',') for t in tri)
         print(f'| {name} | ' + ' | '.join(cells) + f' | {tris} | {levels} |')
     return 0
