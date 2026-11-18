@@ -59,6 +59,7 @@ class SceneGlobals final {
     // TAA: the bias of the material textures' mip level in the main view; shadows keep 0
     void setMipBias(float bias);
     void setTaaFrame(bool taa, bool lampTaa, uint32_t frame);
+    void setLandscapeMask(bool enabled) { landscapeMask = enabled; }
     void setTreeOcclusionProbe() { uboGlobalCpu.viewFlags |= VF_TREE_OCCLUSION_PROBE; }
     // motion vectors of objects: on/off and the camera's part (identity and this frame's camera on a cut)
     void setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
@@ -223,6 +224,7 @@ class SceneGlobals final {
 
     bool                              zWindEnabled = false;
     bool                              grassDrawn   = false; // setGrassDrawn
+    bool                              landscapeMask = false;
     bool                              legacyWind = true;
     float                             windScale = 1.f;
     uint64_t                          windPeriod = 6000;

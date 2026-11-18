@@ -248,8 +248,10 @@ void SceneGlobals::setUnderWater(bool w) {
 
 void SceneGlobals::setTime(uint64_t time) {
   tickCount                = time;
-  uboGlobalCpu.waveAnim    = 2.f*float(M_PI)*float(tickCount%3000)/3000.f;
-  uboGlobalCpu.tickCount32 = uint32_t(tickCount);
+  // Use the same wave and texture animation phase in paired coverage masks.
+  const auto materialTick  = landscapeMask ? 0 : time;
+  uboGlobalCpu.waveAnim    = 2.f*float(M_PI)*float(materialTick%3000)/3000.f;
+  uboGlobalCpu.tickCount32 = uint32_t(materialTick);
 
   // Living foliage: the wind of this tick, and the one the previous frame was drawn with for the motion vectors.
   // A frame at the same tick (a pause) gets both alike; so does the first frame and one after a jump of the clock

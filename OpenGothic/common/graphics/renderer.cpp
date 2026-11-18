@@ -896,6 +896,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   updateCamera(wview, camera);
   updateEye(fId, camera);
   updateFogSky(camera);
+  wview.setLandscapeMask(captureLandscapeDepth);
   if(captureLandscapeDepth) {
     wview.setJitter(nullptr);
     wview.setMipBias(0);
