@@ -4,9 +4,9 @@
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
         textures --boughs DIR --bark DIR --out WORK
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
-        probe fir-probe-3 --textures WORK [--from working-28] [--pairs | --sides flip]
+        probe fir-probe-3 --textures WORK [--from working-28] [--pairs | --sides flip] [--levels]
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
-        forest tree-cost-1024 --textures WORK [--from working-34] [--count 1024] [--share 1] [--no-sample]
+        forest tree-cost-1024 --textures WORK [--from working-34] [--count 1024] [--share 1 | --levels] [--no-sample]
 
 `textures` reads what mesh3d/blender/fir_boughs.py and fir_bark.py baked (boughs.npz, bark.npz) and writes
 WORK/{boughs,bark}-{albedo,normal,orm}.dds, PNG previews for mesh3d/blender/fir_views.py, boughs-mask.npz (the
@@ -37,6 +37,12 @@ boughs' record says `"two_sided": "same"`: the engine draws both sides and light
 it lit the two copies before (reports/engine/2026-11-16-modern-trees/two-sided.md). `--sides flip` writes the
 other value of the field, the side away from the winding lit by the normal turned to the eye; `--pairs` lists
 the triangles twice under a one-sided record, as fir-probe-2 has them.
+
+`--levels` adds the levels of detail of the engine (reports/engine/2026-11-16-modern-trees/tree-lod.md) to each
+spruce: LEVELS, thin() of the spruce to 1/2, 1/4 and 1/8 of its triangles, drawn under 400, 200 and 100 pixels of
+its height on screen, each a GLB of its own beside the spruce's (<VISUAL>_L1.glb ...) and the record's field
+`"levels": [{"glb": ..., "px": 400}, ...]`. They are stands of thin(), not levels whose look is accepted; without
+the flag the set is written as before.
 
 `forest` builds a set of the cost stand (reports/engine/2026-11-16-modern-trees/tree-cost.md) the same way: the
 five spruces of PROBE, thinned to `--share` of their triangles by mesh3d/blender/fir_tree.py thin() when below 1,
@@ -91,6 +97,10 @@ PROBE = (((38700., 3456.2, 1000.), 40., 1.2, 33),
 # by FOREST_SEED, the same in every forest. LONE: spruce A alone on the top of the hill, west of the forest, for
 # the pairs of frames at distances; the hill hides the forest behind it from the west.
 X0, Z0, STEP, SIDE, JITTER, NEST_ROW = 51500., -16060., 660., 32, 150., 8
+# The levels of detail of --levels: the share of the spruce's triangles thin() keeps and the pixels of its height on
+# screen under which the level is drawn. By the silhouettes of tree-cost.md: 1/2 is not told from the spruce up to
+# 200 px, 1/4 up to 100, 1/8 at 50; each threshold is one step before that, at twice the height
+LEVELS = ((.5, 400), (.25, 200), (.125, 100))
 FOREST_SEED = 20261118
 LONE = (48500., 500.)
 GROUND = ('ground', 'rock')     # the material classes a root stands on
@@ -258,6 +268,26 @@ def add_materials(work: Path, config: dict, textures: Path, pairs: bool = False,
     return materials
 
 
+def write_levels(folder: Path, visual: str, full, seed: int, extras: dict) -> tuple[list[dict], list[dict]]:
+    """The GLBs of LEVELS of the spruce `full` beside its own: the field `levels` of its record and their numbers."""
+    sys.path.insert(0, str(BLENDER))
+    import fir_tree
+    import tree_check
+    import tree_glb
+    field, numbers = [], []
+    for number, (share, px) in enumerate(LEVELS, 1):
+        tree = fir_tree.thin(full, share, seed)
+        glb = folder / f'{visual}_L{number}.glb'
+        tree_glb.write(glb, [{k: v for k, v in p.items() if k != 'owner'} for p in tree.parts], visual,
+                       extras=dict(extras, share=share, level=number))
+        read = tree_check.check(glb)
+        field.append(dict(glb=f'{FOLDER}/{glb.name}', px=px))
+        numbers.append(dict(level=number, share=share, px=px, triangles=read['triangles_total'],
+                            triangles_by_material=read['triangles'], thin=tree.metrics.get('thin'),
+                            bytes=glb.stat().st_size))
+    return field, numbers
+
+
 def probe(args) -> int:
     sys.path.insert(0, str(BLENDER))
     import fir_tree
@@ -265,6 +295,8 @@ def probe(args) -> int:
     import tree_density
     import tree_glb
     config = json.loads(args.config.read_text())
+    if args.levels and args.pairs:
+        raise SystemExit('--levels thin the cards of a two-sided record: leave out --pairs')
     work, output = stage(args.source, args.set)
     materials = add_materials(work, config, args.textures, args.pairs, args.sides)
 
@@ -295,11 +327,16 @@ def probe(args) -> int:
                           height_m=tree.metrics['height_m'], crown_width_m=density['crown_width_m'],
                           background_share=density['background_share'],
                           trunk_open_length_share=density['trunk_open_length_share'], bytes=glb.stat().st_size))
+        if args.levels:
+            meshes[visual]['levels'], trees[-1]['levels'] = write_levels(
+                folder, visual, tree, number, dict(tree=config['id'], seed=trees[-1]['seed'], scale=scale))
     rewrite(work / 'meshes/meshes.json', meshes)
     layer = work / 'worlds' / WORLD / 'vobs.d/fir-probe.json'
     layer.write_text(json.dumps(dict(format=1, add=added), indent=1) + '\n')
     report = dict(set=args.set, source=args.source, trees=trees,
                   textures=json.loads((args.textures / 'textures.json').read_text()), materials=materials)
+    if args.levels:
+        report['levels'] = [dict(share=share, px=px) for share, px in LEVELS]
     (work / 'fir-probe.json').write_text(json.dumps(report, indent=1) + '\n')
     work.rename(output)
     print(json.dumps(dict(set=str(output), trees=trees), indent=1))
@@ -369,6 +406,8 @@ def forest(args) -> int:
     import tree_density
     import tree_glb
     config = json.loads(args.config.read_text())
+    if args.levels and args.share != 1:
+        raise SystemExit('--levels are of the whole spruce: leave --share at 1')
     layout = forest_layout(args.count)
     base = args.base or newest_base()
     points = np.array([(t['x'], t['z']) for t in layout] + [LONE])
@@ -402,6 +441,9 @@ def forest(args) -> int:
                             check_fails=read['fails'] + tree_density.rules(density, config['density'], scale),
                             bytes=glb.stat().st_size))
         meshes[visual] = dict(glb=f'{FOLDER}/{glb.name}')
+        if args.levels:
+            meshes[visual]['levels'], spruces[-1]['levels'] = write_levels(
+                folder, visual, full, number, dict(tree=config['id'], seed=spruces[-1]['seed'], scale=scale))
     rewrite(work / 'meshes/meshes.json', meshes)
     added = [dict(key=f'tree-cost-{t["column"]}-{t["row"]}', kind='mesh', visual=f'{VISUAL}_{t["spruce"]}',
                   position=[round(t['x'], 1), round(float(y), 1), round(t['z'], 1)], yaw_deg=t['yaw'], collision='none')
@@ -418,6 +460,8 @@ def forest(args) -> int:
                   sample=args.sample, triangles=sum(per_spruce[a['visual']] for a in added), spruces=spruces,
                   materials=materials, grid=dict(x0=X0, z0=Z0, step=STEP, side=SIDE, jitter=JITTER, seed=FOREST_SEED),
                   lone=dict(position=[LONE[0], round(float(height[-1]), 1), LONE[1]]))
+    if args.levels:
+        report['levels'] = [dict(share=share, px=px) for share, px in LEVELS]
     (work / 'tree-cost.json').write_text(json.dumps(report, indent=1) + '\n')
     work.rename(output)
     print(json.dumps({k: v for k, v in report.items() if k != 'materials'}, indent=1))
@@ -440,6 +484,7 @@ def main() -> int:
                          help="a bough's triangles twice under a one-sided record, as before two-sided materials")
     command.add_argument('--sides', choices=('same', 'flip'), default='same',
                          help='the value of "two_sided" in the record of the boughs')
+    command.add_argument('--levels', action='store_true', help='with the levels of detail LEVELS of each spruce')
     command = commands.add_parser('forest', help='the cost stand: a forest of spruces, maybe thinned')
     command.add_argument('set')
     command.add_argument('--textures', type=Path, required=True,
@@ -449,6 +494,7 @@ def main() -> int:
     command.add_argument('--count', type=int, default=1024, help='0, 64, 256 or 1024 spruces')
     command.add_argument('--share', type=float, default=1., help="the share of a spruce's triangles kept (thin)")
     command.add_argument('--no-sample', dest='sample', action='store_false', help='without the lone spruce A')
+    command.add_argument('--levels', action='store_true', help='with the levels of detail LEVELS of each spruce')
     command.add_argument('--base', type=Path, help='the base the ground is read from (the newest in the cache)')
     args = parser.parse_args()
     return dict(textures=textures, probe=probe, forest=forest)[args.command](args)
