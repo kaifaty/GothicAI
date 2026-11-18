@@ -21,6 +21,7 @@
 
 #include "graphics/drawcommands.h"
 #include "graphics/foliagewind.h"
+#include "graphics/grasscontact.h"
 #include "graphics/grass/grassparams.h"
 #include "camera.h"
 #include "frameprofile.h"
@@ -975,6 +976,22 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
     blood.draw(cmd, fId, wview.sceneGlobals(), gbufDiffuse, Shaders::options().doMaterialMaps ? &gbufOrm : nullptr,
                gbufNormal, zbuffer);
+  const auto grassStudy = taa.shot && Shaders::options().doMaterialMaps ? GrassContact::study() : GrassContact::None;
+  const bool grassRay = Shaders::options().doMaterialMaps && wview.sceneGlobals().grassContactActive();
+  const bool useGrassMask = grassRay && GrassContact::maskEnabled();
+  const bool buildGrassMask = useGrassMask || (grassRay && grassStudy==GrassContact::Compare);
+  if(buildGrassMask) {
+    constexpr uint32_t tile = GrassContact::MaskTilePixels;
+    const uint32_t w = (uint32_t(gbufDiffuse.w()) + tile - 1) / tile;
+    const uint32_t h = (uint32_t(gbufDiffuse.h()) + tile - 1) / tile;
+    auto& mask = usesImage2d(grassContactMask, TextureFormat::R32U, w, h);
+    cmd.setFramebuffer({});
+    cmd.setDebugMarker("GrassContactMask");
+    cmd.setBinding(0, gbufDiffuse, Sampler::nearest(ClampMode::ClampToEdge));
+    cmd.setBinding(1, mask);
+    cmd.setPipeline(shaders.grassContactMask);
+    cmd.dispatch(w, h);
+    }
   // SSAO needs only the depth: ahead of the shadow maps its compute runs under their vertex work on Metal
   prepareSSAO(cmd, wview);
   mainTiming.finish();
@@ -992,8 +1009,15 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   prepareGi  (cmd, fId, wview);
   prepareSurfels(cmd, wview);
 
+  if(grassStudy!=GrassContact::None) {
+    // Capture the shader's classes directly, before any exposure, fog or antialiasing.
+    grassContactDiagnostic = Resources::device().attachment(TextureFormat::RGBA8, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
+    cmd.setFramebuffer({{grassContactDiagnostic, Vec4(), Tempest::Preserve}}, {zbuffer, Tempest::Readonly});
+    drawShadowResolve(cmd, wview, buildGrassMask, grassStudy);
+    }
+
   cmd.setFramebuffer({{sceneLinear, Tempest::Discard, Tempest::Preserve}}, {zbuffer, Tempest::Readonly});
-  drawShadowResolve(cmd, wview);
+  drawShadowResolve(cmd, wview, useGrassMask, GrassContact::None);
   drawAmbient(cmd, wview);
   drawLights(cmd, wview);
   drawSky(cmd, wview);
@@ -1292,7 +1316,8 @@ void Renderer::drawShadowMap(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView
     }
   }
 
-void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
+void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& wview,
+                                 bool useGrassContactMask, uint32_t grassContactStudy) {
   static bool light = true;
   if(!light)
     return;
@@ -1300,16 +1325,17 @@ void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& w
   auto& scene = wview.sceneGlobals();
   cmd.setDebugMarker(settings.vsmEnabled ? "DirectSunLight-VSM" : "DirectSunLight");
 
-  struct Push { Vec3 originLwc; float vsmMipBias; } push = {scene.originLwc, settings.vsmMipBias};
-  if(shadow.directLightPso==&shaders.vsmDirectLight)
-    cmd.setPushData(&push, sizeof(push)); else
-    cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
+  struct Push { Vec3 originLwc; float vsmMipBias; uint32_t grassContactStudy; uint32_t useGrassContactMask; };
+  const Push push = {scene.originLwc, settings.vsmMipBias, grassContactStudy, useGrassContactMask ? 1u : 0u};
+  cmd.setPushData(&push, sizeof(push));
   cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, gbufDiffuse, Sampler::nearest());
   cmd.setBinding(2, gbufNormal,  Sampler::nearest());
   cmd.setBinding(3, zbuffer,     Sampler::nearest());
-  if(Shaders::options().doMaterialMaps)
+  if(Shaders::options().doMaterialMaps) {
     cmd.setBinding(12, gbufOrm, Sampler::nearest());
+    cmd.setBinding(13, useGrassContactMask ? grassContactMask : Resources::fallbackImage(), Sampler::nearest());
+    }
   if(shadow.directLightPso==&shaders.vsmDirectLight) {
     cmd.setBinding(4, vsm.pageTbl);
     cmd.setBinding(6, vsm.pageData);
@@ -1599,6 +1625,9 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&&
     if(enabled)
       captureTreeOcclusion(img,frameId,*wview,*camera);
     }
+  // The tree probe stops after the G-buffer, leaving the first draw's grass diagnostic intact.
+  if(!grassContactDiagnostic.isEmpty())
+    return std::move(grassContactDiagnostic);
   return img;
 
   // debug
