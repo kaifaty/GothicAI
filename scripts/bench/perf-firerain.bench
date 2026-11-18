@@ -34,3 +34,5 @@ wait 600
 perf sample perf-firerain/view-1
 wait 5000
 perf stop
+# the app cadence window is 30 s from `cadence normal`: let it end
+cadence wait
