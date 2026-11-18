@@ -954,7 +954,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     cmd.setBinding(0, zbuffer, Sampler::nearest());
     cmd.setBinding(1, usesImage2d(dst, TextureFormat::R32F, zbuffer.size()));
     cmd.setPipeline(shaders.ssaoDepth);
-    cmd.dispatchThreads(zbuffer.w(), zbuffer.h());
+    cmd.dispatchThreads(dst.size());
     };
 
   drawHiZ (cmd, wview);
