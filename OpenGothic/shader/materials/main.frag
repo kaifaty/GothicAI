@@ -23,8 +23,13 @@
 #include "virtual_shadow/vsm_sun_shadow.glsl"
 #endif
 
-#if defined(MAT_VARYINGS)
+#if defined(MAT_MOTION)
+layout(location = 0) in flat uint materialRef;
+uint bucketId;
+#elif defined(MAT_VARYINGS)
 layout(location = 0) in flat uint bucketId;
+#endif
+#if defined(MAT_VARYINGS)
 layout(location = 1) in Varyings  shInp;
 #endif
 
@@ -1049,6 +1054,19 @@ float alphaThreshold() {
   }
 
 void main() {
+#if defined(GBUFFER)
+  const bool treeProbe = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u;
+#endif
+#if defined(MAT_MOTION)
+  bucketId = materialRef;
+  uint probeInstance = 0u;
+  if(treeProbe) {
+    const uvec4 task = payload[materialRef];
+    bucketId = task.z;
+    probeInstance = task.x;
+    }
+#endif
+
 #if defined(MAT_UV)
 #if defined(ANTITILE_MATERIAL)
   MaterialSampling maps;
@@ -1101,6 +1119,15 @@ void main() {
   if(alphaTest<alphaThreshold())
     discard;
 #endif
+  if(treeProbe) {
+#if defined(MAT_MOTION)
+    outNormal = probeInstance + 1u;
+#elif defined(FLAT_NORMAL)
+    outNormal = 0xffffffffu;
+#else
+    outNormal = 0u;
+#endif
+    }
 #elif defined(WATER)
   mainWater(t);
 #elif defined(FORWARD) && !defined(DEPTH_ONLY)

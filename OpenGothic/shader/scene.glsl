@@ -136,6 +136,7 @@ const uint VF_LAMP_CONTACT = 0x10; // lamps darken what their shadow map is too 
 const uint VF_CONTACT_AO = 0x20; // the light of the GI probes takes the short occlusion of ssao.comp (lighting/rt/probe_ambient.frag)
 const uint VF_GRASS_CONTACT = 0x40; // blades shade the ground and each other by the sun's screen ray (grass/grass_contact.glsl)
 const uint VF_CROWN_MASK = 0x80; // a crown shows its openness as a colour instead of its albedo (OPENGOTHIC_CROWN_LIGHT=mask)
+const uint VF_TREE_OCCLUSION_PROBE = 0x200; // a bench-only G-buffer records the winning instance per pixel
 const uint VF_HIZ_NO_CANOPY = 0x100; // the occluder pass leaves the crowns of trees out, BK_CANOPY (graphics/hizoccluders.h)
 const uint VF_HAIR_DEBUG = 0x4; // hair pixels show the strand's direction as a colour instead of light (OPENGOTHIC_HAIR_DEBUG=1)
 

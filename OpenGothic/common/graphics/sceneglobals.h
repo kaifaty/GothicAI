@@ -40,6 +40,7 @@ class SceneGlobals final {
       VF_GRASS_CONTACT = 0x40,
       VF_CROWN_MASK = 0x80,
       VF_HIZ_NO_CANOPY = 0x100,
+      VF_TREE_OCCLUSION_PROBE = 0x200,
       };
 
     static bool isShadowView(VisCamera v);
@@ -58,6 +59,7 @@ class SceneGlobals final {
     // TAA: the bias of the material textures' mip level in the main view; shadows keep 0
     void setMipBias(float bias);
     void setTaaFrame(bool taa, bool lampTaa, uint32_t frame);
+    void setTreeOcclusionProbe() { uboGlobalCpu.viewFlags |= VF_TREE_OCCLUSION_PROBE; }
     // motion vectors of objects: on/off and the camera's part (identity and this frame's camera on a cut)
     void setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
     // the TAA reactive mask (graphics plan 1v): the added light on screen that makes an additive pixel fully reactive

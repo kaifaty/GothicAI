@@ -42,9 +42,18 @@ class Renderer final {
     void dbgDraw(Tempest::Painter& painter);
 
     // reuse: an image of an earlier call to draw into again, if its size still fits (a video frame every step)
-    Tempest::Attachment screenshoot(uint8_t frameId, Tempest::Attachment&& reuse = Tempest::Attachment());
+    Tempest::Attachment screenshoot(uint8_t frameId, Tempest::Attachment&& reuse = Tempest::Attachment(),
+                                    bool benchShot = false);
 
   private:
+    struct TreeOcclusionProbe {
+      Tempest::StorageImage occluderDepth;
+      Tempest::StorageImage mainDepth;
+      };
+    TreeOcclusionProbe* treeProbe = nullptr;
+    uint32_t treeProbeIndex = 0;
+    void captureTreeOcclusion(Tempest::Attachment& result, uint8_t fId, WorldView& view, const Camera& camera);
+
     enum Quality : uint8_t {
       None,
       VolumetricLQ,

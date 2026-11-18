@@ -229,7 +229,8 @@ uint64_t ParticleFx::calcPrefferedTimeSingle(const KeyList& k, float fps) {
   }
 
 const Tempest::Texture2d* ParticleFx::loadTexture(std::string_view src) {
-  auto view = Resources::loadTexture(src,false,false);
+  // a trail and a mark find an own texture of the content as the sprite does (Material)
+  auto view = Resources::loadMaterialAlbedo(src);
   if(view==nullptr)
     view = &Resources::fallbackBlack();
   return view;
