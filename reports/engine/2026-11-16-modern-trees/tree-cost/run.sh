@@ -5,7 +5,8 @@
 # maps (it waits for the GPU: not a timing run). The sets of `scripts/content/fir_set.py forest` must already lie in
 # ~/gothic-ai/tree-cost/content/<set>/ on Ryzen (rsync, see tree-cost.md, «Как повторить»).
 # With variant names after the output, only those run, in that order, as round 3 (round 4 for a name given twice):
-# a repeat of runs a hang stopped, without the counters' run; NO_BUILD=1 keeps the stand's build.
+# a repeat of runs a hang stopped, without the counters' run; NO_BUILD=1 keeps the stand's build. A name
+# <set variant>-vsmstats is a counters' run of that set.
 #   reports/engine/2026-11-16-modern-trees/tree-cost/run.sh /absolute/local/out [variant...]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
@@ -67,6 +68,7 @@ if ((${#ONLY[@]})); then
   for name in "${ONLY[@]}"; do
     round=3; [[ "$DONE" == *" $name "* ]] && round=4
     DONE+="$name "
+    if [[ "$name" == *-vsmstats ]]; then line "$name" 1 "OPENGOTHIC_VSM_STATS=1"; continue; fi
     for v in "${VARIANTS[@]}"; do if [[ "${v%%|*}" == "$name" ]]; then line "$name" "$round" "${v#*|}"; fi; done
   done
 else
