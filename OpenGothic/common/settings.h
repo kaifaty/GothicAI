@@ -15,6 +15,8 @@ class Settings final {
     ~Settings();
 
     static Settings& inst();
+    // a Settings is alive: its getters may be read (a tool that loads meshes without the game has none)
+    static bool      exists() { return instance!=nullptr; }
 
     struct PhysicsFlags {
       bool ragdoll       = false;

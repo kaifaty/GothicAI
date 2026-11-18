@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <stdexcept>
 
 #include "game/compatibility/phoenix.h"
 
@@ -482,6 +483,43 @@ PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explici
       sub.alphaTestRequired = sub.alphaTest;
       }
     }
+  }
+
+void PackedMesh::addLevel(const asset::StaticMesh& level, float px, const std::vector<std::vector<uint32_t>>* colors) {
+  if(level.sub_meshes.size()!=subMeshes.size())
+    throw std::runtime_error("a level of detail must have the mesh's materials");
+  if(levels.empty()) {
+    mainEnd[0] = vertices.size();
+    mainEnd[1] = indices.size();
+    mainEnd[2] = indices8.size();
+    }
+  // a meshlet is MaxVert vertices, MaxInd indices of them and its 8-bit list: the level's go after, its indices
+  // counted from its first vertex
+  const PackedMesh packed(level,PK_Visual,true,colors);
+  const auto firstVertex = uint32_t(vertices.size());
+  const auto firstIndex  = indices.size();
+  vertices.insert(vertices.end(),packed.vertices.begin(),packed.vertices.end());
+  indices.reserve(indices.size()+packed.indices.size());
+  for(auto i:packed.indices)
+    indices.push_back(firstVertex+i);
+  indices8.insert(indices8.end(),packed.indices8.begin(),packed.indices8.end());
+
+  Level lv;
+  lv.px = px;
+  for(auto& sub:packed.subMeshes)
+    lv.sub.emplace_back(firstIndex+sub.iboOffset,sub.iboLength);
+  lv.bbox[0] = Vec3(level.bbox.min.x,level.bbox.min.y,level.bbox.min.z);
+  lv.bbox[1] = Vec3(level.bbox.max.x,level.bbox.max.y,level.bbox.max.z);
+  levels.push_back(std::move(lv));
+  }
+
+void PackedMesh::dropLevels() {
+  if(levels.empty())
+    return;
+  vertices.resize(mainEnd[0]);
+  indices.resize(mainEnd[1]);
+  indices8.resize(mainEnd[2]);
+  levels.clear();
   }
 
 PackedMesh::PackedMesh(const asset::SoftSkinMesh& skinned) {

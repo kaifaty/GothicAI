@@ -42,7 +42,7 @@ uint32_t DrawClusters::alloc(const Bucket& bucket, size_t firstMeshlet, size_t m
 
   Cluster& c = clusters[ret];
   if(bucket.staticMesh!=nullptr)
-    c.r = bucket.staticMesh->bbox.rConservative + bucket.mat.waveMaxAmplitude +
+    c.r = bucket.staticMesh->drawn.rConservative + bucket.mat.waveMaxAmplitude +
           FoliageTree::travel(bucket.mat.foliage, bucket.staticMesh->bbox.bbox[0], bucket.staticMesh->bbox.bbox[1]); else
     c.r = bucket.animMesh->bbox.rConservative;
   c.bucketId     = bucketId;

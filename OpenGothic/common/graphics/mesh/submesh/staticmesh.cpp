@@ -167,7 +167,7 @@ StaticMesh::StaticMesh(const PackedMesh& mesh) {
     for(size_t i=0;i<mesh.subMeshes.size();++i) {
       if(sub[i].material.strand)
         continue; // ribbons have no width until the vertex shader: nothing for a ray to hit
-      sub[i].blas = Resources::blas(vbo, ibo, sub[i].iboOffset, sub[i].iboLength);
+      sub[i].blas = Resources::blas(vbo, ibo, sub[i].rtOffset, sub[i].rtLength);
       }
     }
   }
@@ -181,9 +181,12 @@ StaticMesh::StaticMesh(const PackedMesh& mesh, LandscapePages& pages)
     for(size_t i=0;i<mesh.subMeshes.size();++i) {
       sub[i].iboOffset = mesh.subMeshes[i].iboOffset;
       sub[i].iboLength = mesh.subMeshes[i].iboLength;
+      sub[i].rtOffset  = sub[i].iboOffset;
+      sub[i].rtLength  = sub[i].iboLength;
       }
     }
   bbox.assign(mesh.bbox());
+  drawn = bbox;
   }
 
 StaticMesh::~StaticMesh() {
@@ -198,6 +201,8 @@ StaticMesh& StaticMesh::operator=(StaticMesh&& other) {
   morph=other.morph;
   sub=std::move(other.sub);
   bbox=other.bbox;
+  drawn=other.drawn;
+  levels=std::move(other.levels);
   pageRange=std::move(other.pageRange);
   return *this;
   }
@@ -250,8 +255,25 @@ void StaticMesh::initSubMeshes(const PackedMesh& mesh) {
     sub[i].iboOffset = mesh.subMeshes[i].iboOffset;
     sub[i].iboLength = mesh.subMeshes[i].iboLength;
     sub[i].texel     = mesh.subMeshes[i].texel;
+    sub[i].rtOffset  = sub[i].iboOffset;
+    sub[i].rtLength  = sub[i].iboLength;
     }
   bbox.assign(mesh.bbox());
+  drawn = bbox;
+  // The levels of detail (meshlevels.h): the rays take the coarsest one at any distance, the culling keeps them all
+  levels.resize(mesh.levels.size());
+  for(size_t i=0;i<mesh.levels.size();++i) {
+    levels[i].px  = mesh.levels[i].px;
+    levels[i].sub = mesh.levels[i].sub;
+    Bounds level;
+    level.assign(mesh.levels[i].bbox);
+    drawn.assign(drawn,level);
+    }
+  if(!levels.empty())
+    for(size_t i=0;i<sub.size() && i<levels.back().sub.size();++i) {
+      sub[i].rtOffset = levels.back().sub[i].first;
+      sub[i].rtLength = levels.back().sub[i].second;
+      }
   strandWidth = mesh.strandWidth;
   }
 
@@ -261,6 +283,24 @@ const Tempest::AccelerationStructure* StaticMesh::blas(size_t iboOffset, size_t 
       return &i.blas;
       }
   return nullptr;
+  }
+
+std::pair<uint32_t,uint32_t> StaticMesh::levelMeshlets(size_t iboOffset, size_t iboLen, size_t level) const {
+  std::pair<size_t,size_t> slice = {iboOffset,iboLen};
+  if(level>0 && level<=levels.size())
+    for(size_t i=0;i<sub.size() && i<levels[level-1].sub.size();++i)
+      if(sub[i].iboOffset==iboOffset && sub[i].iboLength==iboLen) {
+        slice = levels[level-1].sub[i];
+        break;
+        }
+  return {uint32_t(slice.first/PackedMesh::MaxInd), uint32_t(slice.second/PackedMesh::MaxInd)};
+  }
+
+std::pair<size_t,size_t> StaticMesh::rtSlice(size_t iboOffset, size_t iboLen) const {
+  for(auto& i:sub)
+    if(i.iboOffset==iboOffset && i.iboLength==iboLen)
+      return {i.rtOffset,i.rtLength};
+  return {iboOffset,iboLen};
   }
 
 StaticMesh::StaticMesh(const Material& mat, std::vector<Resources::Vertex> cvbo, std::vector<uint32_t> cibo) {
@@ -303,6 +343,7 @@ StaticMesh::StaticMesh(const Material& mat, std::vector<Resources::Vertex> cvbo,
     sub[i].texName   = "";
     sub[i].material  = mat;
     sub[i].iboLength = PackedMesh::MaxInd;
+    sub[i].rtLength  = PackedMesh::MaxInd;
     sub[i].texel     = texel;
     if(Resources::hasGraphicsDevice() && Shaders::options().doRtScene) {
       LoadProbe::Vobs::Scope probe("mesh_gpu");
@@ -310,4 +351,5 @@ StaticMesh::StaticMesh(const Material& mat, std::vector<Resources::Vertex> cvbo,
       }
     }
   bbox.assign(cvbo);
+  drawn = bbox;
   }

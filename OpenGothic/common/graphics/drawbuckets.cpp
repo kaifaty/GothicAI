@@ -260,10 +260,12 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     bx.alphaWeight        = i.mat.alphaWeight;
     bx.envMapping         = i.mat.envMapping;
     if(i.staticMesh!=nullptr) {
+      // the box the culling tests holds every level of detail of the mesh (meshlevels.h); its own is the wind's
       auto& bbox    = i.staticMesh->bbox.bbox;
-      bx.bboxRadius = i.staticMesh->bbox.rConservative;
-      bx.bbox[0]    = Vec4(bbox[0].x,bbox[0].y,bbox[0].z,0.f);
-      bx.bbox[1]    = Vec4(bbox[1].x,bbox[1].y,bbox[1].z,0.f);
+      auto& drawn   = i.staticMesh->drawn.bbox;
+      bx.bboxRadius = i.staticMesh->drawn.rConservative;
+      bx.bbox[0]    = Vec4(drawn[0].x,drawn[0].y,drawn[0].z,0.f);
+      bx.bbox[1]    = Vec4(drawn[1].x,drawn[1].y,drawn[1].z,0.f);
       if(i.staticMesh->morph.anim!=nullptr)
         bx.flags |= BK_MORPH;
       else if(i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest) {

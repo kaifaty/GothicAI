@@ -12,6 +12,7 @@
 
 #include "graphics/mesh/submesh/animmesh.h"
 #include "frameprofile.h"
+#include "graphics/meshlevels.h"
 #include "loadprobe.h"
 #include "physics/worldwind.h"
 #include "shaders.h"
@@ -125,7 +126,7 @@ void VisualObjects::Item::setVisible(bool visible) {
   const auto meshlets = obj.iboLen/PackedMesh::MaxInd;
   const auto count = obj.type==DrawCommands::Landscape ? meshlets : 1u;
   for(uint32_t i=0;i<count;++i)
-    owner->clustersMem[obj.clusterId+i].meshletCount = visible ? (obj.type==DrawCommands::Landscape ? 1u : (obj.strandMeshlets>0 ? obj.strandMeshlets : meshlets)) : 0u;
+    owner->clustersMem[obj.clusterId+i].meshletCount = visible ? (obj.type==DrawCommands::Landscape ? 1u : owner->drawnMeshlets(obj).second) : 0u;
   owner->clustersMem.markClusters(obj.clusterId,count);
   owner->updateRtAs(id);
   }
@@ -159,7 +160,7 @@ void VisualObjects::Item::setDeformation(const Tempest::Vec4* vertices, size_t p
     obj.deformCount = 0;
     obj.deformFirst = 0;
     if(auto mesh=obj.bucketId->staticMesh) {
-      owner->clustersMem[obj.clusterId].r = mesh->bbox.rConservative+obj.bucketId->mat.waveMaxAmplitude+
+      owner->clustersMem[obj.clusterId].r = mesh->drawn.rConservative+obj.bucketId->mat.waveMaxAmplitude+
                                             FoliageTree::travel(obj.bucketId->mat.foliage,mesh->bbox.bbox[0],mesh->bbox.bbox[1]);
       obj.treeFade = FoliageTree::fadeCode(FoliageTree::Fade());
       owner->clustersMem.markClusters(obj.clusterId);
@@ -360,7 +361,9 @@ void VisualObjects::updateRtSlot(RtScene& out, Object& obj) {
     }
   if(obj.rtSlot==RtScene::NoSlot)
     obj.rtSlot = out.allocSlot();
-  out.setSlot(obj.rtSlot, obj.pos, *blas, obj.bucketId->mat, *mesh, obj.iboOff, obj.iboLen, obj.visible);
+  // the triangles of the BLAS: of the coarsest level of detail when the mesh has levels (meshlevels.h)
+  const auto slice = mesh->rtSlice(obj.iboOff, obj.iboLen);
+  out.setSlot(obj.rtSlot, obj.pos, *blas, obj.bucketId->mat, *mesh, slice.first, slice.second, obj.visible);
   }
 
 VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& mat,
@@ -421,6 +424,15 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     obj.treeFade = FoliageTree::fadeCode(FoliageTree::Fade());
     objectsTree.insert(id);
     }
+  // levels of detail (meshlevels.h): the cluster draws its submesh's slice of the level the main view picks
+  if(!mesh.levels.empty() && type!=DrawCommands::Morph)
+    for(size_t i=0; i<mesh.sub.size() && i<NoLevels; ++i)
+      if(mesh.sub[i].iboOffset==iboOff && mesh.sub[i].iboLength==iboLen) {
+        obj.levelSub = uint8_t(i);
+        obj.level    = 0;
+        objectsLevels.insert(id);
+        break;
+        }
 
   if(type==DrawCommands::Morph) {
     obj.objMorphAnim = instanceMem.alloc(sizeof(MorphDesc)*Resources::MAX_MORPH_LAYERS);
@@ -569,6 +581,8 @@ void VisualObjects::free(size_t id) {
     objectsStrand.erase(id);
   if(obj.tree)
     objectsTree.erase(id);
+  if(obj.levelSub!=NoLevels)
+    objectsLevels.erase(id);
 
   obj = Object();
   while(objects.size()>0) {
@@ -824,6 +838,7 @@ void VisualObjects::preFrameUpdate() {
   preFrameUpdateMorph();
   preFrameUpdateStrands();
   preFrameUpdateTrees();
+  preFrameUpdateLevels();
   }
 
 // The wind of a tree fades with the distance (FoliageTree::fade; tree-wind.md, section 4), and a tree with less
@@ -851,9 +866,62 @@ void VisualObjects::preFrameUpdateTrees() {
     if(code==obj.treeFade)
       continue;
     obj.treeFade = code;
-    clustersMem[obj.clusterId].r = mesh->bbox.rConservative + mat.waveMaxAmplitude + FoliageTree::travel(bits, reach, fade);
+    clustersMem[obj.clusterId].r = mesh->drawn.rConservative + mat.waveMaxAmplitude + FoliageTree::travel(bits, reach, fade);
     clustersMem.markClusters(obj.clusterId);
     }
+  }
+
+std::pair<uint32_t,uint32_t> VisualObjects::drawnMeshlets(Object& obj) {
+  const uint32_t first = obj.iboOff/PackedMesh::MaxInd;
+  if(obj.strandMeshlets>0)
+    return {first, obj.strandMeshlets};
+  if(const auto* mesh = obj.bucketId->staticMesh)
+    return mesh->levelMeshlets(obj.iboOff, obj.iboLen, obj.level);
+  return {first, obj.iboLen/PackedMesh::MaxInd};
+  }
+
+// Levels of detail of own meshes (meshlevels.h): once a frame each object of a mesh with levels is measured on the
+// main view — the height of its mesh's box times its scale, at the distance of the box's middle, by the projection
+// the shaders of this frame get — and its cluster is given the slice of the level for that height. Every pass reads
+// the cluster: the main view, the occluders and the shadows draw that level. A deformed object keeps the mesh itself
+void VisualObjects::preFrameUpdateLevels() {
+  uint64_t count[1+MeshLevels::MaxLevels] = {};
+  const float py   = scene.proj.at(1,1);
+  const int   resY = scene.screenRes().y;
+  for(auto id:objectsLevels) {
+    auto&       obj  = objects[id];
+    const auto* mesh = obj.bucketId->staticMesh;
+    if(mesh==nullptr)
+      continue;
+    uint8_t level = 0;
+    if(obj.deformCount==0 && py!=0.f && resY>0) {
+      float px[MeshLevels::MaxLevels] = {};
+      const size_t n = std::min(mesh->levels.size(), MeshLevels::MaxLevels);
+      for(size_t i=0; i<n; ++i)
+        px[i] = mesh->levels[i].px;
+      const auto& box    = mesh->bbox.bbox;
+      Vec3        middle = (box[0]+box[1])*0.5f;
+      obj.pos.project(middle);
+      const float scale  = Vec3(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2)).length();
+      const float height = MeshLevels::screenHeight((box[1].y-box[0].y)*scale, (middle-scene.camPos()).length(), py, resY);
+      level = MeshLevels::pick(px, n, obj.level, height);
+      }
+    if(obj.levelSub==0)
+      ++count[level];
+    if(level==obj.level)
+      continue;
+    obj.level = level;
+    const auto range = drawnMeshlets(obj);
+    auto&      c     = clustersMem[obj.clusterId];
+    c.firstMeshlet = range.first;
+    c.meshletCount = obj.visible ? range.second : 0u;
+    clustersMem.markClusters(obj.clusterId);
+    }
+  // the objects of the first submesh of their meshes: one an object with levels, a spruce of bark and boughs once
+  FrameProfile::add(FrameProfile::Amount::MeshLevel0, count[0]);
+  FrameProfile::add(FrameProfile::Amount::MeshLevel1, count[1]);
+  FrameProfile::add(FrameProfile::Amount::MeshLevel2, count[2]);
+  FrameProfile::add(FrameProfile::Amount::MeshLevel3, count[3]);
   }
 
 void VisualObjects::preFrameUpdateWind() {

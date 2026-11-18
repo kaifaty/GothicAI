@@ -7,6 +7,7 @@
 #include "gltfmesh.h"
 #include "gltfmeshcolor.h"
 #include "graphics/shaders.h"
+#include "graphics/meshlevels.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/skeleton.h"
@@ -23,6 +24,7 @@
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "physics/fracture.h"
 #include "resources.h"
+#include "settings.h"
 #include "asset/fromzenkit.h"
 #include "baseimport.h"
 #include "basemesh.h"
@@ -71,14 +73,18 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <thread>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 #include <sys/wait.h>
 #include <unistd.h>
+
+extern char** environ;
 
 struct MeshGltfTest {
   static MdlVisual& visual(Npc& npc) { return npc.visual; }
@@ -1429,6 +1435,208 @@ void indexCases(const Fixture& fixture) {
   resourcePaths(fixture,false);
   fixture.index(R"({"invalid":{"glb":"../escape.glb"},"oWn_MeSh":{"glb":"test/own.glb"}})");
   resourcePaths(fixture,true);
+  }
+
+// The switch of the levels of detail off, in a process of this test of its own (MeshLevels::enabled() is read once):
+// mode `env` by OPENGOTHIC_MESH_LEVELS=0, mode `ini` by [INTERNAL] meshLevels=0 of the game's settings. A record with
+// levels must load the mesh alone, its rays the mesh's own triangles. Returns the exit code
+int levelSwitchChild(std::string_view mode) {
+  Fixture fixture;
+  const auto root=fixture.root.string();
+  const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str(),"-rt","0"};
+  CommandLine commandLine(5,args);
+  std::unique_ptr<Settings> settings;
+  if(mode=="ini") {
+    textFile(fixture.root/"system.ini","");
+    textFile(fixture.root/"user.ini","[INTERNAL]\nmeshLevels=0\n");
+    settings=std::make_unique<Settings>();
+    settings->load((fixture.root/"system.ini").u16string(),(fixture.root/"user.ini").u16string());
+    }
+  glbFile(fixture.root/"meshes/test/lod1.glb");
+  fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400}]}})");
+  Resources resources;
+  fixture.mount();
+  const auto* proto = Resources::loadMesh("own_mesh.3ds");
+  require(!MeshLevels::enabled(),"the switch must be off: "+std::string(mode));
+  require(proto!=nullptr && proto->attach.size()==1 && proto->attach[0].sub.size()==1,"the mesh must load");
+  const auto& mesh = proto->attach[0];
+  const auto& sub  = mesh.sub[0];
+  require(mesh.levels.empty() && mesh.rtSlice(sub.iboOffset,sub.iboLength)==std::pair(sub.iboOffset,sub.iboLength) &&
+          mesh.levelMeshlets(sub.iboOffset,sub.iboLength,1)==std::pair(uint32_t(0),uint32_t(1)),
+          "levels switched off must leave the mesh itself, in the rays too: "+std::string(mode));
+  std::cout << "mesh levels off by " << mode << ": the mesh alone\n";
+  return 0;
+  }
+
+// Runs levelSwitchChild in this test's binary anew; fork and exec only, so a thread of this process cannot hold a lock
+void levelSwitchCase(std::string_view mode) {
+  std::error_code error;
+  const auto self = std::filesystem::read_symlink("/proc/self/exe",error);
+  require(!error,"the switch's case needs this test's binary (/proc/self/exe)");
+  std::vector<std::string> env;
+  for(char** e=environ; *e!=nullptr; ++e) {
+    const std::string_view v(*e);
+    if(!v.starts_with("OPENGOTHIC_MESH_LEVELS=") && !v.starts_with("GOTHIC_MESH_LEVELS_CHILD="))
+      env.emplace_back(v);
+    }
+  env.push_back("GOTHIC_MESH_LEVELS_CHILD="+std::string(mode));
+  if(mode=="env")
+    env.push_back("OPENGOTHIC_MESH_LEVELS=0");
+  std::vector<char*> envp;
+  for(auto& v:env)
+    envp.push_back(v.data());
+  envp.push_back(nullptr);
+  const std::string path = self.string();
+  char* argv[] = {const_cast<char*>(path.c_str()),nullptr};
+  std::cout.flush();
+  const pid_t child = fork();
+  require(child>=0,"the switch's process must start");
+  if(child==0) {
+    execve(path.c_str(),argv,envp.data());
+    _exit(127);
+    }
+  int status = 0;
+  require(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0,
+          "levels switched off by "+std::string(mode)+" must draw and trace the mesh alone");
+  }
+
+// Levels of detail of an own mesh (graphics/meshlevels.h): the switch, the choice by the height on screen, the field
+// of meshes.json and the packing of the levels after the mesh
+void levelCases(const Fixture& fixture) {
+  require(MeshLevels::parse("",true) && !MeshLevels::parse("",false) && !MeshLevels::parse("0",true) &&
+          MeshLevels::parse("1",false),"OPENGOTHIC_MESH_LEVELS must win over [INTERNAL] meshLevels, 0 is off");
+  levelSwitchCase("env");
+  levelSwitchCase("ini");
+
+  // spruce A, 18 m, at 1920x1080 and 67.5 degrees: the levels of 400, 200 and 100 px come at 36, 73 and 145 m
+  const float px[3] = {400,200,100};
+  const auto  at    = [](float metres) { return MeshLevels::screenHeight(1800,metres*100,1.f/std::tan(0.589f),1080); };
+  require(std::abs(at(36.37f)-400)<1 && std::abs(at(145.5f)-100)<1,"the height on screen must go as height/distance");
+  uint8_t level = 0;
+  std::vector<uint8_t> seen;
+  for(float metres=10; metres<=300; metres+=.5f) {
+    const auto next = MeshLevels::pick(px,3,level,at(metres));
+    require(next>=level,"a farther object must never get a finer level");
+    if(next!=level)
+      seen.push_back(next);
+    level = next;
+    }
+  require(seen==std::vector<uint8_t>{1,2,3} && level==3,"going away the levels must come one by one, in their order");
+  seen.clear();
+  for(float metres=300; metres>=10; metres-=.5f) {
+    const auto next = MeshLevels::pick(px,3,level,at(metres));
+    require(next<=level,"a nearer object must never get a coarser level");
+    if(next!=level)
+      seen.push_back(next);
+    level = next;
+    }
+  require(seen==std::vector<uint8_t>{2,1,0} && level==0,"coming near the levels must go one by one back to the mesh");
+  require(MeshLevels::pick(px,3,0,399)==1 && MeshLevels::pick(px,3,0,400)==0 && MeshLevels::pick(px,3,0,420)==0,
+          "a level must come under its px, not on it");
+  for(float h:{399.f,401.f,420.f,439.f,400.f,438.f})
+    require(MeshLevels::pick(px,3,1,h)==1,"a height between px and 1.1 px must keep the level it has: no flicker");
+  require(MeshLevels::pick(px,3,1,440)==0 && MeshLevels::pick(px,3,3,109)==3 && MeshLevels::pick(px,3,3,110)==2,
+          "a level must give way to the finer one at 1.1 of its px");
+  require(MeshLevels::pick(px,3,0,50)==3 && MeshLevels::pick(px,3,3,1000)==0,"a jump must cross every threshold at once");
+  require(MeshLevels::pick(px,0,0,1)==0 && MeshLevels::pick(px,1,0,50)==1,
+          "a record without levels must draw the mesh at any height; one level must be the last");
+
+  // the field
+  const auto root = fixture.root/"meshes/test";
+  glbFile(root/"own.glb");
+  glbFile(root/"lod1.glb");
+  GlbOptions bigger;
+  bigger.transformed = true;
+  glbFile(root/"lod2.glb",bigger);
+  const auto record = [&](std::string_view levels) {
+    fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":)"+std::string(levels)+"}}");
+    };
+  record(R"([{"glb":"test/lod1.glb","px":400},{"glb":"test/lod2.glb","px":200.5}])");
+  {
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1,"a mesh with levels must load");
+    const auto& mesh = proto->attach[0];
+    require(mesh.levels.size()==2 && mesh.levels[0].px==400.f && mesh.levels[1].px==200.5f,
+            "the levels must keep their order and px");
+    require(mesh.sub.size()==1 && mesh.levels[0].sub.size()==1 && mesh.levels[1].sub.size()==1,
+            "a level must have a slice for each submesh of the mesh, and no submesh of its own");
+    const auto& sub = mesh.sub[0];
+    const auto  lv1 = mesh.levels[0].sub[0], lv2 = mesh.levels[1].sub[0];
+    require(sub.iboOffset==0 && lv1.first==sub.iboOffset+sub.iboLength && lv2.first==lv1.first+lv1.second &&
+            lv1.second==PackedMesh::MaxInd && lv2.second==PackedMesh::MaxInd,
+            "the levels must be packed after the mesh in its buffers, a meshlet each");
+    require(mesh.rtSlice(sub.iboOffset,sub.iboLength)==lv2,"the ray scene must take the coarsest level");
+    // what VisualObjects gives the object's cluster at each level (drawnMeshlets)
+    using Range = std::pair<uint32_t,uint32_t>;
+    const auto itself = Range(uint32_t(sub.iboOffset/PackedMesh::MaxInd),uint32_t(sub.iboLength/PackedMesh::MaxInd));
+    require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,0)==itself &&
+            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,1)==Range(uint32_t(lv1.first/PackedMesh::MaxInd),1) &&
+            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,2)==Range(uint32_t(lv2.first/PackedMesh::MaxInd),1) &&
+            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,3)==itself,
+            "a cluster must draw the meshlets of its level: the mesh's at 0 and at a level the mesh has not");
+    require(close(mesh.bbox.bbox[0].x,-400.f) && close(mesh.bbox.bbox[1].y,600.f),
+            "the mesh's own box (the wind's height) must not take the levels in");
+    const auto& own = mesh.bbox.bbox;
+    const auto& all = mesh.drawn.bbox;
+    require(all[0].x<=own[0].x && all[0].y<=own[0].y && all[0].z<=own[0].z &&
+            all[1].x>=own[1].x && all[1].y>=own[1].y && all[1].z>=own[1].z,"the culling box must hold the mesh");
+    require(mesh.drawn.rConservative>mesh.bbox.rConservative+100.f,"the culling box must hold the larger level");
+    require(mesh.shape!=nullptr && mesh.hullVertices.size()==3 && !proto->points.empty(),
+            "collision and the hull must be built from the mesh alone");
+    for(const auto& point:mesh.hullVertices)
+      require(point.x<=-100.f && point.x>=-400.f && point.y<=600.f,"the hull must have no vertex of a level");
+  }
+
+  // a wrong field: the reason in the log, the mesh drawn alone
+  const auto alone = [&](std::string_view what) {
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1 && proto->attach[0].sub.size()==1 &&
+            proto->attach[0].sub[0].texName=="OWN_TEST_BARREL_WOOD.TGA",
+            "a mesh whose levels are rejected must still load: "+std::string(what));
+    require(proto->attach[0].levels.empty() &&
+            proto->attach[0].rtSlice(proto->attach[0].sub[0].iboOffset,proto->attach[0].sub[0].iboLength).first==0,
+            "levels must be rejected: "+std::string(what));
+    };
+  fixture.index();
+  alone("no field");
+  for(const auto* levels:{R"({"glb":"test/lod1.glb","px":400})",
+                          R"([{"glb":"test/lod1.glb","px":400},{"glb":"test/lod1.glb","px":300},)"
+                          R"({"glb":"test/lod1.glb","px":200},{"glb":"test/lod1.glb","px":100}])",
+                          R"([{"glb":"test/lod1.glb","px":200},{"glb":"test/lod2.glb","px":200}])",
+                          R"([{"glb":"test/lod1.glb","px":200},{"glb":"test/lod2.glb","px":400}])",
+                          R"([{"glb":"test/lod1.glb","px":0}])",
+                          R"([{"glb":"test/lod1.glb","px":-1}])",
+                          R"([{"glb":"test/lod1.glb","px":"400"}])",
+                          R"([{"glb":"test/lod1.glb"}])",
+                          R"([{"px":400}])",
+                          R"([{"glb":7,"px":400}])",
+                          R"(["test/lod1.glb"])",
+                          R"([{"glb":"../meshes/test/lod1.glb","px":400}])",
+                          R"([{"glb":"test/lod1.png","px":400}])",
+                          R"([{"glb":"test/missing.glb","px":400}])"}) {
+    record(levels);
+    alone(levels);
+    }
+  record(R"([{"glb":"test/lod1.glb","px":400}])");
+  GlbOptions other;
+  other.texture = "OWN_TEST_OTHER";
+  glbFile(root/"lod1.glb",other);
+  alone("a level of another material");
+  other = {};
+  other.mixedAlpha = true;
+  glbFile(root/"lod1.glb",other);
+  alone("a level with a material the mesh has not");
+  colorGlbFile(root/"lod1.glb",2);
+  alone("a level with COLOR_0 of a mesh without it");
+  textFile(root/"lod1.glb","broken glb");
+  alone("a level that does not load");
+  std::filesystem::remove(root/"lod1.glb");
+  std::filesystem::remove(root/"lod2.glb");
+  fixture.index();
   }
 
 void fractureFile(const std::filesystem::path& path, size_t version = 1, size_t sourceSize = 0, uint32_t sourceCrc32 = 0,
@@ -2927,6 +3135,8 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
 
 int main() {
   try {
+    if(const char* mode=std::getenv("GOTHIC_MESH_LEVELS_CHILD"))
+      return levelSwitchChild(mode);
     // The effect receipt uses the caller's installation and base: read them before the fixture
     // points the environment at its own toy installation.
     const char* gameDir = std::getenv("GOTHIC_DIR");
@@ -2953,6 +3163,7 @@ int main() {
     generatedBarrel(fixture);
     rejectionCases(fixture);
     indexCases(fixture);
+    levelCases(fixture);
     fractureCache(fixture);
     modelCases(fixture);
     setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);

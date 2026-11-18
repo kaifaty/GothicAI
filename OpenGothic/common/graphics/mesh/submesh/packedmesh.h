@@ -55,6 +55,15 @@ class PackedMesh {
     std::vector<SubMesh>  subMeshes;
     std::vector<Cluster>  meshletBounds;
 
+    // Levels of detail of an own static mesh (graphics/meshlevels.h), coarser one after another: packed after the
+    // mesh into the same buffers, so subMeshes, bbox() and everything before mainEnd are the mesh's own
+    struct Level final {
+      float                                px = 0;   // drawn while the object is under this many pixels high
+      std::vector<std::pair<size_t,size_t>> sub;     // a slice of indices (offset, length) for each of subMeshes
+      Tempest::Vec3                        bbox[2];  // of the level's own vertices
+      };
+    std::vector<Level>    levels;
+
     std::vector<uint32_t> verticesId; // only for morph meshes
     bool                  isUsingAlphaTest = true;
     float                 strandWidth      = 0;    // strands (groommesh.cpp): the mean width of a hair, cm; 0: not strands
@@ -85,8 +94,16 @@ class PackedMesh {
 
     std::pair<Tempest::Vec3,Tempest::Vec3> bbox() const;
 
+    // Packs `level` (a mesh with the materials of this one, its submeshes in the order of subMeshes) after the mesh
+    // and the levels before it; colors: its COLOR_0 as for the constructor
+    void addLevel(const asset::StaticMesh& level, float px, const std::vector<std::vector<uint32_t>>* colors = nullptr);
+    // The mesh alone again: what collision and the hit zones are built from
+    void dropLevels();
+
   private:
     Tempest::Vec3 mBbox[2];
+    // where the mesh's own vertices, indices and 8-bit indices end once levels follow them
+    size_t        mainEnd[3] = {};
 
     struct Prim {
       uint32_t primId = 0;
