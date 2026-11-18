@@ -1,8 +1,8 @@
 # Spruce A at noon, in the forest from fir_set.py and on its own at LONE (48500,6383.1,500).
 # The lone spruce's 18.47 m bounds, 67.5 degree vertical FOV and 1080 render lines give 99.6 and 49.8 px.
-# Test the impostor at both sizes. OPENGOTHIC_IMPOSTORS=0 keeps the meshes even with `impostor force`.
+# For reference impostor stills, change the first `impostor off` to `impostor force`.
 # Forest cameras follow perf-trees.bench from the rock hill through its 300 m view to about 400 m.
-# `forest-300` records the frame triangle count with the normal level selection.
+# Both `forest-300-*` samples hold the same view and switch only the representation.
 # @timeout 360
 seed 73013
 cheat god
@@ -14,7 +14,7 @@ set time 12 0
 goto pos 43700 3000 500
 clear 3000
 deterministic on
-impostor force
+impostor off
 cam at 33500 7267 500 48500 7267 500
 streaming wait
 foliage wait-lull 1500 500
@@ -38,12 +38,12 @@ streaming wait
 grass wait
 wait 5000
 rec forest-fly
-wait 1000
-cam fly 23216 11160 -8618 54140 2490 -10780 30000
-wait 30000
-cam fly 13140 13985 -7910 54140 2490 -10780 16000
-wait 16000
-wait 1000
+wait 500
+cam fly 23216 11160 -8618 54140 2490 -10780 5500
+wait 5500
+cam fly 13140 13985 -7910 54140 2490 -10780 2500
+wait 2500
+wait 500
 stop
 wait 500
 
@@ -52,10 +52,18 @@ streaming wait
 grass wait
 wait 5000
 cadence normal
-wait 200
-perf sample forest-300
+impostor off
+wait 1000
+perf sample forest-300-off
 wait 2000
 perf stop
-shot forest-300
+shot forest-300-off
+wait 200
+impostor auto
+wait 1000
+perf sample forest-300-on
+wait 2000
+perf stop
+shot forest-300-on
 wait 200
 cadence wait
