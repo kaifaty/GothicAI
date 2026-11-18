@@ -227,30 +227,30 @@ def replay(path, shared, geometry):
         if not meshlets:
             continue
         counts["cpu_gpu_decision_mismatches"] += passed != cpu.test(rect, z)[0]
-        if not passed:
-            continue
-        if canopy:
+        if passed and canopy:
             counts["all_canopy_clusters"] += 1
             counts["all_canopy_meshlets"] += meshlets
         if lone:
             continue
-        counts["hiz_meshlets"] += meshlets
-        counts["hiz_canopy_clusters" if canopy else "hiz_bark_clusters"] += 1
         if key not in mesh_names:
             error, name = min((float(np.max(np.abs(box - v))), name) for name, v in shared.items())
             if error > .02:
                 raise ValueError(f"No spruce with bounds {key}. Closest {name}, {error:g} cm off")
             mesh_names[key] = name
         tight, triangles, pieces = geometry[mesh_names[key], level, bool(canopy)]
-        submitted.add(tree)
-        counts["triangles"] += triangles
-        tree_tris[tree] += triangles
-        tree_meshlets[tree] += meshlets
         counts["parts_before_culling"] += len(pieces)
-        mip_count[mip] += 1
-        margins.append([margin, faded])
         rest_rect, rest_z = project(box, model, vp, near)
-        sizes[tree] = float((np.diff(np.clip(rest_rect, 0, 1), axis=0) * screen).max())
+        size = float((np.diff(np.clip(rest_rect, 0, 1), axis=0) * screen).max())
+        if passed:
+            submitted.add(tree)
+            counts["hiz_meshlets"] += meshlets
+            counts["hiz_canopy_clusters" if canopy else "hiz_bark_clusters"] += 1
+            counts["triangles"] += triangles
+            tree_tris[tree] += triangles
+            tree_meshlets[tree] += meshlets
+            mip_count[mip] += 1
+            margins.append([margin, faded])
+            sizes[tree] = size
 
         results = {
             "exact_neighbors": stock.test(rect, z, "neighbors")[0],
@@ -271,9 +271,9 @@ def replay(path, shared, geometry):
                 results["tight_raw"] = stock.test(xy, zz, "pixels")[0]
         for label, depth, matrix in (("previous", previous, last_vp), ("final", final, vp)):
             xy, zz = project(grow(box, margin), model, matrix, near)
-            results[label] = depth.test(xy, zz)[0]
-            results[label + "_raw"] = depth.test(xy, zz, "pixels")[0]
-        results.update((f"size_{n}px", sizes[tree] >= n) for n in SIZE_LIMITS)
+            results[label] = passed and depth.test(xy, zz)[0]
+            results[label + "_raw"] = passed and depth.test(xy, zz, "pixels")[0]
+        results.update((f"size_{n}px", passed and size >= n) for n in SIZE_LIMITS)
         variant_labels.update(results)
         for label, keep in results.items():
             if keep:
@@ -301,7 +301,7 @@ def replay(path, shared, geometry):
             for label, _, _ in split:
                 if label not in passing_parts:
                     visible_drops[label] += 1
-        if canopy:
+        if passed and canopy:
             causes = ("exact_neighbors", "tight_mip", "exact_tiles", "raw_pixels", "raw_pixels_no_quantization")
             cropped = stock.crop(pre, rect)
             residual = "near_plane" if z <= 0 else (
@@ -336,7 +336,8 @@ def replay(path, shared, geometry):
     for label in sorted(variant_labels | {label for label, _, _ in split}):
         removed = submitted - kept[label]
         data["variants"][label] = dict(
-            trees_removed=len(removed), visible_trees_removed=len(removed & seen),
+            trees_removed=len(removed), trees_reintroduced=len(kept[label] - submitted),
+            visible_trees_removed=len(removed & seen),
             visible_pixels_in_removed_trees=sum(visible[t] for t in removed), visible_clusters_removed=visible_drops[label],
             triangles_removed=counts["triangles"] - tris[label], clusters_or_parts_submitted=parts_kept[label],
         )
