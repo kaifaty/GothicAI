@@ -498,6 +498,12 @@ std::vector<uint32_t> visibilityCut(wcb::HierarchyView hierarchy, const ClusterL
   const auto errorPx=[&](const ClusterLod::Group& transition) {
     const auto& center=transition.bounds.center;
     const float x=center[0]-view.camera[0], y=center[1]-view.camera[1], z=center[2]-view.camera[2];
+    if(view.farDepth>0.f) {
+      const float depth=x*view.forward[0]+y*view.forward[1]+z*view.forward[2];
+      const float radius=transition.bounds.radius;
+      if(depth+radius>=view.farDepth-view.farGuard && depth-radius<=view.farDepth+view.farGuard)
+        return infinity;
+      }
     const float nearDistance=std::max(std::sqrt(x*x+y*y+z*z)-transition.bounds.radius,1.f);
     return transition.errorCm/nearDistance*projectionScale;
     };
@@ -570,9 +576,12 @@ class GpuVisibilityCut {
         float lodPx, lodProjection, lodHeight;
         uint32_t lodDebug;
         float lodCamera[4];
+        float lodForwardAndGuard[4];
         };
+      static_assert(sizeof(Push)==64);
       const Push push={0,count,1.f,0,thresholdPx,view.verticalProjection,view.viewportHeight,0,
-                       {view.camera[0],view.camera[1],view.camera[2],0.f}};
+                       {view.camera[0],view.camera[1],view.camera[2],view.farDepth},
+                       {view.forward[0],view.forward[1],view.forward[2],view.farGuard}};
       for(size_t pass=0;pass<pipelines.size();++pass) {
         Indirect draw{};
         indirect.update(&draw,0,sizeof(draw));
@@ -661,6 +670,20 @@ size_t checkVisibilityCuts(const CookedChunk& chunk, const fs::path& path, Tempe
     const float threshold=ClusterLod::projectError(*transition,view);
     for(float nearby:{std::nextafter(threshold,0.f),threshold,std::nextafter(threshold,infinity)})
       compare(view,nearby);
+
+    auto distant=view;
+    distant.camera[2]-=100000.f;
+    const float distantThreshold=ClusterLod::projectError(*transition,distant)*1.125f;
+    compare(distant,distantThreshold);
+    const auto normalCut=ClusterLod::selectCut(graph,distant,distantThreshold);
+    distant.forward={0.f,0.f,1.f};
+    distant.farDepth=100000.f;
+    distant.farGuard=1000.f;
+    require(ClusterLod::selectCut(graph,distant,distantThreshold)!=normalCut,
+            path.string()+": the far clip guard did not refine the transition at 1 km");
+    compare(distant,distantThreshold);
+    distant.farDepth+=transition->bounds.radius+distant.farGuard+1.f;
+    compare(distant,distantThreshold);
     }
   return samples;
   }

@@ -927,6 +927,12 @@ int main() {
     require(std::abs(projectError({{{0,0,1500},100.f},5.f},view)-5.f/1400.f*600.f)<0.00001f,
             "pixel projection is missing the sphere, perspective or screen-height factor");
     require(projectError({{{0,0,0},100.f},5.f},view)==3000.f,"pixel projection is missing the near-distance clamp");
+    const View guarded{{0,0,0},800.f,1.5f,{0,0,1},1500.f,50.f};
+    require(std::isinf(projectError({{{3000,0,1300},150.f},5.f},guarded)) &&
+            std::isinf(projectError({{{3000,0,1700},150.f},5.f},guarded)),
+            "a transition sphere touching either side of the far clip band must refine");
+    require(projectError({{{3000,0,1300},149.f},5.f},guarded)==projectError({{{3000,0,1300},149.f},5.f},view),
+            "a transition sphere outside the far clip band must keep its projected error");
     checkOpenBoundaryRejection();
     checkLockedPositionRejection();
     checkFoldCoverage();

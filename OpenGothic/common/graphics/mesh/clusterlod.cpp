@@ -664,6 +664,14 @@ float projectError(const Group& group, const View& view) {
   const float x = group.bounds.center[0] - view.camera[0];
   const float y = group.bounds.center[1] - view.camera[1];
   const float z = group.bounds.center[2] - view.camera[2];
+  if(view.farDepth > 0.f) {
+    // Projection error only bounds surfaces that survive clipping on both sides of the transition.
+    // An ancestor sphere encloses its transition spheres, so intersections refine the same cut.
+    const float depth = x*view.forward[0] + y*view.forward[1] + z*view.forward[2];
+    if(depth + group.bounds.radius >= view.farDepth - view.farGuard &&
+       depth - group.bounds.radius <= view.farDepth + view.farGuard)
+      return Infinity;
+    }
   const float nearDistance = std::max(std::sqrt(x*x + y*y + z*z) - group.bounds.radius, 1.f);
   return group.errorCm / nearDistance * (0.5f * view.verticalProjection * view.viewportHeight);
   }

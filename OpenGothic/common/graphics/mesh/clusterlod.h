@@ -82,6 +82,9 @@ struct View {
   Point camera;
   float viewportHeight;     // positive, in pixels
   float verticalProjection; // positive magnitude of projection[1][1] for a perspective camera
+  Point forward = {};       // unit direction into the main view
+  float farDepth = 0;       // positive to protect transitions that cross the far clip plane
+  float farGuard = 0;       // half width of the precision band around the plane, in centimetres
   };
 
 float projectError(const Group& group, const View& view);

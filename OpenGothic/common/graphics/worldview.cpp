@@ -517,13 +517,13 @@ struct WorldView::LandscapeStreaming {
         }
       const size_t geometryStride = PackedMesh::MaxVert*sizeof(PackedMesh::Vertex)+PackedMesh::MaxPrim*4+
                                     (Shaders::options().doRtScene ? PackedMesh::MaxInd*sizeof(uint32_t) : 0);
-      Log::i("[cluster-lod] residency pending=",pending," near_geom_bytes=",nearMeshlets*geometryStride,
+      Log::i("[cluster-lod] near pending=",pending," near_geom_bytes=",nearMeshlets*geometryStride,
              " near_meshlets=",nearMeshlets," near_level_records=",nearLevels,
-             " near_legacy_geom_bytes=",nearLegacy*geometryStride," near_legacy_meshlets=",nearLegacy,
-             " live_geom_bytes=",pageStats.occupiedBytes," live_meshlets=",meshlets," live_level_records=",levels,
-             " live_legacy_geom_bytes=",legacy*geometryStride," live_legacy_meshlets=",legacy,
-             " level_record_bytes=",sizeof(PackedMesh::ClusterLevel),
-             " level_buffer_bytes_prior_frame=",view.visuals.clusters().levelBufferBytes(),
+             " near_legacy_geom_bytes=",nearLegacy*geometryStride," near_legacy_meshlets=",nearLegacy);
+      Log::i("[cluster-lod] live_geom_bytes=",pageStats.occupiedBytes," live_meshlets=",meshlets,
+             " live_level_records=",levels," live_legacy_geom_bytes=",legacy*geometryStride,
+             " live_legacy_meshlets=",legacy," level_record_bytes=",sizeof(PackedMesh::ClusterLevel));
+      Log::i("[cluster-lod] level_buffer_bytes_prior_frame=",view.visuals.clusters().levelBufferBytes(),
              " reserved_geom_bytes=",pageStats.occupiedBytes+pageStats.freeBytes+pageStats.retiredBytes);
       }
     wasPending = pending!=0;

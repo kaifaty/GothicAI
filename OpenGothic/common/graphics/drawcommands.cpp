@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <limits>
 
 #include "graphics/clusterlodrender.h"
 #include "graphics/mesh/submesh/animmesh.h"
@@ -29,6 +30,7 @@ struct LodPush {
   float    height      = 0;
   uint32_t debug       = 0;
   Vec4     camera;
+  Vec4     forwardAndGuard;
   };
 
 LodPush clusterLodView(const DrawClusters& clusters, const SceneGlobals& scene) {
@@ -52,8 +54,13 @@ LodPush clusterLodView(const DrawClusters& clusters, const SceneGlobals& scene) 
     }();
   const bool debug = benchLodView==LodView::Levels || (benchLodView==LodView::Default && envLevels);
   const auto eye = scene.camPos();
+  const float farDepth = scene.clipInfo().z;
+  const auto& view = scene.view;
+  // Convert four float epsilon of projected depth to a conservative view-space band at the far plane.
+  const float guard = 4.f * std::numeric_limits<float>::epsilon() * farDepth * farDepth / std::max(scene.znear, 1.f);
   return {benchLodView==LodView::Base ? 0.f : thresholdPx, scene.verticalProjection(),
-          float(scene.screenRes().y), uint32_t(debug), Vec4(eye.x, eye.y, eye.z, 0.f)};
+          float(scene.screenRes().y), uint32_t(debug), Vec4(eye.x, eye.y, eye.z, farDepth),
+          Vec4(view[0][2], view[1][2], view[2][2], guard)};
   }
 
 }
@@ -399,7 +406,7 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
       float znear;
       alignas(16) LodPush lod;
       } push = {};
-    static_assert(offsetof(Push,lod)==16 && sizeof(Push)==48);
+    static_assert(offsetof(Push,lod)==16 && sizeof(Push)==64);
     push.firstMeshlet = 0;
     push.meshletCount = uint32_t(clusters.size());
     push.znear        = scene.znear;
@@ -525,7 +532,7 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
     uint32_t meshletCount, candidateCap;
     alignas(16) LodPush lod;
     } push = {};
-  static_assert(offsetof(Push,lod)==16 && sizeof(Push)==48);
+  static_assert(offsetof(Push,lod)==16 && sizeof(Push)==64);
   push.meshletCount = uint32_t(clusters.size());
   push.candidateCap = cap;
   push.lod          = clusterLodView(clusters, scene);

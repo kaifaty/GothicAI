@@ -141,8 +141,9 @@ void vsmPairCapRecords(Tempest::Device& device) {
         uint32_t meshletCount, candidateCap, padding[2];
         float lodPx, lodProjection, lodHeight;
         uint32_t lodDebug;
-        float lodCamera[4];
-        } push = {2, cap, {}, 0.f, 0.f, 0.f, 0, {}};
+        float lodCamera[4], lodForwardAndGuard[4];
+        } push = {2, cap, {}, 0.f, 0.f, 0.f, 0, {}, {}};
+      static_assert(sizeof(Push)==64);
       enc.setBinding(0, sceneUbo);
       enc.setBinding(1, candidates);
       enc.setBinding(2, instanceBuf);

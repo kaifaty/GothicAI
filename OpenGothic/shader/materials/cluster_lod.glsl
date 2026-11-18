@@ -23,6 +23,17 @@ float clusterProjectError(vec4 sphere, float errorCm) {
   return errorPx;
   }
 
+// Check the infinite error from a far-plane intersection separately for backends using fast math.
+bool clusterLodClipsFar(vec4 sphere) {
+  if(push.lodCamera.w <= 0.0)
+    return false;
+  precise vec3 offset = sphere.xyz - push.lodCamera.xyz;
+  const vec3 forward = push.lodForwardAndGuard.xyz;
+  precise float depth = offset.x*forward.x + offset.y*forward.y + offset.z*forward.z;
+  const float guard = push.lodForwardAndGuard.w;
+  return depth + sphere.w >= push.lodCamera.w - guard && depth - sphere.w <= push.lodCamera.w + guard;
+  }
+
 // For an instanced mesh the transition records are in object space. The maximum absolute row sum of the
 // linear transform's Gram matrix bounds the squared scale even when the instance stretches or shears.
 float clusterLodScale(mat4x3 mat) {
@@ -63,9 +74,10 @@ bool clusterLodVisible(uint clusterId, uint instanceId, out uint level) {
     record.parentErrorCm *= scale;
     }
 
-  const float ownError = leaf ? 0.0 : clusterProjectError(record.bounds, record.errorCm);
-  return ownError <= push.lodPx &&
-         (terminal || clusterProjectError(record.parentBounds, record.parentErrorCm) > push.lodPx);
+  const bool ownAcceptable = leaf || (clusterProjectError(record.bounds, record.errorCm) <= push.lodPx &&
+                                      !clusterLodClipsFar(record.bounds));
+  return ownAcceptable && (terminal || clusterProjectError(record.parentBounds, record.parentErrorCm) > push.lodPx ||
+                           clusterLodClipsFar(record.parentBounds));
   }
 
 #endif

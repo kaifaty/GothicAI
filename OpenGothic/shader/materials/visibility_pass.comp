@@ -31,6 +31,7 @@ layout(push_constant, std430) uniform UboPush {
   float     lodHeight;
   uint      lodDebug;
   vec4      lodCamera;
+  vec4      lodForwardAndGuard;
   } push;
 
 Instance pullInstance(uint i) {
