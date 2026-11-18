@@ -1929,6 +1929,11 @@ exclude only that header field when comparing a load, without reseeding the shar
 require equal start times and all other header fields. Use the same stream mode
 and compare the complete activity trace and strict sample/event files. A current-game save/load
 mismatch is reported as the first differing record, never corrected by this measuring step.
+The current checkpoint control verifies equal initial `world_ms`/native ticks before comparing
+records. It exposes a 1 ms trace shift from the restarted 30 FPS bench cadence and a recalculated
+transient NPC simulation tier; state timers and the game-time remainder are saved. The current
+boundaries, first differences and source analysis are in the
+[D4 baseline](../../reports/engine/2026-11-14-npc-data/d4-baseline.md#харад-и-загрузка-на-занятии).
 `npc-day-smith-save.bench` and `npc-day-smith-reload.bench` provide this fixture for Harad.
 `gothic-npc-day-contract` checks nested VM calls, random ownership, totals, repeated JSON bytes and
 actual engine queue observation on a synthetic program, without game data. The synthetic fixture of
