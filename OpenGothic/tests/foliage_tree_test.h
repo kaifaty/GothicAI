@@ -352,15 +352,35 @@ void foliageTreeMaths() {
     }
   }
 
+  // A 3 m tree with flutter alone needs bounds even when its trunk and branches stand.
+  {
+  Params flutterOnly = leaf;
+  flutterOnly.wind = 0.f;
+  const Vec3     min = boxMin*0.25f, max = boxMax*0.25f;
+  const float    height = reach(flutterOnly,min,max);
+  const uint32_t bits = pack(flutterOnly,Both);
+  const float    grow = travel(bits,height);
+  const Vec3     needle(60,240,20);
+  float          far = 0.f;
+  for(int i=0; i<240; ++i) {
+    const Scene gust = wind(1.f,float(i)/240.f);
+    const Vec3  moved = move(needle,color(255,31,255,255),bits,height,(i%2)==0 ? upright : turned,place,gust);
+    far = std::max(far,(moved-needle).length());
+    }
+  require(far>0.f,"a needle moves even when only flutter is enabled");
+  require(far<=grow,"a short tree's bounds cover its flutter when trunk and branch wind is zero");
+  }
+
   // equal ticks give equal answers; no wind and the wind half off leave the tree at rest
-  const Scene same = FoliageWind::scene(4242,10000,true,1.f,false);
+  const Scene current  = FoliageWind::scene(4242,10000,true,1.f,false);
+  const Scene previous = FoliageWind::scene(4242,10000,true,1.f,false);
   const Vec3  tip(120,1010,-35);
-  require(move(tip,color(180,31,255,255),leafBits,H,turned,place,same)==move(tip,color(180,31,255,255),leafBits,H,turned,place,same),
+  require(move(tip,color(180,31,255,255),leafBits,H,turned,place,current)==move(tip,color(180,31,255,255),leafBits,H,turned,place,previous),
           "equal ticks: this frame's vertex is the previous frame's, no motion");
-  Scene stopped = same;
+  Scene stopped = current;
   stopped.wind = Tempest::Vec4();
   require(move(tip,color(180,31,255,255),leafBits,H,turned,place,stopped)==tip,"no wind: the tree rests where the mesh has it");
-  require(move(tip,color(180,31,255,255),pack(leaf,FoliageWind::Light),H,turned,place,same)==tip,"the wind half off: the tree rests");
+  require(move(tip,color(180,31,255,255),pack(leaf,FoliageWind::Light),H,turned,place,current)==tip,"the wind half off: the tree rests");
   // the trees of a row are out of step
   require(FoliageWind::placeHash(place)!=FoliageWind::placeHash(place+Vec3(700,0,0)),"a tree's step is its place on the ground");
 

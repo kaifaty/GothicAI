@@ -215,6 +215,9 @@ PfxBucket::Block& PfxBucket::getBlock(ImplEmitter &e) {
     e.block = allocBlock();
     auto& p = block[e.block];
     p.pos   = e.pos;
+    // a new flame: upright, and small if it grows (particles.d "lean.grow")
+    p.lean  = Vec3(0,1,0);
+    p.grow  = decl.leanGrowMs>0 ? decl.leanGrowFrom : 1.f;
     }
   return block[e.block];
   }
@@ -229,6 +232,12 @@ size_t PfxBucket::allocEmitter() {
     if(b.st==S_Free) {
       b.st      = S_Inactive;
       b.flicker = {};
+      // a new flame in an old slot: it has not moved yet and has no air of the last one
+      b.carried = false;
+      b.air     = {};
+      b.airRate = {};
+      b.grownMs = 0;
+      b.spent   = false;
       updateTextureDemand(i);
       return i;
       }
@@ -362,9 +371,10 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
       if(mesh!=nullptr) {
         auto pos = skin!=nullptr ? mesh->randCoord(randf(),pose,skin->data(),skin->size()) : mesh->randCoord(randf(),pose);
         pos -= emitter.pos;
-        p.pos = emitter.direction[0]*pos.x +
-                emitter.direction[1]*pos.y +
-                emitter.direction[2]*pos.z;
+        // an own effect's emitter may sit on a bone (the fire on a body): the point of the mesh is the world's
+        p.pos = decl.own ? pos : emitter.direction[0]*pos.x +
+                                 emitter.direction[1]*pos.y +
+                                 emitter.direction[2]*pos.z;
         }
       break;
       }
@@ -597,7 +607,10 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
         Log::i("flicker pfx seed=", emitter.flicker.seed, " t=", parent.now, " s=", p.flicker);
       }
 
-    if(decl.flipSteady && emitter.block!=size_t(-1) && (emitter.st!=S_Active || !nearby)) {
+    // (an emitter out of its loop keeps its steady flame for as long as its emission keys last: the fire on a body)
+    const bool spent = emitter.spent && emitter.block!=size_t(-1) &&
+                       (decl.prefferedTime==0 || getBlock(emitter).timeTotal>=decl.prefferedTime);
+    if(decl.flipSteady && emitter.block!=size_t(-1) && (emitter.st!=S_Active || !nearby || spent)) {
       // steady particles never die on their own: they go with their emitter or when it is out of view range
       auto& p = getBlock(emitter);
       for(size_t i=0;i<blockSize;++i)
@@ -658,6 +671,12 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
             emitter.air     += emitter.airRate*h;
             }
           }
+        emitter.grownMs += float(dt);
+        if(emitter.block!=size_t(-1) && decl.leanRise>0 && decl.leanGrowMs>0) {
+          // a launched flame grows out of the small one it was lit from (a bolt out of the flame on the palm)
+          const float k = std::min(emitter.grownMs/decl.leanGrowMs, 1.f);
+          getBlock(emitter).grow = decl.leanGrowFrom + (1.f-decl.leanGrowFrom)*k*k*(3.f-2.f*k);
+          }
         if(emitter.block!=size_t(-1) && decl.leanRise>0) {
           const Vec3  flat = Vec3(emitter.air.x,0,emitter.air.z);
           const float t    = std::min(flat.length()/decl.leanRise, decl.leanMaxTan);
@@ -694,7 +713,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
 
     if(emitter.st==S_Active && nearby) {
       auto& p = getBlock(emitter);
-      auto dE = decl.flipSteady ? (p.count==0 ? uint64_t(blockSize) : 0) : ppsDiff(decl,emitter.isLoop,p.timeTotal,p.timeTotal+dt);
+      auto dE = decl.flipSteady ? (p.count==0 && !emitter.spent ? uint64_t(blockSize) : 0) : ppsDiff(decl,emitter.isLoop,p.timeTotal,p.timeTotal+dt);
       tickEmit(p,emitter,dE);
       }
 
@@ -819,8 +838,8 @@ void PfxBucket::buildSsbo() {
                         : (std::min(a, 0.1f)/0.1f)*visAlphaStart*(1.f-a) + (std::min(1.f-a, 0.1f)/0.1f)*visAlphaEnd*a;
 
       const float scale = 1.f*(1.f-a) + a*visSizeEndScale;
-      const float szX   = visSizeStart.x*scale;
-      const float szY   = visSizeStart.y*scale;
+      const float szX   = visSizeStart.x*scale*p.grow;
+      const float szY   = visSizeStart.y*scale*p.grow;
       const float szZ   = 0.1f*((szX+szY)*0.5f);
 
       struct Color {
@@ -915,6 +934,9 @@ void PfxBucket::buildBilboard(PfxState& v, const Block& p, const ParState& ps, c
     // card's lower edge to its upper in card heights
     v.bits0 |= uint32_t(3) << 4;
     v.dir    = p.lean;
+    v.size.z = decl.leanAlong; // pfx.vert: the least length of the card seen along the flame, in card heights
+    // a growing card keeps its lower edge where the full one has it
+    v.pos.y -= 0.5f*szY*(1.f/p.grow - 1.f);
     }
   else if(decl.stretchMs>0 && decl.visOrientation!=ParticleFx::Orientation::None) {
     // own streak (particles.d "stretch", pfx.vert): orientation 3, size.z the path of stretchMs at the velocity in cm

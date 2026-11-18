@@ -179,3 +179,131 @@ def test_island_link_map(tmp_path, link_map, error):
     else:
         assert result.returncode == 0, result.stderr
         assert "engine-island: 1 mixed runtime objects checked, all platform or island" in result.stdout
+
+
+@pytest.mark.parametrize("target,allowed", [
+    ("engine-platform-link", "platform"), ("engine-island", "platform,island"),
+])
+@pytest.mark.parametrize("record,error", [
+    ("Loaded C:\\build with space\\gothic-base-runtime.lib(common\\sha256.cpp.obj)", ""),
+    ("Loaded gothic-base-runtime.lib(programdata.cpp.obj)",
+     "gothic-base-runtime(programdata.cpp.obj) from common/programdata.cpp belongs to gothic, not platform"),
+    ("Loaded gothic-video-runtime.lib(unknown.cpp.obj)", "unknown mixed runtime object"),
+    ("", "no mixed runtime objects found"),
+], ids=["platform", "gothic-object", "unknown-object", "no-runtime-objects"])
+def test_msvc_link_map(tmp_path, target, allowed, record, error):
+    # /MAP symbols, references, discarded/folded COMDATs and searched libraries
+    # cannot stand in for extraction records, even when they name a known member.
+    trace = ("Searching C:\\build with space\\gothic-base-runtime.lib:\r\n"
+             "  Found ?readIndex@ProgramData@@\r\n"
+             "    Referenced in gothic-base-runtime.lib(programdata.cpp.obj)\r\n"
+             " 0001:00000000 ?sha256@@ 0000000140001000 f gothic-base-runtime:sha256.cpp.obj\r\n"
+             "  Discarded ?sha256@@ from gothic-base-runtime.lib(sha256.cpp.obj)\r\n"
+             "  Folded ?sha256@@ from gothic-base-runtime.lib(sha256.cpp.obj)\r\n")
+    # A loaded object remains subject to the guard even if it has no public symbols.
+    trace += f"    {record}\r\n    {record}\r\n"
+    map_file = tmp_path / "link.log"
+    map_file.write_bytes(trace.encode() if record else b"")
+    inputs = tmp_path / "inputs.cmake"
+    inputs.write_text(f"set(PLATFORM_RULES [==[{RULES}]==])\n"
+                      "set(PLATFORM_MEMBERS [==[gothic-base-runtime|sha256.cpp.obj|common/sha256.cpp;"
+                      "gothic-base-runtime|programdata.cpp.obj|common/programdata.cpp]==])\n")
+    result = subprocess.run(["cmake", f"-DPLATFORM_MAP={map_file}", f"-DPLATFORM_INPUTS={inputs}",
+                             "-DPLATFORM_MAP_FORMAT=MSVC", f"-DPLATFORM_TARGET={target}",
+                             f"-DPLATFORM_LAYERS={allowed}", "-P", str(PLATFORM_MAP)],
+                            capture_output=True, text=True)
+    if error:
+        assert result.returncode != 0
+        assert error in " ".join(result.stderr.split())
+        if "unknown" in error:
+            assert "unknown.cpp.obj" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        assert f"{target}: 1 mixed runtime objects checked, all {allowed.replace(',', ' or ')}" in result.stdout
+        assert "mixed runtime object gothic-base-runtime(sha256.cpp.obj)" in result.stdout
+
+
+@pytest.mark.parametrize("generator,exit_code", [
+    ("Ninja", 0), ("Ninja", 7), ("Visual Studio 17 2022", 0),
+])
+@pytest.mark.skipif(shutil.which("ninja") is None, reason="no ninja")
+def test_msvc_link_output_capture(tmp_path, generator, exit_code):
+    directory = tmp_path / "with space"
+    directory.mkdir()
+    build = directory / "build"
+    log = build / "engine-platform-link-Release.map.link.log"
+    linker = directory / "linker.py"
+    vs_link = directory / "vs_link.py"
+    # Reproduce CMake RunCommand's successful-output filter; capturing outside this
+    # wrapper loses all Loaded records when link.exe prints the resource banner.
+    vs_link.write_text("import os, subprocess, sys\n"
+                       "assert os.environ['VERBOSE'] == '1'\n"
+                       "command = sys.argv[sys.argv.index('--') + 1:]\n"
+                       "print('LINK:')\n"
+                       "result = subprocess.run(command, capture_output=True, text=True)\n"
+                       "output = result.stdout + result.stderr\n"
+                       "if result.returncode or 'Resource Compiler Version' not in output:\n"
+                       "    print(output)\n"
+                       "sys.exit(result.returncode)\n")
+    linker.write_text("import os, sys\n"
+                      "from pathlib import Path\n"
+                      "assert os.environ['VERBOSE'] == '1'\n"
+                      "Path(sys.argv[1]).touch()\n"
+                      "if '/VERBOSE' in sys.argv:\n"
+                      "    print('    Loaded gothic-base-runtime.lib(sha256.cpp.obj)')\n"
+                      "else:\n"
+                      "    print('    Searching gothic-base-runtime.lib:')\n"
+                      "print('Microsoft (R) Windows (R) Resource Compiler Version 10.0')\n"
+                      "print('linker diagnostic', file=sys.stderr)\n"
+                      f"sys.exit({exit_code})\n")
+    # Run the actual target configuration: testing capture alone missed /VERBOSE:LIB,
+    # which native MSVC 14.44 prints without any Loaded records (release run 43744732687).
+    platform = GUARD.with_name("EnginePlatform.cmake").read_text()
+    start = platform.index("function(engine_link_map_check ")
+    end = platform.index("\nendfunction()", start) + len("\nendfunction()")
+    shutil.copy(GUARD, directory / GUARD.name)
+    (directory / "main.obj").touch()
+    (directory / "inputs.cmake").write_text(
+        f"set(PLATFORM_RULES [==[{RULES}]==])\n"
+        "set(PLATFORM_MEMBERS gothic-base-runtime|sha256.cpp.obj|common/sha256.cpp)\n")
+    (directory / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.20)\nproject(capture NONE)\nset(MSVC TRUE)\n"
+        f'set(guard_rules "{RULES.as_posix()}")\n'
+        f'set(ENGINE_LINK_MAP_CHECK "{PLATFORM_MAP.as_posix()}")\n'
+        'set(ENGINE_LINK_MAP_INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/inputs.cmake")\n'
+        f'set(CMAKE_CXX_LINK_EXECUTABLE "\\\"{Path(sys.executable).as_posix()}\\\" '
+        f'\\\"{vs_link.as_posix()}\\\" vs_link_exe -- '
+        f'\\\"{Path(sys.executable).as_posix()}\\\" \\\"{linker.as_posix()}\\\" <TARGET> <LINK_FLAGS>")\n'
+        f"{platform[start:end]}\n"
+        "add_executable(engine-platform-link main.obj)\n"
+        "set_target_properties(engine-platform-link PROPERTIES LINKER_LANGUAGE CXX)\n"
+        # Exercise the Visual Studio branch without needing its toolchain on this host.
+        f'set(CMAKE_GENERATOR "{generator}")\n'
+        "engine_link_map_check(engine-platform-link platform)\n"
+        "get_target_property(launcher engine-platform-link RULE_LAUNCH_LINK)\n"
+        'file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/launcher.txt" "${launcher}")\n')
+    configured = subprocess.run(["cmake", "-S", str(directory), "-B", str(build), "-G", "Ninja",
+                                 "-DCMAKE_BUILD_TYPE=Release"], capture_output=True, text=True)
+    assert configured.returncode == 0, configured.stdout + configured.stderr
+    launcher = (build / "launcher.txt").read_text()
+    if generator != "Ninja":
+        assert "mixed-runtime map check disabled for Visual Studio" in " ".join(configured.stderr.split())
+        assert launcher == "launcher-NOTFOUND"
+        return
+    assert "$<" not in launcher
+    assert log.as_posix() in launcher
+    log.write_text("stale output")
+    result = subprocess.run(["cmake", "--build", str(build)],
+                            capture_output=True, text=True)
+    assert (result.returncode == 0) == (exit_code == 0)
+    assert "Loaded gothic-base-runtime.lib(sha256.cpp.obj)" in log.read_text()
+    assert "linker diagnostic" in log.read_text()
+    assert "Resource Compiler Version" in log.read_text()
+    assert "stale output" not in log.read_text()
+    output = result.stdout + result.stderr
+    if exit_code:
+        assert "linker diagnostic" in output
+        assert f"MSVC link failed ({exit_code})" in output
+    else:
+        assert "linker diagnostic" not in output  # Suppressed by vs_link_exe, retained in the raw log.
+        assert "1 mixed runtime objects checked, all platform" in output

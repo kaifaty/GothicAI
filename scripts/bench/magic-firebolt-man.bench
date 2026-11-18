@@ -1,0 +1,33 @@
+# The fire bolt hits a man from 1.7 m in Coragon's tavern: the farmer is inserted at the hero's place and frozen, the
+# hero steps back and casts; side view (reports/content/remaster/magic-fire). put and put-at find the roof here.
+seed 73013
+cheat god
+set time 13 0
+overlay off
+ui off
+destruction setup fireball
+clear 3000
+insert BAU_904_BAUER
+wait 300
+freeze BAU_904_BAUER
+where BAU_904_BAUER
+immortal BAU_904_BAUER on
+press back
+wait 1300
+release back
+wait 600
+where BAU_904_BAUER
+equip ItRu_FireBolt
+tap spell
+wait 2500
+cam at 7985 255 1110 8227 225 1010
+wait 1200
+rec hit-man
+wait 300
+press action
+wait 900
+tap forward
+wait 1500
+release action
+wait 5500
+stop

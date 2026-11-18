@@ -42,6 +42,7 @@ class PfxBucket {
       // the air that passes the emitter, cm/ms: minus its own motion, through a spring (particles.d "lean")
       Tempest::Vec3 air          = {};
       Tempest::Vec3 airRate      = {};
+      float         grownMs      = 0;  // how long the emitter has burnt (particles.d "lean.grow")
       // the world's wind at the emitter this frame, cm/ms (particles.d "wind"), and how open its place is to it:
       // asked where the emitter first burns and again when it has gone a metre (PfxObjects::shelter)
       Tempest::Vec3 wind         = {};
@@ -52,6 +53,7 @@ class PfxBucket {
       bool          openAsked    = false;
       Tempest::Vec3 direction[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
       bool          isLoop       = false;
+      bool          spent        = false; // was looped and is not any more (a bolt that hit): its steady flame goes
 
       const ParticleTarget* targetNpc    = nullptr;
 
@@ -139,6 +141,7 @@ class PfxBucket {
       Tempest::Vec3 pos       = {};
       float         flicker   = 1.f;  // the emitter's brightness this frame (ImplEmitter::flicker)
       Tempest::Vec3 lean      = {0,1,0}; // a leaning card's lower edge to its upper, in card heights (pfx.vert)
+      float         grow      = 1.f;     // the share of its size a new emitter's card has grown to ("lean.grow")
       };
 
     struct Trail final {

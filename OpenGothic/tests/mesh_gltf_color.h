@@ -153,3 +153,25 @@ void colorCases(const std::filesystem::path& path) {
     }
   require(thrown,"colours that are not of the mesh's wedges must be rejected");
   }
+
+void resourceColorCase(Tempest::Device& device, const std::filesystem::path& path) {
+  const auto* proto = Resources::loadMesh("OWN_COLOR.3DS");
+  require(proto!=nullptr && proto->attach.size()==1,"the own GLB must load as a ProtoMesh");
+  const auto& attachment = proto->attach[0];
+  std::vector<Resources::Vertex> vertices(attachment.vbo.size());
+  std::vector<uint32_t> indices(attachment.ibo.size());
+  require(!vertices.empty() && !indices.empty(),"the own GLB must upload indexed vertices");
+  device.readBytes(attachment.vbo,vertices.data(),vertices.size()*sizeof(vertices[0]));
+  device.readBytes(attachment.ibo,indices.data(),indices.size()*sizeof(indices[0]));
+
+  const auto mesh = loadGltfMesh(path);
+  const auto& wedges = mesh.sub_meshes.at(0).wedges;
+  require(wedges.size()==std::size(ColorFirst),"the colour fixture must contain three wedges");
+  for(size_t i=0;i<wedges.size();++i) {
+    const auto& at = mesh.positions.at(wedges[i].index);
+    require(std::any_of(indices.begin(),indices.end(),[&](uint32_t index) {
+      const auto& v = vertices.at(index);
+      return v.pos[0]==at.x && v.pos[1]==at.y && v.pos[2]==at.z && v.color==ColorFirst[i];
+      }),"Resources::loadMesh must preserve COLOR_0 for each indexed vertex");
+    }
+  }

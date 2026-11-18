@@ -60,7 +60,11 @@ foreach(runtime gothic-base-runtime gothic-video-runtime)
     get_filename_component(absolute "${source}" ABSOLUTE BASE_DIR "${source_dir}")
     file(RELATIVE_PATH relative "${CMAKE_CURRENT_SOURCE_DIR}" "${absolute}")
     get_filename_component(name "${source}" NAME)
-    list(APPEND members "${runtime}|${name}.o|${relative}")
+    if(MSVC)
+      list(APPEND members "${runtime}|${name}.obj|${relative}")
+    else()
+      list(APPEND members "${runtime}|${name}.o|${relative}")
+    endif()
   endforeach()
 endforeach()
 set(ENGINE_LINK_MAP_INPUTS "${CMAKE_CURRENT_BINARY_DIR}/engine-platform-map-inputs.cmake")
@@ -73,14 +77,26 @@ file(GENERATE OUTPUT "${ENGINE_LINK_MAP_INPUTS}" CONTENT
 # build fails. engine-platform-link takes the platform alone, engine-island (Island.cmake) the platform and the island.
 function(engine_link_map_check target layers)
   set(map "${CMAKE_CURRENT_BINARY_DIR}/${target}-$<CONFIG>.map")
+  set(format native)
   if(MSVC)
-    # /MAP lists public symbols, rather than an exhaustive archive-member load table. Native
-    # validation is needed before relying on it for the mixed-runtime boundary.
     target_link_options(${target} PRIVATE "/MAP:${map}")
-    message(WARNING "${target}: mixed-runtime map check disabled on MSVC (GothicAI#1324); the link itself remains")
-    return()
-  endif()
-  if(APPLE)
+    if(NOT CMAKE_GENERATOR MATCHES "^(Ninja|.*Makefiles.*)$")
+      message(WARNING "${target}: mixed-runtime map check disabled for ${CMAKE_GENERATOR}; "
+        "linker output capture requires single-config Ninja or Makefiles; the link itself remains")
+      return()
+    endif()
+    # /MAP lists public symbols only. Full /VERBOSE records archive extraction before
+    # /OPT:REF and /OPT:ICF remove/fold COMDATs, including objects absent from /MAP.
+    # /VERBOSE:LIB only lists searched libraries on current MSVC.
+    target_link_options(${target} PRIVATE /VERBOSE)
+    # RULE_LAUNCH_LINK does not promise generator expressions on CMake 3.20.
+    set(map "${CMAKE_CURRENT_BINARY_DIR}/${target}-${CMAKE_BUILD_TYPE}.map.link.log")
+    set(format MSVC)
+    # The rule wrapper installs capture directly around link.exe, before vs_link_exe
+    # can suppress its output. Keep the manifest command and support CMake 3.20.
+    set_property(TARGET ${target} PROPERTY RULE_LAUNCH_LINK
+      "\"${CMAKE_COMMAND}\" \"-DPLATFORM_CAPTURE_LOG=${map}\" -P \"${ENGINE_LINK_MAP_CHECK}\" --")
+  elseif(APPLE)
     target_link_options(${target} PRIVATE "LINKER:-map,${map}" "LINKER:-undefined,error")
   else()
     target_link_options(${target} PRIVATE "LINKER:-Map,${map}" "LINKER:--no-undefined")
@@ -91,7 +107,8 @@ function(engine_link_map_check target layers)
     "${ENGINE_LINK_MAP_CHECK}" "${ENGINE_LINK_MAP_INPUTS}" "${guard_rules}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/EngineLayerGuard.cmake")
   add_custom_command(TARGET ${target} POST_BUILD
     COMMAND "${CMAKE_COMMAND}" "-DPLATFORM_MAP=${map}" "-DPLATFORM_INPUTS=${ENGINE_LINK_MAP_INPUTS}"
-      "-DPLATFORM_TARGET=${target}" "-DPLATFORM_LAYERS=${allowed}" -P "${ENGINE_LINK_MAP_CHECK}"
+      "-DPLATFORM_TARGET=${target}" "-DPLATFORM_LAYERS=${allowed}" "-DPLATFORM_MAP_FORMAT=${format}"
+      -P "${ENGINE_LINK_MAP_CHECK}"
     COMMENT "Checking ${target}: mixed runtime objects must belong to ${named}"
     VERBATIM)
 endfunction()

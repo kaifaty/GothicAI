@@ -64,6 +64,7 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
   if(const auto m=content.motions.find(cname); m!=content.motions.end()) {
     // particles.d units to the engine's cm and ms
     const auto& own = m->second;
+    p->own                 = true;
     p->motion.curlStrength = own.curlStrength*1e-4f;
     p->motion.curlWave     = own.curlFrequency*6.2831853f/100.f;
     p->motion.curlDrift    = own.curlSpeed*0.1f;
@@ -73,6 +74,9 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
     p->leanRise            = own.leanRise*0.1f;               // m/s -> cm/ms
     p->leanMaxTan          = std::tan(own.leanMaxDeg*3.14159265f/180.f);
     p->leanResponseMs      = own.leanResponse*1000.f;
+    p->leanAlong           = own.leanAlong;
+    p->leanGrowMs          = own.leanGrow*1000.f;
+    p->leanGrowFrom        = own.leanGrowFrom;
     p->inherit             = own.inherit;
     p->wind                = own.wind;
     p->plumeCm             = own.plumeHeight;

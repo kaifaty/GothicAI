@@ -2388,6 +2388,8 @@ void maskBc1Policy(const Fixture& fixture) {
   options.alpha = "MASK";
   glbFile(fixture.root/"meshes/test/own.glb",options);
   glbFile(fixture.root/"meshes/test/opaque.glb");
+  const auto colorPath = fixture.root/"meshes/test/vertex-color.glb";
+  colorGlbFile(colorPath,2);
   options = {};
   options.texture = "SLOT_V0.TGA";
   glbFile(fixture.root/"meshes/test/slot.glb",options);
@@ -2405,6 +2407,7 @@ void maskBc1Policy(const Fixture& fixture) {
   fixture.index(R"({
     "OWN_MESH":{"glb":"test/own.glb"},
     "OWN_OPAQUE":{"glb":"test/opaque.glb"},
+    "OWN_COLOR":{"glb":"test/vertex-color.glb"},
     "OWN_SLOT":{"glb":"test/slot.glb"},
     "OWN_MODEL_ROTATION":{"glb":"test/opaque.glb"},
     "OWN_MODEL_MASK":{"glb":"test/own.glb"},
@@ -2419,6 +2422,7 @@ void maskBc1Policy(const Fixture& fixture) {
     Shaders shaders;
     shaders.waitCompiler();
     fixture.mount();
+    resourceColorCase(device,colorPath);
     const auto& font=Resources::font("ORIGINAL.extra.tga",Resources::FontType::Normal,1.25f);
     require(font.pixelSize()==21 && font.textSize("A B")==Tempest::Size(35,21),
             "native font must retain scaled source advances and height");

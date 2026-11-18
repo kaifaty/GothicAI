@@ -122,9 +122,13 @@ class ParticleFx final {
     float         stretchMs = 0.f;  // a velocity-oriented sprite grows by |v|*stretchMs along its path
     float         minPixels = 0.f;  // a smaller sprite is drawn this size on screen, its alpha down by the area
     // particles.d "lean" of a steady card and "inherit" of a living particle (ParticleContent::Motion)
+    bool          own            = false; // declared in particles.d
     float         leanRise       = 0.f;  // cm/ms; 0: off
     float         leanMaxTan     = 0.f;
     float         leanResponseMs = 0.f;
+    float         leanAlong      = 0.75f;
+    float         leanGrowMs     = 0.f;
+    float         leanGrowFrom   = 1.f;
     float         inherit        = 0.f;
     float         plumeCm        = 0.f;  // particles.d "plume": cm over the fire; 0: off
     float         plumeRise      = 0.f;  // cm/ms
