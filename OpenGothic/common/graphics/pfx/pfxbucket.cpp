@@ -915,6 +915,7 @@ void PfxBucket::buildBilboard(PfxState& v, const Block& p, const ParState& ps, c
     // card's lower edge to its upper in card heights
     v.bits0 |= uint32_t(3) << 4;
     v.dir    = p.lean;
+    v.size.z = decl.leanAlong; // pfx.vert: the least length of the card seen along the flame, in card heights
     }
   else if(decl.stretchMs>0 && decl.visOrientation!=ParticleFx::Orientation::None) {
     // own streak (particles.d "stretch", pfx.vert): orientation 3, size.z the path of stretchMs at the velocity in cm

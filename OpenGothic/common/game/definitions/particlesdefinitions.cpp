@@ -73,6 +73,7 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
     p->leanRise            = own.leanRise*0.1f;               // m/s -> cm/ms
     p->leanMaxTan          = std::tan(own.leanMaxDeg*3.14159265f/180.f);
     p->leanResponseMs      = own.leanResponse*1000.f;
+    p->leanAlong           = own.leanAlong;
     p->inherit             = own.inherit;
     p->wind                = own.wind;
     p->plumeCm             = own.plumeHeight;

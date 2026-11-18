@@ -110,10 +110,11 @@ void readMotion(const Json& entry, Motion& motion) {
   if(entry.HasMember("lean")) {
     const auto& lean=entry["lean"];
     require(lean.IsObject(),"lean: expected object");
-    fields(lean,{"rise","max_deg","response"});
+    fields(lean,{"rise","max_deg","response","along"});
     motion.leanRise=number(member(lean,"rise"),"lean.rise",0.1,20,"0.1..20");
     if(lean.HasMember("max_deg"))  motion.leanMaxDeg  =number(lean["max_deg"],"lean.max_deg",0,88,"0..88");
     if(lean.HasMember("response")) motion.leanResponse=number(lean["response"],"lean.response",0.02,2,"0.02..2");
+    if(lean.HasMember("along"))    motion.leanAlong   =number(lean["along"],"lean.along",0.05,1,"0.05..1");
     }
   if(entry.HasMember("inherit")) motion.inherit=number(entry["inherit"],"inherit",0,1,"0..1");
   if(entry.HasMember("wind"))    motion.wind   =number(entry["wind"],"wind",0,2,"0..2");
