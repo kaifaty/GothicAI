@@ -521,6 +521,18 @@ WorldView::WorldView(std::pair<Vec3,Vec3> bounds, std::string_view skyPreset)
       return 0.35f;
     return 1.f;
     });
+  // particles.d "land": a falling drop meets the ground, a wall or a roof, not a man (static geometry only)
+  pfxGroup.setGround([](const Vec3& from, const Vec3& to, Vec3& hit) {
+    const auto* physics = GameServices::inst().physicsWorld();
+    if(physics==nullptr || from==to)
+      return false;
+    const auto r = physics->rayStatic(from, to);
+    if(!r.hasCol)
+      return false;
+    // a hair off the surface, so the landing effect is not born inside it
+    hit = r.v + r.n*2.f;
+    return true;
+    });
   sGlobal.setHouses(houses.houses());
   // A scene without a single lamp still binds the (empty) light buffer: VSM visibility reads it unconditionally
   sGlobal.lights = &gLights.lightsSsbo();

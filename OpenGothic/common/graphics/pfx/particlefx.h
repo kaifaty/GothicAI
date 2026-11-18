@@ -117,6 +117,9 @@ class ParticleFx final {
     bool          flipSteady = false;  // ParticleContent::Flipbook::steady
     bool          flipOnce   = false;  // ParticleContent::Flipbook::once
     std::vector<const ParticleFx*> with; // particles.d "with": effects an emitter of this one brings along
+    // particles.d "land": the effect put (with its "with") where a particle meets the world's static geometry; the
+    // particle stops there, its sprite goes and its trail draws in (PfxObjects::ground)
+    const ParticleFx* land = nullptr;
     // own motion and look (particles.d "curl", "drag", "stretch", "minPixels"; ParticleContent::Motion)
     PfxMotion::Params motion;
     float         stretchMs = 0.f;  // a velocity-oriented sprite grows by |v|*stretchMs along its path

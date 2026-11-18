@@ -1,0 +1,36 @@
+# The fire rain's cost (reports/content/remaster/magic-fire/rain.md): the rain from 18 m aside at night over the meadow
+# east of the tavern at its fullest - the gobs and their trails, the landings and the fires on the grass - from 1.2 s
+# to 6.2 s after the cast. Compare sets with scripts/perf-content.sh A B firerain. Animated draws are hidden on both
+# sides.
+seed 73013
+cheat god
+set time 22 0
+cadence normal
+overlay off
+ui off
+view full
+view hide animated morph
+goto NW_TAVERNE_TROLLAREA_03
+clear 3000
+stats mana 3000 circle 6
+equip ItRu_Firerain
+tap spell
+# Ten real seconds after the teleport for loading and native simulation.
+wait 10000
+set time 22 0
+watch player
+cam follow 1800 450 70
+wait 2000
+cam hold
+wait 1000
+press action
+wait 1500
+press forward
+wait 300
+release forward
+wait 300
+release action
+wait 600
+perf sample perf-firerain/view-1
+wait 5000
+perf stop

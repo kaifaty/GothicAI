@@ -16,6 +16,8 @@ PfxObjects::PfxObjects(WorldView& world, const SceneGlobals& scene, VisualObject
   }
 
 PfxObjects::~PfxObjects() {
+  // the landings' emitters live in the buckets
+  landings.clear();
   // Buckets release demand through their ParticleFx declarations.
   bucket.clear();
   }
@@ -39,6 +41,10 @@ void PfxObjects::setShelter(std::function<float(const Vec3&,const Vec3&)> open) 
   shelter = std::move(open);
   }
 
+void PfxObjects::setGround(std::function<bool(const Vec3&,const Vec3&,Vec3&)> ray) {
+  ground = std::move(ray);
+  }
+
 void PfxObjects::resetTicks() {
   lastUpdate = size_t(-1);
   }
@@ -60,11 +66,46 @@ void PfxObjects::tick(uint64_t ticks) {
 
   for(auto& i:bucket)
     i.tick(dt,viewerPos);
+  putLandings();
 
   for(auto& i:bucket)
     i.buildSsbo();
 
   lastUpdate = ticks;
+  }
+
+void PfxObjects::putLandings() {
+  // emitters that have emitted go; their particles live out in their buckets (S_Fade)
+  for(size_t i=0; i<landings.size();) {
+    if(landings[i].until<=now) {
+      landings[i] = std::move(landings.back());
+      landings.pop_back();
+      } else {
+      ++i;
+      }
+    }
+  if(landAsked.empty())
+    return;
+  // a burst of a hundred drops at once is a hundred effects at most: the rain of a spell, not a downpour
+  static constexpr size_t MaxLandings = 256;
+  std::lock_guard<std::recursive_mutex> guard(sync);
+  for(auto& [decl,at]:landAsked) {
+    auto put = [&](const ParticleFx* fx) {
+      if(fx==nullptr || landings.size()>=MaxLandings)
+        return;
+      Landing l;
+      l.slot  = PfxSlot(*this,fx);
+      l.until = now + std::max<uint64_t>(fx->prefferedTime,100);
+      l.slot.setPosition(at);
+      l.slot.setLooped(false);
+      l.slot.setActive(true);
+      landings.push_back(std::move(l));
+      };
+    put(decl);
+    for(auto* other:decl->with)
+      put(other);
+    }
+  landAsked.clear();
   }
 
 bool PfxObjects::isInPfxRange(const Vec3& pos) const {
