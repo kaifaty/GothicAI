@@ -15,9 +15,13 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <iomanip>
+#include <limits>
 
 #include "graphics/drawcommands.h"
 #include "graphics/foliagewind.h"
+#include "graphics/grasscontact.h"
 #include "graphics/grass/grassparams.h"
 #include "camera.h"
 #include "frameprofile.h"
@@ -892,6 +896,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   updateEye(fId, camera);
   updateFogSky(camera);
   prepareTaa(wview, camera);
+  if(treeProbe!=nullptr)
+    wview.setTreeOcclusionProbe();
   prepareMotion(wview);
   wview.setTaaReactiveLref(settings.taaReactiveLref);
   wview.setVsmLampNear(settings.vsmLampNearCm);
@@ -943,16 +949,49 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   wview.visibilityPass(cmd, 0);
   prepareSky(cmd, wview);
 
+  // The SSAO depth sampler copies every texel when its output is full size.
+  const auto copyProbeDepth = [&](StorageImage& dst) {
+    cmd.setFramebuffer({});
+    cmd.setBinding(0, zbuffer, Sampler::nearest());
+    cmd.setBinding(1, usesImage2d(dst, TextureFormat::R32F, zbuffer.size()));
+    cmd.setPipeline(shaders.ssaoDepth);
+    cmd.dispatchThreads(dst.size());
+    };
+
   drawHiZ (cmd, wview);
   buildHiZ(cmd);
+  if(treeProbe!=nullptr)
+    copyProbeDepth(treeProbe->occluderDepth);
 
   wview.visibilityPass(cmd, 1);
-  wview.visibilityStats(cmd, fId);
+  if(treeProbe==nullptr)
+    wview.visibilityStats(cmd, fId);
   drawGBuffer(cmd, fId, wview);
+  if(treeProbe!=nullptr) {
+    copyProbeDepth(treeProbe->mainDepth);
+    wview.postFrameupdate();
+    return;
+    }
   const auto* world = GameServices::inst().bloodDecalSource();
   if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
     blood.draw(cmd, fId, wview.sceneGlobals(), gbufDiffuse, Shaders::options().doMaterialMaps ? &gbufOrm : nullptr,
                gbufNormal, zbuffer);
+  const auto grassStudy = taa.shot && Shaders::options().doMaterialMaps ? GrassContact::study() : GrassContact::None;
+  const bool grassRay = Shaders::options().doMaterialMaps && wview.sceneGlobals().grassContactActive();
+  const bool useGrassMask = grassRay && GrassContact::maskEnabled();
+  const bool buildGrassMask = useGrassMask || (grassRay && grassStudy==GrassContact::Compare);
+  if(buildGrassMask) {
+    constexpr uint32_t tile = GrassContact::MaskTilePixels;
+    const uint32_t w = (uint32_t(gbufDiffuse.w()) + tile - 1) / tile;
+    const uint32_t h = (uint32_t(gbufDiffuse.h()) + tile - 1) / tile;
+    auto& mask = usesImage2d(grassContactMask, TextureFormat::R32U, w, h);
+    cmd.setFramebuffer({});
+    cmd.setDebugMarker("GrassContactMask");
+    cmd.setBinding(0, gbufDiffuse, Sampler::nearest(ClampMode::ClampToEdge));
+    cmd.setBinding(1, mask);
+    cmd.setPipeline(shaders.grassContactMask);
+    cmd.dispatch(w, h);
+    }
   // SSAO needs only the depth: ahead of the shadow maps its compute runs under their vertex work on Metal
   prepareSSAO(cmd, wview);
   mainTiming.finish();
@@ -970,8 +1009,15 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   prepareGi  (cmd, fId, wview);
   prepareSurfels(cmd, wview);
 
+  if(grassStudy!=GrassContact::None) {
+    // Capture the shader's classes directly, before any exposure, fog or antialiasing.
+    grassContactDiagnostic = Resources::device().attachment(TextureFormat::RGBA8, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
+    cmd.setFramebuffer({{grassContactDiagnostic, Vec4(), Tempest::Preserve}}, {zbuffer, Tempest::Readonly});
+    drawShadowResolve(cmd, wview, buildGrassMask, grassStudy);
+    }
+
   cmd.setFramebuffer({{sceneLinear, Tempest::Discard, Tempest::Preserve}}, {zbuffer, Tempest::Readonly});
-  drawShadowResolve(cmd, wview);
+  drawShadowResolve(cmd, wview, useGrassMask, GrassContact::None);
   drawAmbient(cmd, wview);
   drawLights(cmd, wview);
   drawSky(cmd, wview);
@@ -1270,7 +1316,8 @@ void Renderer::drawShadowMap(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView
     }
   }
 
-void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
+void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& wview,
+                                 bool useGrassContactMask, uint32_t grassContactStudy) {
   static bool light = true;
   if(!light)
     return;
@@ -1278,16 +1325,17 @@ void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& w
   auto& scene = wview.sceneGlobals();
   cmd.setDebugMarker(settings.vsmEnabled ? "DirectSunLight-VSM" : "DirectSunLight");
 
-  struct Push { Vec3 originLwc; float vsmMipBias; } push = {scene.originLwc, settings.vsmMipBias};
-  if(shadow.directLightPso==&shaders.vsmDirectLight)
-    cmd.setPushData(&push, sizeof(push)); else
-    cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
+  struct Push { Vec3 originLwc; float vsmMipBias; uint32_t grassContactStudy; uint32_t useGrassContactMask; };
+  const Push push = {scene.originLwc, settings.vsmMipBias, grassContactStudy, useGrassContactMask ? 1u : 0u};
+  cmd.setPushData(&push, sizeof(push));
   cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, gbufDiffuse, Sampler::nearest());
   cmd.setBinding(2, gbufNormal,  Sampler::nearest());
   cmd.setBinding(3, zbuffer,     Sampler::nearest());
-  if(Shaders::options().doMaterialMaps)
+  if(Shaders::options().doMaterialMaps) {
     cmd.setBinding(12, gbufOrm, Sampler::nearest());
+    cmd.setBinding(13, useGrassContactMask ? grassContactMask : Resources::fallbackImage(), Sampler::nearest());
+    }
   if(shadow.directLightPso==&shaders.vsmDirectLight) {
     cmd.setBinding(4, vsm.pageTbl);
     cmd.setBinding(6, vsm.pageData);
@@ -1480,7 +1528,68 @@ void Renderer::readGiStats(uint8_t fId) {
   gi.statsWritten[fId] = false;
   }
 
-Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&& reuse) {
+void Renderer::captureTreeOcclusion(Attachment& result, uint8_t fId, WorldView& view, const Camera& camera) {
+  const char* dir = std::getenv("OPENGOTHIC_BENCH_OUT");
+  if(dir==nullptr || *dir=='\0' || settings.pathTraceEnabled)
+    return;
+
+  auto& device = Resources::device();
+  const auto previousVP = view.sceneGlobals().viewProject();
+  const auto prefix = std::string(dir) + "/tree-hidden-" + std::to_string(++treeProbeIndex);
+  const auto savePixmap = [](std::ostream& out, const Pixmap& pix) {
+    out.write(static_cast<const char*>(pix.data()), std::streamsize(pix.dataSize()));
+    };
+  const auto matrix = [](std::ostream& out, const Matrix4x4& vp) {
+    out << std::setprecision(std::numeric_limits<float>::max_digits10);
+    for(size_t i=0; i<16; ++i)
+      out << vp.data()[i] << ' ';
+    out << '\n';
+    };
+
+  // The ordinary shot is the preceding submitted frame. Its stashed opaque depth still belongs to it.
+  std::ofstream previous(prefix + ".previous.f32", std::ios::binary);
+  savePixmap(previous, device.readPixels(sceneDepth));
+  std::ofstream previousMeta(prefix + ".previous.txt");
+  matrix(previousMeta, previousVP);
+
+  TreeOcclusionProbe capture;
+  CommandBuffer cmd;
+  {
+    auto enc = cmd.startEncoding(device);
+    taa.shot = true;
+    treeProbe = &capture;
+    draw(result,enc,fId,view,camera);
+    treeProbe = nullptr;
+    taa.shot = false;
+    }
+  auto sync = device.submit(cmd);
+  sync.wait();
+
+  std::ofstream info(prefix + ".txt");
+  info << std::setprecision(std::numeric_limits<float>::max_digits10)
+       << zbuffer.w() << ' ' << zbuffer.h() << ' ' << hiz.hiZ.w() << ' ' << hiz.hiZ.h()
+       << ' ' << view.sceneGlobals().znear << '\n';
+  matrix(info, view.sceneGlobals().viewProject());
+  for(const auto& p : frustrum[SceneGlobals::V_Main].f)
+    info << p[0] << ' ' << p[1] << ' ' << p[2] << ' ' << p[3] << '\n';
+  view.writeTreeOcclusionProbe(info);
+
+  std::ofstream pre(prefix + ".pre.f32", std::ios::binary);
+  std::ofstream main(prefix + ".main.f32", std::ios::binary);
+  std::ofstream ids(prefix + ".id.u32", std::ios::binary);
+  std::ofstream levels(prefix + ".hiz.u16", std::ios::binary);
+  savePixmap(pre, device.readPixels(capture.occluderDepth));
+  savePixmap(main, device.readPixels(capture.mainDepth));
+  savePixmap(ids, device.readPixels(gbufNormal));
+  for(uint32_t mip=0; mip<hiz.hiZ.mipCount(); ++mip)
+    savePixmap(levels, device.readPixels(hiz.hiZ,mip));
+  if(info && pre && main && ids && levels && previous && previousMeta)
+    Log::i("render: tree occlusion probe ",prefix);
+  else
+    Log::e("render: failed to write tree occlusion probe ",prefix);
+  }
+
+Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&& reuse, bool benchShot) {
   auto& device = Resources::device();
   device.waitIdle();
 
@@ -1510,6 +1619,15 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&&
 
   auto sync = device.submit(cmd);
   sync.wait();
+  if(benchShot) {
+    const char* env = std::getenv("OPENGOTHIC_TREE_OCCLUSION_PROBE");
+    const bool enabled = env!=nullptr ? std::string_view(env)=="1" : ::Settings::getI("INTERNAL","treeOcclusionProbe")!=0;
+    if(enabled)
+      captureTreeOcclusion(img,frameId,*wview,*camera);
+    }
+  // The tree probe stops after the G-buffer, leaving the first draw's grass diagnostic intact.
+  if(!grassContactDiagnostic.isEmpty())
+    return std::move(grassContactDiagnostic);
   return img;
 
   // debug

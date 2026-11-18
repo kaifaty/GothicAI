@@ -2,6 +2,7 @@
 
 #include <Tempest/Log>
 
+#include <cstdint>
 #include <cstdlib>
 #include <string_view>
 
@@ -13,6 +14,15 @@
 // OPENGOTHIC_GRASS_CONTACT=0|1 wins. Read once
 namespace GrassContact {
 
+enum Study : uint32_t {
+  None,
+  Count,
+  Compare,
+  };
+
+// One mask word covers a workgroup's square in grass/grass_contact_mask.comp.
+inline constexpr uint32_t MaskTilePixels = 64;
+
 inline bool enabled() {
   static const bool on = [] {
     const char* env = std::getenv("OPENGOTHIC_GRASS_CONTACT");
@@ -22,6 +32,29 @@ inline bool enabled() {
     return v;
     }();
   return on;
+  }
+
+inline bool maskEnabled() {
+  static const bool on = [] {
+    const char* env = std::getenv("OPENGOTHIC_GRASS_CONTACT_MASK");
+    const bool enabled = env==nullptr || std::string_view(env)!="0";
+    Tempest::Log::i("render: grass contact mask = ", enabled ? 1 : 0);
+    return enabled;
+    }();
+  return on;
+  }
+
+inline Study study() {
+  static const Study mode = [] {
+    const char* env = std::getenv("OPENGOTHIC_GRASS_CONTACT_STUDY");
+    const std::string_view value = env!=nullptr ? env : "";
+    if(value=="count")
+      return Count;
+    if(value=="compare")
+      return Compare;
+    return None;
+    }();
+  return mode;
   }
 
 }

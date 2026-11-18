@@ -1,0 +1,43 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+#include "grass/grass_light.glsl"
+
+layout(binding = 0) uniform sampler2D diffTex;
+layout(binding = 1, r32ui) uniform writeonly uimage2D mask;
+layout(local_size_x = 8, local_size_y = 8) in;
+
+shared uint tileBits[64];
+
+bool hasGrass(ivec2 base) {
+  const ivec2 size = textureSize(diffTex, 0);
+  const ivec2 end = min(base + 8, size);
+  const vec2 invSize = 1.0 / vec2(size);
+  // Gather each 2x2 block's alpha. At an odd screen edge clamp repeats the last valid texel.
+  for(int y=base.y; y<end.y; y+=2)
+    for(int x=base.x; x<end.x; x+=2) {
+      const vec4 hint = textureGather(diffTex, (vec2(x,y) + 1.0)*invSize, 3);
+      if(isGBufGrass(hint.x) || isGBufGrass(hint.y) || isGBufGrass(hint.z) || isGBufGrass(hint.w))
+        return true;
+      }
+  return false;
+  }
+
+void main() {
+  // One 64x64-pixel tile per workgroup. Four 8x8-pixel invocations contribute to each 16x16-pixel bit.
+  const uvec2 cell = gl_LocalInvocationID.xy >> 1u;
+  const uint lane = gl_LocalInvocationIndex;
+  tileBits[lane] = hasGrass(ivec2(gl_GlobalInvocationID.xy)*8) ? 1u << (cell.x + 4u*cell.y) : 0u;
+  barrier();
+  if(lane<16u) {
+    const uint i = 4u*lane;
+    tileBits[i] |= tileBits[i+1u] | tileBits[i+2u] | tileBits[i+3u];
+    }
+  barrier();
+  if(lane==0u) {
+    uint occupied = 0u;
+    for(uint i=0u; i<64u; i+=4u)
+      occupied |= tileBits[i];
+    imageStore(mask, ivec2(gl_WorkGroupID.xy), uvec4(occupied));
+    }
+  }

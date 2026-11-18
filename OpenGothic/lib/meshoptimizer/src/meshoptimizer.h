@@ -540,6 +540,9 @@ MESHOPTIMIZER_API size_t meshopt_simplify(unsigned int* destination, const unsig
  */
 MESHOPTIMIZER_API size_t meshopt_simplifyWithAttributes(unsigned int* destination, const unsigned int* indices, size_t index_count, const float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride, const float* vertex_attributes, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, size_t target_index_count, float target_error, unsigned int options, float* result_error);
 
+/* OpenGothic extension: weights in position units, separate positional error, optional exact wedge tags. */
+MESHOPTIMIZER_API size_t meshopt_simplifyWithAbsoluteAttributes(unsigned int* destination, const unsigned int* indices, size_t index_count, const float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride, const float* vertex_attributes, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, const unsigned int* vertex_tags, size_t target_index_count, unsigned int options, float* result_error, float* position_error);
+
 /**
  * Mesh simplifier with position/attribute update
  * Reduces the number of triangles in the mesh, attempting to preserve mesh appearance as much as possible.

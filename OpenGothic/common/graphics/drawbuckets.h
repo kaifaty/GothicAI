@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 #include "material.h"
+#include "graphics/meshletspheres.h"
 
 class StaticMesh;
 class AnimMesh;
@@ -49,6 +50,8 @@ class DrawBuckets {
 
     auto ssbo() const -> const Tempest::StorageBuffer& { return bucketsGpu; }
     auto buckets() const -> const std::vector<Bucket>&;
+    // the spheres of the meshlets of the buckets' static meshes (Bucket::meshletSpheres of scene.glsl)
+    auto meshletSpheres() const -> const Tempest::StorageBuffer& { return spheres.ssbo(); }
 
     auto& textures() const { return textureDesc[currentFrame].arrays[0]; }
     auto& normals()  const { return textureDesc[currentFrame].arrays[1]; }
@@ -122,8 +125,12 @@ class DrawBuckets {
                                              // BK_GRASS: Grass::pack of Material::grass;
                                              // BK_WINDOW: WindowGlow::pack of Material::window
       float          foliageReach     = 0.f; // its mesh at rest: the largest arm, or a tree's height (FoliageTree::reach)
+      uint32_t       meshletSpheres   = MeshletSpheres::None; // its mesh's first sphere in meshletSpheres()
+      uint32_t       padding0         = 0;   // the stride of the GPU's array rounds up to 16 bytes
+      uint32_t       padding1         = 0;
+      uint32_t       padding2         = 0;
       };
-    static_assert(sizeof(BucketGpu)==128); // GPU array stride of Bucket in scene.glsl
+    static_assert(sizeof(BucketGpu)==144); // GPU array stride of Bucket in scene.glsl
 
     struct {
       Tempest::DescriptorArray vbo;
@@ -150,6 +157,7 @@ class DrawBuckets {
 
     std::vector<Bucket>      bucketsCpu;
     Tempest::StorageBuffer   bucketsGpu;
+    MeshletSpheres           spheres;
     bool                     bucketsDurtyBit = false;
     uint64_t                 textureGeneration = 0;
   };
