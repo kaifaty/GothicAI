@@ -5,8 +5,11 @@
 // and the processor's mirror of the wind's travelling front against the scene's wind. CPU only: no device, no game
 // data.
 #include "graphics/foliagefront.h"
+#include "graphics/grass/grassdiag.h"
+#include "graphics/grass/grassfield.h"
 #include "graphics/grass/grassparams.h"
 #include "graphics/grass/grassplace.h"
+#include "graphics/grass/grasswaste.h"
 
 #include <rapidjson/document.h>
 
@@ -129,6 +132,14 @@ void switches() {
   require(full.full<full.fadeFrom && full.fadeFrom<full.radius && low.full<low.fadeFrom && low.fadeFrom<low.radius &&
           low.radius<full.radius && low.density<full.density && full.density==1.f,
           "the ring of the low quality is smaller and thinner");
+
+  setenv("OPENGOTHIC_GRASS_LINKS","750,1750,3000",1);
+  const Grass::WasteRule waste;
+  require(Grass::broadLinks(749.f)==4 && Grass::broadLinks(750.f)==3 &&
+          Grass::broadLinks(1750.f)==2 && Grass::broadLinks(3000.f)==1 && waste.links(1750.f)==2,
+          "drawing and waste counting use the configured grass link thresholds");
+  unsetenv("OPENGOTHIC_GRASS_LINKS");
+  require(Grass::broadLinks(750.f)==3, "grass link thresholds are read once");
   }
 
 // ---- the ground of the tests ----
@@ -230,6 +241,22 @@ std::string at(int32_t cx, int32_t cz) {
   }
 
 constexpr int32_t U = Grass::Unit;
+
+void drawOrder() {
+  struct Cell final {
+    float dist;
+    };
+  struct Draw final {
+    const Cell* cell;
+    uint32_t table;
+    bool operator==(const Draw&) const = default;
+    };
+  const Cell farther{2500.f}, closer{300.f}, tied{300.f};
+  std::vector<Draw> draws = {{&farther,0}, {&farther,32}, {&closer,64}, {&closer,96}, {&tied,128}};
+  Grass::orderDraws(draws);
+  require(draws==std::vector<Draw>{{&closer,64}, {&closer,96}, {&tied,128}, {&farther,0}, {&farther,32}},
+          "grass draws must be near first, preserving batch order and span offsets");
+  }
 
 // ---- the placement ----
 
@@ -764,6 +791,7 @@ int main() {
     switches();
     patches();
     tufts();
+    drawOrder();
     placementRepeats();
     placementGround();
     placementEdge();

@@ -31,10 +31,6 @@ constexpr float LevelSlack  = 600.f; // and fewer this late
 constexpr float RankShare   = 1.12f; // grass.vert: a blade stands while its rank is under full/d*1.12
 constexpr float KeepBeyond  = CellCm; // a cell out of the ring is kept this far
 
-// links of a blade by the distance of its cell, and their triangles in the index buffer
-constexpr float   SegmentsTo[] = {1000.f, 2500.f, 4500.f};
-constexpr uint8_t MaxSegments  = 4;
-
 constexpr size_t  UploadBytes  = 512*1024; // a frame; one cell at least
 constexpr float   SquareCm     = float(Grass::SquareSize/Grass::Unit);
 constexpr size_t  SpanCount    = size_t(Grass::CellSquares*Grass::CellSquares); // of a draw in the table; GrassSpans of grass.vert
@@ -68,7 +64,7 @@ int32_t floorDiv(int32_t a, int32_t b) {
 size_t indexOffset(uint8_t segments) {
   // the buffer holds the blades of 4, 3, 2 and 1 links one after another
   size_t at = 0;
-  for(uint8_t s=MaxSegments; s>segments; --s)
+  for(uint8_t s=Grass::MaxSegments; s>segments; --s)
     at += size_t(2*s-1)*3;
   return at;
   }
@@ -84,7 +80,7 @@ GrassField::GrassField(SceneGlobals& scene, std::vector<ChunkId> ids)
     world.insert(key(i.x,i.z));
 
   std::vector<uint16_t> index;
-  for(uint8_t s=MaxSegments; s>=1; --s) {
+  for(uint8_t s=Grass::MaxSegments; s>=1; --s) {
     for(uint16_t k=0; k+1<s; ++k) {
       const uint16_t v = uint16_t(2*k);
       const uint16_t quad[] = {v, uint16_t(v+1), uint16_t(v+2), uint16_t(v+1), uint16_t(v+3), uint16_t(v+2)};
@@ -673,10 +669,7 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     if(cellView==Frustrum::T_Invisible)
       continue;
 
-    uint8_t segments = MaxSegments;
-    for(float to:SegmentsTo)
-      if(c.dist>=to)
-        --segments;
+    const uint8_t segments = Grass::broadLinks(c.dist);
 
     float   dist   = c.dist;
     int32_t tested = -1;
@@ -727,9 +720,6 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId) {
         rule.rankShare   = RankShare;
         rule.rootsBeyond = RootsBeyond;
         rule.fine        = fine;
-        rule.segmentsTo  = SegmentsTo;
-        rule.segmentsN   = std::size(SegmentsTo);
-        rule.maxSegments = MaxSegments;
         Grass::WasteCell wc;
         wc.origin = Vec3(float(c.cx)*CellCm - float(Grass::CellMargin/Grass::Unit), float(c.minY)/float(Grass::Unit),
                          float(c.cz)*CellCm - float(Grass::CellMargin/Grass::Unit));
@@ -766,6 +756,10 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     }
 
   if(!draws.empty()) {
+    // The draws keep their original offsets into spanCpu. Stable ordering keeps each cell's batches in order.
+    if(!Grass::orderOff())
+      Grass::orderDraws(draws);
+
     auto&        device = Resources::device();
     auto&        buf    = spanGpu[fId];
     const size_t bytes  = spanCpu.size()*sizeof(uint32_t);

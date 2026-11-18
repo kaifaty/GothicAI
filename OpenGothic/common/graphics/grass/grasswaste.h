@@ -41,9 +41,6 @@ struct WasteRule final {
   float          rankShare = 0.f;
   float          rootsBeyond = 0.f;
   bool           fine      = false;
-  const float*   segmentsTo = nullptr; // of the broad blades: a link less from each
-  size_t         segmentsN  = 0;
-  uint8_t        maxSegments= 0;
 
   size_t  ranks(float dist) const;
   uint8_t links(float dist) const;
