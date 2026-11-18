@@ -29,5 +29,5 @@ wait 900
 tap forward
 wait 1500
 release action
-wait 3500
+wait 5500
 stop

@@ -115,10 +115,48 @@ def firebolt() -> list:
     ]
 
 
+def body_fire() -> list:
+    """The fire on a burning body (body-fire.md, concept A: the body burns like a wick).
+
+    The game's VOB_MAGICBURN is seven emitters of one effect on bones and one of smoke on the root. The seven take the
+    tongues born on the body's skinned mesh, a seventh of the whole each; the one on the root takes what there is one
+    of: the plume over the shoulders, the smoke, the embers and the hot air.
+    """
+    up = {'shpFOR_S': 'WORLD'}
+    # the game runs the effect once, not in a loop: it burns for as long as its emission keys last (4.3 s, as the
+    # game's own); the keys are the stages: the fire spreads in half a second, holds and dies down
+    burn = {'ppsScaleKeys_S': '0.3 0.7 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0.9 0.7 0.5 0.3', 'ppsFPS': 6.0,
+            'ppsIsLooping': 0, 'ppsIsSmooth': 1}
+    return [
+        # tall tongues: born on the mesh as the short ones, they rise higher and join over the shoulders into the plume
+        {'name': 'OWN_BODY_TALL', 'base': 'OWN_HAND_LICKS', 'inherit': 0.85,
+         'set': {**burn, 'ppsValue': 9.0, 'shpType_S': 'MESH', 'shpIsVolume': 0, 'shpDim_S': '0 0 0',
+                 'shpOffsetVec_S': '0 0 0', 'visSizeStart_S': '34 60', 'visSizeEndScale': 0.75, 'lspPartAvg': 560.0,
+                 'lspPartVar': 140.0, 'velAvg': 0.05, 'velVar': 0.02, 'flyGravity_S': '0 0.00012 0'}},
+        of_torch('OWN_TORCH_SOOT', 'OWN_BODY_SMOKE',
+                 {**burn, 'ppsValue': 1.6, 'shpDim_S': '8 0 8', **up, 'shpOffsetVec_S': '0 45 0',
+                 'visSizeStart_S': '26 26', 'visSizeEndScale': 3.2, 'visAlphaStart': 110.0, 'lspPartAvg': 2200.0,
+                 'lspPartVar': 500.0}, inherit=0.1),
+        of_torch('OWN_TORCH_SPARKS', 'OWN_BODY_EMBERS',
+                 {**burn, 'ppsValue': 2.5, 'shpDim_S': '12', **up, 'shpOffsetVec_S': '0 20 0', 'velAvg': 0.12,
+                 'velVar': 0.07, 'flyGravity_S': '0 0.00012 0', 'lspPartAvg': 1100.0, 'lspPartVar': 450.0,
+                 'visSizeStart_S': '0.6 0.6'}, inherit=0.2, minPixels=2.0),
+        haze('OWN_BODY_HEAT', 5.0, inherit=0.3, **burn, ppsValue=1.0, lspPartAvg=600.0, lspPartVar=120.0, shpDim_S='10',
+             **up, shpOffsetVec_S='0 50 0', visSizeStart_S='60 60', visSizeEndScale=1.5, flyGravity_S='0 0.0001 0'),
+        # the short tongues on the clothes: born on the body's mesh, they rise and go out. Each of the seven emitters
+        # brings a seventh of the smoke, the embers and the hot air, over its own bone
+        {'name': 'MFX_MAGICFIRE_HUMANBURN', 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.92,
+         'with': ['OWN_BODY_TALL', 'OWN_BODY_SMOKE', 'OWN_BODY_EMBERS', 'OWN_BODY_HEAT'],
+         'set': {**burn, 'ppsValue': 30.0, 'shpType_S': 'MESH', 'shpIsVolume': 0, 'shpDim_S': '0 0 0', 'shpOffsetVec_S': '0 0 0',
+                 'visSizeStart_S': '24 40', 'visSizeEndScale': 0.7, 'lspPartAvg': 380.0, 'lspPartVar': 100.0,
+                 'velAvg': 0.02, 'velVar': 0.01}},
+    ]
+
+
 def cmd_build(_args) -> int:
     PARTICLES.parent.mkdir(parents=True, exist_ok=True)
-    PARTICLES.write_text(json.dumps({'format': 1, 'effects': firebolt()}, indent=1) + '\n')
-    print(f'{PARTICLES.relative_to(ROOT)}: {len(firebolt())} effects')
+    PARTICLES.write_text(json.dumps({'format': 1, 'effects': firebolt() + body_fire()}, indent=1) + '\n')
+    print(f'{PARTICLES.relative_to(ROOT)}: {len(firebolt()) + len(body_fire())} effects')
     return 0
 
 

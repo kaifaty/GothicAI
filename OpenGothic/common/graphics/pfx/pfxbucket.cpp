@@ -371,9 +371,10 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
       if(mesh!=nullptr) {
         auto pos = skin!=nullptr ? mesh->randCoord(randf(),pose,skin->data(),skin->size()) : mesh->randCoord(randf(),pose);
         pos -= emitter.pos;
-        p.pos = emitter.direction[0]*pos.x +
-                emitter.direction[1]*pos.y +
-                emitter.direction[2]*pos.z;
+        // an own effect's emitter may sit on a bone (the fire on a body): the point of the mesh is the world's
+        p.pos = decl.own ? pos : emitter.direction[0]*pos.x +
+                                 emitter.direction[1]*pos.y +
+                                 emitter.direction[2]*pos.z;
         }
       break;
       }
@@ -606,7 +607,10 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
         Log::i("flicker pfx seed=", emitter.flicker.seed, " t=", parent.now, " s=", p.flicker);
       }
 
-    if(decl.flipSteady && emitter.block!=size_t(-1) && (emitter.st!=S_Active || !nearby || emitter.spent)) {
+    // (an emitter out of its loop keeps its steady flame for as long as its emission keys last: the fire on a body)
+    const bool spent = emitter.spent && emitter.block!=size_t(-1) &&
+                       (decl.prefferedTime==0 || getBlock(emitter).timeTotal>=decl.prefferedTime);
+    if(decl.flipSteady && emitter.block!=size_t(-1) && (emitter.st!=S_Active || !nearby || spent)) {
       // steady particles never die on their own: they go with their emitter or when it is out of view range
       auto& p = getBlock(emitter);
       for(size_t i=0;i<blockSize;++i)
