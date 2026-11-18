@@ -1,6 +1,7 @@
-# Repeat on Ryzen in the order on, off, on, off (OPENGOTHIC_GRASS_TRACK_NEUTRAL=0 turns it off).
+# Alternate the neutral path in one session, resetting the temporal history before each shot.
 # The two camera setups match landscape-meadow-track-cheap.bench.
 seed 73013
+deterministic on
 cheat god
 overlay off
 ui off
@@ -18,8 +19,28 @@ face -122
 streaming wait
 grass wait
 wait 5000
-shot track
-wait 200
+cam hold
+grass parts 0
+set time 12 0
+streaming wait
+shot track-on-1
+wait 34
+grass parts 33554432
+set time 12 0
+streaming wait
+shot track-off-1
+wait 34
+grass parts 0
+set time 12 0
+streaming wait
+shot track-on-2
+wait 34
+grass parts 33554432
+set time 12 0
+streaming wait
+shot track-off-2
+wait 34
+grass parts 0
 
 # The camera is 30 m from the reference point on the track; the hero is behind it.
 goto NW_TAVERNE_TROLLAREA_07
@@ -27,5 +48,24 @@ cam at 42968 3406 2499 41940 3300 -317
 streaming wait
 grass wait
 wait 5000
-shot track-30m
-wait 200
+grass parts 0
+set time 12 0
+streaming wait
+shot track-30m-on-1
+wait 34
+grass parts 33554432
+set time 12 0
+streaming wait
+shot track-30m-off-1
+wait 34
+grass parts 0
+set time 12 0
+streaming wait
+shot track-30m-on-2
+wait 34
+grass parts 33554432
+set time 12 0
+streaming wait
+shot track-30m-off-2
+wait 34
+grass parts 0
