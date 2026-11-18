@@ -224,6 +224,10 @@ void runCluster(const uint clusterId) {
   const uint meshletId  = cluster.firstMeshlet;
 
   int meshletCount = cluster.meshletCount;
+  // a tree's alpha-tested leaves: no occluder (graphics/hizoccluders.h); the G-buffer draws them as before
+  const uint noCanopy = VF_HIZ | VF_HIZ_NO_CANOPY;
+  if(instanceId!=0xFFFFFFFF && (scene.viewFlags & noCanopy)==noCanopy && (bucket[bucketId].flags & BK_CANOPY)!=0u)
+    return;
   if(instanceId!=0xFFFFFFFF && (bucket[bucketId].flags & BK_STRAND)!=0u) {
     // strands: never an occluder; a shadow view takes the first part of the list
     if((scene.viewFlags & VF_HIZ)!=0u)

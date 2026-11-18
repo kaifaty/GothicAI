@@ -190,6 +190,7 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
 
   defaults->set("INTERNAL",     "giContactAo", 1); // graphics/contactao.h
   defaults->set("INTERNAL",     "crownLight", 1); // graphics/crownlight.h
+  defaults->set("INTERNAL",     "hizSkipCrowns", 1); // graphics/hizoccluders.h
   defaults->set("INTERNAL",     "treeWindFade", 1); // graphics/treewindfade.h
 
   defaults->set("VIDEO", "zVidBrightness", 0.5f);
