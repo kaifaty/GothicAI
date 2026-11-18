@@ -35,6 +35,7 @@ retained in `BulletCompat.LICENSE`; the Jolt library and its existing code retai
 Keep these when updating a library from upstream.
 
 - `meshoptimizer/src/simplifier.cpp`: test edge collapses for flips and zero area in double precision in the original coordinates. Normalizing positions in single precision can change the winding of thin triangles and hide collinearity on regular terrain grids.
+- `meshoptimizer/src/{meshoptimizer.h,simplifier.cpp}`: expose the positional quadric error of attribute-ranked collapses. The cluster LOD path supplies attribute weights in world units, evaluates the mean squared attribute residual, and can require all wedges of a collapse to retain their discrete tags.
 - `Tempest/Engine/graphics/device.cpp`, `gapi/metal/mtdevice.mm` and
   `gapi/vulkan/vallocator.cpp`: `tempestProbeGpuBytes()` reports Metal
   `currentAllocatedSize` and live Vulkan allocations (including cached allocator pages).

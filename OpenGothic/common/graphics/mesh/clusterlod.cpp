@@ -9,20 +9,20 @@
 #include <bit>
 #include <cmath>
 #include <map>
+#include <set>
 #include <stdexcept>
-#include <tuple>
 
 namespace ClusterLod {
 namespace {
 
 constexpr size_t GroupSize = 16;
 constexpr float Infinity = std::numeric_limits<float>::infinity();
-constexpr std::array<float, 9> AttributeWeights = {0.5f, 0.5f, 0.5f, 1.f, 1.f, 0.25f, 0.25f, 0.25f, 0.25f};
+constexpr std::array<float, 9> AttributeWeightsCm = {50.f, 50.f, 50.f, 25.f, 25.f, 20.f, 20.f, 20.f, 20.f};
 
 using Indices = std::vector<uint32_t>;
 using Edge = std::array<uint32_t, 2>;
 using Boundary = std::map<Edge, int>;
-using MaterialContours = std::map<uint32_t, std::vector<std::tuple<uint32_t, uint32_t, int>>>;
+using MaterialContours = std::map<uint32_t, Boundary>;
 
 struct Wedge {
   Point                position;
@@ -54,14 +54,26 @@ void addEdge(Boundary& edges, uint32_t from, uint32_t to) {
     edges[{std::min(from, to), std::max(from, to)}] += (from < to ? 1 : -1);
   }
 
-bool collinearBetween(const Point& point, const Point& from, const Point& to) {
+void discardInteriorEdges(Boundary& edges) {
+  std::erase_if(edges, [](const auto& edge) { return edge.second == 0; });
+  }
+
+double distanceToSegment(const Point& point, const Point& from, const Point& to) {
   std::array<double, 3> a, b;
+  double dot = 0, lengthSquared = 0;
   for(size_t k = 0; k < a.size(); ++k) {
-    a[k] = double(from[k]) - point[k];
-    b[k] = double(to[k]) - point[k];
+    a[k] = double(point[k]) - from[k];
+    b[k] = double(to[k]) - from[k];
+    dot += a[k] * b[k];
+    lengthSquared += b[k] * b[k];
     }
-  return a[0]*b[0] + a[1]*b[1] + a[2]*b[2] < 0 &&
-         a[0]*b[1] == a[1]*b[0] && a[1]*b[2] == a[2]*b[1] && a[2]*b[0] == a[0]*b[2];
+  const double t = lengthSquared > 0 ? std::clamp(dot / lengthSquared, 0.0, 1.0) : 0;
+  double squared = 0;
+  for(size_t k = 0; k < a.size(); ++k) {
+    const double delta = a[k] - b[k] * t;
+    squared += delta * delta;
+    }
+  return std::sqrt(squared);
   }
 
 Sphere mergeSpheres(std::span<const Sphere> spheres) {
@@ -77,7 +89,8 @@ Sphere mergeSpheres(std::span<const Sphere> spheres) {
 
 class Builder {
   public:
-    Builder(std::span<const Vertex> vertices, std::span<const Triangle> triangles, std::span<const uint8_t> boundary);
+    Builder(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
+            std::span<const uint8_t> boundary, BuildStats* stats, CensusVariant variant);
     Graph finish();
 
   private:
@@ -87,6 +100,10 @@ class Builder {
     Indices meshletWedges; // parallel to result.vertexIndices, for the build only
     Indices live;
     std::vector<uint8_t> fixed; // position locks from the chunk and finished branches
+    Indices materials;
+    std::vector<float> materialErrors;
+    BuildStats* stats;
+    CensusVariant variant;
 
     void clusterize(const Indices& indices, uint32_t level, uint32_t refinedGroup, Indices& output);
     void appendIndices(Indices& target, const Cluster& cluster, bool remapPositions) const;
@@ -95,11 +112,15 @@ class Builder {
     Group groupBounds(const Indices& clusters) const;
     void finishGroup(const Indices& clusters, const std::vector<uint8_t>& locks,
                      Indices& pending, std::vector<uint8_t>& nextFixed);
-    bool sameBoundary(const Indices& original, const Indices& simplified) const;
-    MaterialContours materialContours(const Indices& indices) const;
+    Boundary openBoundary(const Indices& indices) const;
+    bool retainsLocks(const Indices& original, const Indices& simplified, const std::vector<uint8_t>& locks) const;
+    MaterialContours materialContours(const Indices& indices, const Boundary& open) const;
+    float materialError(const MaterialContours& original, const Indices& simplified, const Boundary& open) const;
   };
 
-Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> triangles, std::span<const uint8_t> boundary) {
+Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
+                 std::span<const uint8_t> boundary, BuildStats* stats, CensusVariant variant)
+  : stats(stats), variant(variant) {
   if(boundary.size() != vertices.size())
     throw std::invalid_argument("Cluster LOD requires one boundary flag per vertex");
   offset(vertices.size());
@@ -111,6 +132,7 @@ Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> tri
   indices.reserve(triangles.size() * 3);
   std::map<std::array<uint32_t, 10>, uint32_t> unique;
   for(const auto& triangle : triangles) {
+    const uint32_t material = variant == CensusVariant::NoMaterials ? 0 : triangle.material;
     for(const auto id : triangle.vertices) {
       if(id >= vertices.size())
         throw std::out_of_range("Cluster LOD vertex index");
@@ -125,14 +147,15 @@ Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> tri
       const std::array<uint32_t, 10> key = {
         std::bit_cast<uint32_t>(p[0]), std::bit_cast<uint32_t>(p[1]), std::bit_cast<uint32_t>(p[2]),
         std::bit_cast<uint32_t>(n[0]), std::bit_cast<uint32_t>(n[1]), std::bit_cast<uint32_t>(n[2]),
-        std::bit_cast<uint32_t>(uv[0]), std::bit_cast<uint32_t>(uv[1]), vertex.color, triangle.material,
+        std::bit_cast<uint32_t>(uv[0]), std::bit_cast<uint32_t>(uv[1]), vertex.color, material,
         };
       const auto [it, inserted] = unique.try_emplace(key, offset(wedges.size()));
       if(inserted) {
-        Wedge wedge = {p, {n[0], n[1], n[2], uv[0], uv[1]}, id, triangle.material};
+        Wedge wedge = {p, {n[0], n[1], n[2], uv[0], uv[1]}, id, material};
         for(size_t channel = 0; channel < 4; ++channel)
           wedge.attributes[5 + channel] = float((vertex.color >> (channel * 8)) & 255u) / 255.f;
         wedges.push_back(wedge);
+        materials.push_back(material);
         fixed.push_back(0);
         }
       if(boundary[id])
@@ -217,6 +240,8 @@ std::vector<Indices> Builder::partition() const {
   }
 
 std::vector<uint8_t> Builder::lockBoundary(const std::vector<Indices>& partitions) const {
+  if(variant == CensusVariant::NoBoundaries)
+    return std::vector<uint8_t>(wedges.size());
   Indices owner(wedges.size(), NoGroup);
   auto positionLocks = fixed;
   for(uint32_t group = 0; group < partitions.size(); ++group) {
@@ -252,81 +277,123 @@ Group Builder::groupBounds(const Indices& clusters) const {
   return group;
   }
 
-bool Builder::sameBoundary(const Indices& original, const Indices& simplified) const {
-  // Compare directed open edges by position across wedges. Also preserve the exact
-  // wedge vertices and edges of marked boundaries, even inside a closed surface.
-  auto signature = [&](const Indices& indices) {
-    Boundary open;
-    std::vector<Edge> fixedEdges;
-    Indices fixedVertices;
-    for(size_t i = 0; i < indices.size(); i += 3) {
-      for(size_t j = 0; j < 3; ++j) {
-        const uint32_t a = indices[i + j], b = indices[i + (j + 1) % 3];
-        const uint32_t p = positions[a], q = positions[b];
-        addEdge(open, p, q);
-        if(fixed[p]) {
-          fixedVertices.push_back(a);
-          if(fixed[q])
-            fixedEdges.push_back({a, b});
-          }
-        }
-      }
-    std::erase_if(open, [](const auto& edge) { return edge.second == 0; });
-    std::sort(fixedEdges.begin(), fixedEdges.end());
-    std::sort(fixedVertices.begin(), fixedVertices.end());
-    fixedVertices.erase(std::unique(fixedVertices.begin(), fixedVertices.end()), fixedVertices.end());
-    return std::tuple(std::move(open), std::move(fixedEdges), std::move(fixedVertices));
-    };
-  return signature(original) == signature(simplified);
+Boundary Builder::openBoundary(const Indices& indices) const {
+  Boundary edges;
+  for(size_t i = 0; i < indices.size(); i += 3)
+    for(size_t j = 0; j < 3; ++j)
+      addEdge(edges, positions[indices[i+j]], positions[indices[i+(j+1)%3]]);
+  discardInteriorEdges(edges);
+  return edges;
   }
 
-MaterialContours Builder::materialContours(const Indices& indices) const {
-  std::map<uint32_t, Boundary> materials;
+bool Builder::retainsLocks(const Indices& original, const Indices& simplified, const std::vector<uint8_t>& locks) const {
+  std::set<uint32_t> required;
+  for(uint32_t wedge : original)
+    if(locks[wedge] & meshopt_SimplifyVertex_Lock)
+      required.insert(positions[wedge]);
+  for(uint32_t wedge : simplified)
+    required.erase(positions[wedge]);
+  return required.empty();
+  }
+
+MaterialContours Builder::materialContours(const Indices& indices, const Boundary& open) const {
+  MaterialContours materials;
   for(size_t i = 0; i < indices.size(); i += 3) {
-    const uint32_t material = wedges[indices[i]].material;
-    auto& edges = materials[material];
+    auto& edges = materials[wedges[indices[i]].material];
     for(size_t j = 0; j < 3; ++j)
       addEdge(edges, positions[indices[i+j]], positions[indices[i+(j+1)%3]]);
     }
-
-  // Canonicalize each material's oriented contour. A straight run can lose
-  // vertices, but its endpoints, bends and junctions must stay.
-  MaterialContours contours;
-  for(const auto& [material, edges] : materials) {
-    struct Junction {
-      uint32_t prev = NoGroup, next = NoGroup;
-      bool     multiple = false, straight = false;
-      };
-    std::map<uint32_t, Junction> points;
-    auto& contour = contours[material];
-    for(const auto& [edge, count] : edges) {
-      if(count == 0)
-        continue;
-      const uint32_t from = edge[count < 0], to = edge[count > 0];
-      auto& a = points[from];
-      auto& b = points[to];
-      a.multiple |= a.next != NoGroup || std::abs(count) != 1;
-      b.multiple |= b.prev != NoGroup || std::abs(count) != 1;
-      a.next = to;
-      b.prev = from;
-      }
-    for(auto& [id, point] : points)
-      point.straight = !point.multiple && point.prev != NoGroup && point.next != NoGroup &&
-                       collinearBetween(wedges[id].position, wedges[point.prev].position, wedges[point.next].position);
-    for(const auto& [edge, count] : edges) {
-      if(count == 0)
-        continue;
-      const uint32_t from = edge[count < 0];
-      uint32_t to = edge[count > 0];
-      if(points.at(from).straight)
-        continue;
-      while(points.at(to).straight)
-        to = points.at(to).next;
-      contour.emplace_back(from, to, std::abs(count));
-      }
-    std::sort(contour.begin(), contour.end());
+  for(auto& [id, edges] : materials) {
+    discardInteriorEdges(edges);
+    for(const auto& [edge, count] : open)
+      edges.erase(edge);
     }
-  return contours;
+  return materials;
+  }
+
+struct ContourPoint {
+  uint32_t next = NoGroup;
+  size_t incoming = 0, outgoing = 0;
+  };
+
+std::map<uint32_t, ContourPoint> contourPoints(const Boundary& edges) {
+  std::map<uint32_t, ContourPoint> points;
+  for(const auto& [edge, count] : edges) {
+    const uint32_t from = edge[count < 0], to = edge[count > 0];
+    const size_t multiplicity = size_t(std::abs(count));
+    points[from].next = to;
+    points[from].outgoing += multiplicity;
+    points[to].incoming += multiplicity;
+    }
+  return points;
+  }
+
+float Builder::materialError(const MaterialContours& original, const Indices& simplified, const Boundary& open) const {
+  const auto replacement = materialContours(simplified, open);
+  std::map<uint32_t, std::set<uint32_t>> surviving;
+  for(uint32_t wedge : simplified)
+    surviving[wedges[wedge].material].insert(positions[wedge]);
+
+  double error = 0;
+  for(const auto& [material, edges] : original) {
+    const auto target = replacement.find(material);
+    if(edges.empty() && target == replacement.end())
+      return Infinity;
+
+    const auto points = contourPoints(edges);
+    const auto& kept = surviving[material];
+    std::set<uint32_t> removed;
+    for(const auto& [point, links] : points) {
+      if(kept.contains(point))
+        continue;
+      if(links.incoming != 1 || links.outgoing != 1)
+        return Infinity;
+      removed.insert(point);
+      }
+
+    // A replacement edge is a chord of its old contour run. The farthest old
+    // vertex bounds the motion of the entire run under projection onto the chord.
+    Boundary contracted;
+    Indices run;
+    for(const auto& [edge, count] : edges) {
+      const uint32_t from = edge[count < 0];
+      if(!kept.contains(from))
+        continue;
+      uint32_t to = edge[count > 0];
+      run.clear();
+      while(!kept.contains(to)) {
+        if(!removed.erase(to))
+          return Infinity;
+        run.push_back(to);
+        to = points.at(to).next;
+        }
+      if(from != to)
+        contracted[{std::min(from, to), std::max(from, to)}] += from < to ? std::abs(count) : -std::abs(count);
+      for(uint32_t point : run)
+        error = std::max(error, distanceToSegment(wedges[point].position, wedges[from].position, wedges[to].position));
+      }
+
+    // A circuit that loses all of its vertices can disappear only at an error
+    // covering its size. Half its perimeter bounds its diameter.
+    while(!removed.empty()) {
+      const uint32_t first = *removed.begin();
+      uint32_t point = first;
+      double perimeter = 0;
+      do {
+        if(!removed.erase(point))
+          return Infinity;
+        const uint32_t next = points.at(point).next;
+        perimeter += distance(wedges[point].position, wedges[next].position);
+        point = next;
+        } while(point != first);
+      error = std::max(error, perimeter * 0.5);
+      }
+
+    discardInteriorEdges(contracted);
+    if(target == replacement.end() ? !contracted.empty() : contracted != target->second)
+      return Infinity;
+    }
+  return enclosingRadius(error);
   }
 
 void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& locks,
@@ -335,60 +402,100 @@ void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& l
   for(uint32_t id : clusters)
     appendIndices(original, result.clusters[id], false);
 
+  const bool keepOpen = variant != CensusVariant::NoOpenBorder && variant != CensusVariant::NoBoundaries;
+  const auto open = openBoundary(original);
   const auto material = wedges[original.front()].material;
   const bool mixed = std::ranges::any_of(original, [&](uint32_t id) { return wedges[id].material != material; });
-  MaterialContours contours;
-  std::vector<uint8_t> materialLocks;
-  if(mixed) {
-    contours = materialContours(original);
-    materialLocks = locks;
-    auto positionLocks = fixed;
-    for(const auto& [id, contour] : contours) {
-      for(const auto& [from, to, count] : contour) {
-        positionLocks[from] = meshopt_SimplifyVertex_Lock;
-        positionLocks[to] = meshopt_SimplifyVertex_Lock;
-        }
+  const auto contours = mixed ? materialContours(original, open) : MaterialContours{};
+  auto groupLocks = locks;
+  auto positionLocks = std::vector<uint8_t>(wedges.size());
+  if(keepOpen)
+    for(const auto& [edge, count] : open)
+      for(uint32_t position : edge)
+        positionLocks[position] = meshopt_SimplifyVertex_Lock;
+
+  // Keep contour junctions. Degree-two bends can move along their own seam.
+  for(const auto& [id, edges] : contours)
+    for(const auto& [position, links] : contourPoints(edges))
+      if(links.incoming != 1 || links.outgoing != 1)
+        positionLocks[position] = meshopt_SimplifyVertex_Lock;
+
+  // Preserve attribute splits within each material. Across materials, the
+  // tag check pairs wedges without requiring the two charts to share attributes.
+  std::map<std::pair<uint32_t, uint32_t>, uint32_t> charts;
+  if(variant != CensusVariant::NoAttributeSeams) {
+    for(uint32_t wedge : original) {
+      const auto [it, inserted] = charts.try_emplace({positions[wedge], materials[wedge]}, wedge);
+      if(!inserted && wedges[wedge].attributes != wedges[it->second].attributes)
+        positionLocks[positions[wedge]] |= meshopt_SimplifyVertex_Protect;
       }
-    for(uint32_t wedge : original)
-      materialLocks[wedge] |= positionLocks[positions[wedge]];
     }
+  for(uint32_t wedge : original)
+    groupLocks[wedge] |= positionLocks[positions[wedge]];
 
   Indices simplified(original.size());
-  float error = 0.f;
-  const unsigned options = meshopt_SimplifyLockBorder | meshopt_SimplifySparse | meshopt_SimplifyErrorAbsolute |
-                           meshopt_SimplifyErrorClamped | meshopt_SimplifyPreserveFolds;
-  simplified.resize(meshopt_simplifyWithAttributes(simplified.data(), original.data(), original.size(),
-                                                   wedges.front().position.data(), wedges.size(), sizeof(Wedge),
-                                                   wedges.front().attributes.data(), sizeof(Wedge), AttributeWeights.data(),
-                                                   AttributeWeights.size(), (mixed ? materialLocks : locks).data(), (original.size() / 6) * 3,
-                                                   std::numeric_limits<float>::max(), options, &error));
+  float error = 0, positionError = 0;
+  constexpr std::array<float, AttributeWeightsCm.size()> ZeroWeights{};
+  const auto& weights = variant == CensusVariant::PositionsOnly ? ZeroWeights : AttributeWeightsCm;
+  const unsigned options = meshopt_SimplifySparse | meshopt_SimplifyPreserveFolds |
+                           meshopt_SimplifyPermissive;
+  simplified.resize(meshopt_simplifyWithAbsoluteAttributes(simplified.data(), original.data(), original.size(),
+                      wedges.front().position.data(), wedges.size(), sizeof(Wedge),
+                      wedges.front().attributes.data(), sizeof(Wedge), weights.data(), weights.size(),
+                      groupLocks.data(), mixed ? materials.data() : nullptr, (original.size() / 6) * 3,
+                      options, &error, &positionError));
 
-  // Keep at most 85% of the triangles to accept a replacement.
-  const bool reduced = !simplified.empty() && simplified.size() * 100 <= original.size() * 85;
-  bool materialsMatch = true;
-  if(reduced && mixed) {
-    for(size_t i = 0; i < simplified.size(); i += 3) {
-      const auto id = wedges[simplified[i]].material;
-      materialsMatch &= id == wedges[simplified[i+1]].material && id == wedges[simplified[i+2]].material;
-      }
-    materialsMatch = materialsMatch && contours == materialContours(simplified);
+  StopReason stop = StopReason::Count;
+  float seamError = 0;
+  if(simplified.empty() || simplified.size() >= original.size() ||
+     (variant != CensusVariant::AnyReduction && simplified.size() * 100 > original.size() * 85)) {
+    stop = StopReason::Reduction;
     }
+  else {
+    const auto replacementOpen = openBoundary(simplified);
+    if(mixed)
+      seamError = materialError(contours, simplified, replacementOpen);
+    if(!std::isfinite(seamError))
+      stop = StopReason::Material;
+    else if((keepOpen && open != replacementOpen) || !retainsLocks(original, simplified, locks))
+      stop = StopReason::Boundary;
+    }
+
   auto group = groupBounds(clusters);
   const uint32_t groupId = offset(result.groups.size());
-  for(uint32_t id : clusters)
+  float childSeamError = 0;
+  for(uint32_t id : clusters) {
+    const uint32_t child = result.clusters[id].refinedGroup;
+    if(child != NoGroup) {
+      childSeamError = std::max(childSeamError, materialErrors[child]);
+      if(stats)
+        positionError = std::max(positionError, stats->positionErrorCm[child]);
+      }
     result.clusters[id].parentGroup = groupId;
+    }
 
-  if(reduced && materialsMatch && sameBoundary(original, simplified)) {
+  if(stop == StopReason::Count) {
+    seamError = enclosingRadius(double(childSeamError) + seamError);
     // Cover float projection roundoff when the errors of two transitions tie.
-    group.errorCm = std::max(group.errorCm, error) * (1.f + 8 * std::numeric_limits<float>::epsilon());
+    group.errorCm = std::max({group.errorCm, error, positionError, seamError}) *
+                    (1.f + 8 * std::numeric_limits<float>::epsilon());
     clusterize(simplified, result.clusters[clusters.front()].level + 1, groupId, pending);
     }
   else {
     group.errorCm = Infinity;
-    for(uint32_t wedge : original)
-      nextFixed[positions[wedge]] = meshopt_SimplifyVertex_Lock;
+    positionError = Infinity;
+    if(variant != CensusVariant::NoBoundaries)
+      for(uint32_t wedge : original)
+        nextFixed[positions[wedge]] = meshopt_SimplifyVertex_Lock;
+    if(stats) {
+      ++stats->stoppedGroups[size_t(stop)];
+      stats->stoppedTriangles[size_t(stop)] += original.size() / 3;
+      }
     }
   result.groups.push_back(group);
+  materialErrors.push_back(seamError);
+  if(stats)
+    stats->positionErrorCm.push_back(positionError);
   }
 
 Graph Builder::finish() {
@@ -416,7 +523,13 @@ size_t Graph::byteSize() const {
   }
 
 Graph build(std::span<const Vertex> vertices, std::span<const Triangle> triangles, std::span<const uint8_t> boundary) {
-  return Builder(vertices, triangles, boundary).finish();
+  return Builder(vertices, triangles, boundary, nullptr, CensusVariant::Normal).finish();
+  }
+
+Graph buildWithStats(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
+                     std::span<const uint8_t> boundary, BuildStats& stats, CensusVariant variant) {
+  stats = {};
+  return Builder(vertices, triangles, boundary, &stats, variant).finish();
   }
 
 float projectError(const Group& group, const View& view) {
