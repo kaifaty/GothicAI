@@ -304,7 +304,8 @@ void ObjVisual::setVisual(const ItemRecord& hitem, World& world, bool staticDraw
     bundle = VobBundle(world,hitem.visual,(staticDraw ? Vob::Static : Vob::None));
     } else {
     setType(M_Mesh);
-    mesh.view = world.addView(hitem);
+    mesh.worldItem = true;
+    mesh.item = ItemView(world,hitem);
     }
   }
 
@@ -316,15 +317,17 @@ void ObjVisual::setWorldItem(const ItemRecord& item, World& world, const Tempest
   setType(M_Mesh);
   mesh.proto=proto;
   mesh.worldItem=true;
-  mesh.material=item.material;
   renderMatrix=matrix;
   const Tempest::Vec3 position(matrix[3][0],matrix[3][1],matrix[3][2]);
+  // known, not made: the chunk's streaming makes the mesh and its effect (createView)
+  mesh.item=ItemView(world,item,false);
+  mesh.item.setObjMatrix(matrix);
   if(world.view()!=nullptr && world.chunkResidency()!=nullptr)
     world.view()->addVob(*this,ChunkId::fromPosition(position.x,position.z));
   if(!streamView) {
-    mesh.view=world.addView(item);
-    mesh.view.setObjMatrix(matrix);
-    mesh.view.setTextureOwner(position,true);
+    mesh.item=ItemView(world,item);
+    mesh.item.setObjMatrix(matrix);
+    mesh.item.setTextureOwner(position,true);
     }
   }
 
@@ -475,8 +478,14 @@ void ObjVisual::setObjMatrix(const Tempest::Matrix4x4& obj) {
       mdl.physic.setObjMatrix(obj);
       break;
     case M_Mesh:
-      mesh.view.setObjMatrix(fracture && fracture->broken ? hiddenFractureMatrix() : obj);
-      mesh.view.setTexturePosition(Tempest::Vec3(obj[3][0],obj[3][1],obj[3][2]));
+      if(mesh.worldItem) {
+        mesh.item.setObjMatrix(obj);
+        mesh.item.view().setTexturePosition(Tempest::Vec3(obj[3][0],obj[3][1],obj[3][2]));
+        }
+      else {
+        mesh.view.setObjMatrix(fracture && fracture->broken ? hiddenFractureMatrix() : obj);
+        mesh.view.setTexturePosition(Tempest::Vec3(obj[3][0],obj[3][1],obj[3][2]));
+        }
       if(fracture && !fracture->broken)
         for(auto& view:fracture->views)
           view.setTexturePosition(Tempest::Vec3(obj[3][0],obj[3][1],obj[3][2]));
@@ -501,14 +510,19 @@ void ObjVisual::createView() {
     mdl.published=!isViewMissing();
     return;
     }
-  mesh.view=mesh.worldItem ? streamView->addView(mesh.proto,mesh.material) : streamView->addStaticView(mesh.proto,true);
+  const Tempest::Vec3 position(renderMatrix[3][0],renderMatrix[3][1],renderMatrix[3][2]);
+  if(mesh.worldItem) {
+    // the item's mesh and its effect come back together
+    mesh.item.setObjMatrix(renderMatrix);
+    mesh.item.restore(*streamView);
+    mesh.item.setTextureOwner(position,true);
+    mesh.published=!isViewMissing();
+    return;
+    }
+  mesh.view=streamView->addStaticView(mesh.proto,true);
   mesh.view.setWind(mesh.windMode,mesh.windStrength);
   mesh.view.setObjMatrix(fracture && fracture->broken ? hiddenFractureMatrix() : renderMatrix);
-  const Tempest::Vec3 position(renderMatrix[3][0],renderMatrix[3][1],renderMatrix[3][2]);
-  if(mesh.worldItem)
-    mesh.view.setTextureOwner(position,true);
-  else
-    mesh.view.setTexturePosition(position);
+  mesh.view.setTexturePosition(position);
   mesh.published=!isViewMissing();
   }
 
@@ -518,7 +532,9 @@ void ObjVisual::releaseView() {
     mdl.published=false;
     }
   else {
+    // a lying item's effect goes with its mesh, no particles without it
     mesh.view={};
+    mesh.item.release();
     mesh.published=false;
     }
   }
@@ -533,7 +549,7 @@ bool ObjVisual::isViewMissing() const {
   }
 
 size_t ObjVisual::viewNodesCount() const {
-  return type==M_Mdl ? mdl.view.bodyNodesCount() : mesh.view.nodesCount();
+  return type==M_Mdl ? mdl.view.bodyNodesCount() : mesh.view.nodesCount()+mesh.item.nodesCount();
   }
 
 void ObjVisual::setupFracture(World& world, DynamicWorld::Item& body) {
@@ -557,7 +573,7 @@ void ObjVisual::setupFracture(World& world, DynamicWorld::Item& body) {
 
 float ObjVisual::setTextureOwner(const Tempest::Vec3& position, bool spatial) {
   if(type==M_Mesh)
-    return mesh.view.setTextureOwner(position,spatial);
+    return mesh.worldItem ? mesh.item.setTextureOwner(position,spatial) : mesh.view.setTextureOwner(position,spatial);
   if(type==M_Mdl)
     return mdl.view.setTextureOwner(position,spatial);
   return std::numeric_limits<float>::infinity();
@@ -568,17 +584,18 @@ bool ObjVisual::renderPosition(Tempest::Vec3& out) const {
     return false;
   if(type==M_Pfx)
     return pfx.renderPosition(out);
-  if(type==M_Mesh && !mesh.view.isEmpty()) {
-    const auto m = mesh.view.node(0).position();
+  const auto& view = type==M_Mesh && mesh.worldItem ? mesh.item.view() : mesh.view;
+  if(type==M_Mesh && !view.isEmpty()) {
+    const auto m = view.node(0).position();
     out = Tempest::Vec3(m.at(3,0),m.at(3,1),m.at(3,2));
     return true;
     }
   return false;
   }
 
-void ObjVisual::setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot, int32_t material) {
+void ObjVisual::setSlotItem(ItemView&& itm, std::string_view slot) {
   if(type==M_Mdl)
-    mdl.view.setSlotItem(std::move(itm), slot, material);
+    mdl.view.setSlotItem(std::move(itm), slot);
   }
 
 void ObjVisual::setInteractive(Interactive* it) {

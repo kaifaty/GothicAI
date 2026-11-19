@@ -286,18 +286,18 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
   const float string = pose.bowDrawIk().string();
   const float held   = pose.bowDrawIk().aligned();
   if(string>=0.f) {
-    bow.view.setMMShape(BowHeld,0,0,0,string*(1.f-held));
-    bow.view.setMMShape(BowDraw::StringDrawn,0,0,0,string*held);
+    bow.view.view().setMMShape(BowHeld,0,0,0,string*(1.f-held));
+    bow.view.view().setMMShape(BowDraw::StringDrawn,0,0,0,string*held);
     stringByHand = true;
     }
   else if(stringByHand) {
     // let go: the string goes (the shot: it trembles at once, the animation's release is late), else the
     // animation's morphs from here
-    bow.view.startMMAnim(BowHeld,0,0);
-    bow.view.startMMAnim(BowDraw::StringDrawn,0,0);
+    bow.view.view().startMMAnim(BowHeld,0,0);
+    bow.view.view().startMMAnim(BowDraw::StringDrawn,0,0);
     if(pose.bowDrawIk().loosed()) {
       // as hard as the shot: a heavy bow drawn fully rings, a light one drawn short less
-      bow.view.startMMAnim(held>0.5f ? BowDraw::StringLoose : BowLoose,BowDraw::looseIntensity(ar.releaseKick()),uint64_t(-1));
+      bow.view.view().startMMAnim(held>0.5f ? BowDraw::StringLoose : BowLoose,BowDraw::looseIntensity(ar.releaseKick()),uint64_t(-1));
       looseAt = npc.world().tickCount();
       }
     stringByHand = false;
@@ -436,7 +436,7 @@ bool MdlVisual::arrowRay(Vec3& p, Vec3& d) const {
   }
 
 bool MdlVisual::aimAttachmentBounds(bool ammo, Matrix4x4& matrix, Vec3 (&bounds)[2]) const {
-  const auto& mesh = ammo ? ammunition.view : bow.view;
+  const auto& mesh = ammo ? ammunition.view.view() : bow.view.view();
   const auto* proto = mesh.protoMesh();
   if(mesh.isEmpty() || proto==nullptr)
     return false;

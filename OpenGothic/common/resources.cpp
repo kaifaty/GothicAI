@@ -1033,7 +1033,8 @@ PfxEmitterMesh* Resources::implLoadEmiterMesh(std::string_view name) {
 
   auto& ret = emiMeshCache[cname];
 
-  if(FileExt::hasExt(cname,"3DS")) {
+  // a static mesh by its visual's name (.3DS) or by its ProtoMesh's (.MRM: an item's mesh, graphics/itemview)
+  if(FileExt::hasExt(cname,"3DS") || FileExt::hasExt(cname,"MRM")) {
     FileExt::exchangeExt(cname,"3DS","MRM");
 
     bool replaced = false;
@@ -1043,6 +1044,17 @@ PfxEmitterMesh* Resources::implLoadEmiterMesh(std::string_view name) {
       return nullptr;
 
     PackedMesh packed(zmsh,PackedMesh::PK_Visual,replaced);
+    ret = std::unique_ptr<PfxEmitterMesh>(new PfxEmitterMesh(packed));
+    return ret.get();
+    }
+
+  if(FileExt::hasExt(cname,"MMS") || FileExt::hasExt(cname,"MMB")) {
+    // a morph mesh (a bow): its points at rest
+    FileExt::exchangeExt(cname,"MMS","MMB");
+    auto zmm = loadMorphData(cname);
+    if(zmm.mesh.sub_meshes.empty())
+      return nullptr;
+    PackedMesh packed(zmm.mesh,PackedMesh::PK_Visual);
     ret = std::unique_ptr<PfxEmitterMesh>(new PfxEmitterMesh(packed));
     return ret.get();
     }

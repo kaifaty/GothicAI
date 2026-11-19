@@ -102,7 +102,8 @@ struct MeshGltfTest {
     visual.setType(ObjVisual::M_Mesh);
     visual.mesh.proto=proto;
     visual.mesh.worldItem=worldItem;
-    visual.mesh.material=material;
+    if(worldItem)
+      visual.mesh.item=ItemView(proto,material,MeshObjects::Mesh());
     if(!worldItem) {
       visual.mesh.windMode=asset::AnimationType::WIND;
       visual.mesh.windStrength=.5f;
@@ -113,9 +114,12 @@ struct MeshGltfTest {
     view.addVob(visual,ChunkId::fromPosition(position.x,position.z));
     }
 
-  static bool drawable(const ObjVisual& visual) { return !visual.mesh.view.isEmpty(); }
-  static Tempest::Matrix4x4 matrix(const ObjVisual& visual) { return visual.mesh.view.node(0).position(); }
-  static const Material& material(const ObjVisual& visual) { return visual.mesh.view.node(0).material(); }
+  static const MeshObjects::Mesh& meshView(const ObjVisual& visual) {
+    return visual.mesh.worldItem ? visual.mesh.item.view() : visual.mesh.view;
+    }
+  static bool drawable(const ObjVisual& visual) { return !meshView(visual).isEmpty(); }
+  static Tempest::Matrix4x4 matrix(const ObjVisual& visual) { return meshView(visual).node(0).position(); }
+  static const Material& material(const ObjVisual& visual) { return meshView(visual).node(0).material(); }
 
   static void attachModel(ObjVisual& visual, WorldView& view, const ProtoMesh* proto, const Tempest::Vec3& position) {
     visual.setType(ObjVisual::M_Mdl);
@@ -134,9 +138,14 @@ struct MeshGltfTest {
   static bool modelDrawable(const ObjVisual& visual) { return !visual.mdl.view.view.isEmpty(); }
   static Tempest::Matrix4x4 modelMatrix(const ObjVisual& visual) { return visual.mdl.view.view.node(0).position(); }
   static bool modelSlotDrawable(const ObjVisual& visual) { return !visual.mdl.view.item.at(0).view.isEmpty(); }
-  static Tempest::Matrix4x4 modelSlotMatrix(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.node(0).position(); }
-  static const Tempest::Texture2d* modelSlotTexture(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.node(0).material().tex; }
-  static const ProtoMesh* modelSlotProto(const ObjVisual& visual) { return visual.mdl.view.item.at(0).deferredProto; }
+  static Tempest::Matrix4x4 modelSlotMatrix(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.view().node(0).position(); }
+  static const Tempest::Texture2d* modelSlotTexture(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.view().node(0).material().tex; }
+  static const ProtoMesh* modelSlotProto(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.protoMesh(); }
+  // a slot item with no item behind it (graphics/itemview)
+  static ItemView slotItem(MeshObjects::Mesh&& mesh, int32_t material) {
+    const auto* proto = mesh.protoMesh();
+    return ItemView(proto,material,std::move(mesh));
+    }
   static bool startModelAnimation(ObjVisual& visual, const Animation::Sequence& sequence) {
     return visual.mdl.view.pose().startAnim(visual.mdl.view.solver,&sequence,0,BS_NONE,Pose::Force,0);
     }
@@ -2707,7 +2716,7 @@ void mobsiVobLifetime(Tempest::Device& device) {
   require(slotTexture==Resources::loadMaterialAlbedo("SLOT_V1.TGA") &&
           slotTexture!=slotProto->attach[0].sub[0].material.tex,
           "mobsi slot fixture must select a texture distinct from its prototype's default material");
-  visual.setSlotItem(std::move(slotView),"ZS_POS0",1);
+  visual.setSlotItem(MeshGltfTest::slotItem(std::move(slotView),1),"ZS_POS0");
   const std::array textures={texture,slotTexture};
   auto* pose=&MeshGltfTest::modelPose(visual);
   require(!MeshGltfTest::modelDrawable(visual) && !MeshGltfTest::modelSlotDrawable(visual) &&

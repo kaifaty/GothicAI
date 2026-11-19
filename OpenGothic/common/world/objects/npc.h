@@ -254,13 +254,13 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
                               std::string_view body, std::string_view head);
     void       updateArmor   ();
     std::string bodyVisual   () const;
-    void       setSword      (MeshObjects::Mesh&& sword);
-    void       setRangedWeapon(MeshObjects::Mesh&& bow);
-    void       setShield     (MeshObjects::Mesh&& shield);
+    void       setSword      (ItemView&& sword);
+    void       setRangedWeapon(ItemView&& bow);
+    void       setShield     (ItemView&& shield);
     void       setMagicWeapon(Effect&& spell);
-    void       setSlotItem   (MeshObjects::Mesh&& itm, std::string_view slot);
-    void       setStateItem  (MeshObjects::Mesh&& itm, std::string_view slot);
-    void       setAmmoItem   (MeshObjects::Mesh&& itm, std::string_view slot);
+    void       setSlotItem   (ItemView&& itm, std::string_view slot);
+    void       setStateItem  (ItemView&& itm, std::string_view slot);
+    void       setAmmoItem   (ItemView&& itm, std::string_view slot);
     void       clearSlotItem (std::string_view slot);
     // the quiver on the right hip while a bow (not a crossbow) is equipped, with the carried arrows in it
     // by steps (graphics/mesh/quiver); cheap when nothing changed: called every tick and on the view's update

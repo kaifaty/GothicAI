@@ -4,6 +4,7 @@ boughs' planes, the clusters of shoots and the cover of the branches' axes, the 
 twice in the mode of pairs (reports/engine/2026-11-16-modern-trees/two-sided.md)."""
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,10 +13,12 @@ import numpy as np
 import pytest
 
 import fir
+import fir_hierarchy
 import fir_tree
 import tree_bough_lod
 import tree_density
 import tree_glb
+import tree_hierarchy_probe
 import tree_prefix
 
 HERE = Path(__file__).resolve().parent
@@ -112,6 +115,99 @@ def test_bough_lod_measures_a_small_fir(tmp_path, monkeypatch):
     assert curve['submitted'] == [[4, 10], [6, 14], [4, 10], [1, 2]]
     assert curve['turnover'][1] == pytest.approx(.5 * 3 / 4)
     assert curve['current_turnover'] == [0, 1, 1, 0]
+
+
+def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path):
+    roles = [('hang', 1, 1), ('hang', 1, 1), ('end', 1, 2), ('tip', 1, 2),
+             ('roof', 2, 0), ('side', 2, 0), ('sleeve', 0, 0), ('sleeve', 0, 0),
+             ('leader', 0, 0), ('leader', 0, 0)]
+    quad = np.column_stack((tree_bough_lod.UV, np.zeros(4))) * .2
+    position = np.concatenate([quad + (.2 * n, .1, .15) for n in range(len(roles))])
+    colour = np.tile(np.array([[80, 0, 0, 170], [90, 0, 255, 200],
+                               [80, 0, 180, 220], [70, 0, 200, 250]], np.uint8), (len(roles), 1))
+    colour[:, 1] = np.repeat([branch * 23 for _, branch, _ in roles], 4)
+    foliage = dict(name='needles', cutout=True, two_sided=True, position=position,
+                   normal=np.tile((1., 2., 3.), (len(position), 1)),
+                   uv=np.tile(tree_bough_lod.UV, (len(roles), 1)), colour=colour,
+                   index=np.concatenate([tree_bough_lod.QUAD + 4 * n for n in range(len(roles))]))
+    wood = dict(name='wood', position=quad + (.1, .2, .4), normal=foliage['normal'][:4],
+                uv=foliage['uv'][:4], colour=np.zeros((4, 4), np.uint8), index=tree_bough_lod.QUAD)
+    source = tmp_path / 'source.glb'
+    tree_glb.write(source, [wood, foliage])
+    # Ordinary GLB bytes from the writer before hierarchy export.
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == (
+        'f5bd74e310945ab5d634f6de7d7a61820e76cf9c4107c9a7656a51185ebd8b7c')
+    parts = tree_glb.read(source)
+    cards = [dict(role=role, branch=branch, cluster=cluster, first=4 * i, count=4)
+             for i, (role, branch, cluster) in enumerate(roles)]
+    branches = [SimpleNamespace(number=i, points=np.array([[.1, .2, .3]]), azimuth=.1)
+                for i in (1, 2)]
+    tree = SimpleNamespace(cards=cards, branches=branches, stubs=0)
+    nodes, roots = fir_hierarchy.build(parts[1], tree, dict(height_m=1., scale=1.))
+    by_kind = {n.kind: n for n in nodes}
+    assert set(by_kind) == {'leaf', 'hang', 'end', 'bough', 'tier', 'sleeve', 'leader'}
+    assert by_kind['end'].children == (3, 4)
+
+    def leaves(ident):
+        node = nodes[ident - 1]
+        if not node.children:
+            assert np.all(node.low < node.rest_low) and np.all(node.high > node.rest_high)
+            return [node.id]
+        for child_id in node.children:
+            child = nodes[child_id - 1]
+            assert np.all(node.low <= child.low) and np.all(node.high >= child.high)
+        result = [leaf_id for child in node.children for leaf_id in leaves(child)]
+        assert node.leaves == tuple(result)
+        return result
+
+    cut = [leaf_id for root in roots for leaf_id in leaves(root)]
+    assert sorted(cut) == list(range(1, 1 + len(roles)))
+    pulled = fir_hierarchy.leaf_part(parts[1], nodes, cut)
+    for field in (*fir_hierarchy.VERTEX_FIELDS, 'index'):
+        assert pulled[field].tobytes() == parts[1][field].tobytes()
+
+    parents = {n.id: dict(fir_hierarchy.leaf_part(parts[1], nodes, n.leaves[:1]), page=n.id % 2)
+               for n in nodes if n.children}
+    fits = {ident: SimpleNamespace(cards=[parent], max_px=18., target_px=15.)
+            for ident, parent in parents.items()}
+    merges = tree_hierarchy_probe.schedule(nodes, fits, parents, 1., lambda node, high: high)
+    assert len(merges) == len(parents)
+    # The cluster and the branch tip have the same fit and no child bands.
+    # Their IDs place them on opposite sides of the unstaggered centre.
+    assert [by_kind[kind].threshold_px for kind in ('hang', 'end')] == pytest.approx([15.65663567, 14.31727433])
+    assert tree_hierarchy_probe.cut(nodes, roots, 1e6, 1.) == sorted(cut)
+    assert tree_hierarchy_probe.cut(nodes, roots, 1e-6, 1.) == sorted(roots)
+    for node in nodes:
+        if node.children:
+            assert 0 < node.low_px < node.threshold_px < node.high_px <= node.max_px
+            for ident in node.children:
+                child = nodes[ident - 1]
+                if child.children:
+                    assert node.high_px < child.low_px
+                    assert node.high_px / node.diameter < child.low_px / child.diameter
+    exported = tmp_path / 'hierarchy.glb'
+    sizes = fir_hierarchy.export(exported, parts, nodes, roots, parents, [])
+    assert sizes['geometry_bytes'] == len(parents) * (4 * 36 + 2 * 6)
+    actual = tree_glb.read(exported)
+    assert 'card_id' not in actual[0]
+    np.testing.assert_array_equal(actual[1]['card_id'], np.repeat(np.arange(1, 1 + len(roles)), 4))
+    for expected, stored in zip(parts, actual):
+        assert expected['material'] == stored['material']
+        for field in (*fir_hierarchy.VERTEX_FIELDS, 'index'):
+            assert expected[field].tobytes() == stored[field].tobytes()
+
+    records = json.loads(exported.with_suffix('.json').read_text())['nodes']
+    for ident, parent in parents.items():
+        record = records[ident - 1]
+        ranges = record['geometry']
+        assert ranges['page'] == parent['page']
+        first = ranges['first_vertex']
+        start = ranges['first_index'] // 3
+        part = actual[ranges['primitive']]
+        np.testing.assert_array_equal(part['position'][first:first + 4], parent['position'])
+        np.testing.assert_array_equal(part['index'][start:start + 2] - first, parent['index'])
+        low, high = record['cull_box']
+        assert np.all(low < parent['position']) and np.all(high > parent['position'])
 
 
 @pytest.fixture(scope='module')
@@ -284,6 +380,22 @@ def test_prefix_render_samples_atlas_and_interpolates_openness():
     assert tone == pytest.approx([126, 25 / 6, 6])
 
 
+def assert_ordinary_glb(tree, stored):
+    """Check the unmarked writer's normal bytes without relying on a platform's generated vertices."""
+    for part, saved in zip(tree.parts, stored, strict=True):
+        normals = part['normal']
+        gltf_normals = np.stack((normals[:, 0], normals[:, 2], -normals[:, 1]), axis=1)
+        length = np.maximum(np.linalg.norm(gltf_normals, axis=1, keepdims=True), 1e-9)
+        assert saved['normal'].tobytes() == (normals / length).tobytes()
+        cutout = part['cutout']
+        expected = dict(name=part['name'], doubleSided=cutout, extras=dict(group='UNDEF' if cutout else 'WOOD'),
+                        pbrMetallicRoughness=dict(metallicFactor=0., roughnessFactor=1.))
+        if cutout:
+            expected.update(alphaMode='MASK', alphaCutoff=.5)
+        assert saved['material'] == expected
+        assert 'card_id' not in saved
+
+
 def test_colour_0_is_laid_out_for_the_tree_wind(spruce):
     layout = spruce['metrics']['colour_0']
     assert layout['colour_format'] == 'VEC4 UNSIGNED_BYTE normalized'
@@ -297,6 +409,7 @@ def test_colour_0_is_laid_out_for_the_tree_wind(spruce):
     assert cards['sides'] == 'material' and cards['pairs'] == 0 and cards['single'] == cards['triangles']
     assert layout['openness']['corr_with_radius_share'] > .9
     wood, boughs = tree_glb.read(spruce['glb'])
+    assert_ordinary_glb(spruce['tree'], [wood, boughs])
     assert (wood['material']['name'], boughs['material']['name']) == ('OWN_TREE_FIR_BARK', 'OWN_TREE_FIR_BOUGHS')
     assert wood['material'].get('alphaMode') != 'MASK' and boughs['material']['alphaMode'] == 'MASK'
     assert boughs['material']['doubleSided'] and not wood['material']['doubleSided']
@@ -329,7 +442,6 @@ def test_the_mode_of_pairs_only_adds_the_twins(config, spruce, tmp_path):
 
 def digest(tree) -> str:
     """The arrays of a built tree at a millimetre: the same spruce on every platform gives the same digest."""
-    import hashlib
     h = hashlib.sha256()
     for p in tree.parts:
         h.update(np.rint(p['position'] * 1000).astype(np.int64).tobytes())
@@ -356,7 +468,7 @@ def test_spruce_a_is_built_as_before_and_thin_is_a_separate_step(config):
 
 
 @pytest.mark.parametrize(('px', 'old_share'), [(400, .5), (200, .25), (100, .125), (50, 1 / 32)])
-def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, config, px, old_share):
+def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, config, px, old_share, tmp_path):
     tree = spruce['tree']
     before = digest(tree)
     normals = [part['normal'].copy() for part in tree.parts]
@@ -378,6 +490,9 @@ def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, co
     assert [settings['px'] for settings in config['levels']] == [400, 200, 100, 50]
     settings = next(level for level in config['levels'] if level['px'] == px)
     level = fir_tree.design_level(tree, settings, mask, atlas)
+    glb = tmp_path / 'level.glb'
+    tree_glb.write(glb, level.parts)
+    assert_ordinary_glb(level, tree_glb.read(glb))
     level_wood, level_boughs = level.parts
     triangles = sum(len(part['index']) for part in level.parts)
     assert triangles <= int(tree.metrics['triangles'] * settings['share'])

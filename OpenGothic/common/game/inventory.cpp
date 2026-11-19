@@ -423,16 +423,16 @@ bool Inventory::setSlot(Item *&slot, Item* next, Npc& owner, bool force) {
     slot=nullptr;
 
     if(flag & ITM_SHIELD){
-      owner.setShield(MeshObjects::Mesh());
+      owner.setShield(ItemView());
       }
     else if(mainFlag & ITM_CAT_ARMOR){
       owner.updateArmor();
       }
     else if(mainFlag & ITM_CAT_NF){
-      owner.setSword(MeshObjects::Mesh());
+      owner.setSword(ItemView());
       }
     else if(mainFlag & ITM_CAT_FF){
-      owner.setRangedWeapon(MeshObjects::Mesh());
+      owner.setRangedWeapon(ItemView());
       }
     vm.invokeItem(&owner,uint32_t(itData.on_unequip));
     }
@@ -472,15 +472,15 @@ void Inventory::updateView(Npc& owner) {
   updateRuneView  (owner);
 
   for(auto& i:mdlSlots) {
-    auto  vbody  = world.addView(i.item->handle());
+    auto  vbody  = ItemView(world,i.item->handle());
     owner.setSlotItem(std::move(vbody),i.slot);
     }
   if(ammotSlot.item!=nullptr) {
-    auto  vbody  = world.addView(ammotSlot.item->handle());
+    auto  vbody  = ItemView(world,ammotSlot.item->handle());
     owner.setAmmoItem(std::move(vbody),ammotSlot.slot);
     }
   if(stateSlot.item!=nullptr) {
-    auto  vitm   = world.addView(stateSlot.item->handle());
+    auto  vitm   = ItemView(world,stateSlot.item->handle());
     owner.setStateItem(std::move(vitm),stateSlot.slot);
     }
   owner.updateQuiver();
@@ -502,11 +502,11 @@ void Inventory::updateSwordView(Npc &owner) {
   Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
       residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   if(melee==nullptr) {
-    owner.setSword(MeshObjects::Mesh());
+    owner.setSword(ItemView());
     return;
     }
 
-  auto  vbody  = owner.world().addView(melee->handle());
+  auto  vbody  = ItemView(owner.world(),melee->handle());
   owner.setSword(std::move(vbody));
   }
 
@@ -516,13 +516,13 @@ void Inventory::updateBowView(Npc &owner) {
   Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
       residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   if(range==nullptr) {
-    owner.setRangedWeapon(MeshObjects::Mesh());
+    owner.setRangedWeapon(ItemView());
     return;
     }
 
   auto flag = range->mainFlag();
   if(flag & ITM_CAT_FF){
-    auto  vbody  = owner.world().addView(range->handle());
+    auto  vbody  = ItemView(owner.world(),range->handle());
     owner.setRangedWeapon(std::move(vbody));
     }
   }
@@ -533,13 +533,13 @@ void Inventory::updateShieldView(Npc& owner) {
   Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
       residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   if(shield==nullptr) {
-    owner.setShield(MeshObjects::Mesh());
+    owner.setShield(ItemView());
     return;
     }
 
   auto flag = ItmFlags(shield->itemFlag());
   if(flag & ITM_SHIELD){
-    auto  vbody  = owner.world().addView(shield->handle());
+    auto  vbody  = ItemView(owner.world(),shield->handle());
     owner.setShield(std::move(vbody));
     }
   }
@@ -722,7 +722,7 @@ void Inventory::putToSlot(Npc& owner, size_t cls, std::string_view slot) {
     if(i.slot==slot) {
       i.item = it;
 
-      auto  vitm   = owner.world().addView(it->handle());
+      auto  vitm   = ItemView(owner.world(),it->handle());
       owner.setSlotItem(std::move(vitm),slot);
       return;
       }
@@ -730,7 +730,7 @@ void Inventory::putToSlot(Npc& owner, size_t cls, std::string_view slot) {
   MdlSlot& sl = mdlSlots.back();
   sl.slot = slot;
   sl.item = it;
-  auto  vitm   = owner.world().addView(it->handle());
+  auto  vitm   = ItemView(owner.world(),it->handle());
   owner.setSlotItem(std::move(vitm),slot);
   }
 
@@ -766,14 +766,14 @@ void Inventory::putAmmunition(Npc& owner, size_t cls, std::string_view slot) {
   if(it==nullptr) {
     ammotSlot.slot.clear();
     ammotSlot.item = nullptr;
-    owner.setAmmoItem(MeshObjects::Mesh(),"");
+    owner.setAmmoItem(ItemView(),"");
     return;
     }
 
   ammotSlot.slot = slot;
   ammotSlot.item = it;
   auto& itData = it->handle();
-  auto  vitm   = owner.world().addView(itData);
+  auto  vitm   = ItemView(owner.world(),itData);
   owner.setAmmoItem(std::move(vitm),slot);
   }
 
@@ -786,13 +786,13 @@ void Inventory::implPutState(Npc& owner, size_t cls, std::string_view slot) {
   if(it==nullptr) {
     stateSlot.slot.clear();
     stateSlot.item = nullptr;
-    owner.setStateItem(MeshObjects::Mesh(),"");
+    owner.setStateItem(ItemView(),"");
     return;
     }
 
   stateSlot.slot = slot;
   stateSlot.item = it;
-  auto  vitm   = owner.world().addView(it->handle());
+  auto  vitm   = ItemView(owner.world(),it->handle());
   owner.setStateItem(std::move(vitm),slot);
   }
 
@@ -821,8 +821,8 @@ void Inventory::moveItem(Npc& owner, Inventory& invNpc, Interactive& mobsi) {
   auto& world = owner.world();
   auto& slot  = invNpc.mdlSlots.back();
 
-  auto  vbody  = world.addView(slot.item->handle());
-  mobsi.setSlotItem(std::move(vbody), zsSlot, slot.item->handle().material);
+  auto  vbody  = ItemView(world,slot.item->handle());
+  mobsi.setSlotItem(std::move(vbody), zsSlot);
 
   mobsi.inventory().mdlSlots.resize(1);
   MdlSlot& sl = mobsi.inventory().mdlSlots.back();

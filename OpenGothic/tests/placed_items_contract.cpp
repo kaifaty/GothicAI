@@ -33,6 +33,7 @@
 #include "sha256.h"
 #include "loadprobe.h"
 #include "world/objects/item.h"
+#include "graphics/itemview.h"
 #include "world/objects/npc.h"
 #include "world/benchhooks.h"
 #include "testbench.h"
@@ -78,6 +79,14 @@ struct NpcDefinitionContract {
   static const auto& items(GameScript& script) { return script.itemDefinitions; }
   static const auto& routines(GameScript& script) { return script.routineDefinitions; }
   static auto& random(GameScript& script) { return script.randGen; }
+  // the views of items (graphics/itemview): the sword and the bow on a body, a lying item's
+  static const ItemView& sword(const Npc& npc) { return npc.visual.sword.view; }
+  static const ItemView& bow(const Npc& npc) { return npc.visual.bow.view; }
+  static const ItemView* lying(const Item& item) {
+    const auto& v=item.visual;
+    return v.type==ObjVisual::M_Mesh && v.mesh.worldItem ? &v.mesh.item : nullptr;
+    }
+  static StreamedVisual& visual(Item& item) { return item.visual; }
   static auto& isolatedRandom(GameScript& script) { return script.isolatedRandom; }
   };
 
@@ -1856,6 +1865,112 @@ void activityDefinitionsWorld(Gothic& gothic) {
   std::printf("Activity at Harad's anvil (%s, other smith %s): %zu equal events\n",pointName.c_str(),otherName.c_str(),events);
   }
 
+// Item effects (graphics/itemview, reports/engine/2026-11-19-item-effects): an item's own effect lives on its mesh
+// lying in the world and on a body, goes with the mesh, and is nowhere else.
+void itemEffects(World& world) {
+  auto& script=world.script();
+  const auto symbol=[&](const char* name) {
+    const auto id=script.findSymbolIndex(name);
+    require(id!=size_t(-1),"item effect fixtures must be items of the base");
+    return id;
+    };
+  const auto potion=symbol("ITPO_HEALTH_01"),gold=symbol("ITMI_GOLD"),claw=symbol("ITMW_BELIARWEAPON_1H_01"),
+             firebow=symbol("ITRW_ADDON_FIREBOW");
+  const int switchBefore=Settings::getI("GAME","itemEffects");
+  require(switchBefore==1,"[GAME] itemEffects must be 1 by default, as in Gothic");
+  auto* npc=activityNpc(world,"VLK_412_HARAD");
+  require(npc!=nullptr,"item effects need Harad of NEWWORLD");
+  npc->setInteraction(nullptr,true);
+  npc->clearAiQueue();
+  const auto near=[](const Tempest::Vec3& a,const Tempest::Vec3& b,float cm) { return (a-b).length()<cm; };
+  const auto meshAt=[](const ItemView& v) {
+    const auto m=v.view().node(0).position();
+    return Tempest::Vec3(m.at(3,0),m.at(3,1),m.at(3,2));
+    };
+  const auto viewOf=[](const Item* item) { return item!=nullptr ? NpcDefinitionContract::lying(*item) : nullptr; };
+  // born: the emitter is active and has the item's mesh to take its points from
+  const auto emitting=[](const ItemView& v) {
+    return v.isEmitting() && v.effectMesh()==&v.view() && v.view().toMeshEmitter()!=nullptr;
+    };
+  const auto lay=[&](size_t id) {
+    auto m=Tempest::Matrix4x4::mkIdentity();
+    m.translate(npc->position()+Tempest::Vec3(100,50,0));
+    return world.addItemDyn(id,m,size_t(-1));
+    };
+  // lying in the world: the potion has its effect on its own mesh, gold has none; the physics moves both together
+  const auto alive=ItemView::census(world).alive;
+  auto* lying=lay(potion);
+  auto* plain=lay(gold);
+  require(viewOf(lying)!=nullptr && viewOf(plain)!=nullptr,"items put in the world must have views");
+  const auto& potionView=*viewOf(lying);
+  require(lying->handle().effect=="SPELLFX_HEALTHPOTION" && !potionView.isEmpty() && emitting(potionView) &&
+          ItemView::census(world).alive==alive+1,
+          "ITPO_HEALTH_01 put in the world must have its live effect on its own mesh");
+  require(plain->handle().effect.empty() && !viewOf(plain)->isEmpty() && !viewOf(plain)->hasEffect(),
+          "an item without C_ITEM.effect must have no effect");
+  auto fallen=lying->transform();
+  fallen.translate(0,-40,25);
+  lying->setPhysicsMatrix(fallen);
+  Tempest::Vec3 at;
+  require(potionView.effectPosition(at) && near(at,meshAt(potionView),.01f) &&
+          near(at,Tempest::Vec3(fallen.at(3,0),fallen.at(3,1),fallen.at(3,2)),.01f),
+          "a lying item moved by the physics must take its effect along");
+  // the chunk streamed out: the mesh goes, its effect with it
+  NpcDefinitionContract::visual(*lying).releaseView();
+  require(potionView.isEmpty() && !potionView.hasEffect() && ItemView::census(world).alive==alive,
+          "a lying item's released view must have no effect");
+  world.removeItem(*lying);
+  world.removeItem(*plain);
+
+  // Beliar's claw: in the hand once drawn, the effect where the hand is, also after the npc moved
+  const auto& sword=NpcDefinitionContract::sword(*npc);
+  npc->setToFightMode(claw);
+  npc->updateTransform();
+  require(npc->weaponState()==WeaponState::W1H && npc->inventory().itemCount(claw)==1,"Harad must draw Beliar's claw");
+  require(emitting(sword) && sword.effectPosition(at) && near(at,meshAt(sword),.01f) &&
+          near(at,npc->mapBone("ZS_RIGHTHAND"),15.f),"Beliar's claw drawn must have its effect in the hand");
+  const auto hand=npc->mapBone("ZS_RIGHTHAND");
+  npc->setPosition(npc->position()+Tempest::Vec3(300,0,0));
+  npc->updateTransform();
+  Tempest::Vec3 after;
+  const auto handAfter=npc->mapBone("ZS_RIGHTHAND");
+  std::printf("Item effects: claw in the hand at %.1f cm of ZS_RIGHTHAND, moved %.1f cm with it (hand %.1f cm)\n",
+              double((at-hand).length()),double((sword.effectPosition(after) ? after-at : Tempest::Vec3()).length()),
+              double((handAfter-hand).length()));
+  require(sword.effectPosition(after) && (handAfter-hand).length()>250.f && near(after-at,handAfter-hand,1.f) &&
+          near(after,meshAt(sword),.01f),"the claw's effect must follow the hand bone");
+  // on the belt it keeps the effect, taken off into the inventory it has none
+  npc->closeWeapon(true);
+  npc->updateTransform();
+  require(npc->weaponState()==WeaponState::NoWeapon && emitting(sword) && sword.effectPosition(at) &&
+          near(at,npc->mapBone("ZS_SWORD"),15.f),"Beliar's claw put away must keep its effect on the belt");
+  npc->unequipItem(claw);
+  require(npc->inventory().itemCount(claw)==1 && sword.isEmpty() && !sword.hasEffect(),
+          "Beliar's claw taken off into the inventory must have no effect");
+  // the fire bow on the back
+  const auto& bow=NpcDefinitionContract::bow(*npc);
+  npc->addItem(firebow,1);
+  npc->useItem(firebow,Item::NSLOT,true);
+  npc->updateTransform();
+  require(emitting(bow) && bow.effectPosition(at) && near(at,meshAt(bow),.01f) &&
+          near(at,npc->mapBone("ZS_BOW"),15.f),"ITRW_ADDON_FIREBOW on the back must have its effect");
+  // switched off: no new view has an effect
+  Settings::setI("GAME","itemEffects",0);
+  npc->unequipItem(firebow);
+  npc->useItem(firebow,Item::NSLOT,true);
+  npc->setToFightMode(claw);
+  npc->updateTransform();
+  auto* off=lay(potion);
+  require(!bow.isEmpty() && !bow.hasEffect() && !sword.isEmpty() && !sword.hasEffect() && off!=nullptr &&
+          viewOf(off)!=nullptr && !viewOf(off)->isEmpty() && !viewOf(off)->hasEffect() && ItemView::census(world).alive==alive,
+          "with [GAME] itemEffects 0 no item may have an effect");
+  world.removeItem(*off);
+  npc->closeWeapon(true);
+  Settings::setI("GAME","itemEffects",switchBefore);
+  std::puts("Item effects: lying potion on its mesh and with the physics, gold none, released none; claw in the hand, "
+            "on the belt, none in the inventory; fire bow on the back; none with itemEffects 0");
+  }
+
 void moverChildSave() {
   const auto* game=std::getenv("GOTHIC_DIR");
   require(game!=nullptr && *game!='\0',"GOTHIC_DIR must point to prepared Gothic II settings");
@@ -1969,6 +2084,7 @@ void moverChildSave() {
   std::printf("Mover child 2838 -> 2839: catalogue %zu, items %u, identity and saved pose restored\n",catalogueSize,itemCount);
   // Last: it replaces the session with its own load.
   activityDefinitionsWorld(gothic);
+  itemEffects(*gothic.world());
   gothic.clearGame().reset();
   }
 

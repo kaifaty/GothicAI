@@ -558,7 +558,7 @@ void MdlVisual::lookForGround(const Npc& npc, const Vec3& hip, const Vec3& mid, 
   g.at = mean + n*up;
   }
 
-std::vector<Vec3> MdlVisual::carriedPoints(const MeshAttach& att, std::string_view slot) const {
+std::vector<Vec3> MdlVisual::carriedPoints(const ItemAttach& att, std::string_view slot) const {
   // the points of a thing on the back (the bow, a two-hander) in the world; a bow, a morph mesh, by its bounds:
   // a bent stave
   std::vector<Vec3> ret;

@@ -46,8 +46,8 @@ def load_mask(path: Path) -> np.ndarray:
 
 
 def fragments(points: np.ndarray, index: np.ndarray, shape, uv: np.ndarray | None = None,
-              mask: np.ndarray | None = None):
-    """Yield batches of triangle IDs, flat pixel indices, depths and UVs of hits."""
+              mask: np.ndarray | None = None, *, with_weights: bool = False):
+    """Yield batches of triangle IDs, pixel indices, depths, UVs and optional barycentric weights."""
     tri = points[index].astype(np.float64)
     low = np.floor(tri[..., :2].min(axis=1)).astype(np.int64)
     span = np.maximum(np.ceil(tri[..., :2].max(axis=1)).astype(np.int64) - low, 1)
@@ -89,7 +89,8 @@ def fragments(points: np.ndarray, index: np.ndarray, shape, uv: np.ndarray | Non
                     weights = tuple(w[covered] for w in weights)
             z = sum(w * vertex[face, 2] for w, vertex in zip(weights, (a, b, c)))
             pixel = y[face, row].astype(np.int64) * shape[1] + x[face, column].astype(np.int64)
-            yield part[face], pixel, z.astype(np.float32), u, v
+            hits = part[face], pixel, z.astype(np.float32), u, v
+            yield (*hits, weights) if with_weights else hits
 
 
 def raster(points: np.ndarray, index: np.ndarray, shape, uv: np.ndarray | None = None,

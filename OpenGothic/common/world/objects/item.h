@@ -114,6 +114,7 @@ class Item : public Vob {
   private:
     friend class WorldObjects;
     friend class GameScript;
+    friend struct NpcDefinitionContract;
     void                savePhysics(Serialize& fout) const;
     void                restorePhysics(const Tempest::Matrix4x4& matrix, const Tempest::Vec3& velocity,
                                        const Tempest::Vec3& angular, bool sleeping);

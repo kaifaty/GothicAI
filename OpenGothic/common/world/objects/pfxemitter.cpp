@@ -103,6 +103,14 @@ bool PfxEmitter::renderPosition(Vec3& out) const {
   return slot.renderPosition(out);
   }
 
+bool PfxEmitter::position(Vec3& out) const {
+  if(cpuDecl!=nullptr) {
+    out = cpuPosition;
+    return true;
+    }
+  return slot.renderPosition(out);
+  }
+
 void PfxEmitter::setTarget(const Npc* tg) {
   slot.setTarget(tg);
   for(auto& i:extra)

@@ -31,6 +31,8 @@ class PfxEmitter {
     void     setDirection(const Tempest::Matrix4x4& pos);
     void     setObjMatrix(const Tempest::Matrix4x4& mt);
     bool     renderPosition(Tempest::Vec3& out) const;
+    // where the emitter is: its slot's place, the headless one's position; false - no emitter
+    bool     position(Tempest::Vec3& out) const;
     void     setActive(bool act);
     bool     isActive() const;
     void     setLooped(bool loop);
