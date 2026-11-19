@@ -6,7 +6,7 @@
 #if !defined(GL_VERTEX_SHADER)
 layout(local_size_x = 32) in;
 layout(triangles, max_vertices = 32, max_primitives = 16) out;
-layout(location = 7) flat out uvec2 boughFadeOut[];
+layout(location = 7) flat out uvec3 boughFadeOut[];
 layout(location = 8) flat out vec3 boughMaskOut[];
 #endif
 
@@ -43,21 +43,19 @@ uvec3 processPrimitive(uint firstIndex, uint bucketId, uint primitive) {
   return uvec3(boughIndex(bucketId, at), boughIndex(bucketId, at+1u), boughIndex(bucketId, at+2u))-base;
   }
 
-uvec2 boughFade(uvec4 task, out vec3 mask) {
+uvec3 boughFade(uvec4 task, out vec3 mask) {
   const uint band = task.z >> 16u;
+  const Instance instance = pullInstance(task.x);
+  const uint joint = boughJointFade(instance.animPtr);
   mask = vec3(0);
-  if(band==0u)
-    return uvec2(0);
+  if(band==0u && joint==0u)
+    return uvec3(0);
   const uint seed = pcgHash(task.x) ^ (band & ~BoughChildSide);
-  vec4 pivot = scene.view * vec4(pullInstance(task.x).mat[3], 1.0);
-  pivot.z = max(pivot.z, scene.clipInfo.x / scene.clipInfo.z);
-  const vec4 clip = scene.project * pivot;
-  mask.xy = (clip.xy / clip.w * 0.5 + 0.5) * vec2(scene.screenRes);
-  // Map offset pixels to centimetres in the plane at the pivot's depth.
-  mask.z = 2.0 * clip.w * scene.screenResInv.y / abs(scene.project[1][1]);
-  const uint fade = (task.w & BoughWeightMask) | BoughFadeActive |
-                    ((band & BoughChildSide)!=0u ? BoughFadeChild : 0u);
-  return uvec2(fade, seed);
+  // During the joint all representations project the same raw pivot in the fragment stage.
+  mask = joint!=0u ? instance.mat[3] : boughMaskCoordinates(instance.mat[3], scene);
+  const uint side = (band & BoughChildSide)!=0u ? BoughFadeChild : 0u;
+  const uint fade = band!=0u ? (task.w & BoughWeightMask) | BoughFadeActive | side : 0u;
+  return uvec3(fade, seed, joint);
   }
 
 #endif

@@ -39,6 +39,10 @@ void treeBoughRasterCases(Tempest::Device& device) {
   const auto scene = device.ssbo(&globals, sizeof(globals));
   const auto payload = device.ssbo(tasks, sizeof(tasks));
   const auto instances = device.ssbo(instance, sizeof(instance));
+  float jointInstance[16];
+  std::ranges::copy(instance, jointInstance);
+  jointInstance[13] = std::bit_cast<float>(TreeBough::impostorJointFade(0.8f)); // static draw's animation slot
+  const auto jointInstances = device.ssbo(jointInstance, sizeof(jointInstance));
   const auto buckets = device.ssbo(bucket, sizeof(bucket));
   const auto vbo = device.ssbo(quad, sizeof(quad));
   const auto compactIbo = device.ssbo(compact, sizeof(compact));
@@ -64,14 +68,15 @@ void treeBoughRasterCases(Tempest::Device& device) {
       };
     const auto bough = pipeline("main_bough_g_slot.vert.sprv", "main_bough_g_slot.mesh.sprv", "main_bough_g_at_slot.frag.sprv");
     const auto legacy = pipeline("main_obj_g_slot.vert.sprv", "main_obj_g_slot.mesh.sprv", "main_obj_g_at_slot.frag.sprv");
-    const auto render = [&](const RenderPipeline& pso, const StorageBuffer& ibo, uint32_t index) {
+    const auto render = [&](const RenderPipeline& pso, const StorageBuffer& ibo, uint32_t index,
+                            const StorageBuffer& instanceData) {
       auto command = device.commandBuffer();
       {
         auto enc = command.startEncoding(device);
         enc.setFramebuffer({{diffuse,Vec4(),Preserve},{normal,Vec4(),Preserve},{motion,Vec4(),Preserve}});
         enc.setBinding(0,scene);
         enc.setBinding(1,payload);
-        enc.setBinding(2,instances);
+        enc.setBinding(2,instanceData);
         enc.setBinding(3,buckets);
         enc.setBinding(4,ibo);
         enc.setBinding(5,vbo);
@@ -89,22 +94,31 @@ void treeBoughRasterCases(Tempest::Device& device) {
       device.submit(command).wait();
       return device.readPixels(diffuse);
       };
-    const auto full = render(bough,compactIbo,0);
-    const auto parent = render(bough,compactIbo,1);
-    const auto child = render(bough,compactIbo,2);
-    const auto baseline = render(legacy,packedIbo,0);
+    const auto full = render(bough,compactIbo,0,instances);
+    const auto parent = render(bough,compactIbo,1,instances);
+    const auto child = render(bough,compactIbo,2,instances);
+    const auto baseline = render(legacy,packedIbo,0,instances);
     require(std::memcmp(full.data(),baseline.data(),full.dataSize())==0,"steady bough differs from legacy card");
+    const auto jointCrown = render(bough,compactIbo,0,jointInstances);
+    const auto jointWood = render(legacy,packedIbo,0,jointInstances);
+    require(std::memcmp(jointCrown.data(),jointWood.data(),jointCrown.dataSize())==0,
+            "compact and regular geometry disagree on impostor mask");
     const auto covered = [](const Pixmap& pixmap, size_t i) { return static_cast<const uint8_t*>(pixmap.data())[i*4]!=0; };
     std::array<size_t,2> draws{};
+    size_t jointPixels = 0;
     for(size_t i=0; i<side*side; ++i) {
       const bool p = covered(parent,i), c = covered(child,i);
       require(uint32_t(p)+uint32_t(c)==uint32_t(covered(full,i)),"bough raster masks overlap or leave a hole");
+      const bool joint = covered(jointCrown,i);
+      require(!joint || covered(full,i),"impostor mask introduces extra coverage");
+      jointPixels += size_t(joint);
       draws[0] += size_t(p);
       draws[1] += size_t(c);
       }
     require(draws[0]>0 && draws[1]>0 && draws[0]+draws[1]<side*side,"bough raster fixture missed a side or the background");
+    require(jointPixels>0 && jointPixels<draws[0]+draws[1],"impostor mask has no fractional 3D coverage");
     std::cout << "tree bough " << (mesh ? "mesh" : "vertex") << " coverage: " << draws[0] << " parent and " << draws[1]
-              << " child pixels\n";
+              << " child pixels, " << jointPixels << " 3D pixels in the impostor joint\n";
     }
   }
 
@@ -145,9 +159,20 @@ void treeBoughCutCases() {
     };
   static_assert(sizeof(View) == 32);
   constexpr float treeHeight = 1600.f, focal = 810.f;
+  constexpr float impostorPx = 49.f;
+  require(impostorJointWeight(impostorPx, 56.f)==0.f && impostorJointWeight(impostorPx, 46.f)==1.f &&
+          std::abs(impostorJointWeight(impostorPx, 51.f) - 0.5f)<1e-6f &&
+          impostorJointFade(0.f)==0u && impostorJointFade(1.f)==0u,
+          "impostor joint endpoints, midpoint or steady fade encoding differ");
+  require(impostorJointWeight(impostorPx, 55.99828f)<=
+          impostorJointWeight(impostorPx, std::nextafter(55.99828f, 0.f)),
+          "impostor joint reversed between adjacent floats near the upper edge");
   std::vector<View> views;
-  for(const auto height : heights)
+  std::vector<uint32_t> jointWeights;
+  for(const auto height : heights) {
     views.push_back({{{0.30f, 0.f, 0.9539392f}, treeHeight * focal / height, focal, 15.f}});
+    jointWeights.push_back(impostorJointFade(impostorJointWeight(impostorPx, height)));
+    }
 
 #ifdef __APPLE__
   MetalApi api;
@@ -165,6 +190,7 @@ void treeBoughCutCases() {
   const auto nodes = device.ssbo(asset.nodes);
   const auto projections = device.ssbo(views);
   const auto roots = device.ssbo(asset.roots);
+  const auto joints = device.ssbo(jointWeights);
   auto output = device.ssbo(Uninitialized, cuts.size() * sizeof(cuts.front()));
   auto command = device.commandBuffer();
   {
@@ -174,6 +200,7 @@ void treeBoughCutCases() {
     encoder.setBinding(1, projections);
     encoder.setBinding(2, roots);
     encoder.setBinding(3, output);
+    encoder.setBinding(4, joints);
     encoder.dispatchThreads(1);
   }
   device.submit(command).wait();
@@ -183,6 +210,9 @@ void treeBoughCutCases() {
   std::vector<Selected> selected;
   std::vector<float> previousWeights(asset.nodes.size());
   uint32_t sawBands = 0;
+  float previousJointWeight = 0.f;
+  uint32_t activeJointSamples = 0;
+  constexpr uint32_t weightMask = 0xffffffu, fadeActive = 0x2000000u;
   for(size_t sample = 0; sample < heights.size(); ++sample) {
     const auto& view = views[sample].projection;
     const auto gpuCut = std::span(cuts).subspan(sample * stride, stride);
@@ -190,12 +220,26 @@ void treeBoughCutCases() {
     select(asset, view, selected);
     require(gpuCut[0][0] == selected.size(), label + " count differs on GPU");
     require(gpuCut[0][2] == 0, label + " two fade sides disagree on complementary coverage");
+    const float jointWeight = impostorJointWeight(impostorPx, heights[sample]);
+    require(sample <= bottom ? jointWeight >= previousJointWeight : jointWeight <= previousJointWeight,
+            label + " impostor weight is not monotone with height");
+    previousJointWeight = jointWeight;
+    const uint32_t gpuJoint = gpuCut[0][3];
+    if(jointWeight>0.f && jointWeight<1.f) {
+      const int cpuRank = int(std::round(jointWeight * float(weightMask)));
+      require((gpuJoint & ~weightMask)==fadeActive && std::abs(int(gpuJoint & weightMask)-cpuRank)<=1,
+              label + " GPU impostor mask rank differs from CPU weight");
+      ++activeJointSamples;
+      } else {
+      require(gpuJoint==0u, label + " impostor mask active outside the joint");
+      }
     if(sample == 0 || sample == bottom || sample + 1 == heights.size())
       require(selected.size() == (sample == bottom ? 2u : 5u), label + " did not reach the endpoint cut");
     if(sample > bottom) {
       const auto outbound = std::span(cuts).subspan((heights.size() - 1 - sample) * stride, stride);
       require(std::ranges::equal(gpuCut.subspan(1, selected.size()), outbound.subspan(1, outbound[0][0])),
               label + " cut differs by direction");
+      require(gpuJoint==outbound[0][3], label + " impostor mask differs by direction");
       }
     std::vector<const Selected*> byNode(asset.nodes.size());
     bool needCompact = false;
@@ -258,5 +302,7 @@ void treeBoughCutCases() {
     }
   require(sawBands == ((1u << 0) | (1u << 1) | (1u << 5)), "tree bough fixture missed a band");
   std::cout << "tree bough cut: " << heights.size() << " CPU/GPU samples from 800 to 30 px and back\n";
+  require(activeJointSamples>2, "tree bough fixture missed the impostor joint");
+  std::cout << "tree bough impostor joint: " << activeJointSamples << " fractional CPU/GPU samples\n";
   treeBoughRasterCases(device);
   }

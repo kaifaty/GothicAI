@@ -66,6 +66,7 @@ const uint L_ClusterLevel = 9;
 
 #if defined(TREE_BOUGH_LOD)
 #include "materials/tree_bough_visibility.glsl"
+#include "materials/tree_bough_dissolve.glsl"
 bool boughWholeBox;
 #endif
 
@@ -292,10 +293,12 @@ void runCluster(const uint clusterId) {
   const uint command = cluster.bucketId_commandId & 0xffffu;
   const uint treeCommands = tree==0u ? 0xffffffffu : boughData[tree+1u];
   const bool useBough = tree!=0u && command==(treeCommands & 0xffffu) && pullInstance(cluster.instanceId).deformCount==0u;
+  const bool treeJoint = cluster.instanceId!=0xffffffffu &&
+                         (pullInstance(cluster.instanceId).animPtr & BoughJointTag)!=0u;
   boughWholeBox = useBough;
 #if defined(LARGE)
-  if(useBough)
-    return; // a crown participating in the cut is never a HiZ occluder
+  if(useBough || treeJoint)
+    return; // a crown or fractional 3D side never seeds HiZ
 #endif
 #endif
 
@@ -393,8 +396,14 @@ void runCluster(const uint clusterId) {
   const uint drawLevel = push.lodDebug!=0u ? level : 0u;
   const bool historyDraw = (historyCmd[commandId].z & 1u)!=0u;
   const uint debugLevel = historyDraw ? ((clusterId+1u) | (drawLevel<<24u)) : drawLevel;
-  if(historyDraw)
-    historyStatus[clusterId] = 1u | ((cluster.historyGeneration & 0x80000000u)!=0u ? 32u : 0u);
+  if(historyDraw) {
+    uint status = 1u | ((cluster.historyGeneration & 0x80000000u)!=0u ? 32u : 0u);
+#if defined(TREE_BOUGH_LOD)
+    if(treeJoint)
+      status |= 32u | 64u; // use the same late-only scheduling as the crown
+#endif
+    historyStatus[clusterId] = status;
+    }
 #elif defined(MAIN_VIEW) && !defined(LARGE)
   const uint debugLevel = push.lodDebug != 0u ? level : 0u;
 #else

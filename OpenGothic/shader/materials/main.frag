@@ -35,9 +35,11 @@ layout(location = 0) in flat uint bucketId;
 #if defined(MAT_VARYINGS)
 layout(location = 1) in Varyings  shInp;
 #endif
-#if defined(TREE_BOUGH_CARDS)
+#if defined(TREE_BOUGH_CARDS) || defined(MAT_MOTION)
 #include "tree_bough_dissolve.glsl"
-layout(location = 7) in flat uvec2 boughFadeIn;
+#endif
+#if defined(TREE_BOUGH_CARDS)
+layout(location = 7) in flat uvec3 boughFadeIn;
 layout(location = 8) in flat vec3 boughMaskIn;
 #endif
 #if defined(VIRTUAL_SHADOW)
@@ -1097,10 +1099,19 @@ void main() {
 #if defined(GBUFFER) && !defined(HISTORY_DEPTH)
   const bool treeProbe = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u;
 #endif
+#if defined(MAT_MOTION) && !defined(TREE_BOUGH_CARDS)
+  const bool treeJoint = (materialRef & BoughJointTag)!=0u;
+  const uint taskRef = materialRef & ~BoughJointTag;
+#else
+  const bool treeJoint = false;
+#  if defined(HISTORY_PAYLOAD) || (defined(GBUFFER) && defined(MAT_CLUSTER_LEVEL) && !defined(TREE_BOUGH_CARDS))
+  const uint taskRef = materialRef;
+#  endif
+#endif
 #if defined(TREE_BOUGH_CARDS)
   bucketId = materialRef;
 #elif defined(HISTORY_PAYLOAD)
-  const uvec4 historyTask = payload[materialRef];
+  const uvec4 historyTask = payload[taskRef];
   const uint historyOwner = historyTask.w & 0x00FFFFFFu;
   bucketId = historyTask.z;
   uint clusterLevel = historyTask.w >> 24u;
@@ -1112,8 +1123,8 @@ void main() {
 #endif
 #if defined(GBUFFER) && defined(MAT_CLUSTER_LEVEL) && !defined(HISTORY_PAYLOAD) && !defined(TREE_BOUGH_CARDS)
   uint probeCluster = 0u;
-  if(treeProbe) {
-    const uvec4 task = payload[materialRef];
+  if(treeProbe || treeJoint) {
+    const uvec4 task = payload[taskRef];
     bucketId = task.z;
     const bool historyReference = (scene.viewFlags & VF_HIZ_HISTORY_REFERENCE)!=0u;
     probeCluster = historyReference ? ((task.w & 0x00FFFFFFu) - 1u) : task.w;
@@ -1204,9 +1215,20 @@ void main() {
     discard;
 #endif
 #if defined(TREE_BOUGH_CARDS)
-  const vec2 boughSample = (gl_FragCoord.xy - boughMaskIn.xy) * boughMaskIn.z;
+  const uint joint = boughFadeIn.z;
+  const vec3 mask = joint!=0u ? boughMaskCoordinates(boughMaskIn, scene) : boughMaskIn;
+  const vec2 boughSample = boughSampleOffset(gl_FragCoord.xy, mask);
+  if(joint!=0u && !boughCovers(joint ^ BoughFadeChild, boughJointSeed(boughMaskIn), boughSample))
+    discard;
   if(!boughCovers(boughFadeIn.x, boughFadeIn.y, boughSample))
     discard;
+#elif defined(MAT_MOTION)
+  if(treeJoint) {
+    const Instance instance = pullInstance(payload[taskRef].x);
+    const uint fade = boughJointFade(instance.animPtr) ^ BoughFadeChild;
+    if(!boughJointCovers(fade, instance.mat[3], gl_FragCoord.xy, scene))
+      discard;
+    }
 #endif
 #if !defined(HISTORY_DEPTH)
   if(treeProbe) {

@@ -77,6 +77,8 @@ void attach(StaticMesh& mesh, const std::filesystem::path& file);
 
 float screenSize(const Node& node, const Projection& view);
 float parentWeight(const Node& node, float px);
+float impostorJointWeight(float threshold, float px);
+uint32_t impostorJointFade(float weight);
 void select(const Asset& asset, const Projection& view, std::vector<Selected>& out);
 
 }

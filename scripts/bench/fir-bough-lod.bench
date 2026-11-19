@@ -2,14 +2,14 @@
 # Reuse the round trip from fir-eye-threshold.bench. Keep each wait equal to its cam fly duration.
 # If the set has control in slot 0, exchange the two visual names in a run-local copy of its VOB layer.
 # BASE=~/.local/share/gothic-ai/remaster/trees-fir/bough-x4
-# RYZEN_TASK="$(ssh ryzen 'printenv HOME')/gothic-ai/tree-bough-engine"
+# RYZEN_TASK="$(ssh ryzen 'printenv HOME')/gothic-ai/tree-bough-joint"
 # WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT="${CONTENT:-$BASE/content}" OPENGOTHIC_TEXTURES= \
 #   OPENGOTHIC_TREE_BOUGH_LOD=1 OPENGOTHIC_MESH_LEVELS=1 OPENGOTHIC_IMPOSTORS=1 \
-#   OPENGOTHIC_FRAME_PROFILE="$BASE/run/frameprofile.csv" OPENGOTHIC_BENCH_REALTIME=1 \
+#   OPENGOTHIC_FRAME_PROFILE="$BASE/run-joint/frameprofile.csv" OPENGOTHIC_BENCH_REALTIME=1 \
 #   OPENGOTHIC_BENCH_ENCODER='-c:v h264_nvenc -preset p4 -b:v 24M' TEMPEST_WINDOW_SIZE=1920x1080 \
-#   BENCH_HOST=ryzen RYZEN_WORKTREE=tree-bough-engine RYZEN_BENCH_WINDOW=1 RYZEN_LOCK_WAIT=1200 \
+#   BENCH_HOST=ryzen RYZEN_WORKTREE=tree-bough-joint RYZEN_BENCH_WINDOW=1 RYZEN_LOCK_WAIT=1200 \
 #   RYZEN_BENCH_ARCHIVE="$RYZEN_TASK/run-$(date -u +%Y%m%dT%H%M%SZ)" \
-#   scripts/bench.sh fir-bough-lod "$BASE/run"
+#   scripts/bench.sh fir-bough-lod "$BASE/run-joint"
 # @timeout 1200
 seed 73013
 cheat god
@@ -161,3 +161,54 @@ mark fir-bough-returned
 wait 1000
 stop
 wait 500
+
+# Matched stills after the clip. The three eyes lie on the fly path at about 56.5, 51 and 45.5 px.
+# The background hides static geometry for comparison with the RGB of each representation.
+deterministic on
+impostor off
+set time 12 0
+cam at 23928.10 16019.27 -7275.71 47854.16 7003.70 -864.74
+streaming wait
+shot joint-before-mesh
+wait 200
+cam at 21334.74 16996.48 -7970.59 47854.16 7003.70 -864.74
+streaming wait
+shot joint-middle-mesh
+wait 200
+cam at 18095.58 18217.03 -8838.52 47854.16 7003.70 -864.74
+streaming wait
+shot joint-after-mesh
+wait 200
+
+impostor force
+set time 12 0
+cam at 23928.10 16019.27 -7275.71 47854.16 7003.70 -864.74
+streaming wait
+shot joint-before-card
+wait 200
+cam at 21334.74 16996.48 -7970.59 47854.16 7003.70 -864.74
+streaming wait
+shot joint-middle-card
+wait 200
+cam at 18095.58 18217.03 -8838.52 47854.16 7003.70 -864.74
+streaming wait
+shot joint-after-card
+wait 200
+
+view hide static
+set time 12 0
+cam at 23928.10 16019.27 -7275.71 47854.16 7003.70 -864.74
+streaming wait
+shot joint-before-background
+wait 200
+cam at 21334.74 16996.48 -7970.59 47854.16 7003.70 -864.74
+streaming wait
+shot joint-middle-background
+wait 200
+cam at 18095.58 18217.03 -8838.52 47854.16 7003.70 -864.74
+streaming wait
+shot joint-after-background
+wait 200
+view full
+impostor auto
+deterministic off

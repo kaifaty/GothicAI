@@ -320,7 +320,7 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   const auto& transform = pos==nullptr ? obj.pos : *pos;
   InstanceDesc d;
   d.setPosition(transform);
-  d.animPtr = obj.animPtr;
+  d.animPtr = obj.type==DrawCommands::Static ? obj.impostorJoint : obj.animPtr;
   // strands have no fatness: the slot holds how much wider a strand is drawn (vertex_process.glsl, BK_STRAND)
   d.fatness = obj.strandMeshlets>0 ? obj.strandWider : obj.fatness*0.5f;
   // The shader reads deformPtr + vboOffset*8 for vboOffset < deformCount: an object deformed from a later packed
@@ -1025,6 +1025,7 @@ void VisualObjects::preFrameUpdateLevels() {
     const bool canImpostor = obj.impostorShadowCmd!=uint16_t(-1) && benchImpostors!=BenchImpostors::Off;
     MeshLevels::Selection level;
     uint8_t shadowLevel = 0;
+    uint32_t joint = 0;
     if(obj.deformCount==0 && py!=0.f && resY>0) {
       const auto& box    = mesh->bbox.bbox;
       Vec3        middle = (box[0]+box[1])*0.5f;
@@ -1034,8 +1035,12 @@ void VisualObjects::preFrameUpdateLevels() {
       const float worldHeight = (box[1].y-box[0].y)*scale;
       const float height = MeshLevels::screenHeight(worldHeight, distance, py, resY);
       const bool forceImpostor = canImpostor && benchImpostors==BenchImpostors::Force && obj.visible;
+      const bool smoothJoint = canImpostor && mesh->treeBough && benchImpostors==BenchImpostors::Auto;
+      const float weight = smoothJoint ? TreeBough::impostorJointWeight(mesh->impostor.px,height) : 0.f;
+      joint = TreeBough::impostorJointFade(weight);
       // The forced bench view selects below every threshold.
-      level = mesh->pickLevel(obj.level.stage, forceImpostor ? 0.f : height, canImpostor);
+      level = mesh->pickLevel(obj.level.stage, forceImpostor || weight==1.f ? 0.f : height,
+                              canImpostor && (!smoothJoint || weight==1.f));
       shadowLevel = level.glb;
       if(!obj.isGhost && FoliageTree::isTree(obj.bucketId->mat.foliage)) {
         const float shadowHeight = MeshLevels::screenHeight(worldHeight, distance, py, 1080);
@@ -1045,7 +1050,7 @@ void VisualObjects::preFrameUpdateLevels() {
         shadowLevel = fullShadows ? 0 : MeshLevels::pickShadow(mesh->levels.size(), obj.shadowLevel, wasSeparate,
                                                              shadowHeight, shadowNear, shadowLevels);
         }
-      if(level.impostor() && obj.levelSub==0 && obj.visible && drawStatic) {
+      if((level.impostor() || joint!=0u) && obj.levelSub==0 && obj.visible && drawStatic) {
         const Vec3 x(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2));
         const Vec3 y(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
         const Vec3 z(obj.pos.at(2,0), obj.pos.at(2,1), obj.pos.at(2,2));
@@ -1054,6 +1059,10 @@ void VisualObjects::preFrameUpdateLevels() {
         if(scene.frustrum[SceneGlobals::V_Main].testPoint(middle,radius))
           impostorDraws.push_back(id);
         }
+      }
+    if(obj.impostorJoint!=joint) {
+      obj.impostorJoint = joint;
+      obj.objInstance.set(&joint, offsetof(InstanceDesc,animPtr), sizeof(joint));
       }
     if(obj.levelSub==0 && !level.impostor())
       ++count[level.glb];
@@ -1256,6 +1265,7 @@ void VisualObjects::drawImpostors(Tempest::Encoder<CommandBuffer>& cmd, uint8_t 
     std::copy_n(obj.pos.data(), 16, instance.transform);
     instance.info[0] = clustersMem[obj.clusterId].instanceId;
     instance.info[1] = lightFlags;
+    instance.info[2] = obj.impostorJoint;
     }
 
   auto& buffer = impostorBuffer[fId];
