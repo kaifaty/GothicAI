@@ -2,6 +2,7 @@
 # Use the tree-impostor forest set with its L1-L4 and the campfire at (53325,1675,-10448).
 # Use OPENGOTHIC_VSM_PAIRS=4194304 and OPENGOTHIC_VSM_STATS=1. Wait for one sample under each reference frame.
 # The normal-cap measurements use tree-shadow-level-pairs.bench with OPENGOTHIC_VSM_STATS=1.
+# Each deterministic streaming wait pins texture residency until its shot.
 # @timeout 240
 seed 73013
 cheat god
@@ -15,7 +16,6 @@ set time 12 0
 goto pos 54140 1650 -10780
 clear 3000
 cam at 53990 1760 -10780 54680 1570 -11040
-streaming wait
 wait real 6000
 ztimer multiplyer 0
 shadow levels full
@@ -40,7 +40,6 @@ ztimer realtime
 goto pos 48765 6250 -3156
 clear 5000
 cam at 48765 6679 -3156 54140 2190 -10780
-streaming wait
 wait real 6000
 ztimer multiplyer 0
 shadow levels full
@@ -64,7 +63,6 @@ ztimer realtime
 goto pos 42364 1700 -8973
 clear 5000
 cam at 42364 1808 -8973 54140 2490 -10780
-streaming wait
 wait real 6000
 ztimer multiplyer 0
 shadow levels full
@@ -90,7 +88,6 @@ set time 0 0
 goto pos 54140 1650 -10780
 clear 3000
 cam at 54140 1760 -10780 53580 1650 -10450
-streaming wait
 wait real 8000
 ztimer multiplyer 0
 shadow levels full
