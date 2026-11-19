@@ -144,6 +144,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/graphics/mdlvisual*", "rpg"),
     ("common/graphics/objvisual*", "rpg"),
     ("common/graphics/effect", "rpg"),
+    # An item's mesh with its own effect (reports/engine/2026-11-19-item-effects): built of World and ItemRecord.
+    ("common/graphics/itemview", "rpg"),
     # Pure camera math, independent of game objects despite living in game/.
     ("common/game/aimcamera", "platform"),
     # Pure impact math and transform validation, independent of game objects.

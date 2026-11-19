@@ -220,7 +220,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         }
       else if(bs!=BS_DEAD) {
         visual.stopAnim(*this,"");
-        setStateItem(MeshObjects::Mesh(),"");
+        setStateItem(ItemView(),"");
         setAnim(Anim::Idle);
         }
       break;

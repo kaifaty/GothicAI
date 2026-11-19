@@ -260,17 +260,17 @@ void Npc::setQuiverTaken(int n) {
   updateQuiver();
   }
 
-void Npc::setSword(MeshObjects::Mesh&& s) {
+void Npc::setSword(ItemView&& s) {
   visual.setSword(std::move(s));
   updateWeaponSkeleton();
   }
 
-void Npc::setRangedWeapon(MeshObjects::Mesh&& b) {
+void Npc::setRangedWeapon(ItemView&& b) {
   visual.setRangedWeapon(std::move(b));
   updateWeaponSkeleton();
   }
 
-void Npc::setShield(MeshObjects::Mesh&& s) {
+void Npc::setShield(ItemView&& s) {
   visual.setShield(std::move(s));
   updateWeaponSkeleton();
   }
@@ -281,15 +281,15 @@ void Npc::setMagicWeapon(Effect&& s) {
   updateWeaponSkeleton();
   }
 
-void Npc::setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot) {
+void Npc::setSlotItem(ItemView&& itm, std::string_view slot) {
   visual.setSlotItem(std::move(itm),slot);
   }
 
-void Npc::setStateItem(MeshObjects::Mesh&& itm, std::string_view slot) {
+void Npc::setStateItem(ItemView&& itm, std::string_view slot) {
   visual.setStateItem(std::move(itm),slot);
   }
 
-void Npc::setAmmoItem(MeshObjects::Mesh&& itm, std::string_view slot) {
+void Npc::setAmmoItem(ItemView&& itm, std::string_view slot) {
   // the arrow put away (the bow lowered): back in the quiver
   if(itm.isEmpty())
     setQuiverTaken(0);

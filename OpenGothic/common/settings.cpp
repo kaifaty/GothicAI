@@ -128,6 +128,7 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   defaults->set("GAME", "food_over_time",        1);
   defaults->set("GAME", "melee_ai_dodge",        1);
   defaults->set("GAME", "melee_ai_charge",       1);
+  defaults->set("GAME", "itemEffects",           1); // C_ITEM.effect of items in the world, as Gothic (graphics/itemview)
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);

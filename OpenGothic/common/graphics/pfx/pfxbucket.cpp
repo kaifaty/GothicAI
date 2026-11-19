@@ -372,6 +372,14 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
       auto skin = (emitter.mesh!=nullptr) ? emitter.skin : nullptr;
       if(mesh!=nullptr) {
         auto pos = skin!=nullptr ? mesh->randCoord(randf(),pose,skin->data(),skin->size()) : mesh->randCoord(randf(),pose);
+        if(emitter.mesh!=nullptr && pose==nullptr && skin==nullptr) {
+          // a static mesh given to the emitter (an item's, graphics/itemview): the point is the mesh's own, the
+          // emitter's matrix is the mesh's and places it
+          p.pos = emitter.direction[0]*pos.x +
+                  emitter.direction[1]*pos.y +
+                  emitter.direction[2]*pos.z;
+          break;
+          }
         pos -= emitter.pos;
         // an own effect's emitter may sit on a bone (the fire on a body): the point of the mesh is the world's
         p.pos = decl.own ? pos : emitter.direction[0]*pos.x +
