@@ -1061,10 +1061,11 @@ void PfxBucket::preFrameUpdate(const SceneGlobals& scene, uint8_t fId) {
     }
   }
 
-void PfxBucket::drawGBuffer(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
+void PfxBucket::drawGBuffer(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene,
+                            uint8_t fId, bool historyOwner) {
   for(auto i:{Material::Solid, Material::AlphaTest}) {
-    drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false);
-    drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true);
+    drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false, historyOwner);
+    drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true,  historyOwner);
     }
   }
 
@@ -1102,7 +1103,7 @@ void PfxBucket::drawHaze(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Sc
   }
 
 void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, const Draw& itm,
-                           SceneGlobals::VisCamera view, Material::AlphaFunc func, bool trl) {
+                           SceneGlobals::VisCamera view, Material::AlphaFunc func, bool trl, bool historyOwner) {
   if(itm.pfxGpu.isEmpty())
     return;
 
@@ -1118,6 +1119,8 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
       break;
     case SceneGlobals::V_Main:
       pso = itm.pMain;
+      if(historyOwner && pso!=nullptr)
+        pso = Shaders::inst().materialPipeline(decl.visMaterial, DrawCommands::Pfx, Shaders::T_HistoryGBuffer, false);
       break;
     case SceneGlobals::V_HiZ:
     case SceneGlobals::V_Count:

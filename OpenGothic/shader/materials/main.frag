@@ -40,14 +40,24 @@ layout(location = 3) in flat uint vsmMipId;
 layout(location = DEBUG_DRAW_LOC) in flat uint debugId;
 #endif
 
-#if defined(GBUFFER)
+#if defined(HISTORY_DEPTH)
+#if defined(HISTORY_OWNER)
+layout(location = 0) out uint outHistoryOwner;
+#endif
+#elif defined(GBUFFER)
 layout(location = 0) out vec4 outDiffuse;
 layout(location = 1) out uint outNormal;
 #if defined(MATERIAL_MAPS)
 layout(location = 2) out vec4 outOrm;
 layout(location = 3) out vec2 outMotion; // Renderer::gbufMotion: after the material maps
+#if defined(HISTORY_OWNER)
+layout(location = 4) out uint outHistoryOwner;
+#endif
 #else
 layout(location = 2) out vec2 outMotion;
+#if defined(HISTORY_OWNER)
+layout(location = 3) out uint outHistoryOwner;
+#endif
 #endif
 #elif defined(WATER)
 layout(location = 0) out vec4 outColor;
@@ -411,7 +421,7 @@ vec4 diffuseTex() {
   }
 #endif
 
-#if defined(GBUFFER)
+#if defined(GBUFFER) && !defined(HISTORY_DEPTH)
 #if defined(MATERIAL_MAPS) && (MESH_TYPE!=T_PFX)
 vec3 mappedNormal(vec3 normal, vec3 dpdx, vec3 dpdy, vec2 duvdx, vec2 duvdy, vec3 tangentNormal) {
   // Cotangent frame: Gothic meshes have no stored tangents. This also follows
@@ -1053,16 +1063,21 @@ float alphaThreshold() {
   }
 
 void main() {
-#if defined(GBUFFER)
+#if defined(GBUFFER) && !defined(HISTORY_DEPTH)
   const bool treeProbe = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u;
 #endif
-#if defined(MAT_CLUSTER_LEVEL)
+#if defined(HISTORY_PAYLOAD)
+  const uvec4 historyTask = payload[materialRef];
+  const uint historyOwner = historyTask.w & 0x00FFFFFFu;
+  bucketId = historyTask.z;
+  uint clusterLevel = historyTask.w >> 24u;
+#elif defined(MAT_CLUSTER_LEVEL)
   bucketId = materialRef & 0xffffu;
   uint clusterLevel = materialRef >> 16u;
 #elif defined(MAT_MOTION)
   bucketId = materialRef;
 #endif
-#if defined(GBUFFER) && defined(MAT_CLUSTER_LEVEL)
+#if defined(GBUFFER) && defined(MAT_CLUSTER_LEVEL) && !defined(HISTORY_PAYLOAD)
   uint probeCluster = 0u;
   if(treeProbe) {
     const uvec4 task = payload[materialRef];
@@ -1072,7 +1087,7 @@ void main() {
     }
 #endif
 
-#if defined(MAT_UV)
+#if defined(MAT_UV) && (!defined(HISTORY_DEPTH) || defined(ATEST))
 #if defined(ANTITILE_MATERIAL)
   MaterialSampling maps;
   vec4 t = diffuseTex(maps);
@@ -1097,6 +1112,7 @@ void main() {
 #endif
 
 #if defined(GBUFFER)
+#if !defined(HISTORY_DEPTH)
 #if defined(ANTITILE_MATERIAL)
   mainGBuffer(t, maps);
 #else
@@ -1120,17 +1136,31 @@ void main() {
     grassGround(bucket[bucketId].foliage, shInp.pos, shInp.normal, sward, outDiffuse, outNormal, outOrm);
   }
 #endif
+#endif
 #if defined(ATEST) && defined(MATERIAL_MAPS)
+  // The history depth pass uses exactly the G-buffer coverage, including hashed TAA alpha.
   if(alphaTest<alphaThreshold())
     discard;
 #endif
+#if !defined(HISTORY_DEPTH)
   if(treeProbe) {
-#if defined(MAT_CLUSTER_LEVEL)
+#if defined(HISTORY_PAYLOAD)
+    outNormal = historyOwner == 0u ? 0u : (0x80000000u | (historyOwner - 1u));
+#elif defined(MAT_CLUSTER_LEVEL)
     outNormal = 0x80000000u | probeCluster;
 #else
     outNormal = 0u;
 #endif
     }
+#endif
+#if defined(HISTORY_OWNER)
+#if defined(HISTORY_PAYLOAD)
+  outHistoryOwner = historyOwner;
+#else
+  // Opaque particles can win the pixel after a mesh and must clear its owner.
+  outHistoryOwner = 0u;
+#endif
+#endif
 #elif defined(WATER)
   mainWater(t);
 #elif defined(FORWARD) && !defined(DEPTH_ONLY)
@@ -1141,7 +1171,7 @@ void main() {
   mainGhost(t);
 #endif
 
-#if defined(MAT_CLUSTER_LEVEL)
+#if defined(MAT_CLUSTER_LEVEL) && !defined(HISTORY_DEPTH)
   if(clusterLevel != 0u) {
     const vec3 color = debugColors[(clusterLevel - 1u) % uint(debugColors.length())];
 #if defined(GBUFFER)

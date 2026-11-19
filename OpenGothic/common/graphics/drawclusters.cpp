@@ -40,6 +40,7 @@ uint32_t DrawClusters::alloc(const PackedMesh::Cluster* cx, size_t firstMeshlet,
     c.firstMeshlet = uint32_t(firstMeshlet + i);
     c.meshletCount = 1;
     c.instanceId   = instanceId;
+    c.historyGeneration = (clusters[ret+i].historyGeneration+1) & ~HistoryStatic;
 
     clusters[ret+i] = c;
     }
@@ -53,6 +54,7 @@ uint32_t DrawClusters::alloc(const Bucket& bucket, size_t firstMeshlet, size_t m
   const auto ret = implAlloc(1);
 
   Cluster& c = clusters[ret];
+  c.historyGeneration = (c.historyGeneration+1) & ~HistoryStatic;
   if(bucket.staticMesh!=nullptr)
     c.r = bucket.staticMesh->drawn.rConservative + bucket.mat.waveMaxAmplitude +
           FoliageTree::travel(bucket.mat.foliage, bucket.staticMesh->bbox.bbox[0], bucket.staticMesh->bbox.bbox[1]); else
@@ -71,9 +73,11 @@ uint32_t DrawClusters::alloc(const Bucket& bucket, size_t firstMeshlet, size_t m
 void DrawClusters::free(uint32_t id, uint32_t numCluster) {
   freeLevels(id, numCluster);
   for(size_t i=0; i<numCluster; ++i) {
-    clusters[id + i]              = Cluster();
-    clusters[id + i].r            = -1;
-    clusters[id + i].meshletCount = 0;
+    auto& c = clusters[id + i];
+    const auto generation = c.historyGeneration;
+    c = Cluster();
+    c.r = -1;
+    c.historyGeneration = generation;
     markClusters(id + i);
     }
 

@@ -131,7 +131,7 @@ struct Cluster {
   uint  shadowFirstMeshlet;
   int   shadowMeshletCount;
   uint  shadowCommandId;
-  uint  padding;
+  uint  historyGeneration;
   };
 
 Cluster shadowCluster(Cluster cluster) {

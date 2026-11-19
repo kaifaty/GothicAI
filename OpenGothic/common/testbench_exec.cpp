@@ -2,6 +2,7 @@
 #include "testbench.h"
 #include "world/benchhooks.h"
 
+#include <charconv>
 #include <cmath>
 
 #include "ui/gamemenu.h"
@@ -215,6 +216,30 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   if(c=="water-film" && waterFilmCommand(waterFilmContext(),a,w,pl)) return;
   else if(c=="cloth" && clothCommand(clothContext(),a,w,pl)) return;
   else if(c=="foliage" && foliageCommand(a,w)) return;
+  else if(c=="hiz-verify") {
+    auto& verify = bench.historyVerify;
+    if(a.size()==2 && a[1]=="finish") {
+      verify.finish = true;
+      return;
+      }
+    const auto readNumber = [](std::string_view word, uint32_t& value) {
+      const auto end = word.data() + word.size();
+      const auto parsed = std::from_chars(word.data(), end, value);
+      return parsed.ptr==end && parsed.ec==std::errc{};
+      };
+    uint32_t frames = 0, duration = 0;
+    if((a.size()!=3 && a.size()!=4) || !readNumber(a[2], frames) || frames==0 ||
+       (a.size()==4 && (frames<2 || !readNumber(a[3], duration)))) {
+      arenaAbort("hiz-verify expects <segment> <frames> [duration in ms] or finish");
+      return;
+      }
+    verify.segment = a[1];
+    verify.frames = frames;
+    verify.next = 0;
+    verify.start = bench.time;
+    verify.duration = duration;
+    return;
+    }
   else if(c=="impostor" && a.size()==3 && a[1]=="probe" && (a[2]=="on" || a[2]=="off")) {
     Settings::setI("INTERNAL","treeOcclusionProbe",a[2]=="on" ? 1 : 0);
     }

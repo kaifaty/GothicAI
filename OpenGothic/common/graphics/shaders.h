@@ -22,6 +22,9 @@ class Shaders {
       T_Shadow,
       T_Vsm,
       T_Main,
+      T_HistoryGBuffer,
+      T_HistoryDepth,
+      T_HistoryDepthVerify,
       };
 
     struct Options {
@@ -40,6 +43,7 @@ class Shaders {
     static bool isLightsTreeSupported();
     static bool isGi1Supported();
     static bool isGi2Supported();
+    static bool isHiZHistorySupported();
 
     Tempest::RenderPipeline  lights, lightsRq, lightsVsm;
     Tempest::RenderPipeline  lightsVsmHard;  // [INTERNAL] vsmLampSoft=0: lamp shadows in one gather, no PCSS
@@ -71,6 +75,8 @@ class Shaders {
     Tempest::RenderPipeline  bloodDecal, bloodDecalAlbedo; // with and without the ORM target
     Tempest::RenderPipeline  grass;                        // blades into the G-buffer; only with material maps
     Tempest::RenderPipeline  impostor;
+    Tempest::RenderPipeline  grassHistoryGBuffer;
+    Tempest::RenderPipeline  impostorHistoryGBuffer;
     Tempest::ComputePipeline grassContactMask;
     Tempest::RenderPipeline  sun;
     Tempest::ComputePipeline cloudsLut, fogOcclusion, fogOcclusionEmpty;
@@ -99,12 +105,14 @@ class Shaders {
 
     // HiZ
     Tempest::ComputePipeline hiZPot, hiZMip;
+    Tempest::ComputePipeline hizHistoryPot, hizHistoryMip, hizHistoryClassify, hizHistoryCompact, hizHistorySample, hizHistoryVerify;
 
     // Cluster
     Tempest::ComputePipeline clusterInit, clusterPatch;
     Tempest::ComputePipeline visibilityPassSh, visibilityPassHiZ, visibilityPassHiZCr;
     Tempest::ComputePipeline visibilityPassShOrd, visibilityPassHiZOrd, visibilityPassHiZCrOrd;
     Tempest::ComputePipeline visibilityPassHiZProbe, visibilityPassHiZProbeOrd;
+    Tempest::ComputePipeline visibilityPassHistory, visibilityPassHistoryOrd;
     Tempest::ComputePipeline visibilityStats; // the frame profile's counters of the main view (DrawCommands::visibilityStats)
 
     // RT/RQ

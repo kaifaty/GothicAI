@@ -126,11 +126,11 @@ void PfxObjects::preFrameUpdate(uint8_t fId) {
     i.preFrameUpdate(scene, fId);
   }
 
-void PfxObjects::drawGBuffer(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+void PfxObjects::drawGBuffer(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool historyOwner) {
   if(hiddenByBench())
     return;
   for(auto& i:bucket)
-    i.drawGBuffer(cmd, scene, fId);
+    i.drawGBuffer(cmd, scene, fId, historyOwner);
   }
 
 void PfxObjects::drawShadow(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, int layer) {

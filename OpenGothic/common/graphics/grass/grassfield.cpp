@@ -618,7 +618,7 @@ void GrassField::update() {
   last.waiting = waiting;
   }
 
-void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId) {
+void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwner) {
   Stats st;
   st.waiting = last.waiting;
   // the count of the blades submitted for nothing walks every drawn blade: one frame of WasteEvery, kept between
@@ -769,7 +769,8 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       }
     buf.update(spanCpu.data(), 0, bytes);
 
-    cmd.setPipeline(Shaders::inst().grass);
+    const auto& shaders = Shaders::inst();
+    cmd.setPipeline(historyOwner ? shaders.grassHistoryGBuffer : shaders.grass);
     cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
     cmd.setBinding(4, buf);
     const Cell* cellBound = nullptr;

@@ -1,0 +1,79 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform sampler2D earlyDepth;
+layout(binding = 1) uniform usampler2D earlyOwners;
+layout(binding = 2) uniform sampler2D referenceDepth;
+layout(binding = 3) uniform usampler2D referenceOwners;
+layout(binding = 4) uniform sampler2D enabledDepth;
+layout(binding = 5) uniform usampler2D enabledOwners;
+layout(binding = 6, std430) readonly buffer ClusterFlags { uint flags[]; };
+layout(binding = 7, std430) buffer Results { uint results[]; };
+layout(binding = 8, std430) buffer Seen { uint removedWinner[]; };
+
+layout(push_constant, std430) uniform Push {
+  uint pair;
+  uint clusters;
+  };
+
+const uint Early    = 1u << 1u;
+const uint Tested   = 1u << 2u;
+const uint Rejected = 1u << 3u;
+const uint Canopy   = 1u << 4u;
+const uint ResultSize = 16;
+
+// Each byte represents one independent counter. At most 64 invocations add to a byte.
+shared uvec4 counts[64];
+
+void main() {
+  const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+  const ivec2 size = textureSize(referenceDepth, 0);
+  const uint index = uint(pos.y * size.x + pos.x);
+  const uint row = pair * ResultSize;
+  const uint lane = gl_LocalInvocationIndex;
+  uvec4 n = uvec4(0);
+
+  if(all(lessThan(pos, size))) {
+    const uint refId = texelFetch(referenceOwners, pos, 0).r;
+    const uint earlyId = texelFetch(earlyOwners, pos, 0).r;
+    const uint fastId = texelFetch(enabledOwners, pos, 0).r;
+    const float ref = texelFetch(referenceDepth, pos, 0).r;
+    const float early = texelFetch(earlyDepth, pos, 0).r;
+    const float fast = texelFetch(enabledDepth, pos, 0).r;
+    const uint refFlags = refId>0u && refId<=clusters ? flags[refId-1u] : 0u;
+    const bool dropped = (refFlags & Rejected)!=0u;
+    const bool ownerMismatch = refId!=fastId;
+    const bool depthMismatch = floatBitsToUint(ref)!=floatBitsToUint(fast);
+    const bool sameWinner = earlyId!=0u && earlyId==refId;
+    const bool crownWinner = sameWinner && (refFlags & Canopy)!=0u;
+    const bool earlyMismatch = sameWinner && floatBitsToUint(early)!=floatBitsToUint(ref);
+    const bool earlyCloser = early<ref;
+    const uint clusterFlags = index<clusters ? flags[index] : 0u;
+    const bool firstDropped = dropped && atomicExchange(removedWinner[refId-1u], pair+1u)!=pair+1u;
+
+    n.x = 1u | (uint(dropped) << 8u) | (uint(firstDropped) << 16u) | (uint(ownerMismatch) << 24u);
+    n.y = uint(depthMismatch) | (uint(sameWinner) << 8u) | (uint(earlyMismatch) << 16u) |
+          (uint(sameWinner && earlyCloser) << 24u);
+    n.z = uint(crownWinner) | (uint(crownWinner && earlyMismatch) << 8u) |
+          (uint(crownWinner && earlyCloser) << 16u) | (uint(earlyCloser) << 24u);
+    n.w = uint((clusterFlags & Early)!=0u) | (uint((clusterFlags & Tested)!=0u) << 8u) |
+          (uint((clusterFlags & Rejected)!=0u) << 16u);
+
+    if(dropped || ownerMismatch || depthMismatch || earlyMismatch || earlyCloser)
+      atomicMin(results[row+15u], index);
+    }
+
+  counts[lane] = n;
+  barrier();
+  for(uint step = 32u; step>0u; step >>= 1u) {
+    if(lane<step)
+      counts[lane] += counts[lane+step];
+    barrier();
+    }
+  if(lane<15u) {
+    const uint value = (counts[0][lane/4u] >> ((lane%4u)*8u)) & 255u;
+    if(value!=0u)
+      atomicAdd(results[row+lane], value);
+    }
+  }

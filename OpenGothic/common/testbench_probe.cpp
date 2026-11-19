@@ -1,4 +1,5 @@
 #include "testbench.h"
+#include "testbench_internal.h"
 #include "world/benchhooks.h"
 
 namespace {
@@ -6,6 +7,29 @@ class Probe final : public BenchHooks {
   public:
     bool active() const override { return TestBench::isActive(); }
     bool orderedVisibility() const override { return TestBench::orderedVisibility(); }
+    HistoryVerifyRequest historyVerifyRequest() override {
+      auto& bench = testbench_detail::bench;
+      auto& verify = bench.historyVerify;
+      if(verify.finish) {
+        HistoryVerifyRequest request;
+        request.finish = true;
+        return request;
+        }
+      if(verify.next==verify.frames)
+        return {};
+      const auto elapsed = bench.time - verify.start;
+      if(verify.duration>0 && elapsed*(verify.frames-1) < verify.duration*verify.next)
+        return {};
+      return {verify.segment, verify.total++, verify.next++, elapsed, false};
+      }
+    void historyVerifyComplete(bool passed) override {
+      auto& verify = testbench_detail::bench.historyVerify;
+      verify.finish = false;
+      testbench_detail::event("hiz_history_verify", "\"pairs\":"+std::to_string(verify.total)+
+                             ",\"passed\":"+(passed ? "true" : "false"));
+      if(!passed)
+        testbench_detail::say("HiZ history verification failed. See tree-hidden-3b.csv.");
+      }
     int bodyBlockVariant(const Npc& npc, int fallback) const override {
       return TestBench::bodyBlockVariant(npc,fallback);
       }

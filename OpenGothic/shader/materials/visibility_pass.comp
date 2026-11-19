@@ -67,6 +67,10 @@ const uint L_ClusterLevel = 9;
 #if defined(HIZ_PROBE)
 layout(binding = 11, std430) writeonly buffer HiZDecisions { uint hizDecisions[]; };
 #endif
+#if defined(HIZ_HISTORY)
+layout(binding = 11, std430) writeonly buffer HistoryStatus { uint historyStatus[]; };
+layout(binding = 12, std430) readonly buffer HistoryCommands { uvec4 historyCmd[]; };
+#endif
 
 float hiZFetch(in sampler2D hiZ, in ivec2 ibbox[2]) {
   if(ibbox[0]==ibbox[1])
@@ -349,6 +353,12 @@ void runCluster(const uint clusterId) {
   writeOffset      += atomicAdd(cmd[commandId].instanceCount, meshletCount);
 #if defined(HIZ_PROBE)
   const uint debugLevel = clusterId;
+#elif defined(HIZ_HISTORY)
+  const uint drawLevel = push.lodDebug!=0u ? level : 0u;
+  const bool historyDraw = (historyCmd[commandId].z & 1u)!=0u;
+  const uint debugLevel = historyDraw ? ((clusterId+1u) | (drawLevel<<24u)) : drawLevel;
+  if(historyDraw)
+    historyStatus[clusterId] = 1u | ((cluster.historyGeneration & 0x80000000u)!=0u ? 32u : 0u);
 #elif defined(MAIN_VIEW) && !defined(LARGE)
   const uint debugLevel = push.lodDebug != 0u ? level : 0u;
 #else

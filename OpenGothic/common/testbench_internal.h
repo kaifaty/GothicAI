@@ -1907,6 +1907,14 @@ struct Bench : OverlayBench, CameraBench {
   uint32_t    settleSteps   = 0;     // fixed steps left between the end of `streaming wait` and the next command
   uint32_t    holdFrames    = 0;     // frames the loaded world has stood still in a deterministic `streaming wait`
   bool        ordered       = false; // visibility appends clusters in order (slow): from the end of the wait to the shot
+  struct {
+    std::string segment;
+    uint32_t    frames = 0, next = 0, total = 0;
+    uint64_t    start = 0, duration = 0;
+    bool        finish = false;
+
+    bool pending() const { return finish || next < frames; }
+    } historyVerify;
   struct StreamingSample {
     std::string segment;
     uint64_t frame = 0;

@@ -13,6 +13,7 @@ class DrawClusters {
     ~DrawClusters();
 
     using Bucket = DrawBuckets::Bucket;
+    static constexpr uint32_t HistoryStatic = 0x80000000u;
 
     struct alignas(16) Cluster final {
       Tempest::Vec3 pos;
@@ -25,7 +26,7 @@ class DrawClusters {
       uint32_t      shadowFirstMeshlet = 0;
       uint32_t      shadowMeshletCount = 0; // zero keeps the visual range and command
       uint32_t      shadowCommandId    = 0;
-      uint32_t      padding            = 0;
+      uint32_t      historyGeneration  = 0;
       };
     static_assert(sizeof(Cluster)==48);
 
