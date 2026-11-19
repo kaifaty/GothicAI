@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <string_view>
 
@@ -136,10 +137,18 @@ struct Ring final {
   float density  = 1.f; // of the record's
   };
 
+// OPENGOTHIC_GRASS_RING=<from>,<to> (cm) moves where the blades go into the ground, for a bench: what the far blades
+// cost (a ring cut short) or how a longer ring looks and costs (reports/engine/2026-11-18-grass-volume). The ground
+// takes the far look from half of <from>, as always
 inline Ring ring(uint8_t mode) {
-  if(mode==Low)
-    return Ring{800.f, 3000.f, 4000.f, 0.625f};
-  return Ring{};
+  Ring r = mode==Low ? Ring{800.f, 3000.f, 4000.f, 0.625f} : Ring{};
+  static const char* const env = std::getenv("OPENGOTHIC_GRASS_RING");
+  float from = 0, to = 0;
+  if(env!=nullptr && std::sscanf(env, "%f,%f", &from, &to)==2 && from>r.full && to>from) {
+    r.fadeFrom = from;
+    r.radius   = to;
+    }
+  return r;
   }
 
 }

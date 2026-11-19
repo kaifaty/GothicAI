@@ -1,0 +1,108 @@
+# Big fields of the live game, not the pilot meadow (reports/engine/2026-11-18-grass-volume, «Большие поля»): five
+# places where the ground of the grass fills the view to 100 m, picked by a census of the top surface by waypoint,
+# the game's camera behind the hero. A count, not a time: run once per content set on Ryzen at 2560x1440 with
+# OPENGOTHIC_GRASS_WASTE=1,
+#   OPENGOTHIC_GRASS_WASTE=1 TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_CONTENT=<set> scripts/bench.sh grass-fields <out>
+# Each view: `grass stats` (waste.bands), a shot as it is, the ground painted by the bands between the blades
+# (`grass parts 512`) and the whole ground without the blades (640); count the paint with
+# `python3 scripts/grass_look.py farbands`. A shot takes the frame after the commands of its tick: a wait after each.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+watch player
+cam game
+walkmode walk
+# view 1: Sekob's farm: the field below the path
+goto NW_FARM3_PATH_04
+face -65
+clear 3000
+wait 15000
+grass wait
+wait 2000
+grass stats
+shot view-1
+wait 300
+grass parts 512
+wait 1000
+shot view-1-bands
+wait 300
+grass parts 640
+wait 1000
+shot view-1-bands-all
+wait 300
+grass parts 0
+# view 2: the road from the tavern to Onar's: the meadow down the slope
+goto NW_TAVERNE_BIGFARM_05
+face 100
+wait 15000
+grass wait
+wait 2000
+grass stats
+shot view-2
+wait 300
+grass parts 512
+wait 1000
+shot view-2-bands
+wait 300
+grass parts 640
+wait 1000
+shot view-2-bands-all
+wait 300
+grass parts 0
+# view 3: Lobart's pasture from the path to the city
+goto NW_FARM1_PATH_CITY_SHEEP_02
+face 75
+wait 15000
+grass wait
+wait 2000
+grass stats
+shot view-3
+wait 300
+grass parts 512
+wait 1000
+shot view-3-bands
+wait 300
+grass parts 640
+wait 1000
+shot view-3-bands-all
+wait 300
+grass parts 0
+# view 4: Onar's fields: crop ground, grass only in the stress set
+goto NW_BIGFARM_FARM4_PATH_07
+face -175
+wait 15000
+grass wait
+wait 2000
+grass stats
+shot view-4
+wait 300
+grass parts 512
+wait 1000
+shot view-4-bands
+wait 300
+grass parts 640
+wait 1000
+shot view-4-bands-all
+wait 300
+grass parts 0
+# view 5: the meadow by the path to the castle mine, most of it past 48 m
+goto NW_CASTLEMINE_PATH_13
+face -140
+wait 15000
+grass wait
+wait 2000
+grass stats
+shot view-5
+wait 300
+grass parts 512
+wait 1000
+shot view-5-bands
+wait 300
+grass parts 640
+wait 1000
+shot view-5-bands-all
+wait 300
+grass parts 0
