@@ -5,6 +5,8 @@
 #include "programdata.h"
 #include "itemdefinitions.h"
 #include "npcdefinitions.h"
+#include "npchelperdefinitions.h"
+#include "game/npchelperruntime.h"
 #include "placementdefinitions.h"
 #include "activitydefinitions.h"
 #include "game/npcdefinitionruntime.h"
@@ -22,6 +24,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <set>
 #include <stdexcept>
 
@@ -439,6 +442,7 @@ void npcDefinitions(const fs::path& dir) {
   const auto program=NpcDefinitionFixture::program();
   const auto base=dir/"npc-definitions",file=base/"definitions"/program.sha256/"npcs.json";
   const auto counts=NpcSnapshot::writeNpcs(program,file);
+  NpcSnapshot::writeHelpers(program,file.parent_path()/"helpers.json",file);
   check(counts.total==8,"all eight fixture NPC definitions are imported");
   check(NpcSnapshot::verifyNpcs(program,file)==0,"NPC definitions verify independently from disk");
   const auto library=NpcDefinitions::read(base,program.sha256);
@@ -580,6 +584,84 @@ void npcDefinitions(const fs::path& dir) {
     }
   catch(...) { environment(present ? previous.c_str() : nullptr); throw; }
   environment(present ? previous.c_str() : nullptr);
+  }
+
+void helperDefinitions(const fs::path& dir) {
+  const auto program=NpcDefinitionFixture::program();
+  const auto base=dir/"helper-definitions",definitions=base/"definitions"/program.sha256;
+  const auto npcs=definitions/"npcs.json",file=definitions/"helpers.json";
+  NpcSnapshot::writeNpcs(program,npcs);
+  const auto counts=NpcSnapshot::writeHelpers(program,file,npcs);
+  check(counts.captured==6 && counts.total==8 && counts.situations>0,
+        "all six helper forms are recognized; two independent helpers retain VM fallbacks");
+  check(NpcSnapshot::verifyHelpers(program,file,npcs)==0,"helper records verify through the game's strict reader");
+  const auto library=NpcHelperDefinitions::read(base,program.sha256);
+  for(const char* name:{"B_SETFIGHTSKILLS","B_SETNPCVISUAL","B_CREATEAMBIENTINV","B_ADDFIGHTSKILL",
+                        "B_SETVISUALS_SKELETON_LORD","B_SETATTRIBUTESTOCHAPTER"})
+    check(library.helpers.contains(name),std::string(name)+": template recognized");
+  check(library.uncaptured.contains("ADD_AFTER_EQUIP") && library.uncaptured.contains("DRAW_BEFORE_AMBIENT"),
+        "unsupported helper bodies retain the explicit VM fallback");
+  const auto second=dir/"helpers-identical.json";
+  NpcSnapshot::writeHelpers(program,second,npcs);
+  std::ifstream x(file,std::ios::binary),y(second,std::ios::binary);
+  const std::string original{std::istreambuf_iterator<char>(x),{}};
+  check(original==std::string(std::istreambuf_iterator<char>(y),{}),"fresh helper imports are byte-identical");
+  auto rejects=[&](const std::string& why) {
+    bool rejected=false;
+    try { rejected=NpcSnapshot::verifyHelpers(program,file,npcs)!=0; }
+    catch(const std::runtime_error&) { rejected=true; }
+    check(rejected,why);
+    std::ofstream(file,std::ios::binary)<<original;
+    };
+  auto changed=read(file);
+  for(auto& record:changed["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="B_ADDFIGHTSKILL") continue;
+    record["parameters"]["talents"][0]["thresholds"][0]["skill"].SetInt(2);
+    }
+  write(file,changed);
+  rejects("changed skill table number in a ready base fails fresh VM verification");
+  changed=read(file);
+  for(auto& record:changed["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="B_CREATEAMBIENTINV") continue;
+    auto& items=record["parameters"]["fallback"]["rolls"][0];
+    check(items.IsArray() && items.Size()==2,"the synthetic ambient table has two ordered items");
+    items[0].Swap(items[1]);
+    }
+  write(file,changed);
+  rejects("reversed ambient item table in a ready base fails fresh VM verification");
+  auto repeated=original;
+  const auto version=repeated.find("\"version\"");
+  check(version!=std::string::npos,"helper envelope contains its version");
+  repeated.insert(version,"\"version\": 1,\n    ");
+  std::ofstream(file,std::ios::binary)<<repeated;
+  rejects("a repeated helper key fails the same strict reader used by the game");
+  auto fractional=original;
+  const auto integer=fractional.find('1',fractional.find(':',version));
+  check(integer!=std::string::npos,"helper version is an integer token");
+  fractional.replace(integer,1,"1.0");
+  std::ofstream(file,std::ios::binary)<<fractional;
+  rejects("1.0 is rejected where the helper reader requires an integer");
+  changed=read(file);
+  changed["records"][0].AddMember("unexpected",true,changed.GetAllocator());
+  write(file,changed);
+  rejects("unexpected helper fields fail the same strict reader used by the game");
+  const auto* setting=std::getenv("OPENGOTHIC_NPC_HELPER_RECORDS");
+  const std::optional<std::string> saved=setting ? std::optional<std::string>(setting) : std::nullopt;
+  auto environment=[](const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("OPENGOTHIC_NPC_HELPER_RECORDS",value ? value : "")==0,"set NPC helper records environment");
+#else
+    check((value ? setenv("OPENGOTHIC_NPC_HELPER_RECORDS",value,1) : unsetenv("OPENGOTHIC_NPC_HELPER_RECORDS"))==0,
+          "set NPC helper records environment");
+#endif
+    };
+  try {
+    environment(nullptr); check(NpcHelperRuntime::enabled(),"helper records are enabled by default by the game's shared switch");
+    environment("0"); check(!NpcHelperRuntime::enabled(),"zero selects the VM path for all helpers");
+    environment("1"); check(NpcHelperRuntime::enabled(),"nonzero selects helper records");
+    }
+  catch(...) { environment(saved ? saved->c_str() : nullptr); throw; }
+  environment(saved ? saved->c_str() : nullptr);
   }
 
 void placementDefinitions(const fs::path& dir) {
@@ -1181,6 +1263,26 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
     }
   }
 
+void realHelpers(const NpcSnapshot::Program& program,const fs::path& base) {
+  const auto helpers=NpcHelperDefinitions::read(base,program.sha256);
+  check(helpers.helpers.size()==6 && helpers.uncaptured.empty(),"the installed corpus captures all six helper forms");
+  std::map<std::string,size_t> calls;
+  for(const auto& [name,npc]:NpcDefinitions::read(base,program.sha256).npcs) {
+    (void)name;
+    for(const auto& step:npc.steps)
+      if(const auto* call=std::get_if<NpcDefinitions::Call>(&step); call && call->deferred) {
+        ++calls[call->function];
+        }
+    }
+  size_t total=0;
+  for(const auto& [name,count]:calls) {
+    check(helpers.helpers.contains(name),"every deferred helper of the installed NPC corpus is captured");
+    std::cout<<"Real helper "<<name<<": "<<count<<" deferred calls\n";
+    total+=count;
+    }
+  std::cout<<"Real helpers: "<<helpers.helpers.size()<<" captured, "<<helpers.uncaptured.size()<<" VM fallbacks; "<<total<<" deferred calls removed\n";
+  }
+
 void fixture(const fs::path& dir) {
   auto p=Fixture().make();
   npcLayout(p);
@@ -1190,6 +1292,7 @@ void fixture(const fs::path& dir) {
   spellLayout();
   itemDefinitions(dir);
   npcDefinitions(dir);
+  helperDefinitions(dir);
   placementDefinitions(dir);
   activityDefinitions(dir);
   itemSelection(dir);
@@ -1275,6 +1378,7 @@ int main() {
       check(NpcSnapshot::verify(program,dir/"real")==0,"real corpus verifies");
       runtimeItems(program,base);
       realActivities(program,base,dir);
+      realHelpers(program,base);
       }
     fs::remove_all(dir);
     std::cout<<"NPC snapshot contract passed: "<<assertions<<" assertions\n";

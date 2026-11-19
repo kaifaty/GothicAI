@@ -1,4 +1,5 @@
 #include "npcsnapshot.h"
+#include "definitionjson.h"
 #include "daedalus/classes.h"
 #include "npcsnapshotfields.h"
 #include "daedalus/vm.h"
@@ -25,58 +26,14 @@ namespace Flag = DaedalusSymbolFlag;
 void require(bool ok, const std::string& why) {
   if(!ok) throw std::runtime_error(why);
   }
-J text(std::string_view s, A& a) { return J(s.data(),rapidjson::SizeType(s.size()),a); }
-void put(J& j, const char* key, J v, A& a) { j.AddMember(text(key,a),v,a); }
-std::string string(const J& j) {
-  require(j.IsString(),"expected a string");
-  return {j.GetString(),j.GetStringLength()};
-  }
-const J& at(const J& j, const char* key) {
-  require(j.IsObject() && j.HasMember(key),std::string("missing field ")+key);
-  return j[key];
-  }
-// Script strings are byte strings. This reversible Unicode byte mapping preserves even
-// undefined code-page bytes, without guessing the language or dropping invalid UTF-8.
-std::string encode(std::string_view s) {
-  std::string r;
-  for(char byte:s) {
-    const auto c=uint8_t(byte);
-    if(c<128) r+=char(c);
-    else { r+=char(0xC0|(c>>6)); r+=char(0x80|(c&63)); }
-    }
-  return r;
-  }
-std::string decode(const J& j) {
-  auto s=string(j);
-  std::string r;
-  for(size_t i=0;i<s.size();++i) {
-    auto c=uint8_t(s[i]);
-    if(c<128) r+=char(c);
-    else {
-      require((c==0xC2 || c==0xC3) && i+1<s.size() && (uint8_t(s[i+1])&0xC0)==0x80,"invalid script byte string");
-      r+=char(((c&3)<<6)|(uint8_t(s[++i])&63));
-      }
-    }
-  return r;
-  }
-rapidjson::Document readJson(const fs::path& path) {
-  std::ifstream f(path,std::ios::binary);
-  require(bool(f),"cannot read "+path.string());
-  std::string s{std::istreambuf_iterator<char>(f),{}};
-  rapidjson::Document d;
-  d.Parse<rapidjson::kParseFullPrecisionFlag | rapidjson::kParseValidateEncodingFlag>(s.data(),s.size());
-  require(!d.HasParseError(),"invalid JSON: "+path.string());
-  return d;
-  }
-void writeJson(const fs::path& path, const J& j) {
-  rapidjson::StringBuffer b;
-  rapidjson::PrettyWriter<rapidjson::StringBuffer> w(b);
-  require(j.Accept(w),"cannot encode "+path.string());
-  require(!fs::is_symlink(path),"snapshot output is a symlink: "+path.string());
-  std::ofstream f(path,std::ios::binary);
-  f.write(b.GetString(),std::streamsize(b.GetSize())); f.put('\n');
-  require(bool(f),"cannot write "+path.string());
-  }
+using DefinitionJson::text;
+using DefinitionJson::put;
+using DefinitionJson::string;
+using DefinitionJson::at;
+using DefinitionJson::encode;
+using DefinitionJson::bytes;
+using DefinitionJson::read;
+using DefinitionJson::write;
 J copy(const J& j,A& a) { J r; r.CopyFrom(j,a); return r; }
 
 std::string symbolName(const DaedalusScript& vm,int32_t index) {
@@ -116,7 +73,7 @@ template<class T> void restoreField(T& v,const J& j,bool function,const Daedalus
     require(j.IsArray() && j.Size()==std::extent_v<T>,"array extent differs");
     for(size_t i=0;i<std::extent_v<T>;++i) restoreField(v[i],j[rapidjson::SizeType(i)],function,vm);
     }
-  else if constexpr(std::is_same_v<T,std::string>) v=decode(j);
+  else if constexpr(std::is_same_v<T,std::string>) v=bytes(j);
   else {
     if(function) v=T(symbolIndex(vm,j));
     else if constexpr(std::is_floating_point_v<T>) { require(j.IsNumber(),"expected number"); v=T(j.GetDouble()); }
@@ -437,24 +394,7 @@ J routineEnvelope(const NpcSnapshot::Program& p,A& a) {
   put(j,"string_encoding",text("unicode-byte-mapping",a),a);
   return j;
   }
-void difference(const J& expected,const J& actual,const std::string& path,int& errors) {
-  if(expected==actual) return;
-  if(expected.IsObject() && actual.IsObject()) {
-    for(auto it=expected.MemberBegin();it!=expected.MemberEnd();++it) {
-      auto found=actual.FindMember(it->name);
-      if(found==actual.MemberEnd()) { ++errors; std::cerr<<path<<'.'<<it->name.GetString()<<": missing field\n"; }
-      else difference(it->value,found->value,path+"."+it->name.GetString(),errors);
-      }
-    for(auto it=actual.MemberBegin();it!=actual.MemberEnd();++it)
-      if(!expected.HasMember(it->name)) { ++errors; std::cerr<<path<<'.'<<it->name.GetString()<<": unexpected field\n"; }
-    }
-  else if(expected.IsArray() && actual.IsArray()) {
-    if(expected.Size()!=actual.Size()) { ++errors; std::cerr<<path<<": array size differs (expected "<<expected.Size()<<", read "<<actual.Size()<<")\n"; }
-    for(rapidjson::SizeType i=0;i<std::min(expected.Size(),actual.Size());++i)
-      difference(expected[i],actual[i],path+"["+std::to_string(i)+"]",errors);
-    }
-  else { ++errors; std::cerr<<path<<": value differs\n"; }
-  }
+using DefinitionJson::difference;
 }
 
 NpcSnapshot::Program NpcSnapshot::load(const fs::path& base) {
@@ -524,9 +464,9 @@ void NpcSnapshot::write(const Program& p,const fs::path& output) {
       records.PushBack(c.record,a);
       }
     summary.group(kind,ids.size(),captured,a);
-    put(doc,"records",std::move(records),a); writeJson(output/(kind+".json"),doc);
+    put(doc,"records",std::move(records),a); DefinitionJson::write(output/(kind+".json"),doc);
     }
-  writeJson(output/"report.json",summary.finish(p,a));
+  DefinitionJson::write(output/"report.json",summary.finish(p,a));
   std::cout<<"NPC snapshot written: "<<output<<"\n";
   }
 
@@ -537,7 +477,7 @@ int NpcSnapshot::verify(const Program& p,const fs::path& input) {
   auto& reportAllocator=reportStorage.GetAllocator();
   Summary summary;
   for(auto& [kind,ids]:corpus(p)) {
-    auto doc=readJson(input/(kind+".json")); auto& a=doc.GetAllocator();
+    auto doc=read(input/(kind+".json")); auto& a=doc.GetAllocator();
     auto expected=envelope(kind.c_str(),p,a);
     require(doc.IsObject(),kind+": expected object");
     for(auto it=expected.MemberBegin();it!=expected.MemberEnd();++it)
@@ -564,7 +504,7 @@ int NpcSnapshot::verify(const Program& p,const fs::path& input) {
     }
   // Recompute report independently from the freshly verified records, without touching input.
   // Its provenance is mandatory even when the corpus is empty.
-  auto report=readJson(input/"report.json");
+  auto report=read(input/"report.json");
   difference(summary.finish(p,reportAllocator),report,"report",errors);
   std::cout<<"NPC snapshot verification: "<<errors<<" differences\n";
   return errors;
@@ -586,12 +526,12 @@ NpcSnapshot::ItemCounts NpcSnapshot::writeItems(const Program& p,const fs::path&
     records.PushBack(c.record,a);
     }
   put(doc,"records",std::move(records),a);
-  writeJson(file,doc);
+  DefinitionJson::write(file,doc);
   return counts;
   }
 
 int NpcSnapshot::verifyItems(const Program& p,const fs::path& file) {
-  auto doc=readJson(file);
+  auto doc=read(file);
   require(doc.IsObject(),file.string()+": expected item definitions object");
   auto& a=doc.GetAllocator();
   auto expected=itemEnvelope(p,a);
@@ -632,12 +572,12 @@ NpcSnapshot::RoutineCounts NpcSnapshot::writeRoutines(const Program& p,const fs:
     records.PushBack(c.record,a);
     }
   put(doc,"records",std::move(records),a);
-  writeJson(file,doc);
+  DefinitionJson::write(file,doc);
   return counts;
   }
 
 int NpcSnapshot::verifyRoutines(const Program& p,const fs::path& file) {
-  auto doc=readJson(file);
+  auto doc=read(file);
   require(doc.IsObject(),file.string()+": expected routine definitions object");
   auto& a=doc.GetAllocator();
   auto expected=routineEnvelope(p,a);

@@ -27,6 +27,13 @@ struct NpcCounts {
 // Assigned NPC member elements and ordered engine/deferred-script calls.
 NpcCounts writeNpcs(const Program& program, const std::filesystem::path& file);
 int verifyNpcs(const Program& program, const std::filesystem::path& file);
+struct HelperCounts {
+  size_t total = 0, captured = 0, situations = 0, deferred = 0;
+  };
+HelperCounts writeHelpers(const Program& program, const std::filesystem::path& file,
+                         const std::filesystem::path& npcs);
+int verifyHelpers(const Program& program, const std::filesystem::path& file,
+                  const std::filesystem::path& npcs);
 struct PlacementCounts {
   size_t total = 0, captured = 0, steps = 0, deferred = 0;
   };

@@ -109,6 +109,7 @@ fs::path program(const fs::path& base) {
   NpcSnapshot::writeItems(value,definitions/"items.json");
   NpcSnapshot::writeRoutines(value,definitions/"routines.json");
   NpcSnapshot::writeNpcs(value,definitions/"npcs.json");
+  NpcSnapshot::writeHelpers(value,definitions/"helpers.json",definitions/"npcs.json");
   NpcSnapshot::writePlacements(value,definitions/"placement.json",base/"worlds");
   NpcSnapshot::writeActivities(value,definitions/"activities.json",definitions/"routines.json");
   return definitions/"npcs.json";
@@ -172,7 +173,7 @@ void mutations(const fs::path& file, Gothic& gothic, void (*compare)(World&)) {
     const std::string& bytes;
     ~Restore() { write(file,bytes); }
     } restore{file,original};
-  for(unsigned mutation=0;mutation<6;++mutation) {
+  for(unsigned mutation=0;mutation<7;++mutation) {
     rapidjson::Document document;
     document.Parse(original.data(),original.size());
     if(document.HasParseError()) throw std::runtime_error("invalid synthetic NPC definitions JSON");
@@ -181,7 +182,7 @@ void mutations(const fs::path& file, Gothic& gothic, void (*compare)(World&)) {
       if(std::string_view(record["symbol"].GetString())=="NPC_NO_ID") target=&record["steps"];
     if(!target) throw std::runtime_error("synthetic NPC mutation target missing");
     auto& steps=*target;
-    size_t attribute=steps.Size(),create=steps.Size(),equip=steps.Size(),fatness=steps.Size(),deferred=steps.Size();
+    size_t attribute=steps.Size(),create=steps.Size(),equip=steps.Size(),fatness=steps.Size(),deferred=steps.Size(),preceding=steps.Size();
     for(rapidjson::SizeType i=0;i<steps.Size();++i) {
       const auto& step=steps[i];
       if(step.HasMember("field") && std::string_view(step["field"].GetString())=="C_NPC.ATTRIBUTE" &&
@@ -190,11 +191,12 @@ void mutations(const fs::path& file, Gothic& gothic, void (*compare)(World&)) {
       const auto function=std::string_view(step["function"].GetString());
       if(function=="CREATEINVITEMS" && step["arguments"][1].HasMember("value") &&
          std::string_view(step["arguments"][1]["value"].GetString())=="IT_NPC_RING") create=i;
-      if(function=="EQUIPITEM") equip=i;
+      if(function=="B_SETNPCVISUAL") equip=i;
+      if(function=="DRAW_BEFORE_AMBIENT") preceding=i;
       if(function=="MDL_SETMODELFATNESS") fatness=i;
       if(function=="B_CREATEAMBIENTINV") deferred=i;
       }
-    if(attribute>=steps.Size() || create>=steps.Size() || equip>=steps.Size() || fatness>=steps.Size() || deferred>=steps.Size())
+    if(attribute>=steps.Size() || create>=steps.Size() || equip>=steps.Size() || fatness>=steps.Size() || deferred>=steps.Size() || preceding>=steps.Size())
       throw std::runtime_error("synthetic NPC mutation steps missing");
     const auto index=[](size_t value) { return rapidjson::SizeType(value); };
     switch(mutation) {
@@ -210,6 +212,7 @@ void mutations(const fs::path& file, Gothic& gothic, void (*compare)(World&)) {
         break;
         }
       case 4: steps.Erase(steps.Begin()+ptrdiff_t(deferred)); break;
+      case 6: steps[index(deferred)].Swap(steps[index(preceding)]); break;
       case 5: {
         rapidjson::Value call;
         call.CopyFrom(steps[index(deferred)],document.GetAllocator());
@@ -226,13 +229,56 @@ void mutations(const fs::path& file, Gothic& gothic, void (*compare)(World&)) {
     std::string error;
     try { compare(*gothic.world()); }
     catch(const std::exception& failure) { error=failure.what(); }
-    const auto expected=mutation>=4 ? "game random generator differs" : "live NPC differs";
+    const auto expected=mutation==4 || mutation==5 ? "game random generator differs" : "live NPC differs";
     if(error.find(expected)==std::string::npos)
       throw std::runtime_error("live NPC mutation "+std::to_string(mutation+1)+" was not rejected by parity: "+error);
     write(file,original);
     }
-  std::puts("Live NPC mutations: attribute, call order, missing call, untouched id, missing/extra random call rejected");
+  std::puts("Live NPC mutations: attribute, call order, missing call, untouched id, missing/extra random call, helper draw before the previous chain step rejected");
   }
+void helperMutations(const fs::path& file,Gothic& gothic,void (*compare)(World&)) {
+  std::ifstream input(file,std::ios::binary);
+  const std::string original{std::istreambuf_iterator<char>(input),{}};
+  struct Restore {
+    fs::path file;
+    const std::string& bytes;
+    ~Restore() { write(file,bytes); }
+    } restore{file,original};
+  for(unsigned mutation=0;mutation<2;++mutation) {
+    rapidjson::Document document;
+    document.Parse(original.data(),original.size());
+    if(document.HasParseError()) throw std::runtime_error("invalid synthetic helper definitions JSON");
+    bool changed=false;
+    for(auto& record:document["records"].GetArray()) {
+      const auto name=std::string_view(record["symbol"].GetString());
+      if(mutation==0 && name=="B_SETFIGHTSKILLS") {
+        record["parameters"]["talents"][0]["thresholds"][1]["skill"].SetInt(2);
+        changed=true;
+        }
+      if(mutation==1 && name=="B_CREATEAMBIENTINV") {
+        for(auto& guild:record["parameters"]["guilds"].GetArray())
+          for(auto& roll:guild["table"]["rolls"].GetArray()) roll[0].Swap(roll[1]);
+        for(auto& roll:record["parameters"]["fallback"]["rolls"].GetArray()) roll[0].Swap(roll[1]);
+        changed=true;
+        }
+      }
+    if(!changed) throw std::runtime_error("synthetic helper mutation target missing");
+    rapidjson::StringBuffer bytes;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(bytes);
+    if(!document.Accept(writer)) throw std::runtime_error("cannot encode synthetic helper mutation");
+    write(file,{bytes.GetString(),bytes.GetSize()});
+    gothic.clearGame().reset();
+    gothic.setGame(std::make_unique<GameSession>("NPC_CONTRACT.ZEN"));
+    std::string error;
+    try { compare(*gothic.world()); }
+    catch(const std::exception& failure) { error=failure.what(); }
+    if(error.find("live NPC differs")==std::string::npos)
+      throw std::runtime_error("live helper mutation "+std::to_string(mutation+1)+" was not rejected by parity: "+error);
+    write(file,original);
+    }
+  std::puts("Live helper mutations: wrong skill tier and reversed inventory calls rejected without game data");
+  }
+
 }
 
 // The same live comparator as the installed-game corpus runs on a complete, tiny own-format
@@ -262,6 +308,7 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
   environment.set("OPENGOTHIC_CONTENT","");
   environment.set("OPENGOTHIC_TEXTURES","");
   environment.set("OPENGOTHIC_NPC_RECORDS",std::nullopt);
+  environment.set("OPENGOTHIC_NPC_HELPER_RECORDS",std::nullopt);
   environment.set("OPENGOTHIC_ITEM_RECORDS",std::nullopt);
   environment.set("OPENGOTHIC_ROUTINE_RECORDS",std::nullopt);
   environment.set("OPENGOTHIC_PLACEMENT_RECORDS",std::nullopt);
@@ -280,8 +327,10 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
   placement(*gothic.world());
   activities(*gothic.world());
   mutations(definitions,gothic,compare);
+  helperMutations(definitions.parent_path()/"helpers.json",gothic,compare);
   gothic.clearGame().reset();
   environment.set("OPENGOTHIC_NPC_RECORDS","0");
+  environment.set("OPENGOTHIC_NPC_HELPER_RECORDS","0");
   environment.set("OPENGOTHIC_ITEM_RECORDS","0");
   environment.set("OPENGOTHIC_ROUTINE_RECORDS","0");
   environment.set("OPENGOTHIC_PLACEMENT_RECORDS","0");

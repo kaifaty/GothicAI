@@ -1,6 +1,7 @@
 #pragma once
 
 #include "npcdefinitions.h"
+#include "npchelperruntime.h"
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
 
@@ -26,6 +27,7 @@ struct Call {
 using Step = std::variant<Field,Call>;
 struct Definitions {
   std::unordered_map<uint32_t,std::vector<Step>> npcs;
+  NpcHelperRuntime::Definitions helpers;
   };
 
 bool enabled();

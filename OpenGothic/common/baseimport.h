@@ -32,6 +32,8 @@ int convertNpcDefinitions(const std::filesystem::path& base);
 int convertPlacementDefinitions(const std::filesystem::path& base);
 // D4.1: definitions/<program SHA>/activities.json, routine states recognised as an activity template.
 int convertActivityDefinitions(const std::filesystem::path& base);
+// D4.h: deferred NPC helpers recognised and verified as native templates.
+int convertNpcHelperDefinitions(const std::filesystem::path& base);
 // P14: outputunits/outputunits.json and one record per distinct cutscene library (common/outputunits.h)
 // for every .BIN/.DAT of the runtime VFS, the engine's host and language candidates and the server's
 // and storygraph's choices. Fails when the server's native message view differs from its original

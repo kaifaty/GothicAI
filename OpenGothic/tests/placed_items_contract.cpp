@@ -17,6 +17,8 @@
 #include "programdata.h"
 #include "routinedefinitions.h"
 #include "npcdefinitions.h"
+#include "npchelperdefinitions.h"
+#include "game/npchelperruntime.h"
 #include "placementdefinitions.h"
 #include "game/npcdefinitionruntime.h"
 #include "game/placementdefinitionruntime.h"
@@ -76,6 +78,7 @@ struct NpcDefinitionContract {
   static const auto& items(GameScript& script) { return script.itemDefinitions; }
   static const auto& routines(GameScript& script) { return script.routineDefinitions; }
   static auto& random(GameScript& script) { return script.randGen; }
+  static auto& isolatedRandom(GameScript& script) { return script.isolatedRandom; }
   };
 
 namespace {
@@ -701,7 +704,55 @@ std::map<std::string,std::string> npcRecordFields(Npc& npc) {
   return fields;
   }
 
-void npcDefinitions(World& world) {
+struct HelperLocal {
+  daedalus::DaedalusSymbol* symbol;
+  uint16_t index;
+  std::variant<int32_t,float,std::string,std::shared_ptr<daedalus::DaedalusInstance>> value;
+  };
+std::vector<HelperLocal> helperLocals(daedalus::DaedalusVm& vm) {
+  using Type=daedalus::DaedalusDataType;
+  std::vector<HelperLocal> values;
+  for(const auto& entry:vm.symbols()) {
+    const auto& name=entry.name();
+    if(entry.is_member() || entry.is_const() ||
+       !(name.starts_with("B_SETFIGHTSKILLS.") || name.starts_with("B_ADDFIGHTSKILL.") ||
+         name.starts_with("B_RAISEFIGHTTALENT.") || name.starts_with("B_RAISEREALFIGHTTALENTPERCENT.") ||
+         name.starts_with("B_SETNPCVISUAL.") || name.starts_with("B_SETATTRIBUTESTOCHAPTER.") ||
+         name.starts_with("B_CREATEAMBIENTINV.") || name.starts_with("B_CREATEAMBIENTINV_"))) continue;
+    auto* symbol=vm.find_symbol_by_index(entry.index());
+    for(uint16_t index=0;index<entry.count();++index) {
+      if(entry.type()==Type::INT) values.push_back({symbol,index,entry.get_int(index)});
+      else if(entry.type()==Type::FLOAT) values.push_back({symbol,index,entry.get_float(index)});
+      else if(entry.type()==Type::STRING) values.push_back({symbol,index,entry.get_string(index)});
+      else if(entry.type()==Type::INSTANCE) values.push_back({symbol,index,symbol->get_instance()});
+      }
+    }
+  return values;
+  }
+void restoreHelperLocals(const std::vector<HelperLocal>& values) {
+  for(const auto& entry:values)
+    std::visit([&](const auto& value) {
+      using Type=std::decay_t<decltype(value)>;
+      if constexpr(std::is_same_v<Type,int32_t>) entry.symbol->set_int(value,entry.index);
+      else if constexpr(std::is_same_v<Type,float>) entry.symbol->set_float(value,entry.index);
+      else if constexpr(std::is_same_v<Type,std::string>) entry.symbol->set_string(value,entry.index);
+      else entry.symbol->set_instance(value);
+      },entry.value);
+  }
+std::map<std::string,std::string> helperLocalText(daedalus::DaedalusVm& vm,const Npc& npc) {
+  std::map<std::string,std::string> result;
+  for(const auto& entry:helperLocals(vm))
+    result[entry.symbol->name()+"["+std::to_string(entry.index)+"]"]=std::visit([&](const auto& value) -> std::string {
+      using Type=std::decay_t<decltype(value)>;
+      if constexpr(std::is_same_v<Type,std::string>) return Bench::bodyJson(value);
+      else if constexpr(std::is_same_v<Type,int32_t>) return std::to_string(value);
+      else if constexpr(std::is_same_v<Type,float>) return std::to_string(std::bit_cast<uint32_t>(value));
+      else return value==std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()) ? "self" : value ? "symbol "+std::to_string(value->symbol_index()) : "null";
+      },entry.value);
+  return result;
+  }
+
+void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
   auto& script=world.script();
   auto& vm=script.getVm();
   const auto base=baseProgramIndex().dir.parent_path();
@@ -710,6 +761,32 @@ void npcDefinitions(World& world) {
   const auto routines=RoutineDefinitions::read(base,program.sha256);
   require(!library.npcs.empty(),"the real program must have captured NPC definitions");
   auto records=NpcDefinitionRuntime::resolve(library,vm);
+  const auto helpers=NpcHelperDefinitions::read(base,program.sha256);
+  require(helpers.helpers.size()==6,"all six helper forms must be captured in this program");
+  constexpr uint32_t contractSeed=0x12345679u;
+  if(library.npcs.contains("NPC_NO_ID")) {
+    const auto* previous=vm.find_symbol_by_name("DRAW_BEFORE_AMBIENT");
+    require(previous!=nullptr,"the random-order fixture must have its preceding helper");
+    const auto firstInstruction=vm.instruction_at(previous->address());
+    require(firstInstruction.op==daedalus::DaedalusOpcode::PUSHI && firstInstruction.immediate>0,
+            "the preceding helper must declare a positive random bound");
+    const auto bound=uint32_t(firstInstruction.immediate);
+    std::mt19937 stream(contractSeed);
+    if(isolated) {
+      std::seed_seq sequence{contractSeed,0x415u,0x5C21D7u};
+      stream.seed(sequence);
+      }
+    const auto first=uint32_t(stream()),second=uint32_t(stream());
+    const auto& ambient=std::get<NpcHelperDefinitions::AmbientInventory>(helpers.helpers.at("B_CREATEAMBIENTINV"));
+    const auto& table=ambient.guilds.at(2);
+    const auto normalRoll=second%uint32_t(ambient.randomBound),reorderedRoll=first%uint32_t(ambient.randomBound);
+    require(first%bound!=second%bound,
+            "the random-order fixture seed must produce different AIVAR[1] values when the helper moves");
+    require(table.rolls.at(normalRoll)!=table.rolls.at(reorderedRoll),
+            "the random-order fixture seed must select different ambient items when the helper moves");
+    std::printf("Random-order fixture (%s): AIVAR[1] %u/%u, ambient rolls %u/%u; both outcomes differ\n",
+                isolated ? "NPC" : "shared",first%bound,second%bound,normalRoll,reorderedRoll);
+    }
   const auto& gameRecords=NpcDefinitionContract::definitions(script).npcs;
   require(!gameRecords.empty(),"the game must load NPC definitions when records are enabled");
   require(gameRecords.size()==records.npcs.size(),"the game must load all captured NPC definitions");
@@ -738,7 +815,38 @@ void npcDefinitions(World& world) {
       }
     }
   auto loaded=std::move(NpcDefinitionContract::definitions(script));
+  NpcDefinitionContract::definitions(script).helpers=NpcHelperRuntime::resolve(helpers,vm);
   const auto random=NpcDefinitionContract::random(script);
+  const auto isolatedRandom=NpcDefinitionContract::isolatedRandom(script);
+  NpcDefinitionContract::isolatedRandom(script).clear();
+  const auto* helperSetting=std::getenv("OPENGOTHIC_NPC_HELPER_RECORDS");
+  const std::optional<std::string> savedHelperSetting=helperSetting ? std::optional<std::string>(helperSetting) : std::nullopt;
+  auto helperRecords=[](bool enabled) {
+    if(enabled) unsetenv("OPENGOTHIC_NPC_HELPER_RECORDS");
+    else setenv("OPENGOTHIC_NPC_HELPER_RECORDS","0",1);
+    };
+  struct RestoreHelperSetting {
+    const std::optional<std::string>& saved;
+    ~RestoreHelperSetting() {
+      if(saved) setenv("OPENGOTHIC_NPC_HELPER_RECORDS",saved->c_str(),1);
+      else unsetenv("OPENGOTHIC_NPC_HELPER_RECORDS");
+      }
+    } restoreHelperSetting{savedHelperSetting};
+  // The map stores only the address. Reserve the NPC's storage before construction so its
+  // very first Hlp_Random can use a private stream without a production creation hook.
+  auto create=[&](uint32_t symbol,NpcProcessPolicy policy) {
+    auto* storage=static_cast<Npc*>(::operator new(sizeof(Npc)));
+    if(isolated) {
+      std::seed_seq sequence{contractSeed,0x415u,0x5C21D7u};
+      NpcDefinitionContract::isolatedRandom(script)[storage].seed(sequence);
+      }
+    try { return std::unique_ptr<Npc>(::new (static_cast<void*>(storage)) Npc(world,symbol,world.startPoint().name,policy)); }
+    catch(...) {
+      script.releaseIsolatedRandom(storage);
+      ::operator delete(storage);
+      throw;
+      }
+    };
   const auto oldSelf=vm.global_self()->get_instance();
   const auto oldItem=vm.global_item()->get_instance();
   auto prepareSyntheticPhysics=[&](Npc& npc) {
@@ -763,7 +871,21 @@ void npcDefinitions(World& world) {
     }
   const auto* configured=std::getenv("OPENGOTHIC_ROUTINE_RECORDS");
   const bool routineRecords=configured==nullptr || std::strcmp(configured,"0")!=0;
-  size_t count=0,dailyCount=0;
+  std::set<uint32_t> helperAddresses;
+  for(const auto& [name,definition]:helpers.helpers) {
+    (void)definition;
+    helperAddresses.insert(vm.find_symbol_by_name(name)->address());
+    }
+  // Equipment callbacks remain scripts, including the unequip/equip pair when the
+  // constructor's final auto-equip selects an item already in its weapon slot.
+  std::set<uint32_t> itemCallbackAddresses;
+  for(const auto& [symbol,item]:NpcDefinitionContract::items(script).items) {
+    (void)symbol;
+    for(const auto function:{item.on_equip,item.on_unequip})
+      if(const auto* callback=vm.find_symbol_by_index(uint32_t(function)); callback && callback->type()==daedalus::DaedalusDataType::FUNCTION)
+        itemCallbackAddresses.insert(callback->address());
+    }
+  size_t count=0,dailyCount=0,referenceHelperCalls=0;
   std::vector<std::string> differences;
   std::set<std::string> differentNpcs;
   auto difference=[&](const std::string& name,const std::string& field,const std::string& expected,const std::string& actual) {
@@ -794,6 +916,7 @@ void npcDefinitions(World& world) {
       const auto previousContext=vm.unsafe_get_gi();
       std::unique_ptr<Npc> expected,actual;
       bool recordsActive=false;
+      const auto localBaseline=helperLocals(vm);
       try {
         const auto policy=name=="PC_HERO" ? NpcProcessPolicy::Player : NpcProcessPolicy::AiNormal;
         const bool syntheticEquip=library.npcs.contains("NPC_NO_ID") &&
@@ -801,29 +924,49 @@ void npcDefinitions(World& world) {
         const auto* onEquip=vm.find_symbol_by_name("ON_EQUIP");
         if(syntheticEquip) require(onEquip!=nullptr,"synthetic equipment has an on_equip callback");
         const auto onEquipAddress=onEquip ? onEquip->address() : uint32_t(-1);
-        size_t routineInstructions=0,constructorInstructions=0,onEquipCalls=0;
+        size_t routineInstructions=0,constructorInstructions=0,onEquipCalls=0,helperCalls=0,itemCallbackDepth=0;
+        int32_t joraAfterEquip=-1;
+        const auto* fightSkills=vm.find_symbol_by_name("B_SETFIGHTSKILLS");
         const auto constructorAddress=symbol->address();
-        vm.observe_instructions([&](const daedalus::DaedalusInstruction&) {
+        vm.observe_instructions([&](const daedalus::DaedalusInstruction& instruction) {
+          if(itemCallbackAddresses.contains(vm.pc())) ++itemCallbackDepth;
           if(routineAddresses.contains(vm.pc())) ++routineInstructions;
           if(vm.pc()==constructorAddress) ++constructorInstructions;
           if(vm.pc()==onEquipAddress) ++onEquipCalls;
+          if(helperAddresses.contains(vm.pc()) && itemCallbackDepth==0) ++helperCalls;
+          if(itemCallbackDepth>0 && instruction.op==daedalus::DaedalusOpcode::BL) ++itemCallbackDepth;
+          if(itemCallbackDepth>0 && instruction.op==daedalus::DaedalusOpcode::RSR) --itemCallbackDepth;
+          if(name=="VLK_408_JORA" && fightSkills && vm.pc()==fightSkills->address()) {
+            const auto self=std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+            joraAfterEquip=self->hitchance[1];
+            }
           });
-        NpcDefinitionContract::definitions(script)={};
-        script.setSeed(0x12345678);
+        if(helpersOnly) NpcDefinitionContract::definitions(script).npcs.swap(records.npcs);
+        else NpcDefinitionContract::definitions(script).npcs.clear();
+        recordsActive=helpersOnly;
+        helperRecords(false);
+        script.setSeed(contractSeed);
         vm.global_item()->set_instance(oldItem);
-        expected=std::make_unique<Npc>(world,symbol->index(),world.startPoint().name,policy);
-        difference(name,"reference constructor executed","yes",constructorInstructions>0 ? "yes" : "no");
+        expected=create(symbol->index(),policy);
+        referenceHelperCalls+=helperCalls;
+        difference(name,"reference constructor executed",helpersOnly ? "no" : "yes",constructorInstructions>0 ? "yes" : "no");
         if(syntheticEquip) {
           difference(name,"reference on_equip executed","yes",onEquipCalls>0 ? "yes" : "no");
           difference(name,"reference final attribute[0]","40",std::to_string(expected->handle().attribute[0]));
           difference(name,"reference helper result","30",std::to_string(expected->handle().exp));
           difference(name,"reference final level","30",std::to_string(expected->handle().level));
+          difference(name,"reference equipment and B_SetFightSkills hitchance[1]","40",std::to_string(expected->handle().hitchance[1]));
+          }
+        if(name=="VLK_408_JORA") {
+          difference(name,"hitchance[1] after on_equip","10",std::to_string(joraAfterEquip));
+          difference(name,"VM hitchance[1] after B_SetFightSkills","40",std::to_string(expected->handle().hitchance[1]));
           }
         prepareSyntheticPhysics(*expected);
         const auto expectedFields=npcRecordFields(*expected);
         const auto expectedState=npcState(*expected);
         const auto expectedItem=itemState(script);
         const auto expectedRandom=script.randomState(nullptr);
+        const auto expectedActorRandom=script.randomState(expected.get());
         auto temporaryStrings=[&] {
           std::vector<std::string> result;
           for(const auto& value:vm.symbols())
@@ -832,6 +975,7 @@ void npcDefinitions(World& world) {
           return result;
           };
         const auto expectedStrings=temporaryStrings();
+        const auto expectedLocals=helperLocalText(vm,*expected);
         const auto expectedDaily=vm.find_symbol_by_index(uint32_t(expected->handle().daily_routine));
         const bool capturedDaily=expectedDaily && routines.routines.contains(expectedDaily->name());
         if(capturedDaily) {
@@ -839,22 +983,32 @@ void npcDefinitions(World& world) {
           difference(name,"NPC startup daily_routine must use the configured routine record/VM path",
                      routineRecords ? "record" : "VM",routineInstructions==0 ? "record" : "VM");
           }
-        NpcDefinitionContract::definitions(script).npcs.swap(records.npcs);
+        if(!helpersOnly) NpcDefinitionContract::definitions(script).npcs.swap(records.npcs);
         recordsActive=true;
-        script.setSeed(0x12345678);
+        helperRecords(true);
+        restoreHelperLocals(localBaseline);
+        script.setSeed(contractSeed);
         vm.global_item()->set_instance(oldItem);
-        routineInstructions=0; constructorInstructions=0; onEquipCalls=0;
-        actual=std::make_unique<Npc>(world,symbol->index(),world.startPoint().name,policy);
+        routineInstructions=0; constructorInstructions=0; onEquipCalls=0; helperCalls=0; itemCallbackDepth=0;
+        actual=create(symbol->index(),policy);
         difference(name,"record constructor calls","0",std::to_string(constructorInstructions));
+        difference(name,"captured helper VM calls","0",std::to_string(helperCalls));
         if(syntheticEquip) {
           difference(name,"record on_equip executed","yes",onEquipCalls>0 ? "yes" : "no");
           difference(name,"record final level","30",std::to_string(actual->handle().level));
+          difference(name,"Jora equipment and B_SetFightSkills hitchance[1]","40",std::to_string(actual->handle().hitchance[1]));
           }
+        if(name=="VLK_408_JORA")
+          difference(name,"record hitchance[1] after B_SetFightSkills","40",std::to_string(actual->handle().hitchance[1]));
+        const auto actualLocals=helperLocalText(vm,*actual);
+        if(helpersOnly)
+          for(const auto& [local,value]:expectedLocals) difference(name,"helper local "+local,value,actualLocals.at(local));
         const auto actualStrings=temporaryStrings();
         difference(name,"VM temporary string count",std::to_string(expectedStrings.size()),std::to_string(actualStrings.size()));
         for(size_t index=0;index<std::min(expectedStrings.size(),actualStrings.size());++index)
           difference(name,"VM temporary string["+std::to_string(index)+"]",Bench::bodyJson(expectedStrings[index]),Bench::bodyJson(actualStrings[index]));
         difference(name,"game random generator differs",expectedRandom,script.randomState(nullptr));
+        difference(name,"NPC random generator differs",expectedActorRandom,script.randomState(actual.get()));
         prepareSyntheticPhysics(*actual);
         const auto actualFields=npcRecordFields(*actual);
         for(const auto& [field,value]:expectedFields) difference(name,field,value,actualFields.at(field));
@@ -876,6 +1030,9 @@ void npcDefinitions(World& world) {
       catch(const std::exception& error) { difference(name,"creation exception","none",error.what()); }
       vm.observe_instructions({});
       if(recordsActive) NpcDefinitionContract::definitions(script).npcs.swap(records.npcs);
+      restoreHelperLocals(localBaseline);
+      script.releaseIsolatedRandom(actual.get());
+      script.releaseIsolatedRandom(expected.get());
       actual.reset(); expected.reset();
       symbol->set_instance(previous);
       vm.global_self()->set_instance(oldSelf);
@@ -890,18 +1047,29 @@ void npcDefinitions(World& world) {
     vm.global_self()->set_instance(oldSelf);
     vm.global_item()->set_instance(oldItem);
     NpcDefinitionContract::random(script)=random;
+    NpcDefinitionContract::isolatedRandom(script)=isolatedRandom;
     throw;
     }
   NpcDefinitionContract::definitions(script)=std::move(loaded);
   vm.global_item()->set_instance(oldItem);
   NpcDefinitionContract::random(script)=random;
-  require(count==library.npcs.size()+1 && dailyCount>0,"all captured NPCs and actual startup routines must be compared");
+  NpcDefinitionContract::isolatedRandom(script)=isolatedRandom;
+  std::fprintf(stderr,"NPC definition coverage (%s, %s): %zu/%zu NPCs, %zu startup routines, %zu reference helper calls\n",
+               helpersOnly ? "helpers" : "constructors",isolated ? "NPC" : "shared",count,library.npcs.size()+1,dailyCount,referenceHelperCalls);
   for(const auto& value:differences) std::fprintf(stderr,"[npc-definition-difference] %s\n",value.c_str());
   std::fprintf(stderr,"NPC definition differences: %zu NPCs, %zu fields\n",differentNpcs.size(),differences.size());
   if(!differences.empty())
     throw std::runtime_error("live NPC differs: "+std::to_string(differences.size())+" differences; "+differences.front());
-  std::printf("Live NPC equality: %zu captured NPCs and one director template; %zu startup daily routines; record, appearance, ordered inventory, equipped and active items, talents, attitudes, routines, ITEM and RNG match\n",
-              count-1,dailyCount);
+  require(count==library.npcs.size()+1 && dailyCount>0,"all captured NPCs and actual startup routines must be compared");
+  require(referenceHelperCalls>0,"the helpers-off reference must actually execute the captured helpers in the VM");
+  std::printf("Live NPC equality (%s, %s): %zu captured NPCs and one director template; %zu startup daily routines; record, appearance, ordered inventory, equipped and active items, talents, attitudes, routines, ITEM and RNG match\n",
+              helpersOnly ? "helper records vs helper VM" : "records vs constructors",isolated ? "NPC streams" : "shared stream",count-1,dailyCount);
+  }
+
+void npcDefinitions(World& world) {
+  compareNpcDefinitions(world,false,false);
+  compareNpcDefinitions(world,true,false);
+  compareNpcDefinitions(world,true,true);
   }
 
 void npcDefinitionsDisabled(World& world) {
