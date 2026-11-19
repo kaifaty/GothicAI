@@ -35,7 +35,14 @@ CARDS = dict(
     stubble_a=dict(kind='stubble', size=(1.5, .34375), stalks=120),
     stubble_b=dict(kind='stubble', size=(1.5, .34375), stalks=85),
     sheaf=dict(kind='sheaf', size=(.5625, 1.3125), stalks=64),
+    # the weeds of the corn (alive.md): appended, so the cards above stay what they were for a seed
+    thistle=dict(kind='thistle', size=(.5625, 1.25), stalks=3),
+    cockle=dict(kind='cockle', size=(.4375, 1.), stalks=5),
+    cornflower_a=dict(kind='cornflower', size=(.5, .8125), stalks=5),
+    cornflower_b=dict(kind='cornflower', size=(.5, .8125), stalks=3),
+    mayweed=dict(kind='mayweed', size=(.625, .5), stalks=6),
 )
+WEEDS = ('thistle', 'cockle', 'cornflower', 'mayweed')
 MARGIN = .012
 BACK, FRONT = .5, 1.08      # brightness of the stalk furthest from the camera and of the nearest
 FLOOR, CURVE = .36, 1.3     # a stalk's brightness at its root, and how it rises with the height share
@@ -51,6 +58,12 @@ EAR, EAR_DARK, AWN = linear('#9c5f2a'), linear('#6e431e'), linear('#ad8248')
 LEAF = linear('#97804c')
 STUBBLE, STUBBLE_ROOT = linear('#a79a72'), linear('#6f6347')
 BAND = linear('#7f6a3e')
+GREEN, GREEN_DARK = linear('#66703f'), linear('#3d4a2a')
+BLUE, WHITE, YOLK = linear('#4a5fae'), linear('#d9d5c2'), linear('#b3922c')
+PINK, PURPLE = linear('#96467a'), linear('#74488a')
+# kind: height of the plant in metres from..to, side branches from..to, leaves, how wide a leaf is to a cornflower's
+WEED = dict(thistle=((.8, 1.15), (2, 4), (7, 11), 2.6), cockle=((.6, .9), (0, 2), (4, 7), 1.),
+            cornflower=((.45, .72), (1, 4), (4, 8), .8), mayweed=((.25, .42), (2, 5), (6, 10), .6))
 
 
 class Sheet:
@@ -228,6 +241,84 @@ def sheaf(sheet, rng, width, height, count):
         sheet.ribbon(line, np.full(4, .02), np.tile(BAND * (.95 - .15 * turn), (4, 1)), -.05)
 
 
+def heading_of(line, k):
+    d = line[min(k + 1, len(line) - 1)] - line[max(k - 1, 0)]
+    return math.atan2(d[0], d[1])
+
+
+def head(sheet, rng, kind, at, angle, light, y):
+    """A flower at the end of a stem that arrives going `angle`."""
+    def way(a):
+        return np.array((math.sin(a), math.cos(a)))
+
+    def petal(a, length, widths, colour):
+        tip = at + way(a) * length
+        sheet.ribbon((at, (at + tip) / 2, tip), widths, np.tile(colour * light * rng.uniform(.82, 1.1), (3, 1)), y - .002)
+
+    if kind == 'cornflower':
+        sheet.ribbon((at - way(angle) * .014, at), (.006, .011), np.tile(GREEN_DARK * light, (2, 1)), y - .001)
+        for _ in range(14):
+            petal(angle + math.radians(rng.uniform(-85, 85)), rng.uniform(.013, .022), (.003, .007, .005), BLUE)
+    elif kind == 'cockle':
+        sheet.ribbon((at - way(angle) * .03, at), (.005, .012), np.tile(GREEN * light, (2, 1)), y - .001)
+        for k in range(5):
+            petal(angle + math.radians(-70 + 35 * k + rng.uniform(-8, 8)), rng.uniform(.018, .024), (.004, .012, .013), PINK)
+    elif kind == 'mayweed':
+        squash, turn = rng.uniform(.35, 1.), angle + math.radians(rng.normal(0, 25))
+        for k in range(16):
+            a = 2 * math.pi * k / 16
+            offset = way(turn) * math.cos(a) * squash + way(turn + math.pi / 2) * math.sin(a)
+            tip = at + offset * rng.uniform(.014, .018)
+            sheet.ribbon((at, (at + tip) / 2, tip), (.003, .0055, .004), np.tile(WHITE * light * rng.uniform(.85, 1.05), (3, 1)),
+                         y - .002)
+        sheet.ribbon((at - way(turn) * .005 * squash, at + way(turn) * .005 * squash), (.011, .011),
+                     np.tile(YOLK * light, (2, 1)), y - .003)
+    else:                                                # thistle: a spiny bulb and a tuft
+        top = at + way(angle) * .03
+        sheet.ribbon((at, (at + top) / 2, top), (.016, .028, .022), np.tile(GREEN_DARK * light, (3, 1)), y - .001)
+        for _ in range(12):
+            tip = top + way(angle + math.radians(rng.uniform(-45, 45))) * rng.uniform(.016, .026)
+            sheet.ribbon((top, tip), (.006, .003), np.tile(PURPLE * light * rng.uniform(.85, 1.1), (2, 1)), y - .002)
+
+
+def weed(sheet, rng, kind, x, depth):
+    (low, high), branches, leaves, leaf = WEED[kind]
+    top, y = rng.uniform(low, high), .08 * (depth - .5)
+    front = FRONT - (FRONT - BACK) * depth
+    line, angle = curve((x, 0.), math.radians(rng.normal(0, 7)), (top * .5, top * .5),
+                        (math.radians(rng.normal(0, 9)), math.radians(rng.normal(0, 12))), steps=4)
+    tone = (FLOOR + (1 - FLOOR) * np.clip(line[:, 1] / top, 0, 1) ** .7)[:, None] * front
+    sheet.ribbon(line, np.linspace(.0065, .0035, len(line)) * (1.6 if kind == 'thistle' else 1.), GREEN * tone, y)
+    for _ in range(rng.integers(*leaves)):
+        k = rng.integers(1, len(line) - 1)
+        side = rng.choice((-1., 1.))
+        blade, _ = curve(line[k], heading_of(line, k) + side * math.radians(rng.uniform(30, 75)),
+                         (rng.uniform(.03, .09) * (1.8 if kind == 'thistle' else 1.),),
+                         (side * math.radians(rng.uniform(0, 45)),), steps=3)
+        width = np.linspace(.009, .002, len(blade)) * leaf
+        if kind == 'thistle':                            # a spiny leaf: its edge in teeth
+            width = width * np.where(np.arange(len(blade)) % 2 == 0, 1., .45)
+        sheet.ribbon(blade, width, np.tile(GREEN * tone[k] * rng.uniform(.75, 1.05), (len(blade), 1)), y + .001)
+    heads = [(line[-1], angle)]
+    for _ in range(rng.integers(*branches)):
+        k = rng.integers(len(line) // 2, len(line) - 1)
+        side = rng.choice((-1., 1.))
+        branch, a = curve(line[k], heading_of(line, k) + side * math.radians(rng.uniform(25, 55)),
+                          (rng.uniform(.07, .2),), (-side * math.radians(rng.uniform(10, 35)),), steps=3)
+        sheet.ribbon(branch, np.full(len(branch), .0032), np.tile(GREEN * tone[k], (len(branch), 1)), y)
+        heads.append((branch[-1], a))
+    for at, a in heads:
+        head(sheet, rng, kind, at, a, front, y)
+
+
+def weeds(kind):
+    def build(sheet, rng, width, height, count):
+        depth = rng.permutation(count) / max(count - 1, 1)
+        for index in np.argsort(-depth):
+            weed(sheet, rng, kind, (width - .2) * ((index + rng.random()) / count - .5), depth[index])
+    return build
+
+
 def arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('--out', required=True)
@@ -257,7 +348,7 @@ def main():
     links.new(emission.outputs['Emission'], output.inputs['Surface'])
 
     frames = {}
-    builders = dict(rye=rye, stubble=stubble, sheaf=sheaf, ears=ears)
+    builders = dict(rye=rye, stubble=stubble, sheaf=sheaf, ears=ears) | {kind: weeds(kind) for kind in WEEDS}
     for number, (name, card) in enumerate(CARDS.items()):
         width, height = card['size']
         sheet = Sheet()
