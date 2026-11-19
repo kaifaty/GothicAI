@@ -41,6 +41,8 @@ class SceneGlobals final {
       VF_CROWN_MASK = 0x80,
       VF_HIZ_NO_CANOPY = 0x100,
       VF_TREE_OCCLUSION_PROBE = 0x200,
+      VF_HIZ_PRECISE = 0x400,
+      VF_HIZ_VERIFY  = 0x800,
       };
 
     static bool isShadowView(VisCamera v);
@@ -61,7 +63,8 @@ class SceneGlobals final {
     void setTaaFrame(bool taa, bool lampTaa, uint32_t frame);
     void setLandscapeMask(bool enabled) { landscapeMask = enabled; }
     bool isLandscapeMask() const { return landscapeMask; }
-    void setTreeOcclusionProbe() { uboGlobalCpu.viewFlags |= VF_TREE_OCCLUSION_PROBE; }
+    void setTreeOcclusionProbe(bool verify) { uboGlobalCpu.viewFlags |= VF_TREE_OCCLUSION_PROBE | (verify ? VF_HIZ_VERIFY : 0u); }
+    bool isTreeOcclusionProbe() const { return (uboGlobalCpu.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0; }
     // motion vectors of objects: on/off and the camera's part (identity and this frame's camera on a cut)
     void setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
     // the TAA reactive mask (graphics plan 1v): the added light on screen that makes an additive pixel fully reactive

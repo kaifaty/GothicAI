@@ -50,12 +50,13 @@ class Renderer final {
     struct TreeOcclusionProbe {
       Tempest::StorageImage occluderDepth;
       Tempest::StorageImage mainDepth;
+      bool verify = false;
       };
     TreeOcclusionProbe* treeProbe = nullptr;
     uint32_t treeProbeIndex = 0;
     Tempest::StorageImage landscapeDepth;
     bool captureLandscapeDepth = false;
-    void captureTreeOcclusion(Tempest::Attachment& result, uint8_t fId, WorldView& view, const Camera& camera);
+    void captureTreeOcclusion(Tempest::Attachment& result, uint8_t fId, WorldView& view, const Camera& camera, bool verify);
 
     enum Quality : uint8_t {
       None,

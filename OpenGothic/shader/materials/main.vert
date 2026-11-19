@@ -375,8 +375,8 @@ void main() {
 #if defined(MAT_CLUSTER_LEVEL)
   materialRef |= task.w << 16u;
 #endif
-#if defined(MAT_MOTION)
-  // The probe uses the existing flat output to recover both the bucket and instance.
+#if defined(MAT_MOTION) || (MESH_TYPE==T_LANDSCAPE && defined(MAT_CLUSTER_LEVEL))
+  // The probe uses the existing flat output to recover both the bucket and cluster.
   if((scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u)
     materialRef = payloadId;
 #endif

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
+#include <string_view>
 
 #include "graphics/shaders.h"
 #include "graphics/sky/sky.h"
@@ -198,10 +199,17 @@ void SceneGlobals::setTaaFrame(bool taa, bool lampTaa, uint32_t frame) {
   uboGlobalCpu.taaFrame  = taa ? frame : 0;
   // OPENGOTHIC_HAIR_DEBUG=1: hair shows the direction of its strands as a colour (the acceptance of the direction)
   static const bool hairDebug = []{ const char* e = std::getenv("OPENGOTHIC_HAIR_DEBUG"); return e!=nullptr && e[0]=='1'; }();
+  static const bool hizPrecise = [] {
+    const char* env = std::getenv("OPENGOTHIC_HIZ_PRECISE");
+    const bool set = env!=nullptr && *env!='\0';
+    const bool on = set ? std::string_view(env)!="0" : ::Settings::getI("INTERNAL","hizPrecise")!=0;
+    Tempest::Log::i("render: precise HiZ = ", on ? "1" : "0", set ? " by OPENGOTHIC_HIZ_PRECISE" : " by [INTERNAL] hizPrecise");
+    return on;
+    }();
   uboGlobalCpu.viewFlags = (taa ? VF_TAA : 0) | (hairDebug ? VF_HAIR_DEBUG : 0) | (LampContact::enabled() ? VF_LAMP_CONTACT : 0) |
                            (ContactAo::enabled() ? VF_CONTACT_AO : 0) | (grassDrawn && GrassContact::enabled() ? VF_GRASS_CONTACT : 0) |
                            (CrownLight::mode()==CrownLight::Mask ? VF_CROWN_MASK : 0) |
-                           (HiZOccluders::skipCrowns() ? VF_HIZ_NO_CANOPY : 0);
+                           (HiZOccluders::skipCrowns() ? VF_HIZ_NO_CANOPY : 0) | (hizPrecise ? VF_HIZ_PRECISE : 0);
   }
 
 void SceneGlobals::setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip,

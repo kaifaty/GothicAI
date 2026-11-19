@@ -61,6 +61,13 @@ const uint L_ClusterLevelIndex = 8;
 const uint L_ClusterLevel = 9;
 #include "materials/cluster_lod.glsl"
 
+#if defined(MAIN_VIEW) && !defined(LARGE)
+#include "materials/tree_hiz_bounds.glsl"
+#endif
+#if defined(HIZ_PROBE)
+layout(binding = 11, std430) writeonly buffer HiZDecisions { uint hizDecisions[]; };
+#endif
+
 float hiZFetch(in sampler2D hiZ, in ivec2 ibbox[2]) {
   if(ibbox[0]==ibbox[1])
     return texelFetch(hiZ, ibbox[0], 0).x;
@@ -116,11 +123,11 @@ bool projectSphere(const vec4 sphere, out vec4 aabb, out float depthMin) {
   return true;
   }
 
-bool projectInstance(const Cluster cluster, out vec4 aabb, out float depthMin) {
+bool projectInstance(const Cluster cluster, inout bool preciseBox, out vec4 aabb, out float depthMin) {
   const uint  bId        = cluster.bucketId_commandId >> 16;
   const uint  instanceId = cluster.instanceId;
 
-  const vec3  b[2]       = {bucket[bId].bbox[0].xyz, bucket[bId].bbox[1].xyz};
+  vec3        b[2]       = {bucket[bId].bbox[0].xyz, bucket[bId].bbox[1].xyz};
   Instance    obj        = pullInstance(instanceId);
   const float znear      = push.znear;
 
@@ -132,6 +139,20 @@ bool projectInstance(const Cluster cluster, out vec4 aabb, out float depthMin) {
     depthMin = 0;
     return true;
     }
+
+#if !defined(LARGE)
+  // These vertices can leave the authored rest box. Keep their established decision until a
+  // bound for the animated geometry is available.
+  if(preciseBox && ((bucket[bId].flags & (BK_SKIN | BK_MORPH | BK_STRAND))!=0u || obj.fatness!=0))
+    preciseBox = false;
+  if(preciseBox) {
+    vec3 lo, hi;
+    if(treeHiZBox(cluster, bucket[bId], obj.mat, scene.camPos, scene.foliageFade.x, lo, hi)) {
+      b[0] = lo;
+      b[1] = hi;
+      }
+    }
+#endif
 
   aabb     = vec4(1, 1, -1, -1);
   depthMin = 1;
@@ -177,12 +198,48 @@ bool hiZTest(vec4 sbbox, float depthMin) {
   return true;
   }
 
+bool hiZTestPrecise(vec4 sbbox, float depthMin) {
+  if(depthMin<=0)
+    return true;
 
-bool projectCluster(const Cluster cluster, out vec4 aabb, out float depthMin) {
-  if(cluster.instanceId==0xFFFFFFFF)
-    return projectSphere(cluster.sphere, aabb, depthMin);
-  // return projectSphere(cluster.sphere, aabb, depthMin);
-  return projectInstance(cluster, aabb, depthMin);
+  // Take whole pixel cells, including the cell starting at an exact upper edge.
+  // Raster samples next to a tile boundary are half a pixel away from it.
+  const vec2 screenLast = vec2(scene.screenRes - ivec2(1));
+  ivec2 lo = ivec2(clamp(sbbox.xy * scene.screenRes, vec2(0), screenLast)) / scene.hiZTileSize;
+  ivec2 hi = ivec2(clamp(sbbox.zw * scene.screenRes, vec2(0), screenLast)) / scene.hiZTileSize;
+  const ivec2 span = hi - lo;
+  // Any finer level has tiles at most half as wide as the span on one axis.
+  int mip = findMSB(max(1, max(span.x, span.y)));
+  lo >>= mip;
+  hi >>= mip;
+  if(any(greaterThan(hi - lo, ivec2(1)))) {
+    ++mip;
+    lo >>= 1;
+    hi >>= 1;
+    }
+
+  float z = texelFetch(hiZ, lo, mip).x;
+  if(lo.x != hi.x)
+    z = max(z, texelFetch(hiZ, ivec2(hi.x, lo.y), mip).x);
+  if(lo.y != hi.y)
+    z = max(z, texelFetch(hiZ, ivec2(lo.x, hi.y), mip).x);
+  if(lo.x != hi.x && lo.y != hi.y)
+    z = max(z, texelFetch(hiZ, hi, mip).x);
+  return !(packHiZ(depthMin) > z);
+  }
+
+
+bool projectCluster(const Cluster cluster, inout bool preciseBox, out vec4 aabb, out float depthMin) {
+  if(cluster.instanceId==0xFFFFFFFF) {
+    bool projected = projectSphere(cluster.sphere, aabb, depthMin);
+#if !defined(LARGE)
+    // The tangent formula uses the projection diagonal. Restore the offset of the raster projection.
+    if(preciseBox && depthMin>0)
+      aabb += scene.project[2].xyxy*0.5;
+#endif
+    return projected;
+    }
+  return projectInstance(cluster, preciseBox, aabb, depthMin);
   }
 #endif
 
@@ -218,10 +275,17 @@ void runCluster(const uint clusterId) {
     return;
 
 #if defined(MAIN_VIEW)
+#if defined(LARGE)
+  bool preciseBox = false;
+#else
+  bool preciseBox = (scene.viewFlags & VF_HIZ_PRECISE)!=0u;
+#endif
+#if !defined(HIZ_PROBE)
   vec4  aabb     = vec4(0);
   float depthMin = 1;
-  if(!projectCluster(cluster, aabb, depthMin))
+  if(!projectCluster(cluster, preciseBox, aabb, depthMin))
     return;
+#endif
 #endif
 
 #if defined(LARGE)
@@ -234,8 +298,26 @@ void runCluster(const uint clusterId) {
   }
 #endif
 
-#if defined(HIZ)
+#if defined(HIZ_PROBE)
+  vec4 wideRect, tightRect;
+  float wideDepth, tightDepth;
+  bool legacyBox = false, supported = true;
+  projectCluster(cluster, legacyBox, wideRect, wideDepth);
+  projectCluster(cluster, supported, tightRect, tightDepth);
+  const bool oldPass = hiZTest(wideRect, wideDepth);
+  const bool newPass = supported ? hiZTestPrecise(tightRect, tightDepth) : oldPass;
+  const bool widePass = supported && cluster.instanceId!=0xffffffffu ? hiZTestPrecise(wideRect, wideDepth) : newPass;
+  const bool drawPrecise = preciseBox && (scene.viewFlags & VF_HIZ_VERIFY)==0u;
+  const bool drawn = drawPrecise ? newPass : oldPass;
+  hizDecisions[clusterId] = (oldPass ? 1u : 0u) | (newPass ? 2u : 0u) | (widePass ? 4u : 0u) | 8u | (drawn ? 16u : 0u);
+  if(!drawn)
+    return;
+#elif defined(HIZ)
+#if defined(LARGE)
   if(!hiZTest(aabb, depthMin))
+#else
+  if(!(preciseBox ? hiZTestPrecise(aabb, depthMin) : hiZTest(aabb, depthMin)))
+#endif
     return;
 #endif
 
@@ -264,7 +346,9 @@ void runCluster(const uint clusterId) {
 
   uint writeOffset = cmd[commandId].writeOffset;
   writeOffset      += atomicAdd(cmd[commandId].instanceCount, meshletCount);
-#if defined(MAIN_VIEW) && !defined(LARGE)
+#if defined(HIZ_PROBE)
+  const uint debugLevel = clusterId;
+#elif defined(MAIN_VIEW) && !defined(LARGE)
   const uint debugLevel = push.lodDebug != 0u ? level : 0u;
 #else
   const uint debugLevel = 0u;

@@ -4,7 +4,9 @@
 #include <cassert>
 #include <algorithm>
 #include <atomic>
+#include <limits>
 
+#include "graphics/foliagetree.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/meshlevels.h"
 #include "graphics/shaders.h"
@@ -215,6 +217,7 @@ StaticMesh& StaticMesh::operator=(StaticMesh&& other) {
   clusterLevels=std::move(other.clusterLevels);
   ownMesh=other.ownMesh;
   pageRange=std::move(other.pageRange);
+  treeHiZBoxes=std::move(other.treeHiZBoxes);
   return *this;
   }
 
@@ -286,6 +289,49 @@ void StaticMesh::initSubMeshes(const PackedMesh& mesh) {
       sub[i].rtLength = levels.back().sub[i].second;
       }
   strandWidth = mesh.strandWidth;
+  initTreeHiZBoxes(mesh);
+  }
+
+void StaticMesh::initTreeHiZBoxes(const PackedMesh& mesh) {
+  if(!clusterLevels.empty() ||
+     std::ranges::none_of(sub, [](const auto& s) { return FoliageTree::isTree(s.material.foliage); }))
+    return;
+
+  const auto addBox = [&](size_t offset, size_t length) {
+    constexpr float inf = std::numeric_limits<float>::infinity();
+    TreeHiZBounds bounds {Tempest::Vec3(inf), uint32_t(offset/PackedMesh::MaxInd),
+                          Tempest::Vec3(-inf), uint32_t(length/PackedMesh::MaxInd)};
+    for(size_t i=offset; i<offset+length; i+=3) {
+      const auto a = mesh.indices[i], b = mesh.indices[i+1], c = mesh.indices[i+2];
+      // The meshlet's padding is a repeated index and can refer to an unused zero vertex.
+      if(a==b || b==c || a==c)
+        continue;
+      for(auto id : {a,b,c}) {
+        const auto& p = mesh.vertices[id].pos;
+        bounds.min.x = std::min(bounds.min.x,p[0]);
+        bounds.min.y = std::min(bounds.min.y,p[1]);
+        bounds.min.z = std::min(bounds.min.z,p[2]);
+        bounds.max.x = std::max(bounds.max.x,p[0]);
+        bounds.max.y = std::max(bounds.max.y,p[1]);
+        bounds.max.z = std::max(bounds.max.z,p[2]);
+        }
+      }
+    if(bounds.min.x!=inf)
+      treeHiZBoxes.push_back(bounds);
+    };
+
+  for(const auto& s : sub)
+    addBox(s.iboOffset,s.iboLength);
+  for(const auto& level : levels)
+    for(const auto& [offset,length] : level.sub)
+      addBox(offset,length);
+  }
+
+const StaticMesh::TreeHiZBounds* StaticMesh::treeHiZBox(uint32_t firstMeshlet, uint32_t meshletCount) const {
+  const auto it = std::ranges::find_if(treeHiZBoxes, [&](const auto& box) {
+    return box.firstMeshlet==firstMeshlet && box.meshletCount==meshletCount;
+    });
+  return it==treeHiZBoxes.end() ? nullptr : &*it;
   }
 
 const Tempest::AccelerationStructure* StaticMesh::blas(size_t iboOffset, size_t iboLen) const {

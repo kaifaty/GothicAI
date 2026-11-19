@@ -909,7 +909,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     prepareTaa(wview, camera);
     }
   if(treeProbe!=nullptr)
-    wview.setTreeOcclusionProbe();
+    wview.setTreeOcclusionProbe(treeProbe->verify);
   prepareMotion(wview);
   wview.setTaaReactiveLref(settings.taaReactiveLref);
   wview.setVsmLampNear(settings.vsmLampNearCm);
@@ -1555,7 +1555,7 @@ void Renderer::readGiStats(uint8_t fId) {
   gi.statsWritten[fId] = false;
   }
 
-void Renderer::captureTreeOcclusion(Attachment& result, uint8_t fId, WorldView& view, const Camera& camera) {
+void Renderer::captureTreeOcclusion(Attachment& result, uint8_t fId, WorldView& view, const Camera& camera, bool verify) {
   const char* dir = std::getenv("OPENGOTHIC_BENCH_OUT");
   if(dir==nullptr || *dir=='\0' || settings.pathTraceEnabled)
     return;
@@ -1580,6 +1580,7 @@ void Renderer::captureTreeOcclusion(Attachment& result, uint8_t fId, WorldView& 
   matrix(previousMeta, previousVP);
 
   TreeOcclusionProbe capture;
+  capture.verify = verify;
   CommandBuffer cmd;
   {
     auto enc = cmd.startEncoding(device);
@@ -1595,11 +1596,12 @@ void Renderer::captureTreeOcclusion(Attachment& result, uint8_t fId, WorldView& 
   std::ofstream info(prefix + ".txt");
   info << std::setprecision(std::numeric_limits<float>::max_digits10)
        << zbuffer.w() << ' ' << zbuffer.h() << ' ' << hiz.hiZ.w() << ' ' << hiz.hiZ.h()
-       << ' ' << view.sceneGlobals().znear << '\n';
+       << ' ' << view.sceneGlobals().znear << ' ' << (verify ? "verify" : "probe") << '\n';
   matrix(info, view.sceneGlobals().viewProject());
   for(const auto& p : frustrum[SceneGlobals::V_Main].f)
     info << p[0] << ' ' << p[1] << ' ' << p[2] << ' ' << p[3] << '\n';
-  view.writeTreeOcclusionProbe(info);
+  std::ofstream decisions(prefix + ".decisions.u32", std::ios::binary);
+  view.writeTreeOcclusionProbe(info, decisions);
 
   std::ofstream pre(prefix + ".pre.f32", std::ios::binary);
   std::ofstream main(prefix + ".main.f32", std::ios::binary);
@@ -1610,7 +1612,7 @@ void Renderer::captureTreeOcclusion(Attachment& result, uint8_t fId, WorldView& 
   savePixmap(ids, device.readPixels(gbufNormal));
   for(uint32_t mip=0; mip<hiz.hiZ.mipCount(); ++mip)
     savePixmap(levels, device.readPixels(hiz.hiZ,mip));
-  if(info && pre && main && ids && levels && previous && previousMeta)
+  if(info && pre && main && ids && levels && previous && previousMeta && decisions)
     Log::i("render: tree occlusion probe ",prefix);
   else
     Log::e("render: failed to write tree occlusion probe ",prefix);
@@ -1666,9 +1668,10 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&&
     }
   if(benchShot) {
     const char* env = std::getenv("OPENGOTHIC_TREE_OCCLUSION_PROBE");
-    const bool enabled = env!=nullptr ? std::string_view(env)=="1" : ::Settings::getI("INTERNAL","treeOcclusionProbe")!=0;
-    if(enabled)
-      captureTreeOcclusion(img,frameId,*wview,*camera);
+    const int mode = env!=nullptr ? (std::string_view(env)=="2" ? 2 : int(std::string_view(env)=="1")) :
+                                    ::Settings::getI("INTERNAL","treeOcclusionProbe");
+    if(mode!=0)
+      captureTreeOcclusion(img,frameId,*wview,*camera,mode==2);
     }
   // The tree probe stops after the G-buffer, leaving the first draw's grass diagnostic intact.
   if(!grassContactDiagnostic.isEmpty())

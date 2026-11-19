@@ -104,6 +104,7 @@ class Shaders {
     Tempest::ComputePipeline clusterInit, clusterPatch;
     Tempest::ComputePipeline visibilityPassSh, visibilityPassHiZ, visibilityPassHiZCr;
     Tempest::ComputePipeline visibilityPassShOrd, visibilityPassHiZOrd, visibilityPassHiZCrOrd;
+    Tempest::ComputePipeline visibilityPassHiZProbe, visibilityPassHiZProbeOrd;
     Tempest::ComputePipeline visibilityStats; // the frame profile's counters of the main view (DrawCommands::visibilityStats)
 
     // RT/RQ

@@ -1062,15 +1062,13 @@ void main() {
 #elif defined(MAT_MOTION)
   bucketId = materialRef;
 #endif
-#if defined(MAT_MOTION)
-  uint probeInstance = 0u;
+#if defined(GBUFFER) && defined(MAT_CLUSTER_LEVEL)
+  uint probeCluster = 0u;
   if(treeProbe) {
     const uvec4 task = payload[materialRef];
     bucketId = task.z;
-    probeInstance = task.x;
-#if defined(MAT_CLUSTER_LEVEL)
+    probeCluster = task.w;
     clusterLevel = 0u;
-#endif
     }
 #endif
 
@@ -1127,10 +1125,8 @@ void main() {
     discard;
 #endif
   if(treeProbe) {
-#if defined(MAT_MOTION)
-    outNormal = probeInstance + 1u;
-#elif defined(FLAT_NORMAL)
-    outNormal = 0xffffffffu;
+#if defined(MAT_CLUSTER_LEVEL)
+    outNormal = 0x80000000u | probeCluster;
 #else
     outNormal = 0u;
 #endif
