@@ -3,6 +3,7 @@ the forests of 64, 256 and 1 024 spruces nest, every place keeps its spruce and 
 import json
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -127,6 +128,102 @@ def test_baking_the_same_mesh_level_produces_identical_atlases(tmp_path, monkeyp
     assert set(meshes.glob('*.impostor-*.dds')) == {meshes / path for path in updated['atlases'].values()}
     entry = {'impostor': updated['atlases'], 'px': 49}
     assert [record['levels'] for record in json.loads(index.read_text()).values()] == [[source, entry]] * 2
+
+
+def test_bough_x4_adds_hierarchy_without_changing_the_spruce_or_its_fallbacks(tmp_path, monkeypatch):
+    control, impostor_root, hierarchy_root = (tmp_path / name for name in ('control', 'impostor', 'bake'))
+    probes = tmp_path / 'probes'
+    monkeypatch.setattr(fir_set, 'PROBES', probes)
+    config = fir_set.BLENDER / 'fir.json'
+
+    def write(path, data):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data if isinstance(data, bytes) else json.dumps(data).encode())
+
+    base = 'OWN_TREE_FIR_A_4'
+    visual = 'OWN_TREE_FIR_A_BOUGH_X4'
+    control_visual = 'OWN_TREE_FIR_A_BOUGH_CONTROL'
+    full = {'glb': 'trees_fir/base.glb', 'levels': [
+        {'glb': f'trees_fir/L{i}.glb', 'px': px} for i, px in enumerate((400, 200, 100, 50), 1)]}
+    mesh_bytes = {record['glb']: record['glb'].encode() for record in (full, *full['levels'])}
+    for path, data in mesh_bytes.items():
+        write(control / 'meshes' / path, data)
+    write(control / 'meshes/meshes.json', {base: full})
+    boughs = {'albedo': 'trees_fir/boughs.dds', 'normal': 'trees_fir/boughs-normal.dds',
+              'orm': 'trees_fir/boughs-orm.dds', 'foliage': fir_set.FOLIAGE['boughs'], 'two_sided': 'same'}
+    boughs_key = 'OWN_TREE_FIR_BOUGHS.TGA'
+    write(control / 'materials/materials.json', {boughs_key: boughs})
+    for kind in ('albedo', 'normal', 'orm'):
+        write(control / 'materials' / boughs[kind], boughs[kind].encode())
+    layer = 'worlds/NEWWORLD/vobs.d'
+    write(control / layer / 'fir-probe.json', {})
+
+    impostor = {'impostor': {kind: f'trees_fir/impostor-{kind}.dds' for kind in ('albedo', 'surface', 'orm')},
+                'px': 49}
+    write(impostor_root / 'meshes/meshes.json', {base: {'levels': [impostor]}})
+    for path in impostor['impostor'].values():
+        write(impostor_root / 'meshes' / path, path.encode())
+    hierarchy = {'glb': f'{visual}_H.glb', 'atlas': {'pages': [{'rgba': 'color.dds', 'attributes': 'normal.dds'}]},
+                 'nodes': [{'geometry': {'primitive': 1}}, {'geometry': {'primitive': 2, 'page': 0}}]}
+    sidecar = f'{visual}_H.json'
+    write(hierarchy_root / sidecar, hierarchy)
+    for path in ('color.dds', 'normal.dds', hierarchy['glb']):
+        write(hierarchy_root / path, path.encode())
+
+    fir_set.bough_x4(SimpleNamespace(config=config, control=control, impostor_from=impostor_root,
+                                    hierarchy=hierarchy_root, set='bough-x4/content'))
+    content = probes / 'bough-x4/content'
+    meshes = json.loads((content / 'meshes/meshes.json').read_text())
+    staged_control = dict(full, levels=[*full['levels'], impostor])
+    assert meshes == {base: full, control_visual: staged_control,
+                      visual: dict(staged_control, hierarchy=f'trees_fir/bough-x4/{sidecar}')}
+    assert json.loads((control / 'meshes/meshes.json').read_text()) == {base: full}
+    for path, data in mesh_bytes.items():
+        assert (content / 'meshes' / path).read_bytes() == (control / 'meshes' / path).read_bytes() == data
+    for path in impostor['impostor'].values():
+        assert (content / 'meshes' / path).read_bytes() == path.encode()
+
+    staged_sidecar = content / 'meshes' / meshes[visual]['hierarchy']
+    assert staged_sidecar.read_bytes() == (hierarchy_root / sidecar).read_bytes()
+    assert (staged_sidecar.parent / hierarchy['glb']).read_bytes() == hierarchy['glb'].encode()
+    materials = json.loads((content / 'materials/materials.json').read_text())
+    assert materials[boughs_key] == boughs
+    for kind in ('albedo', 'normal', 'orm'):
+        assert (content / 'materials' / boughs[kind]).read_bytes() == boughs[kind].encode()
+    page = materials['FIR_HIERARCHY_0_2.TGA']
+    assert page == {'albedo': 'trees_fir/bough-x4/color.dds', 'normal': 'trees_fir/bough-x4/normal.dds',
+                    'foliage': boughs['foliage'], 'two_sided': boughs['two_sided']}
+    for path in (page['albedo'], page['normal']):
+        staged = content / 'materials' / path
+        assert staged.read_bytes() == (staged_sidecar.parent / staged.name).read_bytes() == staged.name.encode()
+    assert not (content / layer / 'fir-probe.json').exists()
+    placements = json.loads((content / layer / 'fir-bough-x4.json').read_text())['add']
+    assert [(item['visual'], tuple(item['position'])) for item in placements] == list(zip(
+        (control_visual, visual), fir_set.EYE_ROW[:2], strict=True))
+
+
+def test_spruce_a_and_its_four_levels_rebuild_byte_for_byte(tmp_path, monkeypatch):
+    reference = fir_set.PROBES / 'lod-designed/fir-probe-4'
+    textures = reference / 'materials/trees_fir'
+    meshes = reference / 'meshes/trees_fir'
+    visual = 'OWN_TREE_FIR_A_4'
+    names = [f'{visual}.glb', *(f'{visual}_L{i}.glb' for i in range(1, 5))]
+    if not (textures / 'boughs-albedo.dds').is_file() or not all((meshes / name).is_file() for name in names):
+        pytest.skip('Requires the accepted fir-probe-4 GLBs and canopy atlas')
+
+    monkeypatch.syspath_prepend(str(fir_set.BLENDER))
+    import fir_tree
+    import tree_density
+
+    config = json.loads((fir_set.BLENDER / 'fir.json').read_text())
+    tree = fir_tree.build(config)
+    extras = dict(tree=config['id'], seed=7, scale=1.)
+    tree_glb.write(tmp_path / names[0], tree.parts, visual, extras=extras)
+    mask = tree_density.load_mask(fir_set.BLENDER / config['atlas']['mask'])
+    atlas = fir_set.load_level_atlas(textures, 'designed')
+    fir_set.write_levels(tmp_path, visual, tree, 4, extras, config, mask, atlas)
+    for name in names:
+        assert (tmp_path / name).read_bytes() == (meshes / name).read_bytes(), name
 
 
 def test_tree_occlusion_probe_detects_clear_depth_outside_the_projected_box():

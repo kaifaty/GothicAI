@@ -68,6 +68,51 @@ def _texture_sample(part, u, v):
     return base, aux
 
 
+def _triangle_mips(part, points, scale):
+    """Compute isotropic LOD from the affine UV gradients per screen pixel."""
+    mips = part['rgba_mips']
+    xy = points[part['index'], :2]
+    uv = part['uv'][part['index']]
+    extent = mips[0].shape[1::-1]
+    a, b = np.moveaxis((xy[:, 1:] - xy[:, :1]) * scale, 1, 0)
+    s, t = np.moveaxis((uv[:, 1:] - uv[:, :1]) * extent, 1, 0)
+    area = np.maximum(np.abs(a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]), 1e-20)
+    dx = s * b[:, 1:2] - t * a[:, 1:2]
+    dy = t * a[:, 0:1] - s * b[:, 0:1]
+    footprint = np.maximum(np.linalg.norm(dx, axis=1), np.linalg.norm(dy, axis=1)) / area
+    return np.minimum(np.log2(np.maximum(footprint, 1.)), len(mips) - 1)
+
+
+def _bilinear(image, u, v):
+    h, w = image.shape[:2]
+    x = np.clip(u * w - .5, 0, w - 1)
+    y = np.clip(v * h - .5, 0, h - 1)
+    xi, yi = x.astype(np.intp), y.astype(np.intp)
+    x_next, y_next = np.minimum(xi + 1, w - 1), np.minimum(yi + 1, h - 1)
+    fx, fy = np.float32(x - xi)[:, None], np.float32(y - yi)[:, None]
+    top = image[yi, xi] * (1 - fx) + image[yi, x_next] * fx
+    bottom = image[y_next, xi] * (1 - fx) + image[y_next, x_next] * fx
+    return top * (1 - fy) + bottom * fy
+
+
+def _sample_mips(mips, u, v, lod):
+    """Filter a decoded DDS mip chain before applying any cutout threshold."""
+    lod = np.minimum(lod, len(mips) - 1)
+    base = lod.astype(np.intp)
+    fraction = np.float32(lod - base)
+    samples = np.empty((len(u), mips[0].shape[2]), np.float32)
+    for level, image in enumerate(mips):
+        selected = np.flatnonzero(base == level)
+        if not len(selected):
+            continue
+        samples[selected] = _bilinear(image, u[selected], v[selected])
+        blend = selected[fraction[selected] > 0]
+        if len(blend):
+            coarser = _bilinear(mips[level + 1], u[blend], v[blend])
+            samples[blend] += (coarser - samples[blend]) * fraction[blend, None]
+    return samples
+
+
 def _cotangent_edges(part):
     p = part['position'][part['index']]
     uv = part['uv'][part['index']]
@@ -89,11 +134,12 @@ def _mapped_normal(normal, faces, edges, texels):
     return np.where(scale2[:, None] > 1e-20, mapped, normal)
 
 
-def raster(parts, projection, low, ppm, shape, *, foliage=None):
+def raster(parts, projection, low, ppm, shape, *, foliage=None, screen_ppm=None):
     """Nearest covered ray, with premultiplied linear RGB, coverage, XYZ normal and openness.
 
     If provided, foliage is a caller-allocated array of shape shape for the winning foliage alpha.
     Partial baked texels contribute their filtered coverage at the front hit; no rear colour is composited.
+    DDS mip gradients use screen_ppm when this ray grid oversamples the screen.
     """
     depth = np.full(math.prod(shape), np.inf, np.float32)
     pixels_out = np.zeros((len(depth), 8), np.float32)
@@ -107,13 +153,27 @@ def raster(parts, projection, low, ppm, shape, *, foliage=None):
         cutout = _cutout(part)
         tangent_normal = part.get('tangent_normal')
         edges = _cotangent_edges(part) if tangent_normal is not None else None
+        mips = part.get('rgba_mips')
+        normal_xy = ()
+        mip_level = None
+        if mips is not None:
+            normal_xy = tuple(mip[..., :2] for mip in part.get('normal_mips', ()))
+            scale = 1. if screen_ppm is None else screen_ppm / ppm
+            mip_level = _triangle_mips(part, points, scale)
         for faces, pixels, z, u, v, weights in tree_density.fragments(
                 points, index, shape, part['uv'], with_weights=True):
             nearer = z < depth[pixels]
             if not nearer.any():
                 continue
             candidates = np.flatnonzero(nearer)
-            rgba, aux = _texture_sample(part, u[candidates], v[candidates])
+            if mip_level is None:
+                rgba, aux = _texture_sample(part, u[candidates], v[candidates])
+            else:
+                rgba = _sample_mips(mips, u[candidates], v[candidates], mip_level[faces[candidates]])
+                if part.get('alpha_test'):
+                    rgba[:, 3] = rgba[:, 3] >= .5
+                rgba[:, :3] *= rgba[:, 3:4]
+                aux = None
             covered = np.flatnonzero(rgba[:, 3] > 0.)
             if not len(covered):
                 continue
@@ -132,7 +192,11 @@ def raster(parts, projection, low, ppm, shape, *, foliage=None):
                 barycentric = np.asarray([w[hits] for w in weights], np.float32).T
                 normal = np.einsum('nk,nkc->nc', barycentric, vertex_normals)
                 if edges is not None:
-                    texels = tangent_normal[_texel_indices(tangent_normal.shape, u[hits], v[hits], repeat=not cutout)]
+                    if normal_xy:
+                        xy = _sample_mips(normal_xy, u[hits], v[hits], mip_level[faces[hits]])
+                        texels = np.column_stack((xy, np.sqrt(np.maximum(0., 1. - np.sum(xy * xy, axis=1)))))
+                    else:
+                        texels = tangent_normal[_texel_indices(tangent_normal.shape, u[hits], v[hits], repeat=not cutout)]
                     normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-8)
                     normal = _mapped_normal(normal, faces[hits], edges, texels)
                 normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-8)
@@ -197,6 +261,7 @@ def _pack(parts):
     groups = defaultdict(list)
     for part in parts:
         key = (id(part.get('rgba')), id(part.get('attributes')), id(part.get('tangent_normal')),
+               id(part.get('rgba_mips')), id(part.get('normal_mips')),
                _cutout(part), part.get('alpha_test', False), part.get('coverage', False))
         groups[key].append(part)
     packed = []
@@ -221,9 +286,9 @@ def _views():
             yield azimuth, elevation, basis(camera)
 
 
-def _capture(parts, projection, low, ppm, shape):
+def _capture(parts, projection, low, ppm, shape, *, screen_ppm=None):
     foliage = np.empty(shape, np.float32)
-    image, _ = raster(parts, projection, low, ppm, shape, foliage=foliage)
+    image, _ = raster(parts, projection, low, ppm, shape, foliage=foliage, screen_ppm=screen_ppm)
     # Raster hits are premultiplied; keep only front foliage for tone statistics.
     luma = np.where(foliage > 0, image[..., :3] @ LUMA, 0.)
     tones = np.stack((foliage, luma, *(luma * _light(image, light) for light in LIGHTS)), axis=-1)
@@ -305,12 +370,12 @@ def _save_jpeg(sheet, destination, cap):
     raise ValueError(f'Comparison sheet exceeds {cap} bytes: {destination.name}')
 
 
-def _tree_sheet(rows, destination, azimuth, elevation):
+def _tree_sheet(rows, destination, azimuth, elevation, label):
     width = max(pair[0].width * (2 + 2 * zoom) + 56 for _, pair, zoom in rows)
     height = 43 + sum(pair[0].height * zoom + 29 for _, pair, zoom in rows)
     sheet = Image.new('RGB', (width, height), (31, 37, 39))
     draw = ImageDraw.Draw(sheet)
-    draw.text((16, 12), f'Azimuth {azimuth} deg / elevation {elevation:+d} deg     Full | Hierarchy', fill='white')
+    draw.text((16, 12), f'Azimuth {azimuth} deg / elevation {elevation:+d} deg     Full | {label}', fill='white')
     y = 42
     for px, pair, zoom in rows:
         draw.text((16, y), f'{px} px   1x and {zoom}x', fill='white')
@@ -403,11 +468,13 @@ def cost_sheet(measured, model, destination):
     _save_jpeg(sheet, destination, 160_000)
 
 
-def tree_comparisons(full_parts, alternatives, *, jpeg_dir=None):
+def tree_comparisons(full_parts, alternatives, *, jpeg_dir=None, sheet_prefix='tree-hierarchy-tree',
+                     sheet_label='Hierarchy'):
     """Compare alternatives grouped by representation and height in 24 matched orthographic frames.
 
     For a given view, full and variants use identical ray grids of projected height 1600, 800 or 400.
-    Full rays are reused for sizes sharing a grid; box filtering does the pixel integration.
+    Full mip-0 rays are reused for sizes sharing a grid; box filtering does the pixel integration.
+    Mip-enabled alternatives use the actual screen height for texture sampling.
     """
     full = _pack(full_parts)
     heights = sorted({h for meshes in alternatives.values() for h in meshes}, reverse=True)
@@ -443,13 +510,14 @@ def tree_comparisons(full_parts, alternatives, *, jpeg_dir=None):
                 if parts is full:
                     image, tones = ref_image, ref_tones
                 else:
-                    image, tones = _capture(parts, projection, origin, ray_ppm, ref_image.shape[:2])
+                    image, tones = _capture(parts, projection, origin, ray_ppm, ref_image.shape[:2],
+                                            screen_ppm=px / span[1])
                 small = resize(image, screen)
                 row = _compare(ref_small, ref_stats, outline, small, resize(tones, screen))
                 results[name][px].append(dict(azimuth=azimuth, elevation=elevation, **row))
                 if name == 'cut' and jpeg_dir is not None and (azimuth, elevation) in SHEET_VIEWS and px in (400, 200, 100, 50):
                     sheet_rows.append((px, _pair(ref_small, small), 2 if px == 400 else 3 if px == 200 else 4))
         if sheet_rows:
-            file = Path(jpeg_dir) / f'tree-hierarchy-tree-{SHEET_VIEWS[azimuth, elevation]}.jpg'
-            _tree_sheet(sheet_rows, file, azimuth, elevation)
+            file = Path(jpeg_dir) / f'{sheet_prefix}-{SHEET_VIEWS[azimuth, elevation]}.jpg'
+            _tree_sheet(sheet_rows, file, azimuth, elevation, sheet_label)
     return results
