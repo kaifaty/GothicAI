@@ -81,6 +81,9 @@ struct NpcDefinitionContract {
   static auto& previousState(Npc& npc) { return npc.aiPrevState; }
   // The engine's own routine step, without waiting for the perception period.
   static void tickRoutine(Npc& npc) { npc.aiState.loopNextTime=0; npc.tickRoutine(); }
+  // The engine's next queued action, as the NPC's tick takes it.
+  static void nextAiAction(Npc& npc) { npc.nextAiAction(npc.aiQueue,0); }
+  static const AiQueue& queue(const Npc& npc) { return npc.aiQueue; }
   static const auto& items(GameScript& script) { return script.itemDefinitions; }
   static const auto& routines(GameScript& script) { return script.routineDefinitions; }
   static auto& random(GameScript& script) { return script.randGen; }
@@ -1623,15 +1626,19 @@ std::vector<std::string> activityRun(World& world,Npc& npc,const ActivityAct& ac
   }
 
 // Both runs start from `prepare`; every phase of the NPC must run from its record and give the VM's stream.
+// The phases of `vmState`, a state without a record (the interruption), run in the VM in both.
 std::vector<std::string> activityParity(World& world,Npc& npc,const char* position,const ActivityAct& act,
-                                        const std::function<void()>& prepare,const std::vector<std::string>& expectedEvents) {
+                                        const std::function<void()>& prepare,const std::vector<std::string>& expectedEvents,
+                                        const std::string& vmState="") {
   size_t vmRecords=0,records=0;
   prepare();
   const auto expected=activityRun(world,npc,act,false,vmRecords);
   prepare();
   const auto actual=activityRun(world,npc,act,true,records);
   require(vmRecords==0,"the switched-off run must execute every phase in the VM");
-  const auto phases=size_t(std::count_if(expected.begin(),expected.end(),[](const auto& e) { return e.starts_with("phase "); }));
+  const auto phases=size_t(std::count_if(expected.begin(),expected.end(),[&](const auto& e) {
+    return e.starts_with("phase ") && (vmState.empty() || !e.starts_with("phase "+vmState));
+    }));
   if(records!=phases || phases==0)
     throw std::runtime_error(std::string("activity ")+position+": "+std::to_string(records)+" of "+std::to_string(phases)+
                              " phases ran from the record");
@@ -1646,12 +1653,18 @@ std::vector<std::string> activityParity(World& world,Npc& npc,const char* positi
   return actual;
   }
 
-// Through the engine's state machine: Init and Loop by the routine tick, an interruption that
-// switches the state (as AI_StartState of a perception handler does) runs End, the return runs
-// Init again, and the end of the routine row runs the last Loop and End.
+// Through the engine's state machine: Init and Loop by the routine tick; the interruption reaches
+// the NPC as a perception handler sends it, an AI_StartState in the queue taken by the engine, and
+// its start runs End. With `routine` (a time inside the activity's routine row) the interruption
+// ends by its time and the routine tick returns the NPC to the activity; without it the test
+// restarts the activity. The end of the routine row runs the last Loop and End.
 std::vector<std::string> activityEngine(World& world,Npc& npc,const char* position,const ActivityPhases& anvil,
-                                        size_t interruption,const std::function<void()>& place,const std::string& point) {
+                                        size_t interruption,const std::function<void()>& place,const std::string& point,
+                                        std::optional<gtime> routine={}) {
+  auto& session=*Gothic::inst().gameSession();
+  const auto time=world.time();
   auto prepare=[&] {
+    if(routine) session.setTime(*routine);
     place();
     npc.clearAiQueue();
     NpcDefinitionContract::aiState(npc)={};
@@ -1661,14 +1674,35 @@ std::vector<std::string> activityEngine(World& world,Npc& npc,const char* positi
   auto act=[&] {
     NpcDefinitionContract::tickRoutine(npc);
     NpcDefinitionContract::tickRoutine(npc);
-    require(npc.startState(interruption,""),"the interruption must switch the state");
-    require(npc.startState(anvil.init,point),"the NPC must return to the activity");
-    NpcDefinitionContract::tickRoutine(npc);
+    npc.clearAiQueue();
+    npc.aiPush(AiQueue::aiStartState(ScriptFn(interruption),1,nullptr,nullptr,""));
+    NpcDefinitionContract::nextAiAction(npc);
+    require(npc.isInState(interruption),"the queued interruption must switch the state");
+    if(routine) {
+      NpcDefinitionContract::aiState(npc).eTime=world.time();
+      for(int i=0;i<3 && !npc.isInState(anvil.init);++i)
+        NpcDefinitionContract::tickRoutine(npc);
+      require(npc.isInState(anvil.init),"the routine tick must return the NPC to the activity");
+      } else {
+      require(npc.startState(anvil.init,point),"the NPC must return to the activity");
+      }
+    // The routine tick that returns the NPC runs Init at once; a restart runs it on the next tick.
+    if(!NpcDefinitionContract::aiState(npc).started)
+      NpcDefinitionContract::tickRoutine(npc);
     NpcDefinitionContract::tickRoutine(npc);
     NpcDefinitionContract::aiState(npc).eTime=world.time();
     NpcDefinitionContract::tickRoutine(npc);
     };
-  const auto events=activityParity(world,npc,position,act,prepare,{});
+  if(routine) {
+    // The interruption's own phases run in the VM in both runs and write script globals (ZS_Talk_Loop
+    // its zsTalkBugfix): one run first, so that both compared runs start from the same globals.
+    size_t ignored=0;
+    prepare();
+    activityRun(world,npc,act,true,ignored);
+    }
+  const auto events=activityParity(world,npc,position,act,prepare,{},
+                                   std::string(world.script().symbolName(interruption)));
+  if(routine) session.setTime(time);
   const auto name=std::string(world.script().symbolName(anvil.init));
   require(activityCount(events,"phase "+name)==2 && activityCount(events,"phase "+name+"_LOOP")==3 &&
           activityCount(events,"phase "+name+"_END")==2,
@@ -1677,8 +1711,57 @@ std::vector<std::string> activityEngine(World& world,Npc& npc,const char* positi
   return events;
   }
 
+// The NPC's queue as text, front first, without taking it.
+std::vector<std::string> activityQueue(const Npc& npc) {
+  auto queue=NpcDefinitionContract::queue(npc);
+  std::vector<std::string> actions;
+  while(queue.size()>0) {
+    const auto a=queue.pop();
+    actions.push_back(std::string(AiQueue::actionName(uint32_t(a.act)))+" "+std::to_string(a.i0)+" "+std::to_string(a.i1)+" "+
+                      a.s0+" "+(a.point ? a.point->name : "")+" "+(a.target ? std::string(a.target->displayName()) : "")+" "+
+                      std::to_string(a.func.ptr));
+    }
+  return actions;
+  }
+
+// Commands the queue received for walking to `point`.
+size_t activityWalks(const std::vector<std::string>& events,const std::string& point) {
+  return size_t(std::count_if(events.begin(),events.end(),[&](const auto& e) {
+    return e.starts_with("queue GoToPoint ") && e.find(" "+point+" ")!=std::string::npos;
+    }));
+  }
+
+// A distance approach on both sides of its threshold: where the engine reports exactly the threshold
+// the script neither asks to walk nor queues a walk, one unit more does both, once.
+size_t activityThreshold(World& world,Npc& npc,const std::string& label,size_t init,int32_t threshold,
+                         const std::string& point,const std::function<void()>& place) {
+  const auto* wp=world.findWayPoint(point);
+  require(wp!=nullptr,("the approach point must exist: "+point).c_str());
+  std::optional<float> at,past;
+  for(float dx=0;dx<4*float(threshold) && !(at && past);dx+=0.25f) {
+    npc.setPosition(wp->position()+Tempest::Vec3(dx,0,0));
+    const auto distance=NpcEngineCalls::distanceToWaypoint(world,npc,point);
+    if(!at && distance==threshold) at=dx;
+    if(!past && distance==threshold+1) past=dx;
+    }
+  require(at && past,"the threshold distances must be reachable along the point's x axis");
+  size_t events=0;
+  for(const auto& [dx,distance]:{std::pair{*at,threshold},std::pair{*past,threshold+1}}) {
+    const auto position=label+(distance==threshold ? " at the approach threshold" : " just past the approach threshold");
+    const auto stream=activityParity(world,npc,position.c_str(),activityInvoke(world,npc,{init}),[&,dx=dx] {
+      place();
+      npc.setPosition(wp->position()+Tempest::Vec3(dx,0,0));
+      },{"NPC_GETDISTTOWP(self,\""+point+"\")->"+std::to_string(distance)});
+    const size_t walks=distance==threshold ? 0 : 1;
+    require(activityCount(stream,"AI_GOTOWP(self,\""+point+"\")")==walks && activityWalks(stream,point)==walks,
+            "past the threshold, and only there, the NPC must ask once to walk and queue the walk");
+    events+=stream.size();
+    }
+  return events;
+  }
+
 // The switch and the accepted list through the loader the game calls.
-void activitySwitch(GameScript& script,const char* accepted,const char* other) {
+void activitySwitch(GameScript& script,const std::vector<std::string>& accepted,const char* other) {
   const auto base=baseProgramIndex().dir.parent_path();
   std::string sha;
   loadBaseProgram(Gothic::inst().defaultGameDatFile(),Settings::getI("GAME","language"),&sha);
@@ -1699,25 +1782,36 @@ void activitySwitch(GameScript& script,const char* accepted,const char* other) {
   auto loaded=[&](const char* value) {
     if(value) setenv("OPENGOTHIC_ACTIVITY_RECORDS",value,1); else unsetenv("OPENGOTHIC_ACTIVITY_RECORDS");
     const auto definitions=ActivityDefinitionRuntime::load(base,script.getVm(),sha);
-    return std::pair{runs(definitions,accepted),runs(definitions,other)};
+    size_t acceptedRuns=0;
+    for(const auto& state:accepted)
+      acceptedRuns+=runs(definitions,state.c_str()) ? 1 : 0;
+    return std::tuple{acceptedRuns,runs(definitions,other),definitions.phases.size()};
     };
-  require(loaded(nullptr)==std::pair{true,false},"by default only the accepted activity runs from its record");
-  require(loaded("1")==std::pair{true,false},"another switch value keeps the accepted list");
-  require(loaded("0")==std::pair{false,false},"OPENGOTHIC_ACTIVITY_RECORDS=0 must run every activity in the VM");
-  require(loaded("all")==std::pair{true,other!=nullptr},"OPENGOTHIC_ACTIVITY_RECORDS=all must run every captured activity from its record");
-  std::printf("Activity switch: default and 1 run %s only, 0 none, all every captured state\n",accepted);
+  const auto all=accepted.size(),captured=all+(other!=nullptr ? 1 : 0);
+  require(loaded(nullptr)==std::tuple{all,false,3*all},"by default every accepted activity, and only those, runs from its record");
+  require(loaded("1")==std::tuple{all,false,3*all},"another switch value keeps the accepted list");
+  require(loaded("0")==std::tuple{size_t(0),false,size_t(0)},"OPENGOTHIC_ACTIVITY_RECORDS=0 must run every activity in the VM");
+  require(loaded("all")==std::tuple{all,other!=nullptr,3*captured},
+          "OPENGOTHIC_ACTIVITY_RECORDS=all must run every captured activity from its record");
+  std::printf("Activity switch: default and 1 run the %zu accepted states only, 0 none, all every captured state\n",all);
   }
 
 void activityDefinitionsSynthetic(World& world) {
   auto& script=world.script();
-  activitySwitch(script,"ZS_SMITH_ANVIL","ZS_SMITH_FIRE");
+  activitySwitch(script,{"ZS_SMITH_ANVIL","ZS_SMOKE_WATERPIPE"},"ZS_ROAST_SCAVENGER");
+  // The game's accepted list itself, without game data.
+  for(const char* state:{"ZS_SMITH_ANVIL","ZS_SMITH_COOL","ZS_SMITH_FIRE","ZS_SMITH_SHARP","ZS_READ_BOOKSTAND",
+                         "ZS_STOMP_HERB","ZS_SMOKE_WATERPIPE"})
+    require(ActivityDefinitionRuntime::accepted(state),(std::string("the game must accept ")+state).c_str());
+  require(!ActivityDefinitionRuntime::accepted("ZS_ROAST_SCAVENGER"),"ZS_ROAST_SCAVENGER has no day parity and stays in the VM");
   auto* npc=world.addNpc(script.findSymbolIndex("NPC_NO_ID"),Tempest::Vec3{});
   require(npc!=nullptr,"activity NPC must exist");
-  const auto anvil=activityPhases(script,"ZS_SMITH_ANVIL"),fire=activityPhases(script,"ZS_SMITH_FIRE");
+  const auto anvil=activityPhases(script,"ZS_SMITH_ANVIL"),roast=activityPhases(script,"ZS_ROAST_SCAVENGER");
   const auto& phases=NpcDefinitionContract::activities(script).phases;
   require(phases.contains(anvil.init) && phases.contains(anvil.loop) && phases.contains(anvil.end),
           "the game must load the accepted activity record");
-  require(!phases.contains(fire.init),"a captured activity outside the accepted list must stay in the VM");
+  require(!phases.contains(roast.init) && !phases.contains(roast.loop) && !phases.contains(roast.end),
+          "a captured activity outside the accepted list must stay in the VM");
   auto at=[&](const char* wp) { return [npc,wp] { npc->handle().wp=wp; }; };
   size_t events=0;
   events+=activityParity(world,*npc,"at its point",activityInvoke(world,*npc,{anvil.init,anvil.loop,anvil.end}),at("TEST_WP"),
@@ -1727,6 +1821,8 @@ void activityDefinitionsSynthetic(World& world) {
                          {"AI_GOTOWP(self,\"CONTRACT_FAR_WP\")"}).size();
   events+=activityEngine(world,*npc,"interrupted, resumed, row over",anvil,script.findSymbolIndex("ZS_TEST"),
                          at("TEST_WP"),"TEST_WP").size();
+  const auto pipe=activityPhases(script,"ZS_SMOKE_WATERPIPE");
+  events+=activityThreshold(world,*npc,"ZS_SMOKE_WATERPIPE",pipe.init,500,"TEST_WP",at("TEST_WP"));
   // No object exists without game data: the game's host must still queue the use with its state.
   npc->clearAiQueue();
   NpcActivityHost(world,*npc,[](std::string_view) {}).useMob("BSANVIL",1);
@@ -1740,7 +1836,7 @@ void activityDefinitionsSynthetic(World& world) {
   std::filesystem::create_directories(directory);
   std::string error;
   if(!NpcDayMeasurement::start(world,directory.string(),0,false,{},error)) throw std::runtime_error(error);
-  for(auto function:{anvil.init,anvil.loop,anvil.end,fire.init,fire.loop,fire.end})
+  for(auto function:{anvil.init,anvil.loop,anvil.end,roast.init,roast.loop,roast.end})
     script.invokeState(npc,nullptr,nullptr,uint32_t(function));
   NpcDayMeasurement::stop(world);
   std::ifstream file(directory/"npc-day-script.json");
@@ -1756,19 +1852,19 @@ void activityDefinitionsSynthetic(World& world) {
   for(const char* name:{"init","loop","end"}) {
     require(phase("ZS_SMITH_ANVIL",name,"engine")==1 && phase("ZS_SMITH_ANVIL",name,"records")==1,
             "the accepted phase must be counted once, from its record");
-    require(phase("ZS_SMITH_FIRE",name,"engine")==1 && phase("ZS_SMITH_FIRE",name,"records")==0,
+    require(phase("ZS_ROAST_SCAVENGER",name,"engine")==1 && phase("ZS_ROAST_SCAVENGER",name,"records")==0,
             "the outside phase must be counted once, from the VM");
     }
   require(phase("ZS_SMITH_ANVIL","init","nested")==1 && phase("ZS_SMITH_ANVIL","loop","nested")==0 &&
           phase("ZS_SMITH_ANVIL","end","nested")==0,"a record phase runs only its deferred perception helper in the VM");
-  require(phase("ZS_SMITH_FIRE","init","nested")==3 && phase("ZS_SMITH_FIRE","loop","nested")==1,
+  require(phase("ZS_ROAST_SCAVENGER","init","nested")==3 && phase("ZS_ROAST_SCAVENGER","loop","nested")==1,
           "the VM phase runs its helpers");
   // The nine instructions of the fixture's Perception_Set_Normal stay counted in the record's Init.
   require(phase("ZS_SMITH_ANVIL","init","instructions")==9 && phase("ZS_SMITH_ANVIL","loop","instructions")==0 &&
-          phase("ZS_SMITH_ANVIL","end","instructions")==0 && phase("ZS_SMITH_FIRE","init","instructions")>9,
+          phase("ZS_SMITH_ANVIL","end","instructions")==0 && phase("ZS_ROAST_SCAVENGER","init","instructions")>9,
           "a record phase counts only the instructions of its deferred helper");
   world.removeNpc(*npc);
-  std::printf("Activity counters: ZS_SMITH_ANVIL 3 phases from the record, ZS_SMITH_FIRE 3 from the VM; %zu equal events\n",events);
+  std::printf("Activity counters: ZS_SMITH_ANVIL 3 phases from the record, ZS_ROAST_SCAVENGER 3 from the VM; %zu equal events\n",events);
   }
 
 Npc* activityNpc(World& world,const char* name) {
@@ -1779,91 +1875,223 @@ Npc* activityNpc(World& world,const char* name) {
   return nullptr;
   }
 
-// Harad at the real anvil of NEWWORLD: every position of the activity, then a save and load mid-Loop.
-void activityDefinitionsWorld(Gothic& gothic) {
-  auto& world=*gothic.world();
-  auto& script=world.script();
-  activitySwitch(script,"ZS_SMITH_ANVIL",nullptr);
-  auto* harad=activityNpc(world,"VLK_412_HARAD");
-  require(harad!=nullptr,"NEWWORLD must contain Harad");
-  const auto anvil=activityPhases(script,"ZS_SMITH_ANVIL");
+// The accepted activities of NEWWORLD, with the object scheme and the approach threshold their
+// scripts pass (0: the nearest-waypoint approach). Written from the scripts, not from the record,
+// so a record with another state's parameters fails the stream comparison with the VM.
+struct WorldActivitySpec {
+  const char* state;
+  const char* scheme;
+  int32_t     approachDistance;
+  size_t      objects; // free objects of the scheme the actor reaches from its point in NEWWORLD
+  const char* actor;   // a fixed actor, or null for the first NPC with a row of the state
+  };
+constexpr WorldActivitySpec worldActivities[]={
+  {"ZS_SMITH_ANVIL","BSANVIL",0,1,"VLK_412_HARAD"},
+  {"ZS_SMITH_COOL","BSCOOL",0,2,nullptr},
+  {"ZS_SMITH_FIRE","BSFIRE",0,1,nullptr},
+  {"ZS_SMITH_SHARP","BSSHARP",0,1,nullptr},
+  {"ZS_READ_BOOKSTAND","BOOK",0,1,nullptr},
+  {"ZS_STOMP_HERB","HERB",0,1,nullptr},
+  {"ZS_SMOKE_WATERPIPE","SMOKE",500,3,nullptr},
+  };
+
+struct WorldActivity {
+  const WorldActivitySpec* spec=nullptr;
+  ActivityPhases           phases;
+  Npc*                     actor=nullptr;
+  std::string              actorName;
+  const WayPoint*          point=nullptr;
+  std::string              pointName;
+  gtime                    rowStart;
+  Interactive*             mob=nullptr;
+  std::vector<Npc*>        occupants; // occupy every free object of the scheme near the point
+  };
+
+std::string npcName(World& world,const Npc& npc) { return std::string(world.script().symbolName(npc.instanceSymbol())); }
+
+const WayPoint* activityRow(Npc& npc,size_t init,std::string& name,gtime* start=nullptr) {
   const WayPoint* point=nullptr;
-  std::string pointName;
-  harad->forEachRoutine([&](const Npc::RoutineInfo& row) {
-    if(point==nullptr && row.state.ptr==anvil.init) { point=row.waypoint; pointName=std::string(row.point); }
+  npc.forEachRoutine([&](const Npc::RoutineInfo& row) {
+    if(point==nullptr && row.state.ptr==init && row.waypoint!=nullptr) {
+      point=row.waypoint; name=std::string(row.point);
+      if(start) *start=row.start;
+      }
     });
-  require(point!=nullptr,"Harad's routine must have an anvil row with a point");
-  // A smith with the anvil routine, standing elsewhere, to occupy the anvil.
-  Npc* other=nullptr;
-  for(uint32_t i=0;i<world.npcCount() && other==nullptr;++i) {
-    auto* npc=world.npcById(i);
-    if(npc==harad || npc->isPlayer() || !npc->isHuman() || npc->isDead()) continue;
-    npc->forEachRoutine([&](const Npc::RoutineInfo& row) { if(row.state.ptr==anvil.init) other=npc; });
-    }
-  require(other!=nullptr,"another smith must exist to occupy the anvil");
-  const auto home=harad->position(),otherHome=other->position();
-  const std::string otherName(world.script().symbolName(other->instanceSymbol()));
-  const auto homeWp=harad->handle().wp;
-  auto atAnvil=[&] {
-    other->setInteraction(nullptr,true);
-    harad->setInteraction(nullptr,true);
-    harad->setPosition(point->position());
-    harad->handle().wp=pointName;
+  return point;
+  }
+
+bool activityCandidate(Npc& npc) { return !npc.isPlayer() && npc.isHuman() && !npc.isDead(); }
+
+// Every position of one activity at its real object: at the object, far from the point, the object
+// taken by other NPCs, already at the object, both sides of a distance approach, and the engine's
+// interruption, return and end of the row. Then the saved state after record phases.
+size_t activityAtObject(World& world,WorldActivity& activity,const std::set<Npc*>& reserved) {
+  auto& script=world.script();
+  auto& actor=*activity.actor;
+  const auto& phases=activity.phases;
+  const auto* point=activity.point;
+  const auto& pointName=activity.pointName;
+  const std::string scheme="\""+std::string(activity.spec->scheme)+"\"";
+  auto atPoint=[&] {
+    for(auto* other:activity.occupants)
+      other->setInteraction(nullptr,true);
+    actor.setInteraction(nullptr,true);
+    actor.setPosition(point->position());
+    actor.handle().wp=pointName;
     };
-  atAnvil();
-  auto* mob=world.availableMob(*harad,"BSANVIL");
-  require(mob!=nullptr,"Harad's anvil point must have a free BSANVIL");
-  const std::string scheme="\"BSANVIL\"";
+  atPoint();
+  activity.mob=world.availableMob(actor,activity.spec->scheme);
+  require(activity.mob!=nullptr,(activity.actorName+"'s point must have a free "+activity.spec->scheme).c_str());
+  // Other NPCs, preferably with the same activity, take every free object of the scheme in reach.
+  std::vector<Npc*> candidates;
+  for(int pass=0;pass<2;++pass)
+    for(uint32_t i=0;i<world.npcCount();++i) {
+      auto* npc=world.npcById(i);
+      if(reserved.contains(npc) || !activityCandidate(*npc)) continue;
+      std::string ignored;
+      const bool same=activityRow(*npc,phases.init,ignored)!=nullptr;
+      if(same==(pass==0) && std::find(candidates.begin(),candidates.end(),npc)==candidates.end())
+        candidates.push_back(npc);
+      }
+  auto occupy=[&] {
+    atPoint();
+    size_t used=0;
+    while(auto* free=world.availableMob(actor,activity.spec->scheme)) {
+      require(used<candidates.size(),("more free "+std::string(activity.spec->scheme)+" objects than NPCs to take them").c_str());
+      auto* other=candidates[used++];
+      other->setInteraction(nullptr,true);
+      require(other->setInteraction(free,true),"another NPC must occupy the object");
+      if(std::find(activity.occupants.begin(),activity.occupants.end(),other)==activity.occupants.end())
+        activity.occupants.push_back(other);
+      }
+    // Every object of the scheme in reach, not only the nearest: a search that stops at the first
+    // taken object would leave the others free and still answer "none".
+    require(used==activity.spec->objects,(activity.actorName+" must reach "+std::to_string(activity.spec->objects)+" "+
+            activity.spec->scheme+" objects, took "+std::to_string(used)).c_str());
+    };
+  const auto label=[&](const char* position) { return activity.spec->state+std::string(" ")+position; };
+  std::vector<std::string> labels;
   size_t events=0;
-  events+=activityParity(world,*harad,"at the object",activityInvoke(world,*harad,{anvil.init,anvil.loop,anvil.end}),atAnvil,
-                         {"WLD_ISMOBAVAILABLE(self,"+scheme+")->1","AI_USEMOB(self,"+scheme+",1)->0","AI_USEMOB(self,"+scheme+",-1)->0"}).size();
-  events+=activityParity(world,*harad,"far from the point",activityInvoke(world,*harad,{anvil.init,anvil.loop}),[&] {
-    atAnvil();
-    harad->setPosition(point->position()+Tempest::Vec3(4000,0,0));
-    },{"AI_GOTOWP(self,\""+pointName+"\")","WLD_ISMOBAVAILABLE(self,"+scheme+")->0"}).size();
-  events+=activityParity(world,*harad,"object taken by another NPC",activityInvoke(world,*harad,{anvil.loop}),[&] {
-    atAnvil();
-    require(other->setInteraction(mob,true),"the other smith must occupy the anvil");
-    },{"WLD_ISMOBAVAILABLE(self,"+scheme+")->0"}).size();
-  events+=activityParity(world,*harad,"already at the object",activityInvoke(world,*harad,{anvil.loop,anvil.end}),[&] {
-    atAnvil();
-    require(harad->setInteraction(mob,true),"Harad must use the anvil");
-    },{"WLD_ISMOBAVAILABLE(self,"+scheme+")->1"}).size();
-  events+=activityEngine(world,*harad,"interrupted, resumed, row over",anvil,script.findSymbolIndex("ZS_TALK"),atAnvil,pointName).size();
-  // The saved state after the record phases: Harad's state is equal; the VM differs only in the
+  auto parity=[&](const char* position,const ActivityAct& act,const std::function<void()>& prepare,
+                  const std::vector<std::string>& expected) {
+    labels.push_back(label(position));
+    const auto stream=activityParity(world,actor,labels.back().c_str(),act,prepare,expected);
+    events+=stream.size();
+    return stream;
+    };
+  auto gotoCount=[&](const std::vector<std::string>& stream) {
+    return size_t(std::count_if(stream.begin(),stream.end(),[](const auto& e) { return e.starts_with("AI_GOTOWP("); }));
+    };
+  parity("at the object",activityInvoke(world,actor,{phases.init,phases.loop,phases.end}),atPoint,
+         {"WLD_ISMOBAVAILABLE(self,"+scheme+")->1","AI_USEMOB(self,"+scheme+",1)->0","AI_USEMOB(self,"+scheme+",-1)->0"});
+  const auto far=parity("far from the point",activityInvoke(world,actor,{phases.init,phases.loop}),[&] {
+    atPoint();
+    actor.setPosition(point->position()+Tempest::Vec3(4000,0,0));
+    },{"AI_GOTOWP(self,\""+pointName+"\")","WLD_ISMOBAVAILABLE(self,"+scheme+")->0"});
+  require(gotoCount(far)==1 && activityWalks(far,pointName)==1,"far from the point the NPC must queue one walk there");
+  parity("object taken by another NPC",activityInvoke(world,actor,{phases.loop}),occupy,
+         {"WLD_ISMOBAVAILABLE(self,"+scheme+")->0"});
+  parity("already at the object",activityInvoke(world,actor,{phases.loop,phases.end}),[&] {
+    atPoint();
+    require(actor.setInteraction(activity.mob,true),"the actor must use the object");
+    },{"WLD_ISMOBAVAILABLE(self,"+scheme+")->1"});
+  if(const auto threshold=activity.spec->approachDistance; threshold>0)
+    events+=activityThreshold(world,actor,activity.spec->state,phases.init,threshold,pointName,atPoint);
+  const auto talk=script.findSymbolIndex("ZS_TALK");
+  labels.push_back(label("interrupted, resumed, row over"));
+  gtime routine(world.time().day(),int32_t(activity.rowStart.hour()),int32_t(activity.rowStart.minute()));
+  routine.addMilis(60*1000);
+  events+=activityEngine(world,actor,labels.back().c_str(),phases,talk,atPoint,pointName,routine).size();
+  // The saved state after the record phases: the actor's state is equal; the VM differs only in the
   // locals of the script helpers the record does not call. Each is assigned before it is read.
-  // The other smith's VM phases run first, as in the game some other NPC called the helpers last.
+  // Another NPC's VM phases run first, as in the game some other NPC called the helpers last.
+  auto* other=candidates.front();
   size_t ignored=0;
-  atAnvil();
-  activityRun(world,*other,activityInvoke(world,*other,{anvil.init,anvil.loop}),false,ignored);
-  activityRun(world,*harad,activityInvoke(world,*harad,{anvil.init,anvil.loop}),true,ignored);
-  const auto recordNpc=npcState(*harad);
+  atPoint();
+  activityRun(world,*other,activityInvoke(world,*other,{phases.init,phases.loop}),false,ignored);
+  activityRun(world,actor,activityInvoke(world,actor,{phases.init,phases.loop}),true,ignored);
+  const auto recordNpc=npcState(actor);
   const auto recordLocals=placementSymbols(script,true);
-  atAnvil();
-  activityRun(world,*other,activityInvoke(world,*other,{anvil.init,anvil.loop}),false,ignored);
-  activityRun(world,*harad,activityInvoke(world,*harad,{anvil.init,anvil.loop}),false,ignored);
+  atPoint();
+  activityRun(world,*other,activityInvoke(world,*other,{phases.init,phases.loop}),false,ignored);
+  activityRun(world,actor,activityInvoke(world,actor,{phases.init,phases.loop}),false,ignored);
   other->clearAiQueue();
-  require(npcState(*harad)==recordNpc,"Harad's saved state after the record phases must equal the VM's");
+  require(npcState(actor)==recordNpc,(activity.actorName+"'s saved state after the record phases must equal the VM's").c_str());
   const std::set<std::string> helperLocals={"B_RESETALL.SLF","B_STOPLOOKAT.SLF","B_STOPLOOKAT.TARGET",
                                             "C_BODYSTATECONTAINS.SLF","C_BODYSTATECONTAINS.BODYSTATE"};
   std::set<std::string> differing;
   for(const auto& [name,value]:placementSymbols(script,true))
     if(!recordLocals.contains(name) || recordLocals.at(name)!=value) differing.insert(name.substr(0,name.find('[')));
-  std::string names;
-  for(const auto& name:differing) {
+  for(const auto& name:differing)
     require(helperLocals.contains(name),("a saved VM symbol differs outside the skipped helpers: "+name).c_str());
-    names+=(names.empty() ? "" : ", ")+name;
+  std::printf("Activity %s at %s (%s, %zu occupants from %s): %zu equal events, VM locals differ in %zu skipped-helper symbols\n",
+              activity.spec->state,pointName.c_str(),activity.actorName.c_str(),activity.occupants.size(),
+              npcName(world,*activity.occupants.front()).c_str(),events,differing.size());
+  return events;
+  }
+
+// Every accepted activity at its real object in NEWWORLD, each with its own actor; then one save
+// with every actor in the middle of its Loop, and after the load each continues with its restored Loop.
+void activityDefinitionsWorld(Gothic& gothic) {
+  auto& world=*gothic.world();
+  auto& script=world.script();
+  std::vector<std::string> accepted;
+  for(const auto& spec:worldActivities)
+    accepted.emplace_back(spec.state);
+  activitySwitch(script,accepted,"ZS_ROAST_SCAVENGER");
+  std::vector<WorldActivity> activities;
+  std::set<Npc*> actors;
+  for(const auto& spec:worldActivities) {
+    WorldActivity activity;
+    activity.spec=&spec;
+    activity.phases=activityPhases(script,spec.state);
+    if(spec.actor!=nullptr) {
+      activity.actor=activityNpc(world,spec.actor);
+      require(activity.actor!=nullptr,(std::string("NEWWORLD must contain ")+spec.actor).c_str());
+      activity.point=activityRow(*activity.actor,activity.phases.init,activity.pointName,&activity.rowStart);
+      } else {
+      for(uint32_t i=0;i<world.npcCount() && activity.point==nullptr;++i) {
+        auto* npc=world.npcById(i);
+        if(actors.contains(npc) || !activityCandidate(*npc)) continue;
+        if((activity.point=activityRow(*npc,activity.phases.init,activity.pointName,&activity.rowStart))!=nullptr)
+          activity.actor=npc;
+        }
+      }
+    require(activity.actor!=nullptr && activity.point!=nullptr,(std::string("NEWWORLD must have an NPC with a ")+spec.state+" row").c_str());
+    activity.actorName=npcName(world,*activity.actor);
+    actors.insert(activity.actor);
+    activities.push_back(std::move(activity));
     }
-  std::printf("Activity save state: Harad equal; VM locals differ only in %zu skipped-helper symbols: %s\n",differing.size(),names.c_str());
-  // A save in the middle of the activity, after the engine's Init and Loop: the loaded Harad
-  // continues with the restored Loop through the routine tick, from the record as from the VM.
-  atAnvil();
-  harad->clearAiQueue();
-  NpcDefinitionContract::aiState(*harad)={};
-  require(harad->startState(anvil.init,pointName),"Harad must enter the anvil state");
-  NpcDefinitionContract::tickRoutine(*harad);
-  NpcDefinitionContract::tickRoutine(*harad);
-  require(NpcDefinitionContract::aiState(*harad).started,"the engine must have started the activity before the save");
+  require(NpcDefinitionContract::activities(script).phases.size()==3*activities.size(),
+          "the game must load exactly the accepted activity records");
+  size_t events=0;
+  for(auto& activity:activities)
+    events+=activityAtObject(world,activity,actors);
+  // A save in the middle of every activity, after the engine's Init and Loop.
+  for(auto& activity:activities) {
+    auto& actor=*activity.actor;
+    for(auto* other:activity.occupants) { other->setInteraction(nullptr,true); other->clearAiQueue(); }
+    actor.setInteraction(nullptr,true);
+    actor.setPosition(activity.point->position());
+    actor.handle().wp=activity.pointName;
+    actor.clearAiQueue();
+    NpcDefinitionContract::aiState(actor)={};
+    NpcDefinitionContract::previousState(actor)={};
+    }
+  for(auto& activity:activities) {
+    auto& actor=*activity.actor;
+    require(actor.startState(activity.phases.init,activity.pointName),(activity.actorName+" must enter "+activity.spec->state).c_str());
+    NpcDefinitionContract::tickRoutine(actor);
+    NpcDefinitionContract::tickRoutine(actor);
+    require(NpcDefinitionContract::aiState(actor).started,"the engine must have started the activity before the save");
+    }
+  std::vector<std::vector<std::string>> savedQueues;
+  for(const auto& activity:activities) {
+    savedQueues.push_back(activityQueue(*activity.actor));
+    require(std::any_of(savedQueues.back().begin(),savedQueues.back().end(),[&](const auto& a) {
+              return a.starts_with("UseMob 1 0 "+std::string(activity.spec->scheme)+" "); }),
+            (activity.actorName+"'s Loop must have queued the use of its object before the save").c_str());
+    }
   std::vector<uint8_t> bytes;
   {
     Tempest::MemWriter writer(bytes);
@@ -1872,38 +2100,40 @@ void activityDefinitionsWorld(Gothic& gothic) {
     std::memset(preview.data(),0,4);
     gothic.gameSession()->save(out,"activity mid-loop",preview);
   }
-  harad->setInteraction(nullptr,true);
-  harad->setPosition(home);
-  harad->handle().wp=homeWp;
-  other->setInteraction(nullptr,true);
-  other->setPosition(otherHome);
   gothic.clearGame().reset();
   {
     Tempest::MemReader reader(bytes);
     Serialize in(reader);
     gothic.setGame(std::make_unique<GameSession>(in));
   }
+  // `world` and every actor belong to the session replaced by the load.
   auto& loaded=*gothic.world();
-  auto* restored=activityNpc(loaded,"VLK_412_HARAD");
-  require(restored!=nullptr && restored->isInState(anvil.init),"the loaded Harad must be in the anvil state");
-  require(NpcDefinitionContract::activities(loaded.script()).phases.contains(anvil.loop),"the loaded game must load the record");
-  const auto savedState=NpcDefinitionContract::aiState(*restored);
-  const auto savedPrevious=NpcDefinitionContract::previousState(*restored);
-  const auto afterLoad=activityParity(loaded,*restored,"after loading mid-activity",[&] {
-    NpcDefinitionContract::tickRoutine(*restored);
-    NpcDefinitionContract::aiState(*restored).eTime=loaded.time();
-    NpcDefinitionContract::tickRoutine(*restored);
-    },[&] {
-    restored->clearAiQueue();
-    NpcDefinitionContract::aiState(*restored)=savedState;
-    NpcDefinitionContract::previousState(*restored)=savedPrevious;
-    },{"WLD_ISMOBAVAILABLE(self,"+scheme+")->1"});
-  require(activityCount(afterLoad,"phase ZS_SMITH_ANVIL")==0 && activityCount(afterLoad,"phase ZS_SMITH_ANVIL_LOOP")==2 &&
-          activityCount(afterLoad,"phase ZS_SMITH_ANVIL_END")==1,
-          "the loaded Harad must continue with his restored Loop, then end the row");
-  events+=afterLoad.size();
-  // `world`, `harad` and `other` belong to the session replaced by the load.
-  std::printf("Activity at Harad's anvil (%s, other smith %s): %zu equal events\n",pointName.c_str(),otherName.c_str(),events);
+  for(size_t i=0;i<activities.size();++i) {
+    const auto& activity=activities[i];
+    const auto& phases=activity.phases;
+    const std::string state=activity.spec->state;
+    auto* restored=activityNpc(loaded,activity.actorName.c_str());
+    require(restored!=nullptr && restored->isInState(phases.init),("the loaded "+activity.actorName+" must be in "+state).c_str());
+    require(activityQueue(*restored)==savedQueues[i],("the loaded "+activity.actorName+" must keep the queue of the save").c_str());
+    require(NpcDefinitionContract::activities(loaded.script()).phases.contains(phases.loop),"the loaded game must load the record");
+    const auto savedState=NpcDefinitionContract::aiState(*restored);
+    const auto savedPrevious=NpcDefinitionContract::previousState(*restored);
+    const auto position=state+" after loading mid-activity";
+    const auto afterLoad=activityParity(loaded,*restored,position.c_str(),[&] {
+      NpcDefinitionContract::tickRoutine(*restored);
+      NpcDefinitionContract::aiState(*restored).eTime=loaded.time();
+      NpcDefinitionContract::tickRoutine(*restored);
+      },[&] {
+      restored->clearAiQueue();
+      NpcDefinitionContract::aiState(*restored)=savedState;
+      NpcDefinitionContract::previousState(*restored)=savedPrevious;
+      },{"WLD_ISMOBAVAILABLE(self,\""+std::string(activity.spec->scheme)+"\")->1"});
+    require(activityCount(afterLoad,"phase "+state)==0 && activityCount(afterLoad,"phase "+state+"_LOOP")==2 &&
+            activityCount(afterLoad,"phase "+state+"_END")==1,
+            ("the loaded "+activity.actorName+" must continue with the restored Loop, then end the row").c_str());
+    events+=afterLoad.size();
+    }
+  std::printf("Activities at NEWWORLD objects: %zu states, %zu equal events\n",activities.size(),events);
   }
 
 // Item effects (graphics/itemview, reports/engine/2026-11-19-item-effects): an item's own effect lives on its mesh

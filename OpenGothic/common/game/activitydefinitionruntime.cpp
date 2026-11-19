@@ -10,9 +10,18 @@
 namespace {
 using Type = daedalus::DaedalusDataType;
 
-// Accepted states: their day parity with the VM is proven (D4.1). A table in code, so accepting
-// another captured state changes the game, not the base.
-constexpr std::array<std::string_view,1> acceptedStates = {"ZS_SMITH_ANVIL"};
+// Accepted states: their day parity with the VM is proven, each on its own trace (D4.1 the anvil,
+// D4.2 the other six). A table in code, so accepting another captured state changes the game, not
+// the base. ZS_ROAST_SCAVENGER is captured but never runs in a NEWWORLD day: no parity, not accepted.
+constexpr std::array<std::string_view,7> acceptedStates = {
+  "ZS_SMITH_ANVIL",
+  "ZS_SMITH_COOL",
+  "ZS_SMITH_FIRE",
+  "ZS_SMITH_SHARP",
+  "ZS_READ_BOOKSTAND",
+  "ZS_STOMP_HERB",
+  "ZS_SMOKE_WATERPIPE",
+  };
 
 const daedalus::DaedalusSymbol* function(const daedalus::DaedalusScript& script, const std::string& name, bool result) {
   const auto* symbol = script.find_symbol_by_name(name);

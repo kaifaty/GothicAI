@@ -9,7 +9,7 @@
 class Npc;
 class World;
 
-// Routine activities from records (D4.1): a phase of a state with a record runs the template
+// Routine activities from records (D4.1, D4.2): a phase of a state with a record runs the template
 // walk instead of the script; the perception helper stays in the VM at its place.
 namespace ActivityDefinitionRuntime {
 // OPENGOTHIC_ACTIVITY_RECORDS: unset (or any other value) runs the accepted states from records,
