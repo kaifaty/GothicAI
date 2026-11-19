@@ -20,6 +20,9 @@
 layout(local_size_x = 64) in;
 layout(triangles, max_vertices = MaxVert, max_primitives = MaxPrim) out;
 #endif
+#if defined(MAT_MOTION) && MESH_TYPE==T_OBJ && !defined(TREE_BOUGH_CARDS)
+#include "tree_bough_dissolve.glsl"
+#endif
 
 #if defined(VIRTUAL_SHADOW)
 layout(push_constant, std430) uniform Push {
@@ -409,7 +412,7 @@ void main() {
   const uint materialRef = boughBucket(task);
 #elif defined(HISTORY_PAYLOAD)
   // Both history phases use this same vertex shader and carry the unchanged payload index.
-  const uint materialRef = payloadId;
+  uint materialRef = payloadId;
 #else
   uint materialRef     = task.z;
 #if defined(MAT_CLUSTER_LEVEL)
@@ -420,6 +423,11 @@ void main() {
   if((scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u)
     materialRef = payloadId;
 #endif
+#endif
+
+#if defined(MAT_MOTION) && MESH_TYPE==T_OBJ && !defined(TREE_BOUGH_CARDS)
+  if((pullInstance(task.x).animPtr & BoughJointTag)!=0u)
+    materialRef = payloadId | BoughJointTag;
 #endif
 
 #if defined(VIRTUAL_SHADOW)

@@ -1,4 +1,4 @@
-layout(location = 7) flat out uvec2 boughFadeOut;
+layout(location = 7) flat out uvec3 boughFadeOut;
 layout(location = 8) flat out vec3 boughMaskOut;
 
 void vertexShader(uvec4 task, uint materialRef) {

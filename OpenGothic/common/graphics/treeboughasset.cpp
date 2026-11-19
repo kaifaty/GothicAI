@@ -3,6 +3,7 @@
 #include <Tempest/Log>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -424,11 +425,22 @@ float screenSize(const Node& node, const Projection& view) {
   return depth>view.nearZ ? node.diameter*view.focalScale/depth : std::numeric_limits<float>::infinity();
   }
 
-float parentWeight(const Node& node, float px) {
-  if(node.highPx<=node.lowPx)
-    return 0.f;
-  const float t = std::clamp((px-node.lowPx)/(node.highPx-node.lowPx),0.f,1.f);
+static float fadeWeight(float low, float high, float px) {
+  const float t = std::clamp((px-low)/(high-low),0.f,1.f);
   return 1.f-t*t*(3.f-2.f*t);
+  }
+
+float parentWeight(const Node& node, float px) {
+  return node.highPx>node.lowPx ? fadeWeight(node.lowPx,node.highPx,px) : 0.f;
+  }
+
+float impostorJointWeight(float threshold, float px) {
+  return fadeWeight(threshold*(46.f/49.f),threshold*(56.f/49.f),px);
+  }
+
+uint32_t impostorJointFade(float weight) {
+  // The high bit identifies a static instance's joint in the animation slot (tree_bough_dissolve.glsl).
+  return weight>0.f && weight<1.f ? std::bit_cast<uint32_t>(weight) | 0x80000000u : 0u;
   }
 
 void select(const Asset& asset, const Projection& view, std::vector<Selected>& out) {
