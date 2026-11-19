@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <sstream>
 
 #include "camera.h"
 #include "game/bodyarena.h"
@@ -20,6 +21,7 @@
 #include "graphics/renderer.h"
 #include "graphics/mesh/footik.h"
 #include "graphics/mesh/skeleton.h"
+#include "graphics/worldview.h"
 #include "world/chunkresidency.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
@@ -956,11 +958,12 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
       arenaAbort("refusing timing without twenty complete visible bodies"); return true;
       }
     stopRecording(ctx);
-    ctx.camera.rec      = true;
-    ctx.camera.recVideo = !(a.size()>2 && a[2]=="novideo");
-    ctx.camera.recName  = a.size()>1 ? a[1] : "rec";
-    ctx.camera.recFrame = 0;
-    ctx.camera.recStart = ctx.time;
+    ctx.camera.rec        = true;
+    ctx.camera.recVideo   = !(a.size()>2 && a[2]=="novideo");
+    ctx.camera.recTreeLod = a.size()>2 && a[2]=="tree-lod";
+    ctx.camera.recName    = a.size()>1 ? a[1] : "rec";
+    ctx.camera.recFrame   = 0;
+    ctx.camera.recStart   = ctx.time;
     ctx.anim1.clear();
     ctx.anim2.clear();
     ctx.camera.recWall  = std::chrono::steady_clock::now();
@@ -1236,6 +1239,15 @@ void capture(const CameraContext& ctx,Pixmap& frame, float uiScale) {
     benchTexturesFrozen=false;
     }
   if(ctx.camera.rec && ctx.camera.recVideo) {
+    if(ctx.camera.recTreeLod && pm.w()>0) {
+      const auto* world = Gothic::inst().world();
+      if(auto* view = world!=nullptr ? world->view() : nullptr) {
+        std::ostringstream fields;
+        fields << "\"trees\":";
+        view->writeTreeSmoothLod(fields);
+        event("tree_smooth_lod", fields.str());
+        }
+      }
     if(!ctx.camera.trackNpcs.empty() && pm.w()>0)
       trackFrame(ctx,int(pm.w()),int(pm.h()));
     if(!ctx.camera.sightNpc.empty() && pm.w()>0)

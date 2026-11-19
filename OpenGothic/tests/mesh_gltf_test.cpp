@@ -1463,6 +1463,17 @@ int levelSwitchChild(std::string_view mode) {
             "the shadow switch must affect only the shadow level: "+std::string(mode));
     return 0;
     }
+  if(mode.starts_with("smooth-")) {
+    textFile(fixture.root/"system.ini", "");
+    textFile(fixture.root/"user.ini", mode=="smooth-ini" ? "[INTERNAL]\ntreeSmoothLod=0\n" : "");
+    settings = std::make_unique<Settings>();
+    settings->load((fixture.root/"system.ini").u16string(), (fixture.root/"user.ini").u16string());
+    const bool enabled = MeshLevels::smoothTreesEnabled();
+    const float px[] = {400.f, 200.f, 100.f, 50.f};
+    require(enabled==(mode=="smooth-default") && MeshLevels::pickVisual(px, 4, 0, 399.f, enabled)==(enabled ? 0 : 1),
+            "only the enabled tree switch may skip L1: "+std::string(mode));
+    return 0;
+    }
   const bool impostorOnly = mode.starts_with("impostor-");
   if(mode.ends_with("-ini") || mode=="ini") {
     textFile(fixture.root/"system.ini","");
@@ -1503,6 +1514,7 @@ void levelSwitchCase(std::string_view mode) {
     const std::string_view v(*e);
     if(!v.starts_with("OPENGOTHIC_MESH_LEVELS=") && !v.starts_with("OPENGOTHIC_IMPOSTORS=") &&
        !v.starts_with("OPENGOTHIC_SHADOW_LEVELS=") &&
+       !v.starts_with("OPENGOTHIC_TREE_SMOOTH_LOD=") &&
        !v.starts_with("GOTHIC_MESH_LEVELS_CHILD="))
       env.emplace_back(v);
     }
@@ -1513,6 +1525,12 @@ void levelSwitchCase(std::string_view mode) {
     env.push_back("OPENGOTHIC_IMPOSTORS=0");
   if(mode=="shadow-env")
     env.push_back("OPENGOTHIC_SHADOW_LEVELS=0");
+  if(mode=="smooth-env")
+    env.push_back("OPENGOTHIC_TREE_SMOOTH_LOD=0");
+  if(mode=="smooth-parent") {
+    env.push_back("OPENGOTHIC_MESH_LEVELS=0");
+    env.push_back("OPENGOTHIC_TREE_SMOOTH_LOD=1");
+    }
   std::vector<char*> envp;
   for(auto& v:env)
     envp.push_back(v.data());
@@ -1543,6 +1561,10 @@ void levelCases(const Fixture& fixture) {
   levelSwitchCase("shadow-default");
   levelSwitchCase("shadow-env");
   levelSwitchCase("shadow-ini");
+  levelSwitchCase("smooth-default");
+  levelSwitchCase("smooth-env");
+  levelSwitchCase("smooth-ini");
+  levelSwitchCase("smooth-parent");
 
   const auto spruceShadow = [](uint8_t previous, float height) {
     return MeshLevels::pickShadow(4, previous, previous!=0, height, 0, true);
@@ -1560,6 +1582,22 @@ void levelCases(const Fixture& fixture) {
   // Spruce A, 18 m, at 1920x1080 and 67.5 degrees: 400, 200, 100 and 50 px at 36, 73, 145 and 291 m
   const float px[] = {400,200,100,50};
   const auto  count = std::size(px);
+  require(MeshLevels::treeCardFraction(560.f)==1.f && MeshLevels::treeCardFraction(400.f)==0.8f &&
+          MeshLevels::treeCardFraction(200.f)==0.8f, "the smooth tree must keep its card counts at all three thresholds");
+  for(float h=200.f; h<600.f; ++h)
+    require(MeshLevels::treeCardFraction(h)<=MeshLevels::treeCardFraction(h+1.f), "the smooth tree must keep more cards as it approaches");
+  require(MeshLevels::pickVisual(px,count,2,200.f,true)==0 && MeshLevels::pickVisual(px,count,0,199.9f,true)==2 &&
+          MeshLevels::pickVisual(px,count,3,109.f,true)==3 && MeshLevels::pickVisual(px,count,3,110.f,true)==2,
+          "the smooth tree must switch to L2 at 200 px and retain the farther hysteresis");
+  const int32_t ranks[] = {0, 16, 32, 48, 64, 80, 96};
+  require(MeshLevels::treeMeshletPrefix(ranks,76.f,100.f)==5 && MeshLevels::treeMeshletPrefix(ranks,77.f,100.f)==6 &&
+          MeshLevels::treeMeshletPrefix(ranks,99.f,100.f)==7 && MeshLevels::treeCardBand(99.f,100.f)==2.f,
+          "trim meshlets at the strict outer edge of the band");
+  require(MeshLevels::treeCardCoverage(75,80.f,100.f)==1.f && MeshLevels::treeCardCoverage(84,80.f,100.f)==0.f &&
+          MeshLevels::treeCardCoverage(99,100.f,100.f)==1.f, "the fade must only affect cards at the end of the prefix");
+  for(int32_t rank=76; rank<84; ++rank)
+    require(MeshLevels::treeCardCoverage(rank,80.f,100.f)<MeshLevels::treeCardCoverage(rank-1,80.f,100.f),
+            "card coverage must fall monotonically across the band");
   const auto  at    = [](float metres) { return MeshLevels::screenHeight(1800,metres*100,1.f/std::tan(0.589f),1080); };
   require(std::abs(at(36.37f)-400)<1 && std::abs(at(291.f)-50)<1,"the height on screen must go as height/distance");
   uint8_t level = 0;
@@ -3378,6 +3416,7 @@ int main() {
     resourcePaths(fixture,true);
     converterCases(fixture);
     colorCases(fixture.root/"meshes/test/color.glb");
+    cardCases(fixture.root/"meshes/test/card.glb");
     headConverterCases(fixture);
     headManifestCases(fixture);
     generatedBarrel(fixture);

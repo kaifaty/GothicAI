@@ -25,7 +25,7 @@ constexpr uint32_t ColorReal     = 0xFFFF6633u;
 
 // One triangle without indices. first: the accessor of COLOR_0 (2: bytes RGBA, 3: the second set of them,
 // 4: float RGB), or 0 for none; second: the same for a second primitive of the same material, positions and normals
-void colorGlbFile(const std::filesystem::path& path, unsigned first, unsigned second = 0) {
+void colorGlbFile(const std::filesystem::path& path, unsigned first, unsigned second = 0, uint16_t cardId = 0) {
   std::vector<uint8_t> binary;
   for(float v:{1.f,2.f,3.f, 4.f,2.f,3.f, 1.f,6.f,3.f})
     real(binary,v);
@@ -39,24 +39,36 @@ void colorGlbFile(const std::filesystem::path& path, unsigned first, unsigned se
   for(size_t i=0;i<3;++i)
     for(float v:{0.2f,0.4f,1.f})
       real(binary,v);
+  if(cardId!=0)
+    for(size_t i=0;i<3;++i)
+      word(binary,cardId);
 
-  auto primitive = [](unsigned color) {
+  auto primitive = [cardId](unsigned color) {
     std::string p = R"({"attributes":{"POSITION":0,"NORMAL":1)";
     if(color!=0)
       p += ",\"COLOR_0\":"+std::to_string(color);
+    if(cardId!=0)
+      p += R"(,"_CARD_ID":5)";
     return p + R"(},"material":0,"mode":4})";
     };
   std::string json = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],)"
-                     R"("buffers":[{"byteLength":132}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},)"
+                     R"("buffers":[{"byteLength":)"+std::to_string(binary.size())+
+                     R"(}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},)"
                      R"({"buffer":0,"byteOffset":36,"byteLength":36},{"buffer":0,"byteOffset":72,"byteLength":12},)"
-                     R"({"buffer":0,"byteOffset":84,"byteLength":12},{"buffer":0,"byteOffset":96,"byteLength":36}],)"
-                     R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[1,2,3],"max":[4,6,3]},)"
+                     R"({"buffer":0,"byteOffset":84,"byteLength":12},{"buffer":0,"byteOffset":96,"byteLength":36})";
+  if(cardId!=0)
+    json += R"(,{"buffer":0,"byteOffset":132,"byteLength":12,"byteStride":4})";
+  json += R"(],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[1,2,3],"max":[4,6,3]},)"
                      R"({"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},)"
                      R"({"bufferView":2,"componentType":5121,"normalized":true,"count":3,"type":"VEC4"},)"
                      R"({"bufferView":3,"componentType":5121,"normalized":true,"count":3,"type":"VEC4"},)"
-                     R"({"bufferView":4,"componentType":5126,"count":3,"type":"VEC3"}],)"
-                     R"("materials":[{"name":"OWN_TEST_BARREL_WOOD","extras":{"group":"WOOD"}}],)"
-                     R"("meshes":[{"primitives":[)";
+                     R"({"bufferView":4,"componentType":5126,"count":3,"type":"VEC3"})";
+  if(cardId!=0)
+    json += R"(,{"bufferView":5,"componentType":5123,"count":3,"type":"SCALAR"})";
+  json += R"(],"materials":[{"name":"OWN_TEST_BARREL_WOOD","extras":{"group":"WOOD"})";
+  if(cardId!=0)
+    json += R"(,"alphaMode":"MASK")";
+  json += R"(}],"meshes":[{"primitives":[)";
   json += primitive(first);
   if(second!=0)
     json += ","+primitive(second);
@@ -152,6 +164,60 @@ void colorCases(const std::filesystem::path& path) {
     thrown = true;
     }
   require(thrown,"colours that are not of the mesh's wedges must be rejected");
+  }
+
+void cardCases(const std::filesystem::path& path) {
+  std::vector<uint8_t> bytes;
+  colorGlbFile(path,2);
+  auto wood = loadGltfMesh(path,&bytes);
+  require(loadGltfMeshCardIds(bytes,wood).wedges.empty(),"an unmarked GLB must keep its existing path");
+  colorGlbFile(path,2,0,1);
+  const auto marked = loadGltfMesh(path,&bytes);
+  const auto ids = loadGltfMeshCardIds(bytes,marked);
+  require(ids.submesh==0 && ids.wedges==std::vector<uint16_t>(3,1),
+          "the strided unsigned-short GLB attribute must map to the crown wedges");
+
+  wood.sub_meshes.resize(2);
+  auto& crown = wood.sub_meshes[1];
+  crown.mat = marked.sub_meshes[0].mat;
+  GltfMeshCardIds cards;
+  cards.submesh = 1;
+  for(uint16_t id=17; id>0; --id) {
+    const auto start = uint16_t(crown.wedges.size());
+    const auto count = uint16_t(id==1 ? 5 : 4);
+    for(uint16_t v=0; v<count; ++v) {
+      const auto pos = uint16_t(wood.positions.size());
+      wood.positions.push_back({float(pos),float(v%2),float(id)});
+      crown.wedges.push_back({{0.f,0.f,1.f},{float(v),0.f},pos});
+      cards.wedges.push_back(id);
+      }
+    crown.triangles.push_back({{start,uint16_t(start+1),uint16_t(start+2)}});
+    crown.triangles.push_back({{start,uint16_t(start+2),uint16_t(start+3)}});
+    if(id==1)
+      crown.triangles.push_back({{start,uint16_t(start+3),uint16_t(start+4)}});
+    }
+  PackedMesh legacy(wood,PackedMesh::PK_Visual,true);
+  PackedMesh ranked(wood,PackedMesh::PK_Visual,true,nullptr,&cards);
+  require(legacy.cardIds.empty() && legacy.meshletFirstCard.empty(),"legacy packing has no card data");
+  require(ranked.cardCount==17 && ranked.meshletFirstCard==std::vector<int32_t>{-1,0,15},
+          "wood precedes two crown meshlets in rank order and the sixteenth card starts the second");
+  require(ranked.vertices.size()==ranked.cardIds.size(),"padded card IDs and vertices must have equal lengths");
+  std::array<size_t,18> triangles = {};
+  for(size_t m=0; m<ranked.meshletFirstCard.size(); ++m) {
+    const size_t tail = (m+1)*PackedMesh::MaxPrim*4-4;
+    const size_t count = ranked.indices8[tail+2];
+    for(size_t t=0; t<count; ++t) {
+      const size_t at = m*PackedMesh::MaxInd+t*3;
+      const uint16_t id = ranked.cardIds[ranked.indices[at]];
+      require(id==ranked.cardIds[ranked.indices[at+1]] && id==ranked.cardIds[ranked.indices[at+2]],
+              "all corners of a packed triangle must agree on its card");
+      require(m==(id==0 ? 0u : id<16 ? 1u : 2u),"each card must keep all its triangles in one ranked meshlet");
+      ++triangles[id];
+      }
+    }
+  require(triangles[0]==1 && triangles[1]==3 && std::ranges::all_of(triangles.begin()+2,triangles.end(),
+                                                                  [](size_t n) { return n==2; }),
+          "whole-card packing must preserve every triangle");
   }
 
 void resourceColorCase(Tempest::Device& device, const std::filesystem::path& path) {

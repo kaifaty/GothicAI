@@ -129,6 +129,7 @@ class WorldView {
 
     void setTreeOcclusionProbe() { sGlobal.setTreeOcclusionProbe(); }
     void writeTreeOcclusionProbe(std::ostream& out) { visuals.writeTreeOcclusionProbe(out); }
+    void writeTreeSmoothLod(std::ostream& out) { visuals.writeTreeSmoothLod(out); }
 
     const SceneGlobals& sceneGlobals() const { return sGlobal; }
     const Sky&          sky() const { return gSky; }

@@ -41,6 +41,7 @@ class PfxEmitterMesh;
 class GthFont;
 class ContentCensus;
 struct ChunkTable;
+struct GltfMeshCardIds;
 class ChunkResidency;
 
 namespace asset { struct WorldMesh; }
@@ -306,7 +307,8 @@ class Resources final {
     // All static visual readers share the selected base and content overrides.
     // colors: COLOR_0 of the own GLB for PackedMesh (gltfmeshcolor.h); left empty for a mesh without it
     static asset::StaticMesh loadVisualMesh(std::string_view name, bool* replaced = nullptr,
-                                            std::vector<std::vector<uint32_t>>* colors = nullptr);
+                                            std::vector<std::vector<uint32_t>>* colors = nullptr,
+                                            GltfMeshCardIds* cards = nullptr);
     struct MeshReplacementSource {
       std::filesystem::path file;
       size_t size = 0;

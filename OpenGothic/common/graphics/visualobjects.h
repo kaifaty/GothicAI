@@ -129,6 +129,7 @@ class VisualObjects final {
     void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
     void visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void writeTreeOcclusionProbe(std::ostream& out);
+    void writeTreeSmoothLod(std::ostream& out);
     void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -210,6 +211,8 @@ class VisualObjects final {
       uint8_t             levelSub       = NoLevels; // its submesh of a mesh with levels of detail (meshlevels.h)
       MeshLevels::Selection level;                // ...the stage selected for this instance, 0 the mesh itself
       uint8_t             shadowLevel    = 0;
+      bool                rankedCrown    = false;
+      float               treeHeight     = 0.f;
       bool                clusterLod     = false;
       bool                isGhost       = false;
       bool                visible       = true;

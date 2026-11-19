@@ -264,6 +264,8 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     if(i.staticMesh!=nullptr) {
       if(i.staticMesh->ownMesh)
         bx.flags |= BK_OWN_MESH;
+      bx.cardIds = i.staticMesh->cardIdsOffset;
+      bx.cardCount = i.staticMesh->cardCount;
       // the box the culling tests holds every level of detail of the mesh (meshlevels.h); its own is the wind's
       auto& bbox    = i.staticMesh->bbox.bbox;
       auto& drawn   = i.staticMesh->drawn.bbox;

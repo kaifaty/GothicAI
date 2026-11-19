@@ -35,6 +35,9 @@ layout(location = 1) in Varyings  shInp;
 #if defined(VIRTUAL_SHADOW)
 layout(location = 3) in flat uint vsmMipId;
 #endif
+#if defined(MAT_TREE_CARDS)
+layout(location = TreeCardLocation) in flat uvec2 treeCardInp;
+#endif
 
 #if DEBUG_DRAW
 layout(location = DEBUG_DRAW_LOC) in flat uint debugId;
@@ -1052,6 +1055,21 @@ float alphaThreshold() {
 #endif
   }
 
+#if defined(MAT_TREE_CARDS)
+bool treeCardVisible() {
+  const float coverage = uintBitsToFloat(treeCardInp.x);
+  if(coverage>=1.0)
+    return true;
+  if(coverage<=0.0 || (scene.viewFlags & VF_HIZ)!=0u)
+    return false; // A partially visible card cannot conservatively occlude anything.
+
+  // Raw UV follows the card: it does not move with the screen, TAA, atlas sampling or the wind.
+  const uvec2 cell = uvec2(ivec2(floor(shInp.uv*2048.0)));
+  const uint bits = pcg3d(uvec3(cell, treeCardInp.y)).x;
+  return float(bits >> 8u)*(1.0/16777216.0)<coverage;
+  }
+#endif
+
 void main() {
 #if defined(GBUFFER)
   const bool treeProbe = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u;
@@ -1143,6 +1161,12 @@ void main() {
   mainEmissive(t);
 #elif defined(GHOST) && !defined(DEPTH_ONLY)
   mainGhost(t);
+#endif
+
+#if defined(MAT_TREE_CARDS)
+  // Keep material derivatives and the atlas alpha test as they were.
+  if(!treeCardVisible())
+    discard;
 #endif
 
 #if defined(MAT_CLUSTER_LEVEL)

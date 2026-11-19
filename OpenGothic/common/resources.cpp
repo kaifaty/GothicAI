@@ -519,7 +519,8 @@ bool Resources::meshReplacementLoaded(std::string_view name, MeshReplacementSour
   return true;
   }
 
-asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replaced, std::vector<std::vector<uint32_t>>* colors) {
+asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replaced, std::vector<std::vector<uint32_t>>* colors,
+                                            GltfMeshCardIds* cards) {
   LoadProbe::Vobs::Scope probe("mesh_read");
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   if(replaced!=nullptr)
@@ -541,6 +542,14 @@ asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replace
             }
           catch(const std::exception& error) {
             Log::e("meshes: \"",it->second.file.string(),"\" is drawn without its vertex colour: ",error.what());
+            }
+          }
+        if(cards!=nullptr && it->second.levels.size()>=2 && MeshLevels::smoothTreesEnabled()) {
+          try {
+            *cards = loadGltfMeshCardIds(bytes,mesh);
+            }
+          catch(const std::exception& error) {
+            Log::e("meshes: \"",it->second.file.string(),"\" is drawn without smooth tree levels: ",error.what());
             }
           }
         if(inst->census)
@@ -845,7 +854,8 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
 
     bool replaced = false;
     GltfMeshColors colors;
-    auto zmsh = loadVisualMesh(name,&replaced,&colors);
+    GltfMeshCardIds cards;
+    auto zmsh = loadVisualMesh(name,&replaced,&colors,&cards);
 
     if(zmsh.sub_meshes.empty())
       return nullptr;
@@ -862,9 +872,20 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
       if(it!=meshOverrides.end())
         source = &it->second;
       if(source!=nullptr && source->hasLevels) {
-        if(!source->levels.empty() && MeshLevels::enabled())
-          for(auto& level:implLoadMeshLevels(key,*source,zmsh,!colors.empty()))
-            packed.addLevel(level.mesh,level.px,level.colors.empty() ? nullptr : &level.colors);
+        if(!source->levels.empty() && MeshLevels::enabled()) {
+          auto levels = implLoadMeshLevels(key,*source,zmsh,!colors.empty());
+          if(!cards.wedges.empty() && levels.size()>=2 && levels[1].px==MeshLevels::TreeL2Px) {
+            try {
+              visual.emplace(zmsh,PackedMesh::PK_Visual,true,colors.empty() ? nullptr : &colors,&cards);
+              }
+            catch(const std::exception& error) {
+              Log::e("meshes: \"",key,"\" is drawn without smooth tree levels: ",error.what());
+              }
+            }
+          auto& raster = visual ? *visual : packed;
+          for(auto& level:levels)
+            raster.addLevel(level.mesh,level.px,level.colors.empty() ? nullptr : &level.colors);
+          }
         }
       else if(source!=nullptr) {
         const auto enabled = [](const char* env, const char* setting) {

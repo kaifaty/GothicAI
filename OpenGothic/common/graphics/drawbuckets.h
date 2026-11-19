@@ -127,9 +127,9 @@ class DrawBuckets {
                                              // BK_WINDOW: WindowGlow::pack of Material::window
       float          foliageReach     = 0.f; // its mesh at rest: the largest arm, or a tree's height (FoliageTree::reach)
       uint32_t       meshletSpheres   = MeshletSpheres::None; // its mesh's first sphere in meshletSpheres()
-      uint32_t       padding0         = 0;   // the stride of the GPU's array rounds up to 16 bytes
-      uint32_t       padding1         = 0;
-      uint32_t       padding2         = 0;
+      uint32_t       cardIds          = 0;   // word offset of packed crown ranks in ibo8, 0 if absent
+      uint32_t       cardCount        = 0;
+      uint32_t       padding2         = 0;   // the stride of the GPU's array rounds up to 16 bytes
       };
     static_assert(sizeof(BucketGpu)==144); // GPU array stride of Bucket in scene.glsl
 

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <span>
 #include <string_view>
 
 #include "settings.h"
@@ -32,6 +33,7 @@ constexpr uint32_t ImpostorMipCount  = 5;
 // A level gives way to the finer one only at this many times its pixels: a height on a threshold does not switch the
 // level back and forth
 constexpr float  Hysteresis = 1.1f;
+constexpr float  TreeL2Px   = 200.f;
 
 struct Selection {
   uint8_t stage = 0;
@@ -85,6 +87,21 @@ inline bool shadowLevelsEnabled() {
   return on;
   }
 
+inline bool smoothTreesEnabled() {
+  if(!enabled())
+    return false;
+  static const bool on = [] {
+    const char* env = std::getenv("OPENGOTHIC_TREE_SMOOTH_LOD");
+    const bool set = env!=nullptr && *env!='\0';
+    const bool ini = !::Settings::exists() || ::Settings::getI("INTERNAL","treeSmoothLod")!=0;
+    const bool v = parse(set ? std::string_view(env) : std::string_view(), ini);
+    Tempest::Log::i("render: smooth tree levels of detail = ", v ? "1" : "0",
+                    set ? " by OPENGOTHIC_TREE_SMOOTH_LOD" : " by [INTERNAL] treeSmoothLod");
+    return v;
+    }();
+  return on;
+  }
+
 // The pixels of the main view an object `height` high is `distance` from the camera, in the same units; projY: the
 // projection's [1][1], screenH: the view's height in pixels. As the size of a motion in the fade of a tree's wind
 // (FoliageTree::fadeScale)
@@ -101,6 +118,44 @@ inline uint8_t pick(const float* px, size_t count, uint8_t current, float height
   while(level>0 && height>=px[level-1]*Hysteresis)
     --level;
   return uint8_t(level);
+  }
+
+// The smooth prefix replaces the full GLB to L1 switch. Below 200 px only the usual L2 and farther ranges apply.
+inline uint8_t pickVisual(const float* px, size_t count, uint8_t current, float height, bool smoothTree) {
+  if(!smoothTree || count<2 || px[1]!=TreeL2Px)
+    return pick(px, count, current, height);
+  if(height>=TreeL2Px)
+    return 0;
+  const auto fromL2 = uint8_t(std::max(2, int(current))-2);
+  return uint8_t(2 + pick(px+2, count-2, fromL2, height));
+  }
+
+inline float treeCardFraction(float height) {
+  if(height<=400.f)
+    return 0.8f;
+  if(height>=560.f)
+    return 1.f;
+  return std::lerp(0.8f, 1.f, std::log2(height/400.f)/std::log2(560.f/400.f));
+  }
+
+// Same band and rank-centre convention as the raster shader. K==N has no fading band.
+inline float treeCardBand(float keep, float total) {
+  return std::min(std::clamp(0.04f*keep, 8.f, 256.f), 2.f*(total-keep));
+  }
+
+inline size_t treeMeshletPrefix(std::span<const int32_t> firstRanks, float keep, float total) {
+  const float end = keep + 0.5f*treeCardBand(keep, total);
+  const auto stop = std::lower_bound(firstRanks.begin(), firstRanks.end(), end,
+                                    [](int32_t rank, float limit) { return float(rank)<limit; });
+  return size_t(stop-firstRanks.begin());
+  }
+
+inline float treeCardCoverage(int32_t rank, float keep, float total) {
+  const float width = treeCardBand(keep, total);
+  if(width==0.f)
+    return 1.f;
+  const float t = std::clamp((float(rank)+0.5f - (keep-0.5f*width))/width, 0.f, 1.f);
+  return 1.f - t*t*(3.f-2.f*t);
   }
 
 // Leave the visual GLB below 800 pixels at 1080p and return to it at 880. Farther out, sun and lamps share

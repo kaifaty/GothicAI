@@ -67,6 +67,12 @@ layout(location = 3) out flat uint vsmMipIdOut;
 layout(location = 3) out flat uint vsmMipIdOut[];
 #endif
 
+#if defined(MAT_TREE_CARDS) && defined(GL_VERTEX_SHADER)
+layout(location = TreeCardLocation) out flat uvec2 treeCardOut;
+#elif defined(MAT_TREE_CARDS)
+layout(location = TreeCardLocation) out flat uvec2 treeCardOut[];
+#endif
+
 #if defined(VIRTUAL_SHADOW)
 uint shadowPageId = 0;
 #endif
@@ -224,6 +230,39 @@ uvec3 processPrimitive(const uint meshletId, const uint bucketId, const uint out
   return prim;
   }
 
+#if defined(MAT_TREE_CARDS)
+uvec2 processTreeCard(uint bucketId, uint instanceId, uint vertexId) {
+  const uvec2 full = uvec2(floatBitsToUint(1.0), 0u);
+#if (MESH_TYPE==T_OBJ)
+  const uint offset = bucket[bucketId].cardIds;
+  if(offset==0u)
+    return full;
+  // Rigid trees use the animation pointer of the instance for K (VisualObjects::updateInstance).
+  const float k = uintBitsToFloat(instanceMem[instanceId*16u+13u]);
+  const float count = float(bucket[bucketId].cardCount);
+  const float width = min(clamp(0.04*k, 8.0, 256.0), 2.0*(count-k));
+  if(k<=0.0 || width<=0.0)
+    return full;
+#if defined(BINDLESS)
+  nonuniformEXT uint bId = bucketId;
+#else
+  const uint bId = 0;
+#endif
+  const uint bits = ibo[bId].indexes[offset + vertexId/2u];
+  const uint card = (bits >> (16u*(vertexId%2u))) & 0xffffu;
+  if(card==0u)
+    return full;
+  const float rank = float(card)-0.5;
+  const float coverage = 1.0-smoothstep(k-0.5*width, k+0.5*width, rank);
+  // Both raster paths refer to the same instance and rank, also on the shadow pages.
+  const uint seed = pcgHash(instanceId) ^ (card*0x9e3779b9u);
+  return uvec2(floatBitsToUint(coverage), seed);
+#else
+  return full;
+#endif
+  }
+#endif
+
 vec4  processVertex(out Varyings var, uint instanceOffset, const uint meshletId, const uint bucketId, const uint laneID) {
   const uint vboOffset = meshletId * MaxVert + laneID;
 #if (MESH_TYPE==T_PFX)
@@ -259,6 +298,9 @@ void vertexShader(const uvec4 task, const uint materialRef) {
 #endif
   Varyings var;
   uint idx = processPrimitive(meshletId, bucketId, laneID)[gl_VertexIndex%3];
+#if defined(MAT_TREE_CARDS)
+  treeCardOut = processTreeCard(bucketId, instanceId, meshletId*MaxVert + idx);
+#endif
   vec4 pos = processVertex(var, instanceId, meshletId, bucketId, idx);
   gl_Position = pos;
 #if defined(MAT_VARYINGS)
@@ -289,6 +331,9 @@ void meshShader(const uvec4 task, const uint materialRef) {
   if(laneID<vertCount) {
 #if defined(MAT_VARYINGS)
     bucketIdOut[laneID] = materialRef;
+#endif
+#if defined(MAT_TREE_CARDS)
+    treeCardOut[laneID] = processTreeCard(bucketId, instanceId, meshletId*MaxVert + laneID);
 #endif
     vec4 pos = processVertex(var, instanceId, meshletId, bucketId, laneID);
     gl_MeshVerticesEXT[laneID].gl_Position = pos;

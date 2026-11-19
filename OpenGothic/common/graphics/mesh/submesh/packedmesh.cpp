@@ -15,6 +15,7 @@
 #include <stdexcept>
 
 #include "game/compatibility/phoenix.h"
+#include "gltfmeshcolor.h"
 #include "graphics/mesh/clusterlod.h"
 #include "worldchunkbinary.h"
 #include "worldchunksruntime.h"
@@ -646,7 +647,7 @@ PackedMesh::PackedMesh(const WorldChunkMesh& source, std::span<const uint32_t> m
   }
 
 PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest,
-                       const std::vector<std::vector<uint32_t>>* colors) {
+                       const std::vector<std::vector<uint32_t>>* colors, const GltfMeshCardIds* cards) {
   LoadProbe::Vobs::Scope probe("mesh_pack");
   subMeshes.resize(mesh.sub_meshes.size());
   /* NOTE: some mods do have corrupted content description,
@@ -659,7 +660,7 @@ PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explici
   mBbox[1] = Vec3(bbox.max.x,bbox.max.y,bbox.max.z);
   }
 
-  packMeshletsObj(mesh,type,nullptr,nullptr,colors);
+  packMeshletsObj(mesh,type,nullptr,nullptr,colors,cards);
   measureTexels();
   // Native MRM keeps its historical alpha heuristics. GLB declares OPAQUE or
   // MASK explicitly, including when both occur in one mesh.
@@ -1171,7 +1172,8 @@ void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh, std::span<const u
 void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
                                  const std::vector<SkeletalData>* skeletal,
                                  const std::vector<SkinRest>* rest,
-                                 const std::vector<std::vector<uint32_t>>* colors) {
+                                 const std::vector<std::vector<uint32_t>>* colors,
+                                 const GltfMeshCardIds* cards) {
   auto* vId = (type==PK_VisualMorph) ? &verticesId : nullptr;
 
   size_t maxTri = 0;
@@ -1185,6 +1187,13 @@ void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
     auto& sm      = mesh.sub_meshes[mId];
     auto& pack    = subMeshes[mId];
     pack.material = sm.mat;
+    pack.iboOffset = indices.size();
+    const auto* color = colors!=nullptr && mId<colors->size() && (*colors)[mId].size()==sm.wedges.size() ? &(*colors)[mId] : nullptr;
+    if(cards!=nullptr && cards->submesh==mId) {
+      packCrown(mesh,*cards,color);
+      pack.iboLength = indices.size() - pack.iboOffset;
+      continue;
+      }
 
     heap.clear();
     for(size_t i=0; i<sm.triangles.size(); ++i) {
@@ -1200,8 +1209,6 @@ void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
     for(size_t i=0; i<meshlets.size(); ++i)
       meshlets[i].updateBounds(mesh);
 
-    const auto* color = colors!=nullptr && mId<colors->size() && (*colors)[mId].size()==sm.wedges.size() ? &(*colors)[mId] : nullptr;
-    pack.iboOffset = indices.size();
     for(auto& i:meshlets) {
       // a sphere for each meshlet flushed, by its index (the shadow pages' test of an object's meshlets)
       if(i.indSz!=0)
@@ -1212,6 +1219,67 @@ void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
 
     //dbgUtilization(meshlets);
     }
+  }
+
+void PackedMesh::packCrown(const asset::StaticMesh& mesh, const GltfMeshCardIds& cards, const std::vector<uint32_t>* colors) {
+  const auto& crown = mesh.sub_meshes[cards.submesh];
+  if(cards.wedges.empty() || cards.wedges.size()!=crown.wedges.size())
+    throw std::runtime_error("_CARD_ID: expected one ID per crown wedge");
+  cardCount = *std::max_element(cards.wedges.begin(),cards.wedges.end());
+  struct Card {
+    size_t vertices = 0;
+    std::vector<size_t> triangles;
+    };
+  std::vector<Card> byId(size_t(cardCount)+1);
+  for(auto id:cards.wedges)
+    ++byId[id].vertices;
+  if(byId[0].vertices!=0)
+    throw std::runtime_error("_CARD_ID: a crown wedge has no card");
+
+  std::vector<bool> used(crown.wedges.size());
+  for(size_t t=0; t<crown.triangles.size(); ++t) {
+    const auto& w = crown.triangles[t].wedges;
+    const auto id = cards.wedges[w[0]];
+    if(id!=cards.wedges[w[1]] || id!=cards.wedges[w[2]])
+      throw std::runtime_error("_CARD_ID: a triangle crosses card boundaries");
+    if(w[0]==w[1] || w[0]==w[2] || w[1]==w[2])
+      throw std::runtime_error("_CARD_ID: a crown triangle repeats a wedge");
+    byId[id].triangles.push_back(t);
+    for(auto wedge:w)
+      used[wedge] = true;
+    }
+  if(std::ranges::find(used,false)!=used.end())
+    throw std::runtime_error("_CARD_ID: a crown wedge has no triangle");
+
+  cardIds.resize(vertices.size()); // wood
+  meshletFirstCard.resize(meshletBounds.size(),-1);
+  Meshlet active;
+  int32_t first = 0;
+  const auto flush = [&] {
+    if(active.indSz==0)
+      return;
+    active.updateBounds(mesh);
+    meshletBounds.push_back(active.bounds);
+    meshletFirstCard.push_back(first);
+    for(size_t i=0; i<active.vertSz; ++i)
+      cardIds.push_back(cards.wedges[active.vert[i].second]);
+    cardIds.resize(cardIds.size()+MaxVert-active.vertSz); // meshlet padding
+    active.flush(vertices,verticesA,indices,indices8,nullptr,mesh.positions,crown.wedges,nullptr,nullptr,colors);
+    active.clear();
+    };
+  for(uint32_t id=1; id<=cardCount; ++id) {
+    const auto& card = byId[id];
+    if(card.triangles.empty() || card.triangles.size()>MaxPrim || card.vertices>MaxVert)
+      throw std::runtime_error("_CARD_ID: ranks must be contiguous and each card must fit one meshlet");
+    if(active.indSz/3+card.triangles.size()>MaxPrim || active.vertSz+card.vertices>MaxVert)
+      flush();
+    if(active.indSz==0)
+      first = int32_t(id)-1;
+    for(auto t:card.triangles)
+      if(!addTriangle(active,nullptr,&crown,t))
+        throw std::runtime_error("_CARD_ID: a whole card did not fit its meshlet");
+    }
+  flush();
   }
 
 std::vector<PackedMesh::Meshlet> PackedMesh::buildMeshlets(const asset::WorldMesh* mesh,

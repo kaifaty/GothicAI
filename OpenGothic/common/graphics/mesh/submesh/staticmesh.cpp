@@ -4,6 +4,7 @@
 #include <cassert>
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/meshlevels.h"
@@ -153,12 +154,25 @@ std::shared_ptr<LandscapeRange> LandscapePages::allocate(const PackedMesh& mesh)
   }
 
 StaticMesh::StaticMesh(const PackedMesh& mesh) :clusterLevels(mesh.clusterLevels) {
+  cardCount = mesh.cardCount;
+  meshletFirstCard = mesh.meshletFirstCard;
+  if(cardCount!=0)
+    cardIdsOffset = uint32_t(mesh.indices8.size()/sizeof(uint32_t));
   const Vertex* vert=mesh.vertices.data();
   if(Resources::hasGraphicsDevice()) {
     LoadProbe::Vobs::Scope probe("mesh_gpu");
     vbo  = Resources::vbo<Vertex>  (vert,mesh.vertices.size());
     ibo  = Resources::ibo<uint32_t>(mesh.indices.data(),mesh.indices.size());
-    ibo8 = Resources::ssbo(mesh.indices8.data(),mesh.indices8.size());
+    if(cardIdsOffset!=0) {
+      // Keep the existing meshlet offsets. Levels follow the full mesh and use zero IDs.
+      std::vector<uint8_t> payload(mesh.indices8.size()+mesh.vertices.size()*sizeof(uint16_t));
+      std::memcpy(payload.data(),mesh.indices8.data(),mesh.indices8.size());
+      std::memcpy(payload.data()+mesh.indices8.size(),mesh.cardIds.data(),mesh.cardIds.size()*sizeof(uint16_t));
+      ibo8 = Resources::ssbo(payload.data(),payload.size());
+      }
+    else {
+      ibo8 = Resources::ssbo(mesh.indices8.data(),mesh.indices8.size());
+      }
     }
 
   initSubMeshes(mesh);
@@ -210,6 +224,9 @@ StaticMesh& StaticMesh::operator=(StaticMesh&& other) {
   bbox=other.bbox;
   drawn=other.drawn;
   levels=std::move(other.levels);
+  cardCount=other.cardCount;
+  cardIdsOffset=other.cardIdsOffset;
+  meshletFirstCard=std::move(other.meshletFirstCard);
   impostor=std::move(other.impostor);
   meshletSpheres=std::move(other.meshletSpheres);
   clusterLevels=std::move(other.clusterLevels);
@@ -307,14 +324,14 @@ std::pair<uint32_t,uint32_t> StaticMesh::levelMeshlets(size_t iboOffset, size_t 
   return {uint32_t(slice.first/PackedMesh::MaxInd), uint32_t(slice.second/PackedMesh::MaxInd)};
   }
 
-MeshLevels::Selection StaticMesh::pickLevel(uint8_t previous, float height, bool allowImpostor) const {
+MeshLevels::Selection StaticMesh::pickLevel(uint8_t previous, float height, bool allowImpostor, bool smoothTree) const {
   const size_t glbs = std::min(levels.size(), MeshLevels::MaxLevels);
   const bool card = allowImpostor && glbs>0 && impostor.px>0.f;
   float px[MeshLevels::MaxLevels+1] = {};
   for(size_t i=0; i<glbs; ++i)
     px[i] = levels[i].px;
   px[glbs] = impostor.px;
-  const auto stage = MeshLevels::pick(px, glbs+size_t(card), previous, height);
+  const auto stage = MeshLevels::pickVisual(px, glbs+size_t(card), previous, height, smoothTree && cardCount!=0);
   return {stage, uint8_t(std::min<size_t>(stage, glbs))};
   }
 

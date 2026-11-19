@@ -1247,6 +1247,7 @@ struct CameraBench {
 
   bool        rec       = false;
   bool        recVideo  = false;
+  bool        recTreeLod = false;
   std::string recName;
   uint64_t    recFrame  = 0;
   uint64_t    recStart  = 0;

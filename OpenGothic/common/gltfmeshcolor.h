@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <vector>
 
 #include "asset/staticmesh.h"
@@ -23,3 +24,12 @@ using GltfMeshColors = std::vector<std::vector<uint32_t>>;
 // ones. Throws std::runtime_error on a COLOR_0 that is not float or normalized unsigned RGB or RGBA, on primitives
 // that share their wedges and differ in COLOR_0, and on bytes that are not of this mesh.
 GltfMeshColors loadGltfMeshColors(const std::vector<uint8_t>& glb, const asset::StaticMesh& mesh);
+
+// The last, alpha-masked material of a full fir can give each of its wedges a nonzero _CARD_ID.
+// IDs are one-based, so vertices without the attribute use zero on the GPU.
+struct GltfMeshCardIds {
+  size_t                submesh = 0;
+  std::vector<uint16_t> wedges;
+  };
+
+GltfMeshCardIds loadGltfMeshCardIds(const std::vector<uint8_t>& glb, const asset::StaticMesh& mesh);

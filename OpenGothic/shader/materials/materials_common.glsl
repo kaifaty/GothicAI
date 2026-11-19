@@ -96,6 +96,12 @@ const uint L_VsmLights  = L_Shadow1;
 #define MAT_MOTION 1
 #endif
 
+// Object fragments are also shared by skinned and morph meshes, which supply full coverage.
+#if defined(MAT_MOTION) || (defined(DEPTH_ONLY) && defined(ATEST) && !defined(FLAT_NORMAL) && (MESH_TYPE!=T_PFX))
+#define MAT_TREE_CARDS 1
+const uint TreeCardLocation = 8;
+#endif
+
 // The main-view payload packs level + 1 above the 16-bit material bucket.
 #if (MESH_TYPE!=T_PFX) && !defined(DEPTH_ONLY)
 #define MAT_CLUSTER_LEVEL

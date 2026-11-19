@@ -5,8 +5,10 @@
 #include <Tempest/Log>
 #include <Tempest/Painter>
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cassert>
 #include <cstdlib>
 
@@ -45,7 +47,7 @@ struct VisualObjects::InstanceDesc {
     }
   float    pos[4][3] = {};
   float    fatness   = 0;
-  uint32_t animPtr   = 0;
+  uint32_t animPtr   = 0; // for a ranked rigid crown, the bits of its current prefix length K
   uint32_t deformPtr = 0;
   uint32_t deformCount = 0;
   };
@@ -481,6 +483,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     for(size_t i=0; i<mesh.sub.size() && i<NoLevels; ++i)
       if(mesh.sub[i].iboOffset==iboOff && mesh.sub[i].iboLength==iboLen) {
         obj.levelSub = uint8_t(i);
+        obj.rankedCrown = mesh.cardCount!=0 && meshletCount>0 && mesh.meshletFirstCard[firstMeshlet]>=0;
         objectsLevels.insert(id);
         if(type==DrawCommands::Static && mesh.impostor.px>0.f)
           setImpostorShadow(obj, true);
@@ -958,9 +961,31 @@ std::pair<uint32_t,uint32_t> VisualObjects::drawnMeshlets(Object& obj) {
   const uint32_t first = obj.iboOff/PackedMesh::MaxInd;
   if(obj.strandMeshlets>0)
     return {first, obj.strandMeshlets};
+  if(obj.rankedCrown && obj.level.glb==0 && obj.animPtr!=0) {
+    const auto& mesh = *obj.bucketId->staticMesh;
+    const auto ranks = std::span(mesh.meshletFirstCard).subspan(first, obj.iboLen/PackedMesh::MaxInd);
+    return {first, uint32_t(MeshLevels::treeMeshletPrefix(ranks, std::bit_cast<float>(obj.animPtr), float(mesh.cardCount)))};
+    }
   if(const auto* mesh = obj.bucketId->staticMesh)
     return mesh->levelMeshlets(obj.iboOff, obj.iboLen, obj.level.glb);
   return {first, obj.iboLen/PackedMesh::MaxInd};
+  }
+
+void VisualObjects::writeTreeSmoothLod(std::ostream& out) {
+  const char* separator = "";
+  out << '[';
+  for(auto id:objectsLevels) {
+    const auto& obj = objects[id];
+    if(!obj.rankedCrown || !obj.visible)
+      continue;
+    const auto& cluster = clustersMem[obj.clusterId];
+    out << separator << "{\"instance\":" << cluster.instanceId
+        << ",\"root_cm\":[" << obj.pos.at(3,0) << ',' << obj.pos.at(3,1) << ',' << obj.pos.at(3,2) << ']'
+        << ",\"height_px\":" << obj.treeHeight << ",\"k\":" << std::bit_cast<float>(obj.animPtr)
+        << ",\"meshlets\":" << cluster.meshletCount << ",\"stage\":" << unsigned(obj.level.stage) << '}';
+    separator = ",";
+    }
+  out << ']';
   }
 
 void VisualObjects::setImpostorShadow(Object& obj, bool enable) {
@@ -997,6 +1022,7 @@ void VisualObjects::preFrameUpdateLevels() {
     const bool canImpostor = obj.impostorShadowCmd!=uint16_t(-1) && benchImpostors!=BenchImpostors::Off;
     MeshLevels::Selection level;
     uint8_t shadowLevel = 0;
+    float keep = 0.f;
     if(obj.deformCount==0 && py!=0.f && resY>0) {
       const auto& box    = mesh->bbox.bbox;
       Vec3        middle = (box[0]+box[1])*0.5f;
@@ -1007,7 +1033,12 @@ void VisualObjects::preFrameUpdateLevels() {
       const float height = MeshLevels::screenHeight(worldHeight, distance, py, resY);
       const bool forceImpostor = canImpostor && benchImpostors==BenchImpostors::Force && obj.visible;
       // The forced bench view selects below every threshold.
-      level = mesh->pickLevel(obj.level.stage, forceImpostor ? 0.f : height, canImpostor);
+      level = mesh->pickLevel(obj.level.stage, forceImpostor ? 0.f : height, canImpostor, !obj.isGhost);
+      if(obj.rankedCrown) {
+        obj.treeHeight = height;
+        if(!obj.isGhost && level.glb==0)
+          keep = float(mesh->cardCount)*MeshLevels::treeCardFraction(height);
+        }
       shadowLevel = level.glb;
       if(!obj.isGhost && FoliageTree::isTree(obj.bucketId->mat.foliage)) {
         const float shadowHeight = MeshLevels::screenHeight(worldHeight, distance, py, 1080);
@@ -1025,15 +1056,22 @@ void VisualObjects::preFrameUpdateLevels() {
           impostorDraws.push_back(id);
         }
       }
+    if(obj.rankedCrown && obj.animPtr!=std::bit_cast<uint32_t>(keep)) {
+      obj.animPtr = std::bit_cast<uint32_t>(keep);
+      // Patch only K. The matrix written by preFrameUpdateWind and the previous instance remain available.
+      obj.objInstance.set(&obj.animPtr, offsetof(InstanceDesc, animPtr), sizeof(obj.animPtr));
+      }
     if(obj.levelSub==0 && !level.impostor())
       ++count[level.glb];
     auto& c = clustersMem[obj.clusterId];
     const auto command = level.impostor() ? obj.impostorShadowCmd : obj.cmdId;
     const bool separateShadow = shadowLevel!=level.glb;
-    if(level==obj.level && c.commandId==command && shadowLevel==obj.shadowLevel &&
-       (!separateShadow || c.shadowCommandId==obj.cmdId))
-      continue;
+    const bool sameLevel = level==obj.level;
     obj.level = level;
+    if(sameLevel && c.commandId==command && shadowLevel==obj.shadowLevel &&
+       (!separateShadow || c.shadowCommandId==obj.cmdId) &&
+       (!obj.rankedCrown || !obj.visible || c.meshletCount==drawnMeshlets(obj).second))
+      continue;
     obj.shadowLevel = shadowLevel;
     const auto range = drawnMeshlets(obj);
     c.commandId    = command;

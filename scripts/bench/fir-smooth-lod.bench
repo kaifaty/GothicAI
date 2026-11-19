@@ -1,0 +1,39 @@
+# Near crown transition of spruce A on the marked fir-probe-4 set, at noon.
+# Fly along the fir-lod.bench sightline from 25 m until the spruce is below 200 px.
+# Return along the same line, hold near 400 px, then arc 36 degrees around the tree.
+# One recording at 1920x1080 with the per-frame crown selection in events.jsonl.
+# @timeout 300
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+set time 12 0
+
+goto pos 36500 3900 -7577
+clear 3000
+streaming wait
+grass wait
+cam at 40000 3924 -1515 41250 4200 650
+wait 5000
+rec fir-smooth-lod tree-lod
+wait 1000
+cam fly 39380 4356 -2588 41250 4200 650 4500
+wait 4500
+cam fly 37095 5950 -6546 41250 4200 650 12000
+wait 12000
+wait 1000
+cam fly 39380 4356 -2588 41250 4200 650 12000
+wait 12000
+wait 4000
+cam fly 40000 3924 -1515 41250 4200 650 4500
+wait 4500
+cam fly 40474 3924 -1727 41250 4100 650 3000
+wait 3000
+cam fly 40982 3924 -1836 41250 4000 650 3000
+wait 3000
+cam fly 41502 3924 -1837 41250 3900 650 3000
+wait 3000
+wait 1000
+stop
+wait 500

@@ -110,7 +110,7 @@ class StaticMesh {
     std::pair<size_t,size_t>              rtSlice(size_t iboOffset, size_t iboLen) const;
     // The meshlets (first, count) the submesh at this slice draws at a level of detail: 0 or one the mesh has not, its own
     std::pair<uint32_t,uint32_t>          levelMeshlets(size_t iboOffset, size_t iboLen, size_t level) const;
-    MeshLevels::Selection                pickLevel(uint8_t previous, float height, bool allowImpostor) const;
+    MeshLevels::Selection                pickLevel(uint8_t previous, float height, bool allowImpostor, bool smoothTree = false) const;
 
     const Tempest::StorageBuffer& vboBuffer() const;
     const Tempest::StorageBuffer& ibo8Buffer() const;
@@ -134,6 +134,9 @@ class StaticMesh {
     // bbox itself is the mesh's, as a tree's height for the wind is. The same as bbox without levels
     Bounds                          drawn;
     std::vector<Level>              levels;
+    uint32_t                        cardCount = 0;
+    uint32_t                        cardIdsOffset = 0; // word offset of packed 16-bit card IDs in ibo8, or 0
+    std::vector<int32_t>            meshletFirstCard;  // one first rank per full-mesh meshlet, -1 for wood
     Impostor                        impostor;
     float                           strandWidth = 0; // PackedMesh::strandWidth
     // the sphere of each meshlet in the mesh's space (centre, radius), levels included: the shadow pages take an

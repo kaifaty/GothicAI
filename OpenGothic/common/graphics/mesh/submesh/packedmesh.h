@@ -14,6 +14,7 @@
 
 class Bounds;
 struct WorldChunkMesh;
+struct GltfMeshCardIds;
 namespace ClusterLod { struct Graph; }
 
 class PackedMesh {
@@ -77,6 +78,10 @@ class PackedMesh {
       };
     std::vector<Level>    levels;
 
+    uint32_t             cardCount = 0; // the full crown's cards, zero for an unmarked mesh
+    std::vector<uint16_t> cardIds;      // one-based card IDs per packed vertex of the full mesh, zero for wood and padding
+    std::vector<int32_t>  meshletFirstCard; // first zero-based card rank per meshlet of the full mesh, -1 for wood
+
     std::vector<uint32_t> verticesId; // only for morph meshes
     bool                  isUsingAlphaTest = true;
     float                 strandWidth      = 0;    // strands (groommesh.cpp): the mean width of a hair, cm; 0: not strands
@@ -84,7 +89,7 @@ class PackedMesh {
     // colors: the vertex colour of each wedge of each sub-mesh (gltfmeshcolor.h); without them, and for a list that
     // is not of the sub-mesh's size, the vertices are drawn with ones
     PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest = false,
-               const std::vector<std::vector<uint32_t>>* colors = nullptr);
+               const std::vector<std::vector<uint32_t>>* colors = nullptr, const GltfMeshCardIds* cards = nullptr);
     PackedMesh(const asset::StaticMesh& mesh, const ClusterLod::Graph& graph);
     PackedMesh(const asset::WorldMesh& mesh, PkgType type);
     // Triangle IDs address the unchanged source polygon arrays. Materials and
@@ -184,7 +189,9 @@ class PackedMesh {
     void   packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
                            const std::vector<SkeletalData>* skeletal,
                            const std::vector<SkinRest>* rest = nullptr,
-                           const std::vector<std::vector<uint32_t>>* colors = nullptr);
+                           const std::vector<std::vector<uint32_t>>* colors = nullptr,
+                           const GltfMeshCardIds* cards = nullptr);
+    void   packCrown(const asset::StaticMesh& mesh, const GltfMeshCardIds& cards, const std::vector<uint32_t>* colors);
 
     std::vector<Meshlet> buildMeshlets(const asset::WorldMesh* mesh, const asset::SubMesh* proto_mesh,
                                        PrimitiveHeap& heap, std::vector<bool>& used,

@@ -222,6 +222,8 @@ struct Bucket {
                       // BK_TRACK: the record's wander, fade and raggedness (Grass::pack of grasstrack.h)
   uint  meshletSpheres; // where the spheres of its mesh's meshlets start in DrawBuckets::meshletSpheres, meshlet i at
                         // +i; VSM_NO_SPHERES (0xFFFFFFFF) for none (vsm_cull_meshlets.comp)
+  uint  cardIds;    // word offset of the packed uint16 card IDs in the index buffer, 0 without ranks
+  uint  cardCount;  // number of ranked cards in the full mesh
   };
 
 #endif

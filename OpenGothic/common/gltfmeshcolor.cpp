@@ -5,13 +5,14 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #include "../lib/cgltf/cgltf.h"
 
 namespace {
 
-[[noreturn]] void reject(const std::string& message) {
-  throw std::runtime_error("COLOR_0: "+message);
+[[noreturn]] void reject(std::string_view name, std::string_view message) {
+  throw std::runtime_error(std::string(name)+": "+std::string(message));
   }
 
 // loadGltfMesh has rejected a duplicate attribute: the first is the only one
@@ -27,9 +28,9 @@ void requireColor(const cgltf_accessor& color, size_t count) {
   const bool norm = (color.component_type==cgltf_component_type_r_8u || color.component_type==cgltf_component_type_r_16u) &&
                     color.normalized;
   if((color.type!=cgltf_type_vec3 && color.type!=cgltf_type_vec4) || !(real || norm))
-    reject("must use float or normalized unsigned RGB or RGBA");
+    reject("COLOR_0","must use float or normalized unsigned RGB or RGBA");
   if(color.count!=count)
-    reject("its count does not match POSITION");
+    reject("COLOR_0","its count does not match POSITION");
   }
 
 uint32_t vertexColor(const cgltf_accessor* color, size_t index) {
@@ -37,23 +38,23 @@ uint32_t vertexColor(const cgltf_accessor* color, size_t index) {
     return 0xFFFFFFFFu;
   float c[4] = {1.f,1.f,1.f,1.f};
   if(!cgltf_accessor_read_float(color,index,c,color->type==cgltf_type_vec3 ? 3 : 4))
-    reject("cannot be read");
+    reject("COLOR_0","cannot be read");
   uint32_t ret = 0;
   for(unsigned i=0; i<4; ++i) {
     if(!std::isfinite(c[i]))
-      reject("is not finite");
+      reject("COLOR_0","is not finite");
     ret |= uint32_t(std::lround(std::clamp(c[i],0.f,1.f)*255.f)) << (8u*i);
     }
   return ret;
   }
 
-// the wedges one primitive has added to its sub-mesh: WedgeStream of gltfmesh.cpp, and the colour they took
+// The wedges one primitive has added to its submesh: WedgeStream of gltfmesh.cpp.
 struct Stream {
   const cgltf_node*     node;
   const cgltf_accessor* position;
   const cgltf_accessor* normal;
   const cgltf_accessor* uv;
-  const cgltf_accessor* color;
+  const cgltf_accessor* values;
   };
 
 struct MaterialState {
@@ -61,23 +62,23 @@ struct MaterialState {
   std::vector<Stream>   streams;
   };
 
-}
-
-GltfMeshColors loadGltfMeshColors(const std::vector<uint8_t>& glb, const asset::StaticMesh& mesh) {
+template<class T, class Find, class Read>
+std::vector<std::vector<T>> loadWedgeAttribute(const std::vector<uint8_t>& glb, const asset::StaticMesh& mesh,
+                                               std::string_view name, Find find, Read read) {
   cgltf_options options = {};
   options.type = cgltf_file_type_glb;
   cgltf_data* parsed = nullptr;
   if(cgltf_parse(&options,glb.data(),glb.size(),&parsed)!=cgltf_result_success)
-    reject("the GLB cannot be parsed");
+    reject(name,"the GLB cannot be parsed");
   const std::unique_ptr<cgltf_data,decltype(&cgltf_free)> data(parsed,cgltf_free);
   if(data->scene==nullptr || data->buffers_count!=1 || data->bin==nullptr || data->buffers[0].size>data->bin_size)
-    reject("the GLB is not one loadGltfMesh takes");
+    reject(name,"the GLB is not one loadGltfMesh takes");
   // as loadGltfMesh does: the embedded BIN only, never cgltf's URI loader
   data->buffers[0].data = const_cast<void*>(data->bin);
   if(cgltf_validate(data.get())!=cgltf_result_success)
-    reject("the GLB is not valid");
+    reject(name,"the GLB is not valid");
 
-  GltfMeshColors             colors;
+  std::vector<std::vector<T>> values;
   std::vector<MaterialState> materials;
   bool                       any = false;
   std::vector<const cgltf_node*> pending(data->scene->nodes,data->scene->nodes+data->scene->nodes_count);
@@ -87,51 +88,100 @@ GltfMeshColors loadGltfMeshColors(const std::vector<uint8_t>& glb, const asset::
     pending.pop_back();
     const size_t index = size_t(node-data->nodes);
     if(visited[index])
-      reject("a scene node is referenced more than once");
+      reject(name,"a scene node is referenced more than once");
     visited[index] = true;
     for(size_t p=0; node->mesh!=nullptr && p<node->mesh->primitives_count; ++p) {
       const auto& primitive = node->mesh->primitives[p];
       const auto* position  = attribute(primitive,cgltf_attribute_type_position);
       const auto* normal    = attribute(primitive,cgltf_attribute_type_normal);
       const auto* uv        = attribute(primitive,cgltf_attribute_type_texcoord);
-      const auto* color     = attribute(primitive,cgltf_attribute_type_color);
       if(position==nullptr)
-        reject("a primitive has no POSITION");
+        reject(name,"a primitive has no POSITION");
+      const auto* accessor  = find(primitive,position->count);
 
       size_t material = 0;
       while(material<materials.size() && materials[material].source!=primitive.material)
         ++material;
       if(material==materials.size()) {
         materials.push_back({primitive.material,{}});
-        colors.emplace_back();
+        values.emplace_back();
         }
       auto& streams = materials[material].streams;
       const auto shared = std::find_if(streams.begin(),streams.end(),[&](const Stream& s) {
         return s.node==node && s.position==position && s.normal==normal && s.uv==uv;
         });
       if(shared!=streams.end()) {
-        if(shared->color!=color)
-          reject("primitives of one node and material with the same POSITION, NORMAL and TEXCOORD_0 share their "
-                 "vertices and cannot differ in COLOR_0");
+        if(shared->values!=accessor)
+          reject(name,"primitives of one node and material with the same POSITION, NORMAL and TEXCOORD_0 "
+                      "cannot assign different values to their shared vertices");
         continue;
         }
-      if(color!=nullptr) {
-        requireColor(*color,position->count);
-        any = true;
-        }
-      streams.push_back({node,position,normal,uv,color});
+      any |= accessor!=nullptr;
+      streams.push_back({node,position,normal,uv,accessor});
       for(size_t i=0; i<position->count; ++i)
-        colors[material].push_back(vertexColor(color,i));
+        values[material].push_back(read(accessor,i));
       }
     for(size_t i=0; i<node->children_count; ++i)
       pending.push_back(node->children[i]);
     }
   if(!any)
     return {};
-  if(colors.size()!=mesh.sub_meshes.size())
-    reject("the materials are not the mesh's");
-  for(size_t i=0; i<colors.size(); ++i)
-    if(colors[i].size()!=mesh.sub_meshes[i].wedges.size())
-      reject("the vertices are not the mesh's");
-  return colors;
+  if(values.size()!=mesh.sub_meshes.size())
+    reject(name,"the materials are not the mesh's");
+  for(size_t i=0; i<values.size(); ++i)
+    if(values[i].size()!=mesh.sub_meshes[i].wedges.size())
+      reject(name,"the vertices are not the mesh's");
+  return values;
+  }
+
+}
+
+GltfMeshColors loadGltfMeshColors(const std::vector<uint8_t>& glb, const asset::StaticMesh& mesh) {
+  const auto find = [](const cgltf_primitive& primitive, size_t count) {
+    const auto* color = attribute(primitive,cgltf_attribute_type_color);
+    if(color!=nullptr)
+      requireColor(*color,count);
+    return color;
+    };
+  return loadWedgeAttribute<uint32_t>(glb,mesh,"COLOR_0",find,vertexColor);
+  }
+
+GltfMeshCardIds loadGltfMeshCardIds(const std::vector<uint8_t>& glb, const asset::StaticMesh& mesh) {
+  constexpr std::string_view name = "_CARD_ID";
+  bool marked = false;
+  const auto find = [&](const cgltf_primitive& primitive, size_t count) -> const cgltf_accessor* {
+    const cgltf_accessor* cards = nullptr;
+    for(size_t i=0; i<primitive.attributes_count; ++i) {
+      const auto& attr = primitive.attributes[i];
+      if(attr.type!=cgltf_attribute_type_custom || attr.name==nullptr || attr.name!=name)
+        continue;
+      if(marked)
+        reject(name,"expected one marked primitive");
+      marked = true;
+      cards = attr.data;
+      if(primitive.material==nullptr || primitive.material->alpha_mode!=cgltf_alpha_mode_mask)
+        reject(name,"the marked primitive must use a MASK material");
+      if(cards==nullptr || cards->count!=count || cards->type!=cgltf_type_scalar ||
+         cards->component_type!=cgltf_component_type_r_16u || cards->normalized)
+        reject(name,"must use one non-normalized unsigned short per POSITION");
+      }
+    return cards;
+    };
+  const auto read = [name](const cgltf_accessor* cards, size_t index) -> uint16_t {
+    if(cards==nullptr)
+      return 0;
+    cgltf_uint value = 0;
+    if(!cgltf_accessor_read_uint(cards,index,&value,1) || value==0)
+      reject(name,"each crown vertex must have a nonzero card ID");
+    return uint16_t(value);
+    };
+  auto values = loadWedgeAttribute<uint16_t>(glb,mesh,name,find,read);
+  if(values.empty())
+    return {};
+  for(size_t i=0; i+1<values.size(); ++i)
+    if(std::ranges::any_of(values[i],[](uint16_t id) { return id!=0; }))
+      reject(name,"the crown must follow the wood");
+  if(std::ranges::find(values.back(),uint16_t(0))!=values.back().end())
+    reject(name,"the marked material must contain only marked vertices");
+  return {values.size()-1,std::move(values.back())};
   }

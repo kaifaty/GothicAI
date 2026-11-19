@@ -193,6 +193,7 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   defaults->set("INTERNAL",     "hizSkipCrowns", 1); // graphics/hizoccluders.h
   defaults->set("INTERNAL",     "treeWindFade", 1); // graphics/treewindfade.h
   defaults->set("INTERNAL",     "meshLevels", 1); // graphics/meshlevels.h
+  defaults->set("INTERNAL",     "treeSmoothLod", 1); // graphics/meshlevels.h
   defaults->set("INTERNAL",     "impostors", 1); // graphics/meshlevels.h
   defaults->set("INTERNAL",     "shadowLevels", 1); // graphics/meshlevels.h
 
