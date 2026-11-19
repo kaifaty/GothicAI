@@ -463,7 +463,7 @@ CookedChunk recoverIndexedChunk(const std::filesystem::path& path, const CookedI
       }
     data.triangles.push_back(cooked);
     }
-  auto bytes = std::make_shared<const std::vector<uint8_t>>(encodeCookedChunk(data));
+  auto bytes = std::make_shared<const std::vector<uint8_t>>(encodeCookedChunk(data,wcb::LegacyVersion));
   return CookedChunk::open(*bytes,path.string(),bytes);
   }
 

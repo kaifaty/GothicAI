@@ -6,6 +6,7 @@
 #include "drawclusters.h"
 #include "drawcommands.h"
 #include "instancestorage.h"
+#include "meshlevels.h"
 #include "texturescreendemand.h"
 
 #include <filesystem>
@@ -92,7 +93,8 @@ class VisualObjects final {
     Item   get(const AnimMesh& mesh,   const Material& mat, size_t iboOff, size_t iboLen, const InstanceStorage::Id& anim);
     // texturePosition: a landscape package's chunk; texel: its triangles' UV density and world bounds
     Item   get(const StaticMesh& mesh, const Material& mat, size_t iboOff, size_t iboLen, const PackedMesh::Cluster* cluster, DrawCommands::Type type,
-               const Tempest::Vec3* texturePosition = nullptr, const TexelDensity* texel = nullptr);
+               const Tempest::Vec3* texturePosition = nullptr, const TexelDensity* texel = nullptr,
+               std::span<const PackedMesh::ClusterLevel> levels = {});
     // All Items referencing the mesh must have been released first.
     void   invalidate(const StaticMesh& mesh);
     void   setTextureResidency(ChunkResidency* residency);
@@ -132,7 +134,9 @@ class VisualObjects final {
     void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    enum class BenchImpostors { Auto, Force, Off };
+    static BenchImpostors benchImpostors;
     void drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int layer);
     void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -186,6 +190,7 @@ class VisualObjects final {
       uint32_t            animPtr   = 0;
       DrawBuckets::Id     bucketId;
       uint16_t            cmdId     = uint16_t(-1);
+      uint16_t            impostorShadowCmd = uint16_t(-1);
       uint32_t            clusterId = 0;
       uint64_t            timeShift = 0;
 
@@ -200,7 +205,7 @@ class VisualObjects final {
       bool                tree           = false; // a tree in the wind: its sphere follows the wind's fade
       uint16_t            treeFade       = 0;     // ...the fade its sphere is grown by now (preFrameUpdateTrees)
       uint8_t             levelSub       = NoLevels; // its submesh of a mesh with levels of detail (meshlevels.h)
-      uint8_t             level          = 0;     // ...the level its cluster draws now: 0 the mesh itself
+      MeshLevels::Selection level;                // ...the stage selected for this instance, 0 the mesh itself
       bool                isGhost       = false;
       bool                visible       = true;
       Resources::TextureCategory textureCategory = Resources::TextureCategory::Dynamic;
@@ -237,6 +242,8 @@ class VisualObjects final {
     void     preFrameUpdateStrands();
     void     preFrameUpdateTrees();
     void     preFrameUpdateLevels();
+    void     setImpostorShadow(Object& obj, bool enable);
+    void     drawImpostors(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     // the meshlets the object's cluster draws while visible: [first, first+count) of its bucket's mesh
     std::pair<uint32_t,uint32_t> drawnMeshlets(Object& obj);
 
@@ -263,7 +270,8 @@ class VisualObjects final {
     void     scheduleTexture(Object& object, size_t id, double expiry);
     void     unscheduleTexture(Object& object);
 
-    uint32_t clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
+    uint32_t clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId,
+                       uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels);
     uint32_t clusterId(const DrawBuckets::Bucket& bucket, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
 
     void     startMMAnim(size_t i, std::string_view animName, float intensity, uint64_t timeUntil, bool freeOnly);
@@ -294,6 +302,14 @@ class VisualObjects final {
     std::unordered_set<size_t> objectsStrand;
     std::unordered_set<size_t> objectsTree;
     std::unordered_set<size_t> objectsLevels;
+    struct ImpostorInstance {
+      float    transform[16];
+      uint32_t info[4] = {};
+      };
+    static_assert(sizeof(ImpostorInstance)==80);
+    std::vector<size_t>           impostorDraws;
+    std::vector<ImpostorInstance> impostorInstances;
+    Tempest::StorageBuffer       impostorBuffer[Resources::MaxFramesInFlight];
     std::unordered_set<size_t> objectsFree;
     mutable std::recursive_mutex textureSync;
     ChunkResidency*            textureResidency = nullptr;

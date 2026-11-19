@@ -2,8 +2,12 @@
 
 #include <Tempest/Log>
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <cstdlib>
+#include <limits>
 
+#include "graphics/clusterlodrender.h"
 #include "graphics/mesh/submesh/animmesh.h"
 #include "graphics/mesh/submesh/staticmesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -14,6 +18,63 @@
 #include "frameprofile.h"
 
 using namespace Tempest;
+
+namespace {
+
+enum class LodView { Default, Base, Normal, Levels };
+LodView benchLodView = LodView::Default;
+
+struct LodPush {
+  float    thresholdPx = 0;
+  float    projection  = 0;
+  float    height      = 0;
+  uint32_t debug       = 0;
+  Vec4     camera;
+  Vec4     forwardAndGuard;
+  };
+
+LodPush clusterLodView(const DrawClusters& clusters, const SceneGlobals& scene) {
+  if(!clusters.hasLevels())
+    return {};
+
+  static const auto thresholdPx = [] {
+    const char* value = std::getenv("OPENGOTHIC_CLUSTER_LOD_PX");
+    if(value==nullptr || *value=='\0')
+      return 1.f;
+    char* end = nullptr;
+    const float px = std::strtof(value, &end);
+    if(end!=value && *end=='\0' && std::isfinite(px) && px>=0.f)
+      return px;
+    Log::e("Invalid OPENGOTHIC_CLUSTER_LOD_PX; using 1 pixel");
+    return 1.f;
+    }();
+  static const auto envLevels = [] {
+    const char* mode = std::getenv("OPENGOTHIC_CLUSTER_LOD");
+    return mode!=nullptr && std::string_view(mode)=="levels";
+    }();
+  const bool debug = benchLodView==LodView::Levels || (benchLodView==LodView::Default && envLevels);
+  const auto eye = scene.camPos();
+  const float farDepth = scene.clipInfo().z;
+  const auto& view = scene.view;
+  // Convert four float epsilon of projected depth to a conservative view-space band at the far plane.
+  const float guard = 4.f * std::numeric_limits<float>::epsilon() * farDepth * farDepth / std::max(scene.znear, 1.f);
+  return {benchLodView==LodView::Base ? 0.f : thresholdPx, scene.verticalProjection(),
+          float(scene.screenRes().y), uint32_t(debug), Vec4(eye.x, eye.y, eye.z, farDepth),
+          Vec4(view[0][2], view[1][2], view[2][2], guard)};
+  }
+
+}
+
+void ClusterLodRender::setBenchView(std::string_view mode) {
+  if(mode=="base")
+    benchLodView = LodView::Base;
+  else if(mode=="normal")
+    benchLodView = LodView::Normal;
+  else if(mode=="levels")
+    benchLodView = LodView::Levels;
+  else
+    benchLodView = LodView::Default;
+  }
 
 // OPENGOTHIC_VSM_PAIRS=<n>: another cap of the VSM meshlet-page pairs, for a study (the demand of a scene without the
 // cap, an overflow without a forest); the buffers follow it
@@ -195,19 +256,19 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
     }
   }
 
-uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId) {
+uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId, bool shadowOnly) {
   const bool bindlessSys = Shaders::options().doBindless;
   const bool bindless    = bindlessSys && (!m.hasFrameAnimation() || type==Landscape);
 
-  auto pMain    = Shaders::inst().materialPipeline(m, type, Shaders::T_Main,   bindless);
+  auto pMain    = shadowOnly ? nullptr : Shaders::inst().materialPipeline(m, type, Shaders::T_Main, bindless);
   auto pShadow  = Shaders::inst().materialPipeline(m, type, Shaders::T_Shadow, bindless);
   auto pVsm     = Shaders::inst().materialPipeline(m, type, Shaders::T_Vsm,    bindless);
-  auto pHiZ     = Shaders::inst().materialPipeline(m, type, Shaders::T_Depth,  bindless);
-  if(pMain==nullptr && pShadow==nullptr && pHiZ==nullptr)
+  auto pHiZ     = shadowOnly ? nullptr : Shaders::inst().materialPipeline(m, type, Shaders::T_Depth, bindless);
+  if(pMain==nullptr && pShadow==nullptr && pVsm==nullptr && pHiZ==nullptr)
     return uint16_t(-1);
 
   for(size_t i=0; i<cmd.size(); ++i) {
-    if(cmd[i].pMain!=pMain || cmd[i].pShadow!=pShadow || cmd[i].pHiZ!=pHiZ)
+    if(cmd[i].pMain!=pMain || cmd[i].pShadow!=pShadow || cmd[i].pVsm!=pVsm || cmd[i].pHiZ!=pHiZ)
       continue;
     if(!bindless && cmd[i].bucketId!=bucketId)
       continue;
@@ -340,10 +401,16 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
     const size_t visClustersSz = maxPayload*sizeof(uint32_t)*4;
     usesSsbo(view.visClusters, visClustersSz);
 
-    struct Push { uint32_t firstMeshlet; uint32_t meshletCount; float znear; } push = {};
+    struct Push {
+      uint32_t firstMeshlet, meshletCount;
+      float znear;
+      alignas(16) LodPush lod;
+      } push = {};
+    static_assert(offsetof(Push,lod)==16 && sizeof(Push)==64);
     push.firstMeshlet = 0;
     push.meshletCount = uint32_t(clusters.size());
     push.znear        = scene.znear;
+    push.lod          = clusterLodView(clusters, scene);
 
     // bench `deterministic on`: one invocation appends the visible clusters in their canonical order (orderedClusters),
     // so the instance order of a draw (who wins equal depth, the order of blending) depends neither on how GPU threads
@@ -368,6 +435,8 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
     cmd.setBinding(T_Indirect, view.indirectCmd);
     cmd.setBinding(T_Clusters, clusters.ssbo());
     cmd.setBinding(T_HiZ,      *scene.hiZ);
+    cmd.setBinding(8,         clusters.levelIndicesSsbo());
+    cmd.setBinding(9,         clusters.levelsSsbo());
     if(order!=nullptr)
       cmd.setBinding(T_Order,  *order);
     cmd.setPushData(push);
@@ -459,9 +528,14 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   usesSsbo(view.vsmClusters, pairsSz); // the pairs of meshlet and entry, as the meshlets' pass writes them...
   usesSsbo(view.visClusters, pairsSz); // ...and by draw
 
-  struct Push { uint32_t meshletCount; uint32_t candidateCap; } push = {};
+  struct Push {
+    uint32_t meshletCount, candidateCap;
+    alignas(16) LodPush lod;
+    } push = {};
+  static_assert(offsetof(Push,lod)==16 && sizeof(Push)==64);
   push.meshletCount = uint32_t(clusters.size());
   push.candidateCap = cap;
+  push.lod          = clusterLodView(clusters, scene);
 
   cmd.setBinding(T_Scene,    scene.uboGlobal[SceneGlobals::V_Vsm]);
   cmd.setBinding(T_Payload,  vsmCandidates);
@@ -473,6 +547,8 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   cmd.setBinding(T_HiZ,      *scene.vsmPageHiZ);
   cmd.setBinding(T_VsmPages, *scene.vsmPageList);
   cmd.setBinding(9,          scene.vsmDbg);
+  cmd.setBinding(10,         clusters.levelIndicesSsbo());
+  cmd.setBinding(11,         clusters.levelsSsbo());
   cmd.setPushData(&push, sizeof(push));
   cmd.setPipeline(shaders.vsmVisibilityPass);
   cmd.dispatchThreads(push.meshletCount, size_t(scene.vsmPageTbl->d() + 1));

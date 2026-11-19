@@ -1,6 +1,7 @@
 #include "sceneglobals.h"
 #include "graphics/foliagefront.h"
 #include "graphics/contactao.h"
+#include "graphics/grass/grassdiag.h"
 #include "graphics/grasscontact.h"
 #include "graphics/hizoccluders.h"
 #include "graphics/lampcontact.h"
@@ -248,8 +249,10 @@ void SceneGlobals::setUnderWater(bool w) {
 
 void SceneGlobals::setTime(uint64_t time) {
   tickCount                = time;
-  uboGlobalCpu.waveAnim    = 2.f*float(M_PI)*float(tickCount%3000)/3000.f;
-  uboGlobalCpu.tickCount32 = uint32_t(tickCount);
+  // Use the same wave and texture animation phase in paired coverage masks.
+  const auto materialTick  = landscapeMask ? 0 : time;
+  uboGlobalCpu.waveAnim    = 2.f*float(M_PI)*float(materialTick%3000)/3000.f;
+  uboGlobalCpu.tickCount32 = uint32_t(materialTick);
 
   // Living foliage: the wind of this tick, and the one the previous frame was drawn with for the motion vectors.
   // A frame at the same tick (a pause) gets both alike; so does the first frame and one after a jump of the clock
@@ -276,6 +279,7 @@ void SceneGlobals::commitUbo(uint8_t fId) {
   // the tree's wind fades by its size in the main view's pixels, in the shadow views as well (graphics/treewindfade.h)
   uboGlobalCpu.foliageFade = Tempest::Vec4(TreeWindFade::enabled() ? FoliageTree::fadeScale(proj.at(1,1), uboGlobalCpu.screenRes.y) : 0.f,
                                            0.f, 0.f, 0.f);
+  uboGlobalCpu.viewFlags = (uboGlobalCpu.viewFlags & ~Grass::PartTrackMask) | (Grass::benchPartsOff() & Grass::PartTrackMask);
   UboGlobal perView[V_Count];
   uboGlobalPf[fId][V_Main].update(&uboGlobalCpu);
 

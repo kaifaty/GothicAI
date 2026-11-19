@@ -83,6 +83,9 @@ struct Result {
   std::map<std::string,Motion> motions;
   // "with": own effects every emitter of this one brings along at its place (flame + tongues + sparks + smoke)
   std::map<std::string,std::vector<std::string>> with;
+  // "land": the own effect put where a particle of this one meets the world's static geometry (a drop of the fire
+  // rain); the particle stops there
+  std::map<std::string,std::string> land;
   std::vector<std::string> errors;
   };
 

@@ -54,6 +54,7 @@ struct SceneDesc {
   uint  vsmLampSides;    // VSM lamps: a cube face keeps the far side (1), both of the world mesh (2), of objects too (3)
   uint  vsmStudy;        // bench `vsm study <bits>`: VSM_STUDY_* below (0 in the game)
   uint  viewFlags;       // VF_* below: the occluder pass, TAA, shadow views
+                         // Bits 16–24 carry Grass::Part for the cart track (grass/grass_track.glsl).
   float fogSkyVis;       // the sky seen from the camera under GI, 0..1 (fog_sky_vis.comp); 1 without it
   float lampNearKnee;    // a lamp's light never passes this many times its light at the range (light.frag); 0 off
   float dayHour;         // 0..24 of the game's day: the evening of the windows (materials/window_glow.glsl)

@@ -7,6 +7,7 @@
 #include <limits>
 
 #include "utils/string_frm.h"
+#include "game/npcactivityhost.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
 #include "world/objects/interactive.h"
@@ -47,18 +48,10 @@ bool GameScript::npc_wasinstate(std::shared_ptr<daedalus::INpc> npcRef, int stat
   }
 
 int GameScript::npc_getdisttowp(std::shared_ptr<daedalus::INpc> npcRef, std::string_view wpname) {
-  auto  npc = findNpc(npcRef);
-  //NOTE: in CoM, some way-point and free-points share same name - need to be precise
-  auto* wp  = world().findWayPoint(wpname);
-
-  if(npc!=nullptr && wp!=nullptr){
-    float ret = std::sqrt(npc->qDistTo(wp));
-    if(ret<float(std::numeric_limits<int32_t>::max()))
-      return int32_t(ret); else
-      return std::numeric_limits<int32_t>::max();
-    } else {
+  auto npc = findNpc(npcRef);
+  if(npc==nullptr)
     return std::numeric_limits<int32_t>::max();
-    }
+  return NpcEngineCalls::distanceToWaypoint(world(),*npc,wpname);
   }
 
 void GameScript::npc_exchangeroutine(std::shared_ptr<daedalus::INpc> npcRef, std::string_view rname) {
@@ -261,10 +254,7 @@ void GameScript::npc_percdisable(std::shared_ptr<daedalus::INpc> npcRef, int pr)
 
 std::string GameScript::npc_getnearestwp(std::shared_ptr<daedalus::INpc> npcRef) {
   auto npc = findNpc(npcRef);
-  auto wp  = npc ? world().findWayPoint(npc->position()) : nullptr;
-  if(wp)
-    return wp->name;
-  return "";
+  return npc ? NpcEngineCalls::nearestWaypoint(world(),*npc) : "";
   }
 
 std::string GameScript::npc_getnextwp(std::shared_ptr<daedalus::INpc> npcRef) {

@@ -182,6 +182,7 @@ struct WorldView::LandscapeStreaming {
   struct Chunk {
     std::unique_ptr<Landscape> gpu;
     std::unique_ptr<PackedMesh> ready;
+    size_t meshlets=0, legacyMeshlets=0;
     std::exception_ptr error;
     bool failed=false;
     bool nearFailed=false;
@@ -203,6 +204,7 @@ struct WorldView::LandscapeStreaming {
   size_t releasedSourceBytes=0;
   bool stopping=false;
   bool firstUpdate=true;
+  bool wasPending=true;
   double preloadMs=0;
   double initialPackMs=0;
   double initialReadMs=0; // the Near cells' reads within initialPackMs
@@ -406,9 +408,24 @@ struct WorldView::LandscapeStreaming {
       *readMs+=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
     if(view.grass)
       view.grass->addChunk(residency.table().entries[i].id,chunk.mesh);
-    std::vector<uint32_t> selected(chunk.mesh.polygons.material_indices.size());
-    std::iota(selected.begin(),selected.end(),uint32_t(0));
-    return std::make_unique<PackedMesh>(chunk.mesh,selected,materials,chunk.vertexIds,chunk.featureIds);
+    const auto packLegacy = [&]() {
+      std::vector<uint32_t> selected(chunk.mesh.polygons.material_indices.size());
+      std::iota(selected.begin(),selected.end(),uint32_t(0));
+      return std::make_unique<PackedMesh>(chunk.mesh,selected,materials,chunk.vertexIds,chunk.featureIds);
+      };
+    if(chunk.clusterHierarchy) {
+      try {
+        auto packed = std::make_unique<PackedMesh>(chunk,materials);
+        if(LoadProbe::enabled())
+          packed->legacyLandscapeMeshlets = packLegacy()->meshletBounds.size();
+        return packed;
+        }
+      catch(const std::runtime_error& e) {
+        const auto& cell = residency.table().entries[i];
+        Log::e("[cluster-lod] ",cell.file," uses ordinary meshlets: ",e.what());
+        }
+      }
+    return packLegacy();
     }
 
   void publish(size_t i, const PackedMesh& packed) {
@@ -417,6 +434,8 @@ struct WorldView::LandscapeStreaming {
     const Vec3 texturePosition((float(id.x)+0.5f)*ChunkId::Size,0,(float(id.z)+0.5f)*ChunkId::Size);
     Resources::TextureLoadScope textureLoadScope(true);
     chunks[i].gpu=std::make_unique<Landscape>(view.visuals,packed,pages,texturePosition);
+    chunks[i].meshlets=packed.meshletBounds.size();
+    chunks[i].legacyMeshlets=packed.clusterLevels.empty() ? packed.meshletBounds.size() : packed.legacyLandscapeMeshlets;
     const auto ms=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
     residency.recordPublication(ms,residency.desired(i)==ChunkResidency::State::Far);
     if(firstUpdate)
@@ -473,13 +492,41 @@ struct WorldView::LandscapeStreaming {
         readyBytes+=packed.vertices.capacity()*sizeof(packed.vertices[0])+
                     packed.indices.capacity()*sizeof(packed.indices[0])+
                     packed.indices8.capacity()*sizeof(packed.indices8[0])+
-                    packed.meshletBounds.capacity()*sizeof(packed.meshletBounds[0]);
+                    packed.meshletBounds.capacity()*sizeof(packed.meshletBounds[0])+
+                    packed.clusterLevels.capacity()*sizeof(packed.clusterLevels[0]);
         }
       }
     }
     residency.setPending(pending);
     const auto pageStats=pages.stats();
     residency.setLandscapePages(pageStats.occupiedBytes,pageStats.freeBytes,pageStats.retiredBytes,pageStats.pageCount);
+    if((firstUpdate || (wasPending && pending==0)) && LoadProbe::enabled()) {
+      size_t nearMeshlets=0, nearLevels=0, nearLegacy=0, meshlets=0, levels=0, legacy=0;
+      for(size_t i=0; i<chunks.size(); ++i) {
+        const auto& cell = chunks[i];
+        if(!cell.gpu)
+          continue;
+        meshlets += cell.meshlets;
+        levels += cell.gpu->levelRecordCount();
+        legacy += cell.legacyMeshlets;
+        if(residency.desired(i)==ChunkResidency::State::Near) {
+          nearMeshlets += cell.meshlets;
+          nearLevels += cell.gpu->levelRecordCount();
+          nearLegacy += cell.legacyMeshlets;
+          }
+        }
+      const size_t geometryStride = PackedMesh::MaxVert*sizeof(PackedMesh::Vertex)+PackedMesh::MaxPrim*4+
+                                    (Shaders::options().doRtScene ? PackedMesh::MaxInd*sizeof(uint32_t) : 0);
+      Log::i("[cluster-lod] near pending=",pending," near_geom_bytes=",nearMeshlets*geometryStride,
+             " near_meshlets=",nearMeshlets," near_level_records=",nearLevels,
+             " near_legacy_geom_bytes=",nearLegacy*geometryStride," near_legacy_meshlets=",nearLegacy);
+      Log::i("[cluster-lod] live_geom_bytes=",pageStats.occupiedBytes," live_meshlets=",meshlets,
+             " live_level_records=",levels," live_legacy_geom_bytes=",legacy*geometryStride,
+             " live_legacy_meshlets=",legacy," level_record_bytes=",sizeof(PackedMesh::ClusterLevel));
+      Log::i("[cluster-lod] level_buffer_bytes_prior_frame=",view.visuals.clusters().levelBufferBytes(),
+             " reserved_geom_bytes=",pageStats.occupiedBytes+pageStats.freeBytes+pageStats.retiredBytes);
+      }
+    wasPending = pending!=0;
     if(firstUpdate) {
       if(LoadProbe::enabled()) {
         size_t sourceBytes=source->memoryBytes()+materials.capacity()*sizeof(materials[0]);
@@ -520,6 +567,18 @@ WorldView::WorldView(std::pair<Vec3,Vec3> bounds, std::string_view skyPreset)
     if(len>0 && physics->rayStatic(from, from-flat*(600.f/len)).hasCol)
       return 0.35f;
     return 1.f;
+    });
+  // particles.d "land": a falling drop meets the ground, a wall or a roof, not a man (static geometry only)
+  pfxGroup.setGround([](const Vec3& from, const Vec3& to, Vec3& hit) {
+    const auto* physics = GameServices::inst().physicsWorld();
+    if(physics==nullptr || from==to)
+      return false;
+    const auto r = physics->rayStatic(from, to);
+    if(!r.hasCol)
+      return false;
+    // a hair off the surface, so the landing effect is not born inside it
+    hit = r.v + r.n*2.f;
+    return true;
     });
   sGlobal.setHouses(houses.houses());
   // A scene without a single lamp still binds the (empty) light buffer: VSM visibility reads it unconditionally
@@ -779,16 +838,17 @@ void WorldView::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   visuals.drawVsm(cmd);
   }
 
-void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
+void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, bool landscapeOnly) {
   // The blades go first: the ground under them then fails the depth test before its layers are shaded
   // (reports/engine/2026-11-17-grass-cost). Their own marker gives them a row of their own in the pass timings
-  if(grass) {
+  if(grass && !landscapeOnly) {
     cmd.setDebugMarker("Grass");
     grass->draw(cmd,fId);
     cmd.setDebugMarker("GBuffer");
     }
-  visuals.drawGBuffer(cmd);
-  pfxGroup.drawGBuffer(cmd, fId);
+  visuals.drawGBuffer(cmd, fId);
+  if(!landscapeOnly)
+    pfxGroup.drawGBuffer(cmd, fId);
   }
 
 void WorldView::drawWater(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {

@@ -14,6 +14,7 @@ import fir
 import fir_tree
 import tree_density
 import tree_glb
+import tree_prefix
 
 HERE = Path(__file__).resolve().parent
 
@@ -133,6 +134,61 @@ def test_the_outline_takes_in_a_hole_and_leaves_out_a_notch_wider_than_the_closi
     assert 400 <= (inside & ~solid).sum() <= 400 + .1 * 40 * 14
 
 
+def test_ranked_prefix_covers_two_boughs_before_adding_a_duplicate(tmp_path, monkeypatch):
+    def quad(left, right, low, high, depth):
+        return [(left, depth, low), (left, depth, high), (right, depth, low), (right, depth, high)]
+
+    def part(name, quads, cutout, openness):
+        position = np.array(quads, np.float32).reshape(-1, 3)
+        count = len(position)
+        colour = np.zeros((count, 4), np.uint8)
+        colour[:, 2] = np.tile([0, 128, 128, 255], len(quads))
+        colour[:, 3] = openness
+        index = np.array([(0, 1, 2), (1, 3, 2)]) + np.arange(len(quads))[:, None, None] * 4
+        return dict(name=name, cutout=cutout, position=position, normal=np.tile([0, 1, 0], (count, 1)),
+                    uv=np.full((count, 2), .5), colour=colour, index=index.reshape(-1, 3))
+
+    trunk = quad(-.06, .06, 0, 3, 0)
+    wood = part('bark', [trunk, quad(-.18, -.08, .2, .4, 0)], False, 255)
+    level_wood = part('bark', [trunk], False, 255)
+    # In the +Y order view the narrow right bough wins on silhouette weight,
+    # then the front left bough beats the duplicate with the same footprint.
+    left, right = quad(-1.2, -.2, .8, 2, .15), quad(.14, .48, .25, 2.7, .15)
+    hidden = quad(-1.2, -.2, .8, 2, .14999)
+    monkeypatch.setattr(tree_prefix, 'ORDER_VIEWS', ((0, 0),))
+    full, designed = tmp_path / 'full.glb', tmp_path / 'designed.glb'
+    tree_glb.write(full, [wood, part('boughs', [right, hidden, left], True, 128)])
+    tree_glb.write(designed, [level_wood, part('boughs', [left, right], True, 128)])
+    mask = np.ones((4, 4), bool)
+    bark, boughs = tree_prefix.split_parts(tree_glb.read(full))
+    first, _, by_face = tree_prefix.cards(boughs)
+    points = np.concatenate((bark['position'], boughs['position']))
+    order = tree_prefix.rank_cards(points, bark, boughs, mask, by_face, np.bincount(by_face, minlength=len(first)))
+    assert order.tolist() == [0, 2, 1]
+
+    rows = tree_prefix.measure(full, {50: designed}, mask, np.full((4, 4), 27.), {50: (1/3, 2/3)})[50]
+    assert (rows['same_total']['cards'], rows['same_total']['wood_triangles']) == (1, 4)
+    assert (rows['same_canopy']['cards'], rows['same_canopy']['wood_triangles']) == (2, 2)
+    assert rows['same_total']['triangles'] == rows['same_canopy']['triangles'] == rows['designed']['triangles'] == 6
+    assert rows['same_total']['views'] == rows['0.333333']['views']
+    assert rows['same_canopy']['views'] == rows['designed']['views']
+    assert rows['0.333333']['views'][0]['reference_opening'] > rows['0.666667']['views'][0]['reference_opening']
+    assert rows['0.666667_grown']['growth'] == pytest.approx(1.5**.25)
+    assert rows['0.666667_grown']['views'][0]['extra_outline'] > 0
+
+
+def test_prefix_render_samples_atlas_and_interpolates_openness():
+    leaves = dict(position=np.array([(0, 0, 0), (6, 0, 0), (0, 6, 0)]),
+                  index=np.array([(0, 1, 2)]), uv=np.array([(0, 0), (1, 0), (0, 1)]),
+                  colour=np.array([(0, 0, 0, 0), (0, 0, 128, 255), (0, 0, 255, 0)], np.uint8))
+    mask = np.array([[False, True], [False, False]])
+    luma = np.array([[1, 11, 21], [31, 41, 51], [61, 71, 81]])
+    _, tone = tree_prefix.render(leaves, lambda points: points, (6, 6), np.full(36, np.inf), mask, luma)
+    # The six hits sample luma 11, 11, 41, 21, 21 and 21. Their interpolated A is x/6
+    # for x = 3.5, 4.5 and 5.5, hit three, two and one times respectively.
+    assert tone == pytest.approx([126, 25 / 6, 6])
+
+
 def test_colour_0_is_laid_out_for_the_tree_wind(spruce):
     layout = spruce['metrics']['colour_0']
     assert layout['colour_format'] == 'VEC4 UNSIGNED_BYTE normalized'
@@ -202,3 +258,53 @@ def test_spruce_a_is_built_as_before_and_thin_is_a_separate_step(config):
         assert thinned.metrics['thin']['card_growth'] == pytest.approx(thinned.metrics['thin']['cards_share'] ** -.5,
                                                                        abs=1e-3)
     assert digest(fir_tree.build(config)) == digest(tree)
+
+
+@pytest.mark.parametrize(('px', 'old_share'), [(400, .5), (200, .25), (100, .125), (50, 1 / 32)])
+def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, config, px, old_share):
+    tree = spruce['tree']
+    before = digest(tree)
+    normals = [part['normal'].copy() for part in tree.parts]
+    mask = tree_density.load_mask(HERE / config['atlas']['mask'])
+    _, boughs = tree.parts
+    source_colour = boughs['colour']
+    starts = [card['first'] for card in tree.cards]
+    positions = boughs['position'][boughs['index']]
+    areas = np.linalg.norm(np.cross(positions[:, 1] - positions[:, 0], positions[:, 2] - positions[:, 0]), axis=1)
+    source_areas = np.bincount(np.searchsorted(starts, boughs['index'][:, 0], side='right') - 1, weights=areas)
+
+    # The repository carries the cutout mask. Give it a varied RGB sheet for the offline test.
+    atlas = np.empty(mask.shape + (4,), np.uint8)
+    atlas[..., :3] = config['palette']['needles_srgb']
+    atlas[:mask.shape[0] // 2, :, :3] += 1
+    atlas[:, :mask.shape[1] // 2, :3] -= 1
+    atlas[..., 3] = mask * 255
+
+    assert [settings['px'] for settings in config['levels']] == [400, 200, 100, 50]
+    settings = next(level for level in config['levels'] if level['px'] == px)
+    level = fir_tree.design_level(tree, settings, mask, atlas)
+    level_wood, level_boughs = level.parts
+    triangles = sum(len(part['index']) for part in level.parts)
+    assert triangles <= int(tree.metrics['triangles'] * settings['share'])
+    assert triangles <= fir_tree.thin(tree, old_share, seed=4).metrics['triangles']
+    assert (level_wood['owner'] == 0).all()
+    assert any(len(card['members']) > 1 for card in level.cards)
+    assert sum(card['count'] for card in level.cards) == len(level_boughs['colour'])
+    for card in level.cards:
+        source = card['source']
+        members = card['members']
+        assert source in members
+        assert source_areas[source] == pytest.approx(max(source_areas[members]), rel=1e-6), card
+        original = tree.cards[source]
+        retained = level_boughs['colour'][card['first']:card['first'] + card['count']]
+        assert float(retained[:, 3].max()) / 255 >= settings['min_open'], card
+        np.testing.assert_array_equal(retained, source_colour[original['first']:original['first'] + original['count']])
+    assert digest(tree) == before
+    for part, original in zip(tree.parts, normals):
+        np.testing.assert_array_equal(part['normal'], original)
+
+    comparison = tree_density.compare_level(tree.parts, level.parts, mask, atlas, px)
+    assert len(comparison['views']) == 5
+    openings = {view['view']: view['background_level'] - view['background_full'] for view in comparison['views']}
+    assert max(map(abs, openings.values())) <= .01, (px, openings)
+    assert abs(comparison['tone']['relative']) <= .005, (px, comparison['tone'])

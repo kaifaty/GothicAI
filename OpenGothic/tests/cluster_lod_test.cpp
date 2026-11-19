@@ -711,6 +711,124 @@ void checkLockedPositionRejection() {
     }),"the builder lost a locked position while preserving the open edges");
   }
 
+std::array<uint32_t,3> cutTriangle(const Graph& graph, const Cluster& cluster, uint32_t triangle) {
+  std::array<uint32_t,3> ids;
+  for(size_t corner=0; corner<ids.size(); ++corner) {
+    const auto index = graph.indices[cluster.indexOffset+triangle*3+corner];
+    ids[corner] = graph.vertexIndices[cluster.vertexOffset+index];
+    }
+  return ids;
+  }
+
+template<class Check>
+void checkCoverageCuts(const Graph& graph, Check check) {
+  constexpr View Views[] = {
+    {{1200,1200,300},1080.f,1.6f},
+    {{-600,850,2900},1440.f,1.496606f},
+    {{2900,1800,-4500},720.f,2.414214f},
+    };
+  for(const auto& view : Views) {
+    std::vector<float> thresholds = {0.f,1.f,8.f,Infinity};
+    // The set changes only at a transition's projected error.
+    for(const auto& group : graph.groups)
+      if(std::isfinite(group.errorCm))
+        thresholds.push_back(projectError(group,view));
+    for(const float threshold : thresholds)
+      check(view,threshold,selectCut(graph,view,threshold));
+    }
+  }
+
+void checkFoldCoverage() {
+  Fixture mesh{Model::Flat,{},{},{}};
+  addGround(mesh,0,4,0,4,0,0);
+  const uint32_t first = uint32_t(mesh.vertices.size());
+  // The needle is narrower than a millimetre across much of its length.
+  // Its directed edges cancel, and area-weighted error can miss a metre-scale silhouette loss.
+  constexpr Point Needle[] = {{290,1,310},{290.1f,1,310},{1800,1,310.1f},{290,1.1f,310}};
+  for(const auto& p : Needle)
+    mesh.vertices.push_back({p,{0,1,0},{p[0]/6400.f,p[2]/6400.f},0xffffffffu});
+  const auto needleStart = mesh.triangles.size();
+  mesh.triangles.insert(mesh.triangles.end(),{
+    {{first,first+1,first+2},0},{{first,first+2,first+3},0},
+    {{first+1,first+3,first+2},0},{{first,first+3,first+1},0}});
+  mesh.boundary.resize(mesh.vertices.size());
+
+  std::vector<Point> samples;
+  for(const auto& triangle : std::span(mesh.triangles).subspan(needleStart)) {
+    const auto [a,b,c] = triangle.vertices;
+    const auto& p = mesh.vertices[a].position;
+    const auto ab = difference(mesh.vertices[b].position,p);
+    const auto ac = difference(mesh.vertices[c].position,p);
+    for(int u=0; u<=4; ++u)
+      for(int v=0; v<=4-u; ++v)
+        samples.push_back(along(along(p,ab,float(u)*0.25f),ac,float(v)*0.25f));
+    }
+
+  const auto graph = build(mesh.vertices,mesh.triangles,mesh.boundary);
+  require(std::ranges::any_of(graph.clusters,[](const Cluster& cluster) { return cluster.level>0; }),
+          "the thin fold fixture did not exercise a finite replacement");
+  checkCoverageCuts(graph,[&](const View& view, float threshold, const std::vector<uint32_t>& cut) {
+    float cutErrorCm = 0.f, cutErrorPx = 0.f;
+    std::vector<std::array<Point,3>> faces;
+    for(const uint32_t id : cut) {
+      const auto& cluster = graph.clusters[id];
+      if(cluster.refinedGroup!=NoGroup) {
+        const auto& own = graph.groups[cluster.refinedGroup];
+        cutErrorCm = std::max(cutErrorCm,own.errorCm);
+        cutErrorPx = std::max(cutErrorPx,projectError(own,view));
+        }
+      for(uint32_t t=0; t<cluster.triangleCount; ++t) {
+        const auto [a,b,c] = cutTriangle(graph,cluster,t);
+        faces.push_back({graph.vertices[a].position,graph.vertices[b].position,graph.vertices[c].position});
+        }
+      }
+    for(const auto& p : samples) {
+      float loss = Infinity;
+      for(const auto& face : faces)
+        loss = std::min(loss,distance(p,closestOnTriangle(p,face)));
+      if(loss>cutErrorCm+0.005f)
+        throw std::runtime_error("the cut error underestimates a lost point on the thin fold: "+std::to_string(loss)+
+                                 " cm versus "+std::to_string(cutErrorCm)+" cm");
+      const float lossPx = projectError({{p,0.f},loss},view);
+      require(lossPx<=std::min(threshold,cutErrorPx)+0.005f,
+              "the thin fold loses more coverage than the projected cut error");
+      }
+    });
+  }
+
+void checkLockedCard() {
+  Fixture mesh{Model::Flat,{},{},{}};
+  addGround(mesh,0,4,0,4,0,0);
+  const uint32_t first = uint32_t(mesh.vertices.size());
+  for(const auto& p : {Point{960,20,260},Point{960,300,260},Point{960,300,410},Point{960,20,410}})
+    mesh.vertices.push_back({p,{1,0,0},{p[2]/6400.f,p[1]/6400.f},0xffffffffu});
+  const std::multiset<std::array<uint32_t,3>> card = {
+    {first,first+1,first+2},{first,first+2,first+3},
+    {first,first+2,first+1},{first,first+3,first+2}};
+  for(const auto& triangle : card)
+    mesh.triangles.push_back({triangle,0,true});
+  mesh.boundary.resize(mesh.vertices.size());
+
+  const auto graph = build(mesh.vertices,mesh.triangles,mesh.boundary);
+  require(std::ranges::any_of(graph.clusters,[](const Cluster& cluster) { return cluster.level>0; }),
+          "the locked card stopped the separate patch from simplifying");
+  checkCoverageCuts(graph,[&](const View&, float, const std::vector<uint32_t>& cut) {
+    std::multiset<std::array<uint32_t,3>> visible;
+    for(const uint32_t id : cut) {
+      const auto& cluster = graph.clusters[id];
+      for(uint32_t t=0; t<cluster.triangleCount; ++t) {
+        auto triangle = cutTriangle(graph,cluster,t);
+        if(std::ranges::none_of(triangle,[&](uint32_t v) { return v>=first; }))
+          continue;
+        require(cluster.level==0,"a locked card triangle was replaced above level zero");
+        std::rotate(triangle.begin(),std::ranges::min_element(triangle),triangle.end());
+        visible.insert(triangle);
+        }
+      }
+    require(visible==card,"the cut lost or changed a face of the two-sided locked card");
+    });
+  }
+
 void checkMixedMaterialWedge() {
   const auto mesh = makeFixture(Model::Seams);
   BuildStats stats;
@@ -809,8 +927,16 @@ int main() {
     require(std::abs(projectError({{{0,0,1500},100.f},5.f},view)-5.f/1400.f*600.f)<0.00001f,
             "pixel projection is missing the sphere, perspective or screen-height factor");
     require(projectError({{{0,0,0},100.f},5.f},view)==3000.f,"pixel projection is missing the near-distance clamp");
+    const View guarded{{0,0,0},800.f,1.5f,{0,0,1},1500.f,50.f};
+    require(std::isinf(projectError({{{3000,0,1300},150.f},5.f},guarded)) &&
+            std::isinf(projectError({{{3000,0,1700},150.f},5.f},guarded)),
+            "a transition sphere touching either side of the far clip band must refine");
+    require(projectError({{{3000,0,1300},149.f},5.f},guarded)==projectError({{{3000,0,1300},149.f},5.f},view),
+            "a transition sphere outside the far clip band must keep its projected error");
     checkOpenBoundaryRejection();
     checkLockedPositionRejection();
+    checkFoldCoverage();
+    checkLockedCard();
     checkMixedMaterialWedge();
     checkDisappearingMaterial();
     checkAccumulatedContourDrift();

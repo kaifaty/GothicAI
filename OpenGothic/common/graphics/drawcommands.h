@@ -60,7 +60,7 @@ class DrawCommands {
     const DrawCmd& operator[](size_t i) const { return cmd[i]; }
 
     void     commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    uint16_t commandId(const Material& m, Type type, uint32_t bucketId);
+    uint16_t commandId(const Material& m, Type type, uint32_t bucketId, bool shadowOnly = false);
     void     addClusters(uint16_t cmdId, uint32_t meshletCount);
 
     void     visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);

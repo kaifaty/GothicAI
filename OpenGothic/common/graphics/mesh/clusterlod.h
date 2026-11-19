@@ -25,6 +25,7 @@ struct Vertex {
 struct Triangle {
   std::array<uint32_t, 3> vertices;
   uint32_t               material;
+  bool                   locked = false; // stays in the cut at level 0
   };
 
 struct Sphere {
@@ -64,7 +65,7 @@ struct Graph {
 Graph build(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
             std::span<const uint8_t> boundary);
 
-enum class StopReason { Reduction, Material, Boundary, Count };
+enum class StopReason { Reduction, Material, Boundary, Locked, Count };
 enum class CensusVariant { Normal, NoMaterials, NoOpenBorder, NoBoundaries, NoAttributeSeams, AnyReduction, PositionsOnly };
 
 struct BuildStats {
@@ -81,6 +82,9 @@ struct View {
   Point camera;
   float viewportHeight;     // positive, in pixels
   float verticalProjection; // positive magnitude of projection[1][1] for a perspective camera
+  Point forward = {};       // unit direction into the main view
+  float farDepth = 0;       // positive to protect transitions that cross the far clip plane
+  float farGuard = 0;       // half width of the precision band around the plane, in centimetres
   };
 
 float projectError(const Group& group, const View& view);

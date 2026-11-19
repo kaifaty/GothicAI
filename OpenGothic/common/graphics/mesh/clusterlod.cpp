@@ -9,6 +9,7 @@
 #include <bit>
 #include <cmath>
 #include <map>
+#include <numeric>
 #include <set>
 #include <stdexcept>
 
@@ -101,7 +102,7 @@ class Builder {
     Indices live;
     std::vector<uint8_t> fixed; // position locks from the chunk and finished branches
     Indices materials;
-    std::vector<float> materialErrors;
+    std::vector<float> coverageErrors;
     BuildStats* stats;
     CensusVariant variant;
 
@@ -116,6 +117,7 @@ class Builder {
     bool retainsLocks(const Indices& original, const Indices& simplified, const std::vector<uint8_t>& locks) const;
     MaterialContours materialContours(const Indices& indices, const Boundary& open) const;
     float materialError(const MaterialContours& original, const Indices& simplified, const Boundary& open) const;
+    float foldError(const Indices& original, const Indices& simplified) const;
   };
 
 Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
@@ -128,11 +130,11 @@ Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> tri
   if(triangles.empty())
     return;
 
-  Indices indices;
+  Indices indices, locked;
   indices.reserve(triangles.size() * 3);
   std::map<std::array<uint32_t, 10>, uint32_t> unique;
   for(const auto& triangle : triangles) {
-    const uint32_t material = variant == CensusVariant::NoMaterials ? 0 : triangle.material;
+    const uint32_t material = variant == CensusVariant::NoMaterials && !triangle.locked ? 0 : triangle.material;
     for(const auto id : triangle.vertices) {
       if(id >= vertices.size())
         throw std::out_of_range("Cluster LOD vertex index");
@@ -158,9 +160,9 @@ Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> tri
         materials.push_back(material);
         fixed.push_back(0);
         }
-      if(boundary[id])
+      if(boundary[id] || triangle.locked)
         fixed[it->second] = meshopt_SimplifyVertex_Lock;
-      indices.push_back(it->second);
+      (triangle.locked ? locked : indices).push_back(it->second);
       }
     }
 
@@ -169,6 +171,24 @@ Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> tri
   for(size_t i = 0; i < wedges.size(); ++i)
     fixed[positions[i]] |= fixed[i];
   clusterize(indices, 0, NoGroup, live);
+  if(!locked.empty()) {
+    // Remove these faces from the partitioner. Pin their coincident positions
+    // on adjoining pieces as well, so a mixed cut cannot open the contact.
+    Indices terminal;
+    clusterize(locked, 0, NoGroup, terminal);
+    const auto id = offset(result.groups.size());
+    auto group = groupBounds(terminal);
+    group.errorCm = Infinity;
+    for(const auto cluster : terminal)
+      result.clusters[cluster].parentGroup = id;
+    result.groups.push_back(group);
+    coverageErrors.push_back(0);
+    if(stats) {
+      stats->positionErrorCm.push_back(Infinity);
+      ++stats->stoppedGroups[size_t(StopReason::Locked)];
+      stats->stoppedTriangles[size_t(StopReason::Locked)] += locked.size()/3;
+      }
+    }
   }
 
 void Builder::clusterize(const Indices& indices, uint32_t level, uint32_t refinedGroup, Indices& output) {
@@ -402,6 +422,108 @@ float Builder::materialError(const MaterialContours& original, const Indices& si
   return enclosingRadius(error);
   }
 
+float Builder::foldError(const Indices& original, const Indices& simplified) const {
+  using Face = std::array<uint32_t, 3>;
+  const auto face = [&](const Indices& indices, size_t at) {
+    Face triangle = {positions[indices[at]], positions[indices[at+1]], positions[indices[at+2]]};
+    std::ranges::rotate(triangle, std::ranges::min_element(triangle));
+    return triangle;
+    };
+
+  // Opposing faces can lose visible area with no movement of a directed open
+  // edge. Find their positions before comparing oriented faces with the cut.
+  const size_t count = original.size()/3;
+  std::vector<Face> faces;
+  faces.reserve(count);
+  std::vector<std::array<double, 3>> normals;
+  normals.reserve(count);
+  std::map<Edge, std::vector<size_t>> incident;
+  for(size_t i = 0; i < count; ++i) {
+    const auto triangle = face(original, i*3);
+    const auto& a = wedges[triangle[0]].position;
+    const auto& b = wedges[triangle[1]].position;
+    const auto& c = wedges[triangle[2]].position;
+    const double ux = double(b[0])-a[0], uy = double(b[1])-a[1], uz = double(b[2])-a[2];
+    const double vx = double(c[0])-a[0], vy = double(c[1])-a[1], vz = double(c[2])-a[2];
+    faces.push_back(triangle);
+    normals.push_back({uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx});
+    for(size_t k = 0; k < 3; ++k) {
+      const auto [from, to] = std::minmax(triangle[k], triangle[(k+1)%3]);
+      incident[{from, to}].push_back(i);
+      }
+    }
+
+  std::vector<bool> folded(count);
+  for(const auto& [edge, adjacent] : incident) {
+    for(size_t a = 0; a < adjacent.size(); ++a) {
+      const auto& x = normals[adjacent[a]];
+      for(size_t b = a+1; b < adjacent.size(); ++b) {
+        const auto& y = normals[adjacent[b]];
+        if(x[0]*y[0] + x[1]*y[1] + x[2]*y[2] < 0)
+          folded[adjacent[a]] = folded[adjacent[b]] = true;
+        }
+      }
+    }
+  if(std::ranges::none_of(folded, [](bool b) { return b; }))
+    return 0;
+
+  std::set<Face> kept;
+  for(size_t i = 0; i < simplified.size(); i += 3)
+    kept.insert(face(simplified, i));
+
+  // Join adjacent changed faces and measure each lost patch. The box
+  // diagonal also covers a sheet whose two windings cancel its perimeter.
+  std::vector<size_t> parent(count);
+  std::iota(parent.begin(), parent.end(), size_t(0));
+  const auto root = [&](size_t i) {
+    while(parent[i] != i) {
+      parent[i] = parent[parent[i]];
+      i = parent[i];
+      }
+    return i;
+    };
+  for(size_t i = 0; i < count; ++i)
+    folded[i] = folded[i] && !kept.contains(faces[i]);
+  for(const auto& [edge, adjacent] : incident) {
+    const auto first = std::ranges::find_if(adjacent, [&](size_t i) { return folded[i]; });
+    if(first != adjacent.end())
+      for(auto next = first+1; next != adjacent.end(); ++next)
+        if(folded[*next])
+          parent[root(*next)] = root(*first);
+    }
+
+  struct Bounds {
+    Point min = { Infinity,  Infinity,  Infinity};
+    Point max = {-Infinity, -Infinity, -Infinity};
+    double perimeter = 0;
+    };
+  std::vector<Bounds> patches(count);
+  for(size_t i = 0; i < count; ++i) {
+    if(!folded[i])
+      continue;
+    auto& patch = patches[root(i)];
+    for(const auto id : faces[i]) {
+      const auto& point = wedges[id].position;
+      for(size_t k = 0; k < 3; ++k) {
+        patch.min[k] = std::min(patch.min[k], point[k]);
+        patch.max[k] = std::max(patch.max[k], point[k]);
+        }
+      }
+    }
+  for(const auto& [edge, adjacent] : incident) {
+    const auto changed = [&](size_t i) { return folded[i]; };
+    if(std::ranges::count_if(adjacent, changed)==1) {
+      const auto i = *std::ranges::find_if(adjacent, changed);
+      patches[root(i)].perimeter += distance(wedges[edge[0]].position, wedges[edge[1]].position);
+      }
+    }
+  double error = 0;
+  for(const auto& patch : patches)
+    if(patch.min[0] != Infinity)
+      error = std::max({error, distance(patch.min, patch.max), patch.perimeter*0.5});
+  return enclosingRadius(error);
+  }
+
 void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& locks,
                           Indices& pending, std::vector<uint8_t>& nextFixed) {
   Indices original;
@@ -469,11 +591,11 @@ void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& l
 
   auto group = groupBounds(clusters);
   const uint32_t groupId = offset(result.groups.size());
-  float childSeamError = 0;
+  float coverageError = 0, childCoverageError = 0;
   for(uint32_t id : clusters) {
     const uint32_t child = result.clusters[id].refinedGroup;
     if(child != NoGroup) {
-      childSeamError = std::max(childSeamError, materialErrors[child]);
+      childCoverageError = std::max(childCoverageError, coverageErrors[child]);
       if(stats)
         positionError = std::max(positionError, stats->positionErrorCm[child]);
       }
@@ -481,9 +603,9 @@ void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& l
     }
 
   if(stop == StopReason::Count) {
-    seamError = enclosingRadius(double(childSeamError) + seamError);
+    coverageError = enclosingRadius(double(childCoverageError) + std::max(seamError, foldError(original, simplified)));
     // Cover float projection roundoff when the errors of two transitions tie.
-    group.errorCm = std::max({group.errorCm, error, positionError, seamError}) *
+    group.errorCm = std::max({group.errorCm, error, positionError, coverageError}) *
                     (1.f + 8 * std::numeric_limits<float>::epsilon());
     clusterize(simplified, result.clusters[clusters.front()].level + 1, groupId, pending);
     }
@@ -499,7 +621,7 @@ void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& l
       }
     }
   result.groups.push_back(group);
-  materialErrors.push_back(seamError);
+  coverageErrors.push_back(coverageError);
   if(stats)
     stats->positionErrorCm.push_back(positionError);
   }
@@ -542,6 +664,14 @@ float projectError(const Group& group, const View& view) {
   const float x = group.bounds.center[0] - view.camera[0];
   const float y = group.bounds.center[1] - view.camera[1];
   const float z = group.bounds.center[2] - view.camera[2];
+  if(view.farDepth > 0.f) {
+    // Projection error only bounds surfaces that survive clipping on both sides of the transition.
+    // An ancestor sphere encloses its transition spheres, so intersections refine the same cut.
+    const float depth = x*view.forward[0] + y*view.forward[1] + z*view.forward[2];
+    if(depth + group.bounds.radius >= view.farDepth - view.farGuard &&
+       depth - group.bounds.radius <= view.farDepth + view.farGuard)
+      return Infinity;
+    }
   const float nearDistance = std::max(std::sqrt(x*x + y*y + z*z) - group.bounds.radius, 1.f);
   return group.errorCm / nearDistance * (0.5f * view.verticalProjection * view.viewportHeight);
   }

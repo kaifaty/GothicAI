@@ -13,6 +13,7 @@
 #include "graphics/mesh/texeldensity.h"
 
 class Bounds;
+struct WorldChunkMesh;
 
 class PackedMesh {
   public:
@@ -40,12 +41,21 @@ class PackedMesh {
       bool             alphaTest = true;
       bool             alphaTestRequired = false;
       TexelDensity     texel;  // its triangles' lowest UV density and bounds, for the texture's mip level
+      size_t           landscapeL0Length = 0; // prefix of a cluster hierarchy's index slice used by rays
       };
 
     struct Cluster final {
       Tempest::Vec3 pos;
       float         r = 0;
       };
+
+    // std430. Errors and both transition spheres share the coordinate space of the mesh.
+    struct ClusterLevel final {
+      Tempest::Vec4 bounds {}, parentBounds {};
+      float         errorCm = 0.f, parentErrorCm = 0.f;
+      uint32_t      level = 0, flags = 0; // bit 0 marks a record with a hierarchy
+      };
+    static_assert(sizeof(ClusterLevel)==48);
 
     std::vector<Vertex>   vertices;
     std::vector<VertexA>  verticesA;
@@ -54,6 +64,8 @@ class PackedMesh {
 
     std::vector<SubMesh>  subMeshes;
     std::vector<Cluster>  meshletBounds;
+    std::vector<ClusterLevel> clusterLevels; // empty without a hierarchy, else one per meshlet
+    size_t legacyLandscapeMeshlets = 0; // counted while profiling the cooked landscape
 
     // Levels of detail of an own static mesh (graphics/meshlevels.h), coarser one after another: packed after the
     // mesh into the same buffers, so subMeshes, bbox() and everything before mainEnd are the mesh's own
@@ -80,6 +92,8 @@ class PackedMesh {
     PackedMesh(const asset::WorldMesh& mesh, std::span<const uint32_t> triangles,
                std::span<const uint32_t> materialMap = {},
                std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
+    // A cooked landscape visual, with the source triangles extracted into cloth left out.
+    PackedMesh(const WorldChunkMesh& chunk, std::span<const uint32_t> materialMap);
     PackedMesh(const asset::SoftSkinMesh& mesh);
     // Strands of a head as ribbons (graphics/mesh/groommesh.cpp): the file of groom_export.py; share<1 keeps that
     // share of the strands, wider. Throws std::runtime_error on a broken file.

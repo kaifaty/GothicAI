@@ -44,6 +44,7 @@ uint32_t RendererInternal::nextPot(uint32_t x) {
 uint32_t Renderer::benchVsmLampSides = 0;
 uint32_t Renderer::benchVsmStudy     = 0;
 uint32_t Renderer::benchSsaoStudy    = 0;
+bool     Renderer::benchClusterLodMask = false;
 
 Renderer::Renderer() {
   auto& device = Resources::device();
@@ -899,7 +900,14 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   updateCamera(wview, camera);
   updateEye(fId, camera);
   updateFogSky(camera);
-  prepareTaa(wview, camera);
+  wview.setLandscapeMask(captureLandscapeDepth);
+  if(captureLandscapeDepth) {
+    wview.setJitter(nullptr);
+    wview.setMipBias(0);
+    wview.setTaaFrame(false, false, 0);
+    } else {
+    prepareTaa(wview, camera);
+    }
   if(treeProbe!=nullptr)
     wview.setTreeOcclusionProbe();
   prepareMotion(wview);
@@ -938,7 +946,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   wview.preFrameUpdate(camera, tickCount, fId);
   wview.prepareGlobals(cmd,fId);
 
-  if(settings.pathTraceEnabled) {
+  if(settings.pathTraceEnabled && !captureLandscapeDepth) {
     ssao.valid = false; // no SSAO in this frame: its history is not the frame before the next one
     drawPathtrace(cmd, wview, fId);
     mainTiming.finish();
@@ -951,7 +959,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
 
   wview.visibilityPass(cmd, 0);
-  prepareSky(cmd, wview);
+  if(!captureLandscapeDepth)
+    prepareSky(cmd, wview);
 
   // The SSAO depth sampler copies every texel when its output is full size.
   const auto copyProbeDepth = [&](StorageImage& dst) {
@@ -962,15 +971,29 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     cmd.dispatchThreads(dst.size());
     };
 
+  const auto hiddenTypes = DrawCommands::hiddenTypes;
+  if(captureLandscapeDepth)
+    DrawCommands::hiddenTypes = ~(1u << DrawCommands::Landscape);
   drawHiZ (cmd, wview);
   buildHiZ(cmd);
   if(treeProbe!=nullptr)
     copyProbeDepth(treeProbe->occluderDepth);
 
   wview.visibilityPass(cmd, 1);
-  if(treeProbe==nullptr)
+  if(treeProbe==nullptr && !captureLandscapeDepth)
     wview.visibilityStats(cmd, fId);
   drawGBuffer(cmd, fId, wview);
+  if(captureLandscapeDepth) {
+    // Water is a separate depth-writing landscape pass. Give it valid inputs
+    // without composing sky, fog, reflections, or the rest of the scene.
+    cmd.setFramebuffer({{sceneLinear, Vec4(), Tempest::Preserve}});
+    stashSceneAux(cmd);
+    drawGWater(cmd, wview);
+    DrawCommands::hiddenTypes = hiddenTypes;
+    copyProbeDepth(landscapeDepth);
+    wview.postFrameupdate();
+    return;
+    }
   if(treeProbe!=nullptr) {
     copyProbeDepth(treeProbe->mainDepth);
     wview.postFrameupdate();
@@ -1260,7 +1283,7 @@ void Renderer::drawGBuffer(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& 
                         {gbufMotion, Tempest::Vec4(), Tempest::Preserve}},
                        {zbuffer, Tempest::Preserve, Tempest::Preserve});
     }
-  view.drawGBuffer(cmd,fId);
+  view.drawGBuffer(cmd,fId,captureLandscapeDepth);
   }
 
 void Renderer::drawGWater(Encoder<CommandBuffer>& cmd, WorldView& view) {
@@ -1593,7 +1616,8 @@ void Renderer::captureTreeOcclusion(Attachment& result, uint8_t fId, WorldView& 
     Log::e("render: failed to write tree occlusion probe ",prefix);
   }
 
-Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&& reuse, bool benchShot) {
+Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&& reuse, bool benchShot,
+                                         Tempest::Pixmap* landscapeCoverage) {
   auto& device = Resources::device();
   device.waitIdle();
 
@@ -1617,12 +1641,29 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&&
   {
   auto enc = cmd.startEncoding(device);
   taa.shot = true;
+  captureLandscapeDepth = landscapeCoverage!=nullptr;
   draw(img,enc,frameId,*wview,*camera);
+  captureLandscapeDepth = false;
   taa.shot = false;
   }
 
   auto sync = device.submit(cmd);
   sync.wait();
+  if(landscapeCoverage!=nullptr) {
+    const auto depth = device.readPixels(landscapeDepth);
+    *landscapeCoverage = Pixmap(depth.w(),depth.h(),TextureFormat::RGBA8);
+    const auto* values = static_cast<const float*>(depth.data());
+    auto* rgba = static_cast<uint8_t*>(landscapeCoverage->data());
+    for(size_t i=0, end=size_t(depth.w())*depth.h(); i<end; ++i) {
+      // Encode depth coverage before sky, fog, postprocessing and UI can change a pixel.
+      rgba[4*i+0] = 255;
+      rgba[4*i+1] = values[i]<1.f ? 255 : 0;
+      rgba[4*i+2] = 255;
+      rgba[4*i+3] = 255;
+      }
+    resetTemporal();
+    return img;
+    }
   if(benchShot) {
     const char* env = std::getenv("OPENGOTHIC_TREE_OCCLUSION_PROBE");
     const bool enabled = env!=nullptr ? std::string_view(env)=="1" : ::Settings::getI("INTERNAL","treeOcclusionProbe")!=0;

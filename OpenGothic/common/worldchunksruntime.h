@@ -54,6 +54,11 @@ struct WorldChunkMesh {
   // Compact local indices -> the full reader's original or appended IDs.
   std::vector<uint32_t>  vertexIds;
   std::vector<uint32_t>  featureIds;
+  // Local position, feature and material IDs in the graph address its cooked chunk.
+  std::shared_ptr<const CookedChunk> clusterHierarchy;
+  // The landscape's retained source triangles, omitted when it keeps the entire cell.
+  std::vector<uint32_t> clusterTriangleSources;
+  std::vector<uint32_t> clusterMaterialIds; // cooked material IDs -> indices in mesh.materials
   };
 
 // How ChunkMeshSource::read took its cells since the world was loaded.

@@ -1,5 +1,6 @@
 #include "gothicglb.h"
 #include "graphics/mesh/clusterlod.h"
+#include "worldchunkcook.h"
 #include "worldchunksruntime.h"
 
 #include <algorithm>
@@ -243,12 +244,14 @@ struct CellInput {
   std::vector<uint32_t> positions;
   };
 
-CellInput cellInput(const asset::WorldMesh& mesh, std::span<const uint32_t> sourceTriangles, const Topology& topology) {
+CellInput cellInput(const asset::WorldMesh& mesh, std::span<const uint32_t> sourceTriangles, const Topology& topology,
+                    std::span<const uint8_t> lockedMaterials) {
   std::map<std::pair<uint32_t,uint32_t>,uint32_t> local;
   CellInput input;
   input.triangles.reserve(sourceTriangles.size());
   for(const auto source : sourceTriangles) {
-    ClusterLod::Triangle tri {{},mesh.polygons.material_indices[source]};
+    const auto material = mesh.polygons.material_indices[source];
+    ClusterLod::Triangle tri {{},material,lockedMaterials[material]!=0};
     for(size_t corner=0; corner<3; ++corner) {
       const size_t index = size_t(source)*3+corner;
       const auto v = mesh.polygons.vertex_indices[index];
@@ -392,6 +395,7 @@ void writeRelaxations(std::ostream& out, std::span<const CellInput> cells, const
 void runClusterLodCensus(const std::filesystem::path& world, const std::filesystem::path& output) {
   ChunkTable table;
   const auto mesh = readWorldChunksGlb(world,{},table);
+  const auto lockedMaterials = clusterLodLockedMaterials(world,mesh.materials);
   const auto lists = chunkTriangleLists(mesh,table);
   Topology topology(mesh,table);
   std::vector<CellInput> inputs;
@@ -404,7 +408,7 @@ void runClusterLodCensus(const std::filesystem::path& world, const std::filesyst
   for(size_t i=0; i<lists.size(); ++i) {
     try {
       const auto [open,sharedInterior] = topology.inspectCell(mesh,lists[i],i);
-      inputs.push_back(cellInput(mesh,lists[i],topology));
+      inputs.push_back(cellInput(mesh,lists[i],topology,lockedMaterials));
       cells.push_back(countCell(inputs.back(),open,sharedInterior,errors,stats));
       }
     catch(const std::exception& error) {
@@ -426,7 +430,7 @@ void runClusterLodCensus(const std::filesystem::path& world, const std::filesyst
   writeRow(out,"TOTAL",total,total.levels.size());
   writeErrors(out,errors,total.levels.size());
   out << "\nstop_reason\tgroups\ttop_triangles\n";
-  constexpr std::array reasonNames = {"reduction","material","boundary"};
+  constexpr std::array reasonNames = {"reduction","material","boundary","locked"};
   static_assert(reasonNames.size()==size_t(ClusterLod::StopReason::Count));
   for(size_t i=0; i<reasonNames.size(); ++i)
     out << reasonNames[i] << '\t' << stats.stoppedGroups[i] << '\t' << stats.stoppedTriangles[i] << '\n';

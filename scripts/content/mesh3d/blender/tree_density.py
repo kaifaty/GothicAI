@@ -1,6 +1,7 @@
-"""How open a tree's crown is, read from its GLB: two side views a quarter turn apart, no ground. NumPy only.
+"""How open a tree's crown is, read from its GLB: two side views a quarter turn apart, no ground.
 
     python tree_density.py TREE.glb --mask ATLAS-MASK.npz [--png OUT.png] [--json OUT.json]
+    python tree_density.py FULL.glb --mask ATLAS-MASK.npz --level LEVEL.glb --atlas ALBEDO.dds --px 400
 
 Each view is an orthographic picture of the file at PX pixels a metre, RAYS by RAYS rays a pixel: the wood is
 solid, a card is there where the atlas's coverage mask says so (the mask is the atlas's alpha brought to a
@@ -18,6 +19,8 @@ ABOVE metres but the width:
 - `crown_width_m`: the widest the tree is below ABOVE metres.
 
 The PNG shows both views: the crown dark, the background inside the outline red, the open trunk orange.
+The level comparison uses four horizontal views and one at 30 degrees elevation. Each has a common scale
+and frame for both meshes, and reports full-silhouette opening, along with mean sRGB from visible foliage rays.
 """
 from __future__ import annotations
 
@@ -42,38 +45,60 @@ def load_mask(path: Path) -> np.ndarray:
     return np.unpackbits(data['bits'])[:size * size].reshape(size, size).astype(bool)
 
 
-def raster(points: np.ndarray, index: np.ndarray, shape, uv: np.ndarray | None = None,
-           mask: np.ndarray | None = None) -> np.ndarray:
-    """The nearest depth per pixel. points (n, 3): column, row and depth, the first two in pixels."""
-    depth = np.full(shape, np.inf, np.float32)
+def fragments(points: np.ndarray, index: np.ndarray, shape, uv: np.ndarray | None = None,
+              mask: np.ndarray | None = None):
+    """Yield batches of triangle IDs, flat pixel indices, depths and UVs of hits."""
     tri = points[index].astype(np.float64)
     low = np.floor(tri[..., :2].min(axis=1)).astype(np.int64)
     span = np.maximum(np.ceil(tri[..., :2].max(axis=1)).astype(np.int64) - low, 1)
     bucket = np.ceil(np.log2(span)).astype(np.int64)
     for wide, tall in np.unique(bucket, axis=0):
         chosen = np.flatnonzero((bucket[:, 0] == wide) & (bucket[:, 1] == tall))
-        ox, oy = (v.reshape(-1) + .5 for v in np.meshgrid(np.arange(2 ** wide), np.arange(2 ** tall)))
-        for part in np.array_split(chosen, max(1, len(chosen) * len(ox) // 2_000_000)):
+        ox, oy = np.arange(2 ** wide) + .5, np.arange(2 ** tall) + .5
+        samples = len(chosen) * len(ox) * len(oy)
+        for part in np.array_split(chosen, max(1, samples // 2_000_000)):
             a, b, c = (tri[part, k] for k in range(3))
             x = low[part, 0, None] + ox[None]
             y = low[part, 1, None] + oy[None]
             area = (b[:, 1] - c[:, 1]) * (a[:, 0] - c[:, 0]) + (c[:, 0] - b[:, 0]) * (a[:, 1] - c[:, 1])
             flat = np.abs(area) < 1e-9
-            area = np.where(flat, 1., area)[:, None]
-            w0 = ((b[:, 1] - c[:, 1])[:, None] * (x - c[:, 0, None]) + (c[:, 0] - b[:, 0])[:, None] * (y - c[:, 1, None])) / area
-            w1 = ((c[:, 1] - a[:, 1])[:, None] * (x - c[:, 0, None]) + (a[:, 0] - c[:, 0])[:, None] * (y - c[:, 1, None])) / area
+            area = np.where(flat, 1., area)[:, None, None]
+            dx = x - c[:, 0, None]
+            dy = y - c[:, 1, None]
+            # The edge functions separate into one term per row and one per column.
+            w0x, w0y = (b[:, 1] - c[:, 1])[:, None] * dx, (c[:, 0] - b[:, 0])[:, None] * dy
+            w1x, w1y = (c[:, 1] - a[:, 1])[:, None] * dx, (a[:, 0] - c[:, 0])[:, None] * dy
+            w0 = (w0x[:, None, :] + w0y[:, :, None]) / area
+            w1 = (w1x[:, None, :] + w1y[:, :, None]) / area
             w2 = 1 - w0 - w1
-            inside = (w0 >= 0) & (w1 >= 0) & (w2 >= 0) & ~flat[:, None]
-            inside &= (x > 0) & (x < shape[1]) & (y > 0) & (y < shape[0])
+            inside = (w0 >= 0) & (w1 >= 0) & (w2 >= 0) & ~flat[:, None, None]
+            inside &= ((x > 0) & (x < shape[1]))[:, None, :]
+            inside &= ((y > 0) & (y < shape[0]))[:, :, None]
+            face, row, column = np.nonzero(inside)
+            weights = (w0[face, row, column], w1[face, row, column], w2[face, row, column])
+            u = v = None
             if uv is not None:
-                corner = uv[index[part]].astype(np.float64)
-                u = w0 * corner[:, 0, 0, None] + w1 * corner[:, 1, 0, None] + w2 * corner[:, 2, 0, None]
-                v = w0 * corner[:, 0, 1, None] + w1 * corner[:, 1, 1, None] + w2 * corner[:, 2, 1, None]
-                size = mask.shape[0]
-                inside &= mask[np.clip((v * size).astype(np.int64), 0, size - 1),
-                               np.clip((u * size).astype(np.int64), 0, size - 1)]
-            z = (w0 * a[:, 2, None] + w1 * b[:, 2, None] + w2 * c[:, 2, None])[inside]
-            np.minimum.at(depth, (y[inside].astype(np.int64), x[inside].astype(np.int64)), z.astype(np.float32))
+                corner = uv[index[part]]
+                u, v = (sum(w * corner[face, k, axis] for k, w in enumerate(weights)) for axis in (0, 1))
+                if mask is not None:
+                    size = mask.shape[0]
+                    covered = mask[np.clip((v * size).astype(np.int64), 0, size - 1),
+                                   np.clip((u * size).astype(np.int64), 0, size - 1)]
+                    face, row, column = face[covered], row[covered], column[covered]
+                    u, v = u[covered], v[covered]
+                    weights = tuple(w[covered] for w in weights)
+            z = sum(w * vertex[face, 2] for w, vertex in zip(weights, (a, b, c)))
+            pixel = y[face, row].astype(np.int64) * shape[1] + x[face, column].astype(np.int64)
+            yield part[face], pixel, z.astype(np.float32), u, v
+
+
+def raster(points: np.ndarray, index: np.ndarray, shape, uv: np.ndarray | None = None,
+           mask: np.ndarray | None = None) -> np.ndarray:
+    """The nearest depth per pixel. points (n, 3): column, row and depth, the first two in pixels."""
+    depth = np.full(shape, np.inf, np.float32)
+    flat = depth.ravel()
+    for _, pixel, z, _, _ in fragments(points, index, shape, uv, mask):
+        np.minimum.at(flat, pixel, z)
     return depth
 
 
@@ -107,6 +132,83 @@ def outline(solid: np.ndarray, px: int, close: float) -> np.ndarray:
         if np.array_equal(more, outside):
             return ~outside
         outside = more
+
+
+def level_views(parts: list[dict], px: int):
+    """Project both meshes at the full tree's threshold height, with room around its bounds."""
+    full = np.concatenate([part['position'] for part in parts])
+    for name, x, y, elevation in (('+Y', 0., 1., 0.), ('-Y', 0., -1., 0.),
+                                  ('+X', 1., 0., 0.), ('-X', -1., 0., 0.), ('+Y/30°', 0., 1., 30.)):
+        angle = np.radians(elevation)
+        c, s = np.cos(angle), np.sin(angle)
+        basis = np.array([(y, -x, 0.), (-x * s, -y * s, c), (-x * c, -y * c, -s)]).T
+        bounds = full @ basis[:, :2]
+        low = bounds.min(axis=0)
+        span = bounds.max(axis=0) - low
+        ppm = px / span[1]
+        margin = int(np.ceil(.1 * px)) + 2
+        shape = tuple((np.ceil(span[::-1] * ppm).astype(int) + 2 * margin) * RAYS)
+        origin = np.append((margin - low * ppm) * RAYS, 0.)
+        scale = np.array([ppm * RAYS, ppm * RAYS, 1.])
+
+        def project(position, basis=basis, origin=origin, scale=scale):
+            return position @ basis * scale + origin
+
+        yield name, project, shape, ppm
+
+
+def level_opening(solid: np.ndarray, ppm: float) -> tuple[float, int]:
+    """Fraction of background inside the closed silhouette and its area in display pixels."""
+    inside = outline(solid, ppm, CLOSE)
+    area = int(inside.sum())
+    return float((inside & ~solid).sum()) / max(area, 1), area
+
+
+def level_sample(parts: list[dict], project, shape, mask: np.ndarray, atlas: np.ndarray):
+    """Display pixel coverage and the RGB sum and count of visible foliage rays."""
+    wood = np.full(shape, np.inf, np.float32)
+    foliage = []
+    for part in parts:
+        if part.get('cutout', part.get('material', {}).get('alphaMode') == 'MASK'):
+            foliage.append(part)
+        else:
+            np.minimum(wood, raster(project(part['position']), part['index'], shape), out=wood)
+    canopy = np.full(wood.size, np.inf, np.float32)
+    colours = np.zeros((wood.size, 3), np.uint8)
+    wood = wood.ravel()
+    height, width = atlas.shape[:2]
+    for part in foliage:
+        for _, pixel, z, u, v in fragments(project(part['position']), part['index'], shape, part['uv'], mask):
+            np.minimum.at(canopy, pixel, z)
+            front = (z == canopy[pixel]) & (z < wood[pixel])
+            row = np.clip((v[front] * height).astype(np.int64), 0, height - 1)
+            column = np.clip((u[front] * width).astype(np.int64), 0, width - 1)
+            colours[pixel[front]] = atlas[row, column, :3]
+    seen = canopy < wood
+    hit = (seen | np.isfinite(wood)).reshape(shape[0] // RAYS, RAYS, shape[1] // RAYS, RAYS)
+    solid = hit.sum(axis=(1, 3)) > RAYS * RAYS // 2
+    return solid, colours[seen].sum(axis=0, dtype=np.float64), int(seen.sum())
+
+
+def compare_level(full: list[dict], level: list[dict], mask: np.ndarray, atlas: np.ndarray, px: int) -> dict:
+    """Measure opening and relative Rec. 709 sRGB luminance of a level at its screen-height threshold."""
+    views = []
+    colour_sums = np.zeros((2, 3))
+    sample_counts = np.zeros(2)
+    for name, project, shape, ppm in level_views(full, px):
+        view = dict(view=name)
+        for i, (key, parts) in enumerate((('full', full), ('level', level))):
+            solid, colours, count = level_sample(parts, project, shape, mask, atlas)
+            opening, area = level_opening(solid, ppm)
+            view.update({f'background_{key}': opening, f'outline_{key}': area})
+            colour_sums[i] += colours
+            sample_counts[i] += count
+        views.append(view)
+    rgb = colour_sums / sample_counts[:, None]
+    tone = rgb @ (.2126, .7152, .0722)
+    return dict(px=px, views=views, triangles_full=sum(len(p['index']) for p in full),
+                triangles_level=sum(len(p['index']) for p in level),
+                tone=dict(rgb_full=rgb[0].tolist(), rgb_level=rgb[1].tolist(), relative=float(tone[1] / tone[0] - 1)))
 
 
 def png(path: Path, image: np.ndarray) -> None:
@@ -197,8 +299,24 @@ def main() -> int:
     parser.add_argument('--mask', type=Path, required=True)
     parser.add_argument('--png', type=Path)
     parser.add_argument('--json', type=Path)
+    parser.add_argument('--level', type=Path, help='compare this level to the full GLB')
+    parser.add_argument('--atlas', type=Path, help='albedo atlas of the foliage when comparing levels')
+    parser.add_argument('--px', type=int, help='screen height of the full tree when comparing levels')
     args = parser.parse_args()
-    text = json.dumps(measure(args.glb, load_mask(args.mask), picture=args.png), indent=1)
+    if args.level:
+        if args.atlas is None or args.px is None or args.px <= 0:
+            parser.error('--level requires --atlas and a positive --px')
+        if args.png:
+            parser.error('--png is available without --level')
+        from PIL import Image
+        with Image.open(args.atlas) as image:
+            atlas = np.asarray(image.convert('RGBA'))
+        result = compare_level(tree_glb.read(args.glb), tree_glb.read(args.level), load_mask(args.mask), atlas, args.px)
+    else:
+        if args.atlas is not None or args.px is not None:
+            parser.error('--atlas and --px require --level')
+        result = measure(args.glb, load_mask(args.mask), picture=args.png)
+    text = json.dumps(result, indent=1)
     print(text)
     if args.json:
         args.json.write_text(text + '\n')

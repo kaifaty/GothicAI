@@ -75,7 +75,7 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions import/placementdefinitions placementdefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions import/placementdefinitions placementdefinitions import/activitydefinitions activitydefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/musicrecord dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
@@ -187,7 +187,6 @@ include(cmake/BaseImport.cmake)
 # Runtime manifest reading, cooked chunks, world cloth and the MSVC flag: one list for every build with the base.
 include(cmake/BaseRuntime.cmake)
 include(cmake/VideoImport.cmake)
-include(cmake/ClusterLod.cmake)
 # Compile the builder with a replaceable simplifier call in the CPU test only.
 add_executable(gothic-cluster-lod-test EXCLUDE_FROM_ALL tests/cluster_lod_test.cpp common/graphics/mesh/clusterlod.cpp)
 target_include_directories(gothic-cluster-lod-test PRIVATE common)
@@ -361,7 +360,7 @@ if(UNIX)
   # wind's travelling front; CPU only, no device or game data.
   add_executable(gothic-grass-test EXCLUDE_FROM_ALL tests/grass_test.cpp tests/grass_cover_test.cpp)
   target_link_libraries(gothic-grass-test PRIVATE OpenGothic AiBridge)
-  target_include_directories(gothic-grass-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  target_include_directories(gothic-grass-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include ${PROJECT_SOURCE_DIR}/shader)
   target_compile_options(gothic-grass-test PRIVATE -Wall -Wconversion -Werror)
   # Windows that glow at night (graphics/windowglow.h) and the house they go out with (graphics/houselights.h); CPU only.
   add_executable(gothic-window-glow-test EXCLUDE_FROM_ALL tests/window_glow_test.cpp)

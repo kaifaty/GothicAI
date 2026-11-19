@@ -74,11 +74,13 @@ NPC прошли цикл тел теней и сверку логических
 | `face` | `scripts/bench/perf-face.bench` | лицо героя крупно на рынке днём: цена волос, бровей и ресниц своей головы, запускать с её контентом (`PERF_ENV='OPENGOTHIC_CONTENT=…'`) |
 | `face-far` | `scripts/bench/perf-face-far.bench` | голова героя с 1,2, 3, 7 и 15 м там же: цена прядей, когда голова мала в кадре; после каждого вида — кадр |
 | `grass` | `scripts/bench/perf-grass.bench` | цена самих травинок по частям на четырёх стоячих видах луга: вид как есть, затем `view-N-vertex` (`grass parts 32768`: травинки проходят вершинную стадию и уходят за экран) и `view-N-hidden` (`grass parts 128`: отброшены в начале вершинной стадии); читать строку `Grass` в `gpu_passes`, запускать с контентом луга и `OPENGOTHIC_GPU_PASSES=1` |
+| `grass-track` | `scripts/bench/perf-grass-track.bench` | цена материала колеи на видах 5 и 1 из `perf-meadow`: читать `GBuffer.mean_ms` в `gpu_passes`, из полного вида вычесть `-noroad` для цены материала или образец с одной выключенной частью для её вклада; запускать с контентом дороги и `OPENGOTHIC_GPU_PASSES=1` |
 | `trees` | `scripts/bench/perf-trees.bench` | цена леса из елей А: внутри, с 30, 100 и 300 м и проход сквозь лес; запускать с набором `scripts/content/fir_set.py forest` (`PERF_ENV='OPENGOTHIC_CONTENT=… OPENGOTHIC_GPU_PASSES=1'`), все варианты одной заявкой — [`tree-cost/run.sh`](../reports/engine/2026-11-16-modern-trees/tree-cost/run.sh), [заметка](../reports/engine/2026-11-16-modern-trees/tree-cost.md) |
 | `rock` | `scripts/bench/perf-rock.bench` | стена у дороги южнее фермы Акила, вид `road-3` съёмки материала скал, и пучки травы у камеры, вид `ledge-near`: цена своего материала скалы и живой листвы, запускать с набором (`PERF_ENV='OPENGOTHIC_CONTENT=…'`) |
 | `temple` | `scripts/bench/perf-temple.bench` | храм в землях троллей в полночь, 48 настенных факелов со статичной лампой 700–900: зал, факел в 3 м, факел с двумя за проёмом, факел на фризе; сравнение наборов — `scripts/perf-content.sh A B temple` |
 | `xardas` | `scripts/bench/perf-xardas.bench` | башня Ксардаса в полночь, 23 настенных факела первой сцены: стартовая комната с двумя факелами в 5 м, проход у входа с тремя, нижний зал, факел лестницы в 1,3 м; цена своей модели и огня факела, сравнение наборов — `scripts/perf-content.sh A B xardas` |
 | `fires` | `scripts/bench/perf-fires.bench` | свой огонь костров, жаровен и очагов: костёр порта в полночь с 4 м (пламя, дым, марево), он же в полдень с 2 м, жаровня города в полночь, широкий камин верхнего квартала с пятью огнями; сравнение наборов — `scripts/perf-content.sh A B fires` |
+| `firerain` | `scripts/bench/perf-firerain.bench` | огненный дождь на лугу к востоку от таверны, четыре броска по 8 с замера с падением, ударами и огнём на траве: весь дождь с 18 м ночью, у героя ночью, весь дождь днём, камера внутри дождя с взглядом вверх; сравнение наборов — `scripts/perf-content.sh A B firerain` ([заметка](../reports/content/remaster/magic-fire/rain.md)) |
 
 `shot`, `face`, `face-far` и `rock` не входят в прогон по умолчанию. `shot` снимает PNG `market-a`, `market-b`,
 `forest`, `interior` в папку повтора с `ui on`: кадр проходит путь до экрана,
@@ -286,7 +288,7 @@ scripts/perf-content.sh none working-8 harbour market --noise-pct 2 --threshold-
 `scripts/perf-content.sh <A> <B> [места]` сравнивает наборы из
 `~/.local/share/gothic-ai/content-staging/<набор>/` на Mac; `none` задаёт
 игре пустой `OPENGOTHIC_CONTENT=`. По умолчанию места — `harbour market`;
-доступны также `harbour-night` (порт в полночь, для ночного света), `forest`, `interior`, `combat`, `xardas` (башня Ксардаса в полночь, 23 настенных факела), `temple` (храм в землях троллей, 48 факелов), `fires` (костёр, жаровня и широкий камин). Запуск только на Ryzen, без
+доступны также `harbour-night` (порт в полночь, для ночного света), `forest`, `interior`, `combat`, `xardas` (башня Ксардаса в полночь, 23 настенных факела), `temple` (храм в землях троллей, 48 факелов), `fires` (костёр, жаровня и широкий камин), `firerain` (огненный дождь на лугу ночью). Запуск только на Ryzen, без
 автоматического перехода на Mac. Окно и настройки — те же `PERF_WINDOW`,
 `PERF_VID_RES`, `PERF_ARGS`, `PERF_ENV`, `PERF_INI`, что у `perf.sh`;
 `OPENGOTHIC_CONTENT` всегда определяется аргументом A/B.

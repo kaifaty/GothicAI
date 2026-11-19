@@ -304,6 +304,7 @@ float PfxBucket::randf(float base, float var) {
 
 void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t particle) {
   auto& p   = particles[particle];
+  p.landed  = false;
 
   if(decl.ppsValue<0) {
     // decal
@@ -522,6 +523,13 @@ void PfxBucket::tick(Block& sys, ImplEmitter& emitter, size_t particle, uint64_t
 
   // eval particle
   ps.life  = uint16_t(ps.life-dt);
+  if(ps.landed) {
+    // it lies where it landed while its trail draws in (tickTrail: the head stays, the rest ages out)
+    if(maxTrlTime!=0)
+      tickTrail(ps,emitter,dt);
+    return;
+    }
+  const Vec3 was = ps.pos;
   if(decl.motion.active()) {
     // own curl and drag (particles.d): substeps, drag integrated exactly, the field in world space
     const Vec3  origin = decl.useEmittersFOR ? emitter.pos : Vec3();
@@ -531,6 +539,24 @@ void PfxBucket::tick(Block& sys, ImplEmitter& emitter, size_t particle, uint64_t
     } else {
     ps.pos  += ps.dir*dtF;
     ps.dir  += decl.flyGravity*dtF;
+    }
+
+  if(decl.land!=nullptr && parent.ground && !decl.useEmittersFOR) {
+    // particles.d "land": the way of this tick against the world's static geometry; at the ground the particle
+    // asks for its landing effect and stops there; it lives on only for its trail to draw in
+    Vec3 hit;
+    if(parent.ground(was,ps.pos,hit)) {
+      ps.pos    = hit;
+      ps.dir    = Vec3();
+      ps.landed = true;
+      ps.life   = uint16_t(std::min<uint64_t>(ps.life,maxTrlTime));
+      parent.landAsked.emplace_back(decl.land,hit);
+      if(ps.life==0) {
+        sys.count--;
+        finalize(particle+sys.offset);
+        return;
+        }
+      }
     }
 
   if(maxTrlTime!=0)
@@ -833,7 +859,7 @@ void PfxBucket::buildSsbo() {
       ParState& ps = particles[pId+p.offset];
       auto&     px = pfxCpu   [pId+p.offset];
 
-      if(ps.life==0) {
+      if(ps.life==0 || ps.landed) {
         px.size = Vec3();
         continue;
         }
