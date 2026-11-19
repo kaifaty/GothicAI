@@ -92,9 +92,40 @@ struct NpcDefinitionContract {
     }
   static StreamedVisual& visual(Item& item) { return item.visual; }
   static const ItemView& stuckArrow(const Npc& npc, size_t i) { return npc.visual.stuckArrows[i].view; }
-  static Tempest::Vec3 boneAt(const Npc& npc, size_t bone) {
-    const auto& m=npc.visual.renderedBone(bone);
+  // where a stuck arrow is by its own bone and offset: the bone's rendered matrix times the pin's local one
+  static Tempest::Vec3 pinAt(const Npc& npc, size_t i) {
+    const auto& pin=npc.visual.stuckArrows[i];
+    const auto m=npc.visual.renderedBone(pin.bone)*pin.local;
     return {m.at(3,0),m.at(3,1),m.at(3,2)};
+    }
+  // a stuck arrow's record in main's own bytes (mdlvisual_quiver.cpp, APR1 version 1), read by the current loader
+  static bool loadMainArrow(Npc& npc, World& world, size_t i) {
+    const auto& pin=npc.visual.stuckArrows[i];
+    const std::string skeleton(npc.visual.skeleton->name()),bone(npc.visual.skeleton->nodes[pin.bone].name),visual=pin.visual;
+    const auto local=pin.local;
+    std::vector<uint8_t> raw;
+    {
+      Tempest::MemWriter writer(raw);
+      Serialize out(writer);
+      out.setEntry("contract/arrows");
+      const auto name=[&](const std::string& v) {
+        const uint32_t n=uint32_t(v.size());
+        out.writeBytes(&n,sizeof(n));
+        out.writeBytes(v.data(),v.size());
+        };
+      const uint32_t magic=0x31525041,count=1;
+      const uint16_t version=1;
+      out.writeBytes(&magic,sizeof(magic));
+      out.writeBytes(&version,sizeof(version));
+      name(skeleton);
+      out.writeBytes(&count,sizeof(count));
+      name(visual);
+      name(bone);
+      out.writeBytes(&local,sizeof(local));
+    }
+    Tempest::MemReader reader(raw);
+    Serialize in(reader);
+    return in.setEntry("contract/arrows") && npc.visual.loadStuckArrows(in,world);
     }
   static auto& isolatedRandom(GameScript& script) { return script.isolatedRandom; }
   };
@@ -1885,8 +1916,7 @@ void itemEffects(World& world) {
     };
   const auto potion=symbol("ITPO_HEALTH_01"),gold=symbol("ITMI_GOLD"),claw=symbol("ITMW_BELIARWEAPON_1H_01"),
              firebow=symbol("ITRW_ADDON_FIREBOW");
-  // the engine's own value, not the one of the installation's Gothic.ini
-  require(Settings::defaultI("GAME","itemEffects")==1,"[GAME] itemEffects must be 1 by default, as in Gothic");
+  // the default is checked by itemEffectsDefault on empty INIs; here it is 1 whatever the installation's Gothic.ini says
   const int switchBefore=Settings::getI("GAME","itemEffects");
   Settings::setI("GAME","itemEffects",1);
   auto* npc=activityNpc(world,"VLK_412_HARAD");
@@ -1997,6 +2027,10 @@ void arrowEffects(Gothic& gothic) {
   require(shot!=nullptr && hit!=nullptr,"SPELLFX_FIREARROW must have KEY_INVEST_2 and KEY_INVEST_3");
   std::printf("Arrow effects: SPELLFX_FIREARROW light %.0f cm shot, %.0f cm hit\n",double(shot->lightRange),double(hit->lightRange));
   require(shot->lightRange==300.f && hit->lightRange==400.f,"the fire arrow's light must be 300 cm shot and 400 cm hit");
+  // arrows stick for this scenario whatever the installation's Gothic.ini says
+  const int stickingBefore=Settings::getI("GAME","arrow_sticking");
+  Settings::setI("GAME","arrow_sticking",1);
+  Settings::inst().refreshPhysicsFlags();
   require(Settings::physicsFlags().arrowSticking,"arrows must stick (GAME arrow_sticking)");
   const int switchBefore=Settings::getI("GAME","itemEffects");
   Settings::setI("GAME","itemEffects",1);
@@ -2031,22 +2065,25 @@ void arrowEffects(Gothic& gothic) {
     return done();
     };
 
-  // the ground by Harad, found from above, where an arrow sticks: stone and metal throw it back
+  // the ground by Harad, found from above: stone throws an arrow back, other ground (not metal) takes it
+  const auto findGround=[&](bool stone,Tempest::Vec3& out) {
+    for(float r=150;r<=1500;r+=150)
+      for(int a=0;a<12;++a) {
+        const float an=float(a)*float(M_PI)/6.f;
+        const auto p=npc->position()+Tempest::Vec3(std::cos(an)*r,0,std::sin(an)*r);
+        const auto land=world->physic()->ray(p+Tempest::Vec3(0,300,0),p-Tempest::Vec3(0,700,0));
+        const bool isStone=land.mat==asset::MaterialGroup::STONE;
+        if(!land.hasCol || land.n.y<.7f || isStone!=stone || land.mat==asset::MaterialGroup::METAL ||
+           land.mat==asset::MaterialGroup::UNDEFINED || land.mat==asset::MaterialGroup::NONE)
+          continue;
+        out=land.v;
+        std::printf("Arrow effects: ground of material %d %.0f cm from Harad\n",int(land.mat),double(r));
+        return true;
+        }
+    return false;
+    };
   Tempest::Vec3 ground;
-  bool found=false;
-  for(float r=150;r<=1500 && !found;r+=150)
-    for(int a=0;a<12 && !found;++a) {
-      const float an=float(a)*float(M_PI)/6.f;
-      const auto p=npc->position()+Tempest::Vec3(std::cos(an)*r,0,std::sin(an)*r);
-      const auto land=world->physic()->ray(p+Tempest::Vec3(0,300,0),p-Tempest::Vec3(0,700,0));
-      if(!land.hasCol || land.mat==asset::MaterialGroup::STONE || land.mat==asset::MaterialGroup::METAL ||
-         land.mat==asset::MaterialGroup::UNDEFINED || land.mat==asset::MaterialGroup::NONE || land.n.y<.7f)
-        continue;
-      ground=land.v;
-      found=true;
-      std::printf("Arrow effects: ground of material %d %.0f cm from Harad\n",int(land.mat),double(r));
-      }
-  require(found,"ground an arrow sticks in must be found by Harad");
+  require(findGround(false,ground),"ground an arrow sticks in must be found by Harad");
   // shot: the effect at KEY_INVEST_2 on the arrow's mesh
   const auto stuckBefore=world->stuckArrowCount();
   auto& fire=shoot(fireArrow,ground+Tempest::Vec3(0,120,0),Tempest::Vec3(0,-1,0));
@@ -2058,28 +2095,55 @@ void arrowEffects(Gothic& gothic) {
   Settings::setI("GAME","itemEffects",0);
   auto& off=shoot(fireArrow,ground+Tempest::Vec3(0,120,-5),Tempest::Vec3(0,-1,0));
   require(!off.itemView().isEmpty() && !off.itemView().hasEffect(),"with [GAME] itemEffects 0 a shot arrow must have no effect");
-  Settings::setI("GAME","itemEffects",1);
-  // stuck in the ground: the effect at KEY_INVEST_3 on the stuck arrow
-  require(tickUntil([&] { return world->stuckArrowCount()>=stuckBefore+3; },16,120),"the three arrows must stick in the ground");
-  // one of them burns: the fire arrow shot with the switch on
+  // one step of the flight: the fire arrow's effect goes with the bullet
+  const auto shotFrom=fire.position();
+  session->tick(10);
+  Tempest::Vec3 flying;
+  require(!fire.isFinished() && (fire.position()-shotFrom).length()>20.f && fire.itemView().effectPosition(flying) &&
+          near(flying,fire.position(),.5f) && onMesh(fire.itemView()),"a flying fire arrow's effect must go with the bullet");
+  // stuck in the ground, the switch still off: the effect at KEY_INVEST_3 on the fire arrow only; when it stuck
   size_t stuckIndex=0,burning=0;
-  for(size_t i=stuckBefore;i<world->stuckArrowCount();++i)
-    if(world->stuckArrowView(i)->hasEffect()) {
-      stuckIndex=i;
-      ++burning;
-      }
+  uint64_t stuckAt=0;
+  const auto burningPins=[&] {
+    burning=0;
+    for(size_t i=stuckBefore;i<world->stuckArrowCount();++i)
+      if(world->stuckArrowView(i)->hasEffect()) {
+        stuckIndex=i;
+        ++burning;
+        }
+    if(burning>0 && stuckAt==0)
+      stuckAt=world->tickCount();
+    return world->stuckArrowCount()>=stuckBefore+3;
+    };
+  require(tickUntil(burningPins,16,120),"the three arrows must stick in the ground, also the one shot with itemEffects 0");
+  Settings::setI("GAME","itemEffects",1);
   // by its index: the vector of the stuck arrows may grow while the world ticks
   const auto stuckView=[&] { return world->stuckArrowView(stuckIndex); };
   const auto* stuck=stuckView();
-  require(burning==1 && emitting(*stuck) && stuck->effectKey()==hit && onMesh(*stuck),
+  require(burning==1 && stuckAt!=0 && emitting(*stuck) && stuck->effectKey()==hit && onMesh(*stuck),
           "the fire arrow stuck in the ground must have its effect at KEY_INVEST_3 on its mesh, the others none");
-  const auto stuckAt=world->tickCount();
-  // 20 s of the game's time: the effect goes, the arrow stays
-  require(tickUntil([&] { return world->tickCount()>=stuckAt+19500; },100,400) && stuckView()->hasEffect(),
-          "the stuck fire arrow must keep its effect for 20 s");
-  require(tickUntil([&] { return world->tickCount()>=stuckAt+20100; },100,20) && !stuckView()->hasEffect() &&
-          !stuckView()->isEmpty() && world->stuckArrowCount()==stuckBefore+3,
-          "20 s after the hit the stuck fire arrow must have no effect, the arrow must stay");
+  // 20 s of the game's time from its hit: the effect goes, the arrow stays
+  const auto tickTo=[&](uint64_t at) {
+    for(size_t i=0;i<400 && world->tickCount()<at;++i)
+      session->tick(std::min<uint64_t>(100,at-world->tickCount()));
+    return world->tickCount()==at;
+    };
+  require(tickTo(stuckAt+19999) && stuckView()->hasEffect(),"the stuck fire arrow must keep its effect for 20 s");
+  require(tickTo(stuckAt+20000) && !stuckView()->hasEffect() && !stuckView()->isEmpty() &&
+          world->stuckArrowCount()>=stuckBefore+3,"20 s after the hit the stuck fire arrow must have no effect, the arrow must stay");
+
+  // on stone: the arrow glances off and flies on, at KEY_INVEST_3 since that first hit
+  Tempest::Vec3 stone;
+  require(findGround(true,stone),"stone ground must be found by Harad");
+  auto& glancing=shoot(fireArrow,stone+Tempest::Vec3(0,120,0),Tempest::Vec3(0,-1,0));
+  bool glanced=false;
+  for(size_t i=0;i<100 && !glanced && !glancing.isFinished();++i) {
+    session->tick(4);
+    // a finished bullet is removed on the next tick only
+    glanced=!glancing.isFinished() && glancing.itemView().level()==3 && glancing.itemView().effectKey()==hit &&
+            emitting(glancing.itemView());
+    }
+  require(glanced,"a fire arrow glancing off stone must fly on at KEY_INVEST_3");
 
   // in Harad: the effect goes with the bone
   const auto inBody=npc->stuckArrowCount();
@@ -2094,14 +2158,20 @@ void arrowEffects(Gothic& gothic) {
   npc->updateTransform();
   Tempest::Vec3 at,after;
   pinned.effectPosition(at);
-  const auto bone=NpcDefinitionContract::boneAt(*npc,pin.bone);
+  const auto bone=NpcDefinitionContract::pinAt(*npc,npc->stuckArrowCount()-1);
   npc->setPosition(npc->position()+Tempest::Vec3(0,0,300));
   npc->updateTransform();
-  const auto moved=NpcDefinitionContract::boneAt(*npc,pin.bone)-bone;
+  const auto moved=NpcDefinitionContract::pinAt(*npc,npc->stuckArrowCount()-1)-bone;
   std::printf("Arrow effects: the fire arrow in Harad's bone %zu moved %.1f cm with it (bone %.1f cm)\n",pin.bone,
               double((pinned.effectPosition(after) ? after-at : Tempest::Vec3()).length()),double(moved.length()));
   require(pinned.effectPosition(after) && moved.length()>250.f && near(after-at,moved,2.f) && onMesh(pinned),
           "the fire arrow's effect in Harad must follow its bone");
+  // as he animates: the effect where its bone and the hit's offset put the arrow
+  const auto pinIndex=npc->stuckArrowCount()-1;
+  for(int i=0;i<10;++i)
+    session->tick(16);
+  require(pinned.effectPosition(after) && near(after,NpcDefinitionContract::pinAt(*npc,pinIndex),.5f) && onMesh(pinned),
+          "the fire arrow's effect in Harad must be at its bone times the hit's offset");
 
   // saved: the stuck arrows in main's layout (world/world.cpp saveStuckArrows, schema 2); loaded: no effects
   const auto worldPins=world->stuckArrowCount(),bodyPins=npc->stuckArrowCount();
@@ -2158,16 +2228,77 @@ void arrowEffects(Gothic& gothic) {
   for(size_t i=0;i<loaded->stuckArrowCount();++i)
     require(!NpcDefinitionContract::stuckArrow(*loaded,i).isEmpty() && !NpcDefinitionContract::stuckArrow(*loaded,i).hasEffect(),
             "a loaded arrow in a body must have no effect");
-  // `item put` of a symbol that is no C_ITEM instance: «no item», no VM exception
-  for(const char* notItem:{"C_ITEM","VLK_412_HARAD","ITRW_ARROW_NOT_A_SYMBOL"})
-    testbench_detail::itemEffectsCommand({"item","put",notItem,"100","0"},*world,*loaded);
+  // an arrow in a body written by main (APR1 version 1) loads, without effect
+  require(NpcDefinitionContract::loadMainArrow(*loaded,*world,0) && loaded->stuckArrowCount()==1 &&
+          !NpcDefinitionContract::stuckArrow(*loaded,0).isEmpty() && !NpcDefinitionContract::stuckArrow(*loaded,0).hasEffect(),
+          "an arrow in a body saved by main must load without effect");
+
+  // stuck in something that moves: the effect goes with the arrow
+  {
+    auto m=Tempest::Matrix4x4::mkIdentity();
+    m.translate(loaded->position()+Tempest::Vec3(0,5000,0));
+    auto* item=world->addItemDyn(fireArrow,m,size_t(-1));
+    require(item!=nullptr,"the arrow item must be made");
+    ItemView view(*world,item->handle());
+    world->removeItem(*item);
+    view.setLevel(3);
+    auto movable=std::make_shared<DynamicWorld::MovableVobPose>();
+    movable->transform=Tempest::Matrix4x4::mkIdentity();
+    movable->transform.translate(loaded->position()+Tempest::Vec3(0,100,0));
+    auto pinMatrix=movable->transform;
+    pinMatrix.translate(0,20,0);
+    require(world->stickArrow(std::move(view),pinMatrix,"ITRW_ADDON_FIREARROW",movable),"the arrow must stick in the movable");
+    const auto* moving=world->stuckArrowView(world->stuckArrowCount()-1);
+    Tempest::Vec3 before,later;
+    require(moving->effectPosition(before) && emitting(*moving),"the arrow in the movable must have its effect");
+    movable->transform.translate(0,0,150);
+    session->tick(16);
+    moving=world->stuckArrowView(world->stuckArrowCount()-1);
+    require(moving->effectPosition(later) && near(later-before,Tempest::Vec3(0,0,150),.5f) && onMesh(*moving),
+            "the effect of an arrow in a movable must go with it");
+    movable.reset();
+    session->tick(16);
+  }
+
+  // `item put` of a symbol that is no C_ITEM instance: «no item», no VM exception; its answer in a bench.log of its own
+  {
+    const auto dir=std::filesystem::temp_directory_path()/("item-put-"+std::to_string(getpid()));
+    std::filesystem::create_directories(dir);
+    TestBench::retarget(dir.string());
+    for(const char* notItem:{"C_ITEM","VLK_412_HARAD","ITRW_ARROW_NOT_A_SYMBOL"})
+      require(testbench_detail::itemEffectsCommand({"item","put",notItem,"100","0"},*world,*loaded),
+              "item put must take the command");
+    TestBench::flushOutput();
+    std::ifstream log(dir/"bench.log");
+    const std::string text((std::istreambuf_iterator<char>(log)),std::istreambuf_iterator<char>());
+    const auto* out=std::getenv("OPENGOTHIC_BENCH_OUT");
+    TestBench::retarget(out!=nullptr ? out : ".");
+    std::filesystem::remove_all(dir);
+    require(text=="item put: no item C_ITEM\nitem put: no item VLK_412_HARAD\nitem put: no item ITRW_ARROW_NOT_A_SYMBOL\n",
+            "item put must answer «no item» for a symbol that is no C_ITEM instance");
+  }
   Settings::setI("GAME","itemEffects",switchBefore);
+  Settings::setI("GAME","arrow_sticking",stickingBefore);
+  Settings::inst().refreshPhysicsFlags();
   std::printf("Arrow effects: shot KEY_INVEST_2, stuck KEY_INVEST_3 in the ground and in a bone, gone in 20 s, arrow stays; "
               "ITRW_ARROW and itemEffects 0 none; %zu+%zu arrows saved in main's layout, loaded without effects\n",
               worldPins,bodyPins);
   }
 
+// [GAME] itemEffects read the working way (Settings::getI, ItemView::enabled) when neither Gothic.ini has it: 1, as Gothic
+void itemEffectsDefault() {
+  require(!Settings::exists(),"the default of itemEffects needs Settings of its own");
+  const auto dir=std::filesystem::temp_directory_path()/("item-effects-ini-"+std::to_string(getpid()));
+  Settings settings;
+  settings.load((dir/"SystemPack.ini").u16string(),(dir/"Gothic.ini").u16string());
+  const auto* env=std::getenv("OPENGOTHIC_ITEM_EFFECTS");
+  require(!Settings::has("GAME","itemEffects") && Settings::getI("GAME","itemEffects")==1 &&
+          (ItemView::enabled() || (env!=nullptr && std::string_view(env)=="0")),
+          "[GAME] itemEffects must be 1 by default, as in Gothic");
+  }
+
 void moverChildSave() {
+  itemEffectsDefault();
   const auto* game=std::getenv("GOTHIC_DIR");
   require(game!=nullptr && *game!='\0',"GOTHIC_DIR must point to prepared Gothic II settings");
   const char* args[]={"gothic-placed-items-contract","-g",game};

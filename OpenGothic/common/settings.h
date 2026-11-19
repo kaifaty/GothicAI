@@ -104,8 +104,6 @@ class Settings final {
     // a key in the user's or the system Gothic.ini, not in the defaults; false before load
     static bool has(std::string_view sec, std::string_view name);
     static int getI(std::string_view sec, std::string_view name);
-    // the engine's own value of a key, whatever Gothic.ini says; 0 when it has none
-    static int defaultI(std::string_view sec, std::string_view name);
     static void setI(std::string_view sec, std::string_view name, int val);
     static float getF(std::string_view sec, std::string_view name);
     static void setF(std::string_view sec, std::string_view name, float val);

@@ -275,12 +275,6 @@ int Settings::getI(std::string_view sec, std::string_view name) {
   return 0;
   }
 
-int Settings::defaultI(std::string_view sec, std::string_view name) {
-  if(instance==nullptr || instance->defaults==nullptr || !instance->defaults->has(sec,name))
-    return 0;
-  return instance->defaults->getI(sec,name);
-  }
-
 void Settings::setI(std::string_view sec, std::string_view name, int val) {
   instance->iniFile->set(sec,name,val);
   instance->onSettingsChanged();
