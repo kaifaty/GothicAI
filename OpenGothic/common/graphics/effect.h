@@ -29,6 +29,9 @@ class Effect final {
     Effect&  operator = (Effect&&) = default;
     bool     is(const VisualFx& vfx) const;
     const VisualFx* handle() const { return root; }
+    // the mesh its particles are born on (setMesh), and where it is now (its last matrix)
+    const MeshObjects::Mesh* emitterMesh() const { return meshEmitter; }
+    Tempest::Vec3   position() const { return {pos.at(3,0),pos.at(3,1),pos.at(3,2)}; }
 
     void     tick(uint64_t dt);
 

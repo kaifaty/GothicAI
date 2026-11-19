@@ -73,7 +73,7 @@ class Interactive : public Vob, public AnimationSound, public AnimationInteracti
     std::string_view    startItems() const { return startContents; }  // "ItMi_Gold:29,ItRw_Arrow:15"
 
     Inventory&          inventory();
-    void                setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot, int32_t material);
+    void                setSlotItem(ItemView&& itm, std::string_view slot);
 
     uint32_t            stateMask() const;
 

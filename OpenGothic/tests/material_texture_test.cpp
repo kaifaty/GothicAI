@@ -45,6 +45,14 @@
 #include <unistd.h>
 #include <vector>
 
+// a slot item with no item behind it (graphics/itemview)
+struct ItemViewTest {
+  static ItemView of(MeshObjects::Mesh&& mesh) {
+    const auto* proto = mesh.protoMesh();
+    return ItemView(proto,0,std::move(mesh));
+    }
+  };
+
 namespace {
 size_t assertions = 0;
 
@@ -2830,12 +2838,12 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
                                {{0,100,0},{0,0,1},{0,1},0xffffffffu}},{0,1,2});
   MdlVisual npcVisual;
   npcVisual.setTextureOwner({start.x+1,0,start.z},true);
-  npcVisual.setShield(MeshObjects::Mesh(meshes,shieldMesh,0,false));
+  npcVisual.setShield(ItemViewTest::of(MeshObjects::Mesh(meshes,shieldMesh,0,false)));
   require(std::abs(npcVisual.setTextureOwner(start,true)-400.f)<1.f,"the NPC must get 4 m of reach 40 m away");
   view.x-=700;
   tick();
   require(std::abs(npcVisual.setTextureOwner({start.x+200,0,start.z},true)-200.f)<1.f,"a 2 m move must stay within the reach");
-  npcVisual.setSword(MeshObjects::Mesh(meshes,swordMesh,0,false));
+  npcVisual.setSword(ItemViewTest::of(MeshObjects::Mesh(meshes,swordMesh,0,false)));
   Resources::finishTextureLoading();
   require(armour.tex->w()==256,"a part added after the NPC moved within its reach must be placed where the NPC is");
   }

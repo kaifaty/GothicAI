@@ -200,6 +200,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(itemWakeCommand(a,w,pl)) return;
   else if(placedItemsCommand(bench.placedItems,a,w,pl,ctrl)) return;
   else if(itemHullsCommand(bench.itemHulls,a,w,pl)) return;
+  else if((c=="item" || c=="itemfx") && itemEffectsCommand(a,w,pl)) return;
   else if(c=="physics" && worldCommand(worldContext(),line,a,w,pl,ctrl)) return;
   else if(c=="traces" && a.size()>=2) {
     std::string command=a[1],value,error;

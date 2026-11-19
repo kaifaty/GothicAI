@@ -1047,6 +1047,17 @@ PfxEmitterMesh* Resources::implLoadEmiterMesh(std::string_view name) {
     return ret.get();
     }
 
+  if(FileExt::hasExt(cname,"MMS") || FileExt::hasExt(cname,"MMB")) {
+    // a morph mesh (a bow): its points at rest
+    FileExt::exchangeExt(cname,"MMS","MMB");
+    auto zmm = loadMorphData(cname);
+    if(zmm.mesh.sub_meshes.empty())
+      return nullptr;
+    PackedMesh packed(zmm.mesh,PackedMesh::PK_Visual);
+    ret = std::unique_ptr<PfxEmitterMesh>(new PfxEmitterMesh(packed));
+    return ret.get();
+    }
+
   if(FileExt::hasExt(name,"MDM")) {
     asset::ModelMesh mesh {};
     if(!loadModelMeshData(cname,mesh))

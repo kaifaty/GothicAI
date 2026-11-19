@@ -386,11 +386,10 @@ void MdlVisual::setVisualBody(WorldView& owner, MeshObjects::Mesh&& body) {
   addTextureOwner(view);
   bindBodyRig();
   pushBodyPose();
-  for(auto& slot:item)
-    if(slot.deferredProto!=nullptr) {
-      slot.view=owner.addView(slot.deferredProto,slot.deferredMaterial);
-      addTextureOwner(slot.view);
-      }
+  for(auto& slot:item) {
+    slot.view.restore(owner);
+    addTextureOwner(slot.view);
+    }
   syncAttaches();
   }
 
@@ -398,11 +397,8 @@ void MdlVisual::clearVisualBody() {
   view={};
   bindBodyRig();  // no body, no rig: the effects on its skin let go of the palette
   attach.clear();
-  for(auto& slot:item) {
-    if(auto proto=slot.view.protoMesh())
-      slot.deferredProto=proto;
-    slot.view={};
-    }
+  for(auto& slot:item)
+    slot.view.release();
   quiv.clear();
   bodyDetached=true;
   }
@@ -563,24 +559,24 @@ void MdlVisual::setSlotAttachment(MeshObjects::Mesh&& itm, std::string_view bone
   attach.push_back(std::move(slt));
   }
 
-void MdlVisual::setSword(MeshObjects::Mesh &&s) {
+void MdlVisual::setSword(ItemView&& s) {
   bind(sword,std::move(s),"ZS_RIGHTHAND");
   }
 
-void MdlVisual::setRangedWeapon(MeshObjects::Mesh &&b) {
+void MdlVisual::setRangedWeapon(ItemView&& b) {
   bind(bow,std::move(b),"ZS_BOW");
   }
 
-void MdlVisual::setShield(MeshObjects::Mesh&& s) {
+void MdlVisual::setShield(ItemView&& s) {
   bind(shield,std::move(s),"ZS_SHIELD");
   }
 
-void MdlVisual::setAmmoItem(MeshObjects::Mesh&& a, std::string_view bone) {
+void MdlVisual::setAmmoItem(ItemView&& a, std::string_view bone) {
   bind(ammunition,std::move(a),bone);
   }
 
 void MdlVisual::dropAmmo() {
-  ammunition.view = MeshObjects::Mesh();
+  ammunition.view = ItemView();
   }
 
 void MdlVisual::setMagicWeapon(Effect&& spell, World& owner) {
@@ -600,7 +596,7 @@ void MdlVisual::setMagicWeaponKey(World& owner, SpellFxKey key, int32_t keyLvl) 
   pfx.view.setKey(owner,key,keyLvl);
   }
 
-void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone, int32_t material) {
+void MdlVisual::setSlotItem(ItemView&& itm, std::string_view bone) {
   addTextureOwner(itm);
   if(bone.empty() || skeleton==nullptr)
     return;
@@ -615,28 +611,24 @@ void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone, int3
 
   for(auto& i:item) {
     if(i.boneId==id) {
-      i.deferredProto=itm.protoMesh();
-      i.deferredMaterial=material;
       if(bodyDetached)
-        itm={};
+        itm.release();
       i.view=std::move(itm);
       syncAttaches();
       return;
       }
     }
 
-  MeshAttach slt;
+  ItemAttach slt;
   slt.bone = skeleton->nodes[id].name;
-  slt.deferredProto=itm.protoMesh();
-  slt.deferredMaterial=material;
   if(bodyDetached)
-    itm={};
+    itm.release();
   bind(slt,std::move(itm),slt.bone);
   item.push_back(std::move(slt));
   syncAttaches();
   }
 
-void MdlVisual::setStateItem(MeshObjects::Mesh&& a, std::string_view bone) {
+void MdlVisual::setStateItem(ItemView&& a, std::string_view bone) {
   bind(stateItm,std::move(a),bone);
   syncAttaches();
   }
@@ -687,7 +679,7 @@ bool MdlVisual::setFightMode(asset::MdsFightMode mode) {
   }
 
 void MdlVisual::dropWeapon(Npc& npc) {
-  MeshAttach* att  = &sword;
+  ItemAttach* att  = &sword;
   auto&       pose = *skInst;
 
   if(fgtMode!=WeaponState::W1H && fgtMode!=WeaponState::W2H &&
@@ -713,7 +705,7 @@ void MdlVisual::dropWeapon(Npc& npc) {
   }
 
 void MdlVisual::dropShield(Npc& npc) {
-  MeshAttach* att  = &sword;
+  ItemAttach* att  = &sword;
   auto&       pose = *skInst;
 
   if(fgtMode!=WeaponState::W1H && fgtMode!=WeaponState::W2H)
@@ -870,8 +862,9 @@ float MdlVisual::setTextureOwner(const Vec3& position, bool spatial) {
   textureOwnerPosition=position;
   textureOwnerLast=position;
   float reach=view.setTextureOwner(position,spatial);
-  MeshAttach* slots[]={&head,&groom,&sword,&shield,&bow,&ammunition,&stateItm};
-  for(auto* slot:slots)
+  for(auto* slot:{&head,&groom})
+    reach=std::min(reach,slot->view.setTextureOwner(position,spatial));
+  for(auto* slot:{&sword,&shield,&bow,&ammunition,&stateItm})
     reach=std::min(reach,slot->view.setTextureOwner(position,spatial));
   for(auto& slot:item)
     reach=std::min(reach,slot.view.setTextureOwner(position,spatial));
@@ -981,6 +974,10 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
       ++i;
       }
     }
+  for(auto* i:{&sword,&shield,&bow,&ammunition,&stateItm})
+    i->view.tick(dt);
+  for(auto& i:item)
+    i.view.tick(dt);
 
   // Effects retain their world-clock lifetime while the actor's solved bones hold still.
   if(pausePose)
@@ -1444,6 +1441,13 @@ void MdlVisual::bind(MeshAttach& slot, MeshObjects::Mesh&& itm, std::string_view
   // sync?
   }
 
+void MdlVisual::bind(ItemAttach& slot, ItemView&& itm, std::string_view bone) {
+  slot.boneId = skeleton==nullptr ? size_t(-1) : skeleton->findNode(bone);
+  slot.view   = std::move(itm);
+  addTextureOwner(slot.view);
+  slot.bone   = bone;
+  }
+
 void MdlVisual::bind(PfxAttach& slot, Effect&& itm, std::string_view bone) {
   slot.boneId = skeleton==nullptr ? size_t(-1) : skeleton->findNode(bone);
   slot.view   = std::move(itm);
@@ -1459,8 +1463,9 @@ void MdlVisual::bind(Attach<View>& slot, std::string_view bone) {
   }
 
 void MdlVisual::rebindAttaches(const Skeleton& to) {
-  auto  mesh = {&head,&groom,&sword,&bow,&ammunition,&stateItm};
-  for(auto i:mesh)
+  for(auto i:{&head,&groom})
+    rebindAttaches(*i,to);
+  for(auto i:{&sword,&bow,&ammunition,&stateItm})
     rebindAttaches(*i,to);
   for(auto& i:item)
     rebindAttaches(i,to);
@@ -1481,8 +1486,10 @@ void MdlVisual::rebindAttaches(Attach<View>& mesh, const Skeleton& to) {
   }
 
 void MdlVisual::syncAttaches() {
-  MdlVisual::MeshAttach* mesh[] = {&head,&groom,&sword,&shield,&bow,&ammunition,&stateItm};
-  for(auto i:mesh)
+  for(auto i:{&head,&groom})
+    syncAttaches(*i);
+  // an item's effect goes with its mesh (graphics/itemview)
+  for(auto i:{&sword,&shield,&bow,&ammunition,&stateItm})
     syncAttaches(*i);
   for(auto& i:item)
     syncAttaches(i);
@@ -1818,24 +1825,27 @@ void MdlVisual::updateFace(Npc& npc) {
   }
 
 void MdlVisual::startMMAnim(Npc& npc, std::string_view anim, std::string_view bone) {
-  MdlVisual::MeshAttach* mesh[] = {&head,&sword,&shield,&bow,&ammunition,&stateItm};
-  for(auto i:mesh) {
-    if(i->bone!=bone && !bone.empty())
+  const std::pair<MeshObjects::Mesh*,std::string_view> mesh[] = {{&head.view,head.bone},{&sword.view.view(),sword.bone},
+    {&shield.view.view(),shield.bone},{&bow.view.view(),bow.bone},{&ammunition.view.view(),ammunition.bone},
+    {&stateItm.view.view(),stateItm.bone}};
+  for(auto& [view,at]:mesh) {
+    if(at!=bone && !bone.empty())
       continue;
+    const bool isBow = view==&bow.view.view();
     // the string drawn by hand: the animation does not draw it; held by hand, the bow lets it go straight
-    if(i==&bow && skInst->bowDrawIk().string()>=0.f)
+    if(isBow && skInst->bowDrawIk().string()>=0.f)
       continue;
-    if(i==&bow && anim==BowLoose && looseAt>0 && npc.world().tickCount()<looseAt+LooseLate)
+    if(isBow && anim==BowLoose && looseAt>0 && npc.world().tickCount()<looseAt+LooseLate)
       continue;
-    if(i==&bow && anim==BowLoose && skInst->bowDrawIk().aligned()>0.5f) {
-      i->view.startMMAnim(BowDraw::StringLoose,1,uint64_t(-1));
+    if(isBow && anim==BowLoose && skInst->bowDrawIk().aligned()>0.5f) {
+      view->startMMAnim(BowDraw::StringLoose,1,uint64_t(-1));
       continue;
       }
-    if(i==&head && face.isActive()) {
+    if(view==&head.view && face.isActive()) {
       face.startAnim(anim,1,uint64_t(-1),npc.world().tickCount());
       continue;
       }
-    i->view.startMMAnim(anim,1,uint64_t(-1));
+    view->startMMAnim(anim,1,uint64_t(-1));
     }
   }
 
