@@ -354,8 +354,8 @@ void Resources::indexMaterialMaps() {
       if(ok)
         if(const auto it = value.FindMember("anchor"); it!=value.MemberEnd()) {
           const std::string_view anchor = it->value.IsString() ? it->value.GetString() : "";
-          p.anchor = anchor=="tree" ? FoliageWind::AnchorTree : FoliageWind::AnchorLine;
-          ok       = anchor=="tree" || anchor=="line";
+          p.anchor = anchor=="tree" ? FoliageWind::AnchorTree : (anchor=="field" ? FoliageWind::AnchorField : FoliageWind::AnchorLine);
+          ok       = anchor=="tree" || anchor=="line" || anchor=="field";
           }
       if(!ok || !number("wind",p.wind,FoliageWind::MaxScale) || !number("flutter",p.flutter,FoliageWind::MaxScale) ||
          !number("translucency",p.translucency,1.0))

@@ -26,11 +26,12 @@ struct Params final {
   float   wind         = 1.f;   // times the bend, 0..4
   float   flutter      = 1.f;   // times the flutter, 0..4
   float   translucency = 0.6f;  // the share of the sun a leaf lets through, 0..1
-  uint8_t anchor       = 0;     // AnchorLine: the roots on the mesh's X axis; AnchorTree: a tree (foliagetree.h)
+  uint8_t anchor       = 0;     // AnchorLine: the roots on the mesh's X axis; AnchorTree: a tree (foliagetree.h);
+                                // AnchorField: a row of a field of corn, a line whose waves show by its light
   bool    operator==(const Params&) const = default;
   };
 
-enum : uint8_t { AnchorLine = 0, AnchorTree = 1 };
+enum : uint8_t { AnchorLine = 0, AnchorTree = 1, AnchorField = 2 };
 
 // the halves of the switch
 enum : uint8_t { Wind = 1, Light = 2, Both = 3 };
@@ -48,6 +49,10 @@ constexpr float BendMaxTan   = 0.3093f;  // tan(0.30 rad): the cap of the lean a
 constexpr float BendRoot     = 0.35f;    // the share of the lean and the swing a vertex at the root takes
 constexpr float WaveSteady   = 0.875f;   // the lean is WaveSteady + WaveSwing*G, G in -1..1: the waves are a ripple on it,
 constexpr float WaveSwing    = 0.125f;   // a quarter of its depth from trough to crest, so a gust holds the leaf over
+// a field of corn (AnchorField): a deeper ripple with the same crest, so its bounds are a tuft's. The light of the
+// wave is the shader's alone (foliageFieldLight of foliage_wind.glsl)
+constexpr float FieldSteady  = 0.6f;
+constexpr float FieldSwing   = 0.4f;
 constexpr float Wave1Length  = 2400.f;   // cm; along +Z, the mean direction of the wind
 constexpr float Wave2Length  = 950.f;    // cm; turned 55 degrees to +X
 constexpr float Wave1Share   = 0.55f;
@@ -240,7 +245,9 @@ inline Tempest::Vec3 bend(const Tempest::Vec3& p, uint32_t bits, float reach,
   const float w2 = std::sin(6.2831853f*(fract((place.x*Wave2DirX + place.z*Wave2DirZ)/Wave2Length) - sc.phase.y));
   const float g     = Wave1Share*w1 + Wave2Share*w2;
   const float swing = std::min(windK*sc.swing.y, SwingMaxTan);
-  const float tanT  = std::min(BendK*windK*sc.wind.z*(WaveSteady + WaveSwing*g), BendMaxTan - swing);
+  const bool  field = (bits >> 24)==AnchorField;
+  const float tanT  = std::min(BendK*windK*sc.wind.z*((field ? FieldSteady : WaveSteady) + (field ? FieldSwing : WaveSwing)*g),
+                               BendMaxTan - swing);
   const float arm   = len*(BendRoot + (1.f-BendRoot)*s);
   Tempest::Vec3 d   = dir*(arm*tanT);
 

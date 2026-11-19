@@ -85,10 +85,12 @@ inline float skyThrough(float translucency, float facing) {
   return SkyLobe * translucency * std::clamp(1.f + 1.5f*facing, 0.f, 1.f);
   }
 
-// BK_CROWN of a material: a tree's, while the light of the foliage is on (FoliageWind::enabled). A glowing material
+// BK_CROWN of a material: a tree's or a field of corn's (its rows carry the depth of the field in the same colour),
+// while the light of the foliage is on (FoliageWind::enabled). A glowing material
 // is none: the glow's share and the crown's shade ride in the same alpha of the G-buffer
 inline bool lit(const FoliageWind::Params& p, uint8_t halves, bool on, float emissive = 0.f) {
-  return on && emissive<=0.f && p.on && p.anchor==FoliageWind::AnchorTree && (halves & FoliageWind::Light)!=0;
+  return on && emissive<=0.f && p.on && (p.anchor==FoliageWind::AnchorTree || p.anchor==FoliageWind::AnchorField) &&
+         (halves & FoliageWind::Light)!=0;
   }
 
 }

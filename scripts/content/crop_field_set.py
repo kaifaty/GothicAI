@@ -63,7 +63,8 @@ EARTH, LITTER = 'OWN_CROP_EARTH', 'OWN_CROP_LITTER'
 TONES = ('', 'PALE', 'GREEN')
 WEED_ATLAS = 1024
 WEED_KINDS = ('thistle', 'cockle', 'cornflower', 'mayweed')
-FOLIAGE = dict(wind=1.4, flutter=.6, translucency=.45)
+FOLIAGE = dict(wind=1.4, flutter=.6, translucency=.45, anchor='field')    # the wave shows by the light (alive.md, step B)
+OPEN_ROW, OPEN_EDGE, OPEN_TOP = (.1, .82), (.4, .9), .85    # openness of a vertex, root and top: the crown's shade of the field
 NORMAL_UP = .7              # share of straight up in a vertex normal: the field is lit as one surface
 NORMAL_EDGE = .4            # of the rows and tufts at a strip's edge: the wall of rye is lit as a wall
 ROUGH = .9
@@ -128,7 +129,7 @@ def tone_material(tone: str) -> str:
 
 
 def card(mesh, cell: dict, z: float, turn: float = 0., links: int = 4, mirror: bool = False, lean: float = 0.,
-         shift: float = 0., up: float = NORMAL_UP) -> None:
+         shift: float = 0., up: float = NORMAL_UP, open=(1., 1.)) -> None:
     """An upright card along the mesh's X at depth z (cm), turned about Y by `turn` degrees round its middle,
     its top leant by `lean` cm along Z."""
     half, height = cell['width_cm'] / 2, cell['height_cm']
@@ -142,13 +143,14 @@ def card(mesh, cell: dict, z: float, turn: float = 0., links: int = 4, mirror: b
         centre = np.array((shift, height * t, z)) + out * lean * t
         v = cell['v_root'] + (cell['v_tip'] - cell['v_root']) * t
         normal = unit(up * np.array((0., 1., 0.)) + (1 - up) * normal_own)
-        rows.append([(centre - along * half, normal, (u0, v)), (centre + along * half, normal, (u1, v))])
+        o = open[0] + (open[1] - open[0]) * t ** 1.2
+        rows.append([(centre - along * half, normal, (u0, v), o), (centre + along * half, normal, (u1, v), o)])
     for low, high in zip(rows, rows[1:]):
         mesh.quad((low[0], low[1], high[1], high[0]), out, both=True)
 
 
 def tilted(mesh, cell: dict, x: float, y: float, z: float, yaw: float, tilt: float, mirror: bool = False,
-           up: float = NORMAL_UP) -> None:
+           up: float = NORMAL_UP, open: float = 1.) -> None:
     """A card of ears over the top of a row: from (x, y, z) up and over by `tilt` degrees from the vertical, turned
     about Y by `yaw`."""
     c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
@@ -162,9 +164,9 @@ def tilted(mesh, cell: dict, x: float, y: float, z: float, yaw: float, tilt: flo
     u0, u1 = cell['u'][::-1] if mirror else cell['u']
     normal = unit(up * np.array((0., 1., 0.)) + (1 - up) * out)
     foot = np.array((x, y, z))
-    mesh.quad([(foot - along * half, normal, (u0, cell['v_root'])), (foot + along * half, normal, (u1, cell['v_root'])),
-               (foot + rise * height + along * half, normal, (u1, cell['v_tip'])),
-               (foot + rise * height - along * half, normal, (u0, cell['v_tip']))], out, both=True)
+    mesh.quad([(foot - along * half, normal, (u0, cell['v_root']), open), (foot + along * half, normal, (u1, cell['v_root']), open),
+               (foot + rise * height + along * half, normal, (u1, cell['v_tip']), open),
+               (foot + rise * height - along * half, normal, (u0, cell['v_tip']), open)], out, both=True)
 
 
 # share of the picture's height, radius in cm: thinner than the picture's sheaf, whose loose straws stand out of it
@@ -229,22 +231,23 @@ def build_meshes(cards, cells: dict, weeds: dict, directory: Path, rng) -> dict:
                                   ('C', ('rye_b', 'rye_c', 'rye_a'), (False, False, True))):
         tops = [(rng.uniform(-55, 55), rng.uniform(100, 116), rng.uniform(-16, 16), rng.uniform(0, 360),
                  rng.uniform(42, 68)) for _ in range(5)]
-        for kind, up in (('ROW', NORMAL_UP), ('ROWE', NORMAL_EDGE)):
+        for kind, up, shade in (('ROW', NORMAL_UP, OPEN_ROW), ('ROWE', NORMAL_EDGE, OPEN_EDGE)):
             mesh = cards.Mesh()
-            card(mesh, cells[a], -10., turn=-5., mirror=flip[0], lean=-3., up=up)
-            card(mesh, cells[b], 0., turn=3., mirror=flip[1], shift=6., up=up)
-            card(mesh, cells[c], 10., turn=7., mirror=flip[2], lean=4., shift=-5., up=up)
+            card(mesh, cells[a], -10., turn=-5., mirror=flip[0], lean=-3., up=up, open=shade)
+            card(mesh, cells[b], 0., turn=3., mirror=flip[1], shift=6., up=up, open=shade)
+            card(mesh, cells[c], 10., turn=7., mirror=flip[2], lean=4., shift=-5., up=up, open=shade)
             # the top: ears laid over the row every way, so that from above it is ears and not the cards' edges
             for k, top in enumerate(tops):
-                tilted(mesh, cells[ear_cards[k % 2]], *top, mirror=bool(k % 2))
+                tilted(mesh, cells[ear_cards[k % 2]], *top, mirror=bool(k % 2), open=OPEN_TOP)
             for tone in TONES:
                 write(f'{tone_material(tone)}_{kind}_{name}', mesh, tone_material(tone))
     for name, (a, b) in (('A', ('tuft_a', 'tuft_c')), ('B', ('tuft_b', 'tuft_d')), ('C', ('tuft_d', 'tuft_a')),
                          ('D', ('tuft_c', 'tuft_b'))):
         mesh = cards.Mesh()                     # single stalks: the reaped edge of a strip, a straggler in the stubble
         turn = rng.uniform(0, 180)
-        card(mesh, cells[a], 0., turn=turn, lean=rng.uniform(-6, 6), up=NORMAL_EDGE)
-        card(mesh, cells[b], 0., turn=turn + rng.uniform(60, 120), mirror=True, lean=rng.uniform(-6, 6), up=NORMAL_EDGE)
+        card(mesh, cells[a], 0., turn=turn, lean=rng.uniform(-6, 6), up=NORMAL_EDGE, open=OPEN_EDGE)
+        card(mesh, cells[b], 0., turn=turn + rng.uniform(60, 120), mirror=True, lean=rng.uniform(-6, 6), up=NORMAL_EDGE,
+             open=OPEN_EDGE)
         for tone in TONES:
             write(f'{tone_material(tone)}_TUFT_{name}', mesh, tone_material(tone))
     for name, (a, b) in (('A', ('stubble_a', 'stubble_b')), ('B', ('stubble_b', 'stubble_a'))):
@@ -758,7 +761,7 @@ def main() -> int:
                                                        orm=f'{FOLDER}/orm.dds', two_sided='same', foliage=FOLIAGE)
     materials[f'{DRY}.TGA'] = dict(albedo=f'{FOLDER}/albedo.dds', orm=f'{FOLDER}/orm.dds', two_sided='same')
     materials[f'{WEED}.TGA'] = dict(albedo='crop_weed/albedo.dds', orm='crop_weed/orm.dds', two_sided='same',
-                                    foliage=FOLIAGE | dict(wind=1.8))
+                                    foliage=FOLIAGE | dict(wind=1.8, anchor='line'))
     materials[f'{EARTH}.TGA'], materials[f'{LITTER}.TGA'] = ground['earth'], ground['litter']
     table.write_text(json.dumps(materials, indent=2) + '\n')
 

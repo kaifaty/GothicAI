@@ -20,15 +20,18 @@ import numpy as np
 class Mesh:
     def __init__(self, pairs: bool = False):
         self.position, self.normal, self.uv, self.index = [], [], [], []
+        self.open = []              # per vertex, 0..1: COLOR_0 alpha, the openness the crown's light reads
         self.pairs = pairs          # a card of two sides is two copies under a one-sided material
         self.two_sided = False      # a card of two sides was added once: the material has to be two-sided
 
     def triangle(self, corners, front) -> None:
-        """corners: three (position, normal, uv); front: the direction the visible side faces, Gothic axes."""
-        a, b, c = (np.asarray(p, np.float64) for p, _, _ in corners)
+        """corners: three (position, normal, uv) or (position, normal, uv, openness); front: the direction the
+        visible side faces, Gothic axes."""
+        a, b, c = (np.asarray(corner[0], np.float64) for corner in corners)
         if np.dot(np.cross(b - a, c - a), front) > 0:   # X is mirrored on the way to glTF: clockwise here is its front
             corners = (corners[0], corners[2], corners[1])
-        for position, normal, uv in corners:
+        for position, normal, uv, *more in corners:
+            self.open.append(float(more[0]) if more else 1.)
             self.index.append(len(self.position))
             self.position.append(tuple(float(v) for v in position))
             self.normal.append(tuple(float(v) for v in normal))
@@ -53,7 +56,11 @@ class Mesh:
         uv = np.asarray(self.uv, np.float32)
         index = np.asarray(self.index, np.uint16)
         parts, views, offset = [], [], 0
-        for array, target in ((position, 34962), (normal, 34962), (uv, 34962), (index, 34963)):
+        coloured = any(o < 1 for o in self.open)
+        colour = np.full((len(position), 4), 255, np.uint8)
+        colour[:, 3] = np.rint(np.clip(self.open, 0, 1) * 255)
+        arrays = [(position, 34962), (normal, 34962), (uv, 34962), (index, 34963)] + ([(colour, 34962)] if coloured else [])
+        for array, target in arrays:
             data = array.tobytes()
             data += b'\0' * (-len(data) % 4)
             views.append(dict(buffer=0, byteOffset=offset, byteLength=array.nbytes, target=target))
@@ -62,15 +69,16 @@ class Mesh:
         document = dict(
             asset=dict(version='2.0', generator='glb_cards.py'), scene=0, scenes=[dict(nodes=[0])],
             nodes=[dict(mesh=0, name=path.stem)],
-            meshes=[dict(name=path.stem, primitives=[dict(attributes=dict(POSITION=0, NORMAL=1, TEXCOORD_0=2),
-                                                         indices=3, material=0)])],
+            meshes=[dict(name=path.stem, primitives=[dict(attributes=dict(POSITION=0, NORMAL=1, TEXCOORD_0=2)
+                                                         | (dict(COLOR_0=4) if coloured else {}), indices=3, material=0)])],
             materials=[dict(name=material, alphaMode='MASK', alphaCutoff=.5, doubleSided=self.two_sided,
                             extras=dict(group=group))],
             accessors=[dict(bufferView=0, componentType=5126, count=len(position), type='VEC3',
                             min=position.min(axis=0).tolist(), max=position.max(axis=0).tolist()),
                        dict(bufferView=1, componentType=5126, count=len(normal), type='VEC3'),
                        dict(bufferView=2, componentType=5126, count=len(uv), type='VEC2'),
-                       dict(bufferView=3, componentType=5123, count=len(index), type='SCALAR')],
+                       dict(bufferView=3, componentType=5123, count=len(index), type='SCALAR')]
+            + ([dict(bufferView=4, componentType=5121, normalized=True, count=len(colour), type='VEC4')] if coloured else []),
             bufferViews=views, buffers=[dict(byteLength=offset)])
         text = json.dumps(document, separators=(',', ':')).encode()
         text += b' ' * (-len(text) % 4)

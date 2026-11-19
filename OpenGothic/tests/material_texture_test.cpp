@@ -1,4 +1,5 @@
 #include "commandline.h"
+#include "graphics/crownlight.h"
 #include "graphics/material.h"
 #include "graphics/mesh/submesh/animmesh.h"
 #include "graphics/mesh/skeleton.h"
@@ -640,6 +641,7 @@ void foliageRecords(Tempest::Device& device, const Fixture& fixture) {
     record("LEAF_DEFAULT.TGA", "{}") + "," +
     record("LEAF_SET.TGA", R"({"wind":1.5,"flutter":0.5,"translucency":0.25,"anchor":"line"})") + "," +
     record("LEAF_LIMITS.TGA", R"({"wind":4,"flutter":0,"translucency":1})") + "," +
+    record("LEAF_FIELD.TGA", R"({"anchor":"field"})") + "," +
     record("LEAF_STILL.TGA", R"({"wind":0,"flutter":0,"translucency":0})") + "," +
     R"("LEAF_NONE.TGA":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds"},)" +
     record("LEAF_NUMBER.TGA", "1") + "," +
@@ -662,6 +664,11 @@ void foliageRecords(Tempest::Device& device, const Fixture& fixture) {
   const auto set = Resources::loadMaterialMaps("LEAF_SET.TGA").foliage;
   require(set.on && set.wind==1.5f && set.flutter==0.5f && set.translucency==0.25f && set.anchor==FoliageWind::AnchorLine,
           "foliage must carry the record's numbers");
+  const auto field = Resources::loadMaterialMaps("LEAF_FIELD.TGA").foliage;
+  require(field.on && field.anchor==FoliageWind::AnchorField && (FoliageWind::pack(field,FoliageWind::Both)>>24)==2u &&
+          CrownLight::lit(field,FoliageWind::Both,true) && !CrownLight::lit(set,FoliageWind::Both,true) &&
+          std::abs(FoliageWind::FieldSteady+FoliageWind::FieldSwing-FoliageWind::WaveSteady-FoliageWind::WaveSwing)<1e-6f,
+          "a field of corn is a line with the crown's shade and a tuft's crest");
   const auto limits = Resources::loadMaterialMaps("LEAF_LIMITS.TGA").foliage;
   require(limits.on && limits.wind==4.f && limits.flutter==0.f && limits.translucency==1.f,
           "both ends of the ranges are allowed");

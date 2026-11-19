@@ -358,7 +358,19 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
   if((bucket[bucketId].flags & BK_CROWN)!=0u) {
     // A tree's crown (lighting/crown_light.glsl): the openness of the vertex (COLOR_0 A of the own GLB, 1 without
     // it) rides to main.frag in the normal's length, as the lid's shade does
-    shOut.normal = normal*inversesqrt(max(dot(normal,normal), 1e-12))*(0.5 + 0.5*unpackUnorm4x8(v.color).a);
+    vec3  crownN    = normal*inversesqrt(max(dot(normal,normal), 1e-12));
+    float crownOpen = unpackUnorm4x8(v.color).a;
+#if (MESH_TYPE==T_OBJ)
+    if((bucket[bucketId].flags & BK_FOLIAGE)!=0u && (bucket[bucketId].foliage >> 24)==FoliageAnchorField) {
+      // A field of corn (foliage_wind.glsl): the wave shows by the light. Where the corn lies over, the normal goes
+      // over against the wind and the vertex opens, at the place of the row, so a row is lit as one
+      const vec3  at = foliageFrontAt(obj.mat[3].z, scene.foliageFront.xy, scene.foliageFrontK, scene.foliageWind, scene.foliageSwing);
+      const float l  = foliageFieldLight(bucket[bucketId].foliage, obj.mat[3], at.x, scene.foliageWind, scene.foliagePhase);
+      crownN    = normalize(crownN - vec3(scene.foliageWind.x, 0.0, scene.foliageWind.y)*(FoliageFieldNormalTan*l));
+      crownOpen = min(crownOpen + FoliageFieldSheen*l, 1.0);
+      }
+#endif
+    shOut.normal = crownN*(0.5 + 0.5*crownOpen);
     }
 #endif
 #endif
