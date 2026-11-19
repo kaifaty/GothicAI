@@ -2485,7 +2485,9 @@ void arrowEffects(Gothic& gothic) {
   // in Harad: the effect goes with the bone
   const auto inBody=npc->stuckArrowCount();
   // along a line into one of his zones: through his box's centre an arrow may pass between an arm and the trunk, then
-  // the zones do not tell where it entered and the tip is put at that centre
+  // the zones do not tell where it entered and the tip is put at that centre. His pose where he stands now: far from
+  // the hero it is not solved every tick, and he was moved here
+  npc->updateTransform();
   const auto center=npc->collosionCenter();
   Tempest::Vec3 aim=center;
   bool inZone=false;
