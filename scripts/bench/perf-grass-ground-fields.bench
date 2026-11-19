@@ -1,5 +1,5 @@
 # The cost of meadow ground on views 1 and 4 from perf-grass-fields.bench.
-# Use grass-stress-working-34 and OPENGOTHIC_GPU_PASSES=1. Each sample removes one part of the ground.
+# Use grass-stress-working-34, OPENGOTHIC_GPU_PASSES=1 and TEMPEST_OFFSCREEN=1.
 seed 73013
 cheat god
 set time 12 0
