@@ -18,7 +18,7 @@ import perf_report
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLACES = ("harbour", "harbour-night", "market", "forest", "interior", "combat", "xardas", "temple", "fires", "firerain", "crops")
+PLACES = ("harbour", "harbour-night", "market", "forest", "interior", "combat", "xardas", "temple", "fires", "firerain", "crops", "crops-onar")
 ORDER = ("A", "B", "B", "A")
 NOISE_PCT = 2.0
 THRESHOLD_PCT = 5.0
