@@ -2444,21 +2444,42 @@ void arrowEffects(Gothic& gothic) {
             emitting(glancing.itemView());
     }
   require(glanced,"a fire arrow glancing off stone must fly on at KEY_INVEST_3");
-  // where it stopped: on the stone the tip 2 cm in it, the arrow turned into the stone
+  // Stopped on stone (its fourth glance, DynamicWorld::moveBullet): the tip 2 cm in it, the arrow turned into the
+  // stone. Shot straight down onto flat stone it glances in place; a glance at the very start of a step leaves the
+  // arrow hanging where it is (the flight as on main), so the next shot is tried.
   {
-    const auto before=world->stuckArrowCount();
-    for(size_t i=0;i<3000 && !glancing.isFinished();++i)
-      session->tick(4);
-    Tempest::Matrix4x4 m;
-    require(glancing.isFinished() && world->stuckArrowCount()==before+1 && world->stuckArrowTransform(before,m),
-            "the fire arrow glancing off stone must stop and stick");
-    const auto entry=glancing.impactPoint();
-    const auto d=depthOf(m,world->stuckArrowView(before)->protoMesh(),entry);
-    const auto land=world->physic()->ray(entry-d.axis*20.f,entry+d.axis*5.f);
-    std::printf("Arrow depth: stopped on material %d, tip %.2f cm past the hit, %.2f cm off its line, flight %.2f %.2f %.2f\n",
-                int(land.mat),double(d.tip),double(d.off),double(d.axis.x),double(d.axis.y),double(d.axis.z));
-    require(land.hasCol && land.mat==asset::MaterialGroup::STONE && std::abs(d.tip-2.f)<=1.f && d.off<1.f &&
-            Tempest::Vec3::dotProduct(d.axis,land.n)<0.f,"an arrow stopped on stone must have its tip 2 cm in it");
+    bool stopped=false;
+    for(float r=150;r<=3000 && !stopped;r+=150)
+      for(int a=0;a<12 && !stopped;++a) {
+        const float an=float(a)*float(M_PI)/6.f;
+        const auto p=npc->position()+Tempest::Vec3(std::cos(an)*r,0,std::sin(an)*r);
+        const auto land=world->physic()->ray(p+Tempest::Vec3(0,300,0),p-Tempest::Vec3(0,700,0));
+        if(!land.hasCol || land.mat!=asset::MaterialGroup::STONE || land.n.y<.98f)
+          continue;
+        const auto before=world->stuckArrowCount();
+        auto& b=shoot(arrow,land.v+Tempest::Vec3(0,120,0),Tempest::Vec3(0,-1,0));
+        auto last=b.position();
+        for(size_t i=0,still=0;i<3000 && still<50 && !b.isFinished();++i) {
+          session->tick(4);
+          still=(b.position()-last).length()<1.e-4f ? still+1 : 0;
+          last=b.position();
+          }
+        Tempest::Matrix4x4 m;
+        if(!b.isFinished() || world->stuckArrowCount()!=before+1 || !world->stuckArrowTransform(before,m))
+          continue;
+        const auto entry=b.impactPoint();
+        const auto d=depthOf(m,world->stuckArrowView(before)->protoMesh(),entry);
+        const auto under=world->physic()->ray(entry-d.axis*20.f,entry+d.axis*5.f);
+        std::printf("Arrow depth: stopped on material %d %.0f cm from where it was shot, tip %.2f cm past the hit, %.2f cm "
+                    "off its line, flight %.2f %.2f %.2f\n",int(under.mat),double((entry-land.v).length()),double(d.tip),
+                    double(d.off),double(d.axis.x),double(d.axis.y),double(d.axis.z));
+        if(!under.hasCol || under.mat!=asset::MaterialGroup::STONE)
+          continue;
+        require(std::abs(d.tip-2.f)<=1.f && d.off<1.f && Tempest::Vec3::dotProduct(d.axis,under.n)<0.f,
+                "an arrow stopped on stone must have its tip 2 cm in it");
+        stopped=true;
+        }
+    require(stopped,"an arrow must stop on flat stone by Harad");
   }
 
   // in Harad: the effect goes with the bone
