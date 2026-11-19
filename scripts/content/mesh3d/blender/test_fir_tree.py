@@ -29,6 +29,9 @@ def test_bough_lod_measures_a_small_fir(tmp_path, monkeypatch):
     def part(name, position, phase, index, cutout):
         colour = np.zeros((len(position), 4), np.uint8)
         colour[:, 1] = phase
+        if cutout:
+            colour[:, 2] = 255
+            colour[::4, 2] = 0
         uv = np.tile(tree_bough_lod.UV, (len(position) // 4, 1))
         return dict(name=name, position=np.asarray(position, np.float32),
                     normal=np.tile((0., 0., 1.), (len(position), 1)), uv=uv,
@@ -37,25 +40,28 @@ def test_bough_lod_measures_a_small_fir(tmp_path, monkeypatch):
     indices = tree_bough_lod.QUAD
     front, side = quad(tree_bough_lod.FRONT), quad(tree_bough_lod.SIDE)
     wood = part('wood', [(-.1, 0., -.3), (.1, 0., -.3), (.1, 0., 7.15), (-.1, 0., 7.15)], 0, indices, False)
-    foliage = part('foliage', np.concatenate((front, side, front + (0., 0., 1.))),
-                   [23] * 8 + [0] * 4, np.concatenate((indices, indices + 4, indices + 8)), True)
-    branch = SimpleNamespace(phase=23 / 255, points=np.zeros((1, 3)), azimuth=0., height=.2, whorl=0, length=2.)
-    metrics = dict(cards_total=3, cards={'mock': 3}, cards_by_role={'roof': 2, 'sleeve': 1})
+    foliage = part('foliage', np.concatenate((front, side, front, front + (.1, .1, 1.))),
+                   [23] * 12 + [0] * 4, np.concatenate([indices + i for i in (0, 4, 8, 12)]), True)
+    branch = SimpleNamespace(number=1, phase=23 / 255, points=np.zeros((1, 3)),
+                             azimuth=0., height=.2, whorl=0, length=2.)
+    cards = [dict(first=i, branch=1, cluster=1, role='hang') for i in (0, 4, 8)]
+    cards.append(dict(first=12, branch=0, cluster=0, role='sleeve'))
+    metrics = dict(cards_total=4, cards={'mock': 4}, cards_by_role={'hang': 3, 'sleeve': 1})
     monkeypatch.setattr(fir_tree, 'build', lambda *_: SimpleNamespace(
-        parts=[wood, foliage], branches=[branch], stubs=0, cards=[], metrics=metrics))
+        parts=[wood, foliage], branches=[branch], stubs=0, cards=cards, metrics=metrics))
     config = dict(id='mock', cards={'top': [.8]}, whorl={'skirt': 1})
     glb = tmp_path / 'mock.glb'
     tree_glb.write(glb, [wood, foliage], extras=dict(tree='mock', seed=7, scale=1.))
 
-    boughs, projected, census = tree_bough_lod.measure_branches(glb, config)
+    boughs, projected, census, (leaves, tree) = tree_bough_lod.measure_branches(glb, config)
     assert census['branches'] == 1
     assert census['types'] == {'skirt': 1}
-    assert (census['wood'], census['fixed_foliage'], census['full']) == (2, 2, 8)
+    assert (census['wood'], census['fixed_foliage'], census['full']) == (2, 2, 10)
     assert projected.shape == (24, 1)
     budget = {row['tree_px']: row['options'] for row in tree_bough_lod.budgets(boughs, projected, census)}
-    assert budget[800]['48/16']['steady'] == 8
+    assert budget[800]['48/16']['steady'] == 10
     # The mock bough spans about 31 px at 100 px tree height and 15.5 px at 50 px.
-    assert budget[100]['32/8'] == dict(steady=16, submitted=20, fading=1, stages=[0, 1, 0])
+    assert budget[100]['32/8'] == dict(steady=16, submitted=22, fading=1, stages=[0, 1, 0])
     assert budget[50]['48/16'] == dict(steady=8, submitted=20, fading=1, stages=[0, 0, 1])
 
     bough = boughs[0]
@@ -94,6 +100,18 @@ def test_bough_lod_measures_a_small_fir(tmp_path, monkeypatch):
         screening.append(dict(sample=sample, metrics={'side': side}))
     limits = tree_bough_lod.screening_limits(screening)
     assert {sample: values['cross'] for sample, values in limits.items()} == dict(source=4, holdout=2, both=2)
+
+    merges, ends = tree_bough_lod.hierarchy_merges(leaves, tree, census)
+    merge, = merges
+    end, = ends
+    assert (merge.leaves, end.leaves) == (3, 4)
+    assert merge.low >= end.high
+    samples = [800, (merge.high + merge.low) / 2, (end.high + end.low) / 2, 30]
+    curve = tree_bough_lod.hierarchy_curve(merges, ends, census, [(3, 8), (2, 6), (2, 6), (1, 4)], samples)
+    assert curve['effective'] == [[4, 10], [3.5, 9], [2, 5], [1, 2]]
+    assert curve['submitted'] == [[4, 10], [6, 14], [4, 10], [1, 2]]
+    assert curve['turnover'][1] == pytest.approx(.5 * 3 / 4)
+    assert curve['current_turnover'] == [0, 1, 1, 0]
 
 
 @pytest.fixture(scope='module')

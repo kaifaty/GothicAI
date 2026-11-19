@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 import struct
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +21,7 @@ from PIL import Image, ImageDraw
 import fir_tree
 import tree_density
 import tree_glb
+import tree_prefix
 
 TREE_PX = (800, 400, 200, 100, 50)
 BOUGH_PX = (1, 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128)
@@ -136,7 +137,7 @@ def measure_branches(glb: Path, config: dict):
                   source_roles=tree.metrics['cards_by_role'], types=dict(Counter(b.kind for b in boughs)),
                   hanging_clusters=len({r['cluster'] for r in tree.cards if r['role'] == 'hang'}),
                   end_clusters=len({r['cluster'] for r in tree.cards if r['role'] == 'end'}))
-    return boughs, np.array(shapes) / tree_height, census
+    return boughs, np.array(shapes) / tree_height, census, (foliage, tree)
 
 
 def budgets(boughs, projected, census):
@@ -163,6 +164,124 @@ def budgets(boughs, projected, census):
         quantiles = (0, .1, .5, .9, 1)
         yield dict(tree_px=height, projected=np.quantile(projected * height, quantiles).tolist(),
                    selector=np.quantile(px, quantiles).tolist(), options=options)
+
+
+@dataclass
+class CutNode:
+    low: np.ndarray
+    high: np.ndarray
+    cost: tuple[int, int]  # foliage cards, triangles
+    leaves: int  # number of original cards represented
+    ready_at: float = math.inf
+
+
+@dataclass
+class CutMerge:
+    high: float
+    low: float
+    before: tuple[int, int]
+    after: tuple[int, int]
+    leaves: int
+
+
+def combine_cut_nodes(children):
+    return CutNode(np.min([n.low for n in children], axis=0), np.max([n.high for n in children], axis=0),
+                   (sum(n.cost[0] for n in children), sum(n.cost[1] for n in children)),
+                   sum(n.leaves for n in children), min(n.ready_at for n in children))
+
+
+def cut_merge(node, target, screen_px, centres, height, ordinal):
+    """Schedule a local merge after all descendants have completed their own transitions."""
+    diameter = np.linalg.norm(node.high - node.low)
+    centre = np.clip(screen_px * height / diameter, *centres)
+    stagger = 1. + .24 * ((ordinal * .61803398875) % 1. - .5)
+    high = min(centre * stagger * (1 + BAND), node.ready_at)
+    low = high * (1 - BAND) / (1 + BAND)
+    return CutMerge(high, low, node.cost, target, node.leaves)
+
+
+def hierarchy_merges(foliage, tree, census):
+    """Cost model of a disjoint foliage forest. Nodes use GLB bounds, proxies use assumed budgets."""
+    first, _, by_face = tree_prefix.cards(foliage)
+    if not np.array_equal(first, [card['first'] for card in tree.cards]):
+        raise ValueError('The hierarchy requires the original card ranges')
+    lows = np.minimum.reduceat(foliage['position'], first, axis=0)
+    highs = np.maximum.reduceat(foliage['position'], first, axis=0)
+    costs = np.bincount(by_face, minlength=len(first))
+    height = census['height_m']
+    clusters = defaultdict(list)
+    stems = defaultdict(list)
+    tiers = defaultdict(list)
+    branches = {b.number: b for b in tree.branches[tree.stubs:]}
+    merges, ends = [], []
+
+    def cell(z, azimuth):
+        return math.floor(z / 1.5), math.floor(3 * (azimuth % (2 * math.pi)) / (2 * math.pi))
+
+    def combine(children, cards, px, centres):
+        node = combine_cut_nodes(children)
+        cost = (cards, 2 * cards)
+        if cost[0] < node.cost[0] and cost[1] < node.cost[1]:
+            merge = cut_merge(node, cost, px, centres, height, len(merges) + 1)
+            merges.append(merge)
+            return CutNode(node.low, node.high, cost, node.leaves, merge.low)
+        return node
+
+    for i, record in enumerate(tree.cards):
+        node = CutNode(lows[i], highs[i], (1, int(costs[i])), 1)
+        branch = record['branch']
+        if branch:
+            group = record['cluster']
+            clusters[branch, group if group else -i - 1].append(node)
+        else:
+            x, y, z = (node.low + node.high) / 2
+            stems[cell(z, math.atan2(y, x))].append(node)
+
+    boughs = defaultdict(list)
+    for (branch, _), children in clusters.items():
+        boughs[branch].append(combine(children, 2, 18, (130, 630)))
+    for number, children in boughs.items():
+        branch = branches[number]
+        group = cell(branch.points[0, 2] * census['scale'], branch.azimuth)
+        tiers[group].append(combine(children, 6, 30, (85, 420)))
+    for group, children in stems.items():
+        for i in range(0, len(children), 4):
+            tiers[group].append(combine(children[i:i + 4], 2, 18, (130, 630)))
+    for children in tiers.values():
+        root = combine(children, 4, 22, (55, 115))
+        ends.append(cut_merge(root, (0, 0), 15, (38, 58), height, len(ends) + 1))
+    return merges, ends
+
+
+def hierarchy_curve(merges, ends, census, levels, heights):
+    """Compare weighted costs, actual submissions and original-card turnover at each sample."""
+    heights = np.asarray(heights)
+    full_cost = (census['cards'], census['full'])
+    effective = np.tile(full_cost, (len(heights), 1)).astype(float)
+    submitted = np.tile(full_cost, (len(heights), 1))
+    churn = np.zeros(len(heights))
+    impostor = np.zeros(len(heights))
+    for merge in (*merges, *ends):
+        t = np.clip((merge.high - heights) / (merge.high - merge.low), 0., 1.)
+        t = t * t * (3. - 2. * t)
+        delta = np.subtract(merge.after, merge.before)
+        effective += t[:, None] * delta
+        submitted += (t[:, None] > 0) * merge.after - (t[:, None] == 1) * merge.before
+        churn += np.abs(np.diff(t, prepend=t[0])) * merge.leaves / census['cards']
+        if merge.after == (0, 0):
+            impostor += t * merge.leaves
+    impostor /= census['cards']
+    effective += impostor[:, None] * (1, 2 - census['wood'])
+    submitted += (impostor[:, None] > 0) * (1, 2)
+    submitted -= np.isclose(impostor[:, None], 1., atol=1e-12, rtol=0.) * (0, census['wood'])
+
+    stage = np.count_nonzero(heights[:, None] < (400, 200, 100, 50, 49), axis=1)
+    current = np.array([full_cost, *levels, (1, 2)])[stage]
+    current_churn = np.abs(np.diff(stage, prepend=stage[0])) > 0
+    return dict(samples_px=heights.tolist(), effective=effective.round(6).tolist(), submitted=submitted.tolist(),
+                turnover=churn.tolist(), impostor_share=impostor.tolist(),
+                current=current.tolist(), current_turnover=current_churn.astype(int).tolist(),
+                local_merges=len(merges), root_transitions=len(ends))
 
 
 def sample(texture, u, v):
@@ -356,7 +475,7 @@ def main():
     parser.add_argument('--levels', type=Path, nargs=4, required=True)
     parser.add_argument('--sheets', type=Path)
     args = parser.parse_args()
-    boughs, projected, census = measure_branches(args.glb, json.loads(args.config.read_text()))
+    boughs, projected, census, (foliage, tree) = measure_branches(args.glb, json.loads(args.config.read_text()))
     with Image.open(args.atlas) as im:
         rgba = np.array(im.convert('RGBA'), dtype=np.float32) / 255
     rgb = rgba[..., :3]
@@ -376,9 +495,16 @@ def main():
                 args.sheets.mkdir(parents=True, exist_ok=True)
                 save_sheet(args.sheets / f'tree-bough-{source.kind}-{label}.jpg',
                            f'{source.kind} {target.phase}', sheet_views)
-    levels = [[len(p['index']) for p in tree_glb.read(path)] for path in args.levels]
+    parts = [tree_glb.read(path) for path in args.levels]
+    levels = [[len(p['index']) for p in level] for level in parts]
+    old_costs = [(len(tree_prefix.cards(tree_prefix.split_parts(level)[1])[0]), sum(cost))
+                 for level, cost in zip(parts, levels)]
+    steps = math.floor(math.log(30 / 800) / math.log(.99))
+    heights = np.r_[800 * .99 ** np.arange(steps + 1), 30]
+    merges, ends = hierarchy_merges(foliage, tree, census)
     report = dict(census=census, budgets=list(budgets(boughs, projected, census)), current_levels=levels,
-                  atlas=dict(atlas_sizes(groups)), screening_px=screening_limits(results), views=results)
+                  atlas=dict(atlas_sizes(groups)), screening_px=screening_limits(results), views=results,
+                  hierarchy=hierarchy_curve(merges, ends, census, old_costs, heights))
     print(json.dumps(report, indent=1))
     return 0
 
