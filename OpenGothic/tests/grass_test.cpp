@@ -301,6 +301,17 @@ void packSpans() {
       expected.resize(2+16*3, UINT32_MAX);
       }
     require(table==expected, "grass span boundaries and physical blade ends must match the shader's table");
+
+    const size_t   drawOffset = expected.size();
+    const uint32_t first = next+pack; // adjacent in the blade buffer, but in a new draw
+    spans.reset();
+    spans.add(first, 1);
+    require(spans.finish()==1, "each grass draw must count its instances from zero");
+    expected.insert(expected.end(), {1, first});
+    if(pack!=1)
+      expected.push_back(first+1);
+    expected.resize(drawOffset+16*(pack==1 ? 2u : 3u), UINT32_MAX);
+    require(table==expected, "a new grass draw must append its own spans after the previous draw's table");
     }
   }
 
