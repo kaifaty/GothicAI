@@ -36,7 +36,7 @@ def test_bough_lod_measures_a_small_fir(tmp_path, monkeypatch):
 
     indices = tree_bough_lod.QUAD
     front, side = quad(tree_bough_lod.FRONT), quad(tree_bough_lod.SIDE)
-    wood = part('wood', [(-.1, 0., -.3), (.1, 0., -.3), (.1, 0., 3.), (-.1, 0., 3.)], 0, indices, False)
+    wood = part('wood', [(-.1, 0., -.3), (.1, 0., -.3), (.1, 0., 7.15), (-.1, 0., 7.15)], 0, indices, False)
     foliage = part('foliage', np.concatenate((front, side, front + (0., 0., 1.))),
                    [23] * 8 + [0] * 4, np.concatenate((indices, indices + 4, indices + 8)), True)
     branch = SimpleNamespace(phase=23 / 255, points=np.zeros((1, 3)), azimuth=0., height=.2, whorl=0, length=2.)
@@ -52,18 +52,48 @@ def test_bough_lod_measures_a_small_fir(tmp_path, monkeypatch):
     assert census['types'] == {'skirt': 1}
     assert (census['wood'], census['fixed_foliage'], census['full']) == (2, 2, 8)
     assert projected.shape == (24, 1)
-    assert next(tree_bough_lod.budgets(boughs, projected, census))['options']['48/16']['steady'] == 8
+    budget = {row['tree_px']: row['options'] for row in tree_bough_lod.budgets(boughs, projected, census)}
+    assert budget[800]['48/16']['steady'] == 8
+    # The mock bough spans about 31 px at 100 px tree height and 15.5 px at 50 px.
+    assert budget[100]['32/8'] == dict(steady=16, submitted=20, fading=1, stages=[0, 1, 0])
+    assert budget[50]['48/16'] == dict(steady=8, submitted=20, fading=1, stages=[0, 0, 1])
 
     bough = boughs[0]
-    texture = np.ones((4, 4, 4), np.float32)
+    texture = np.zeros((5, 7, 4), np.float32)
+    texture[1:4, 1:6] = (.2, .3, .4, 1.)
+    texture[2:4, 4:] = (.8, .6, .4, 1.)
     cross = tree_bough_lod.bake(bough, texture, (tree_bough_lod.FRONT, tree_bough_lod.SIDE), 1)
-    variants = [cross[:1], cross, cross]
+    three_crosses = tree_bough_lod.bake(bough, texture, (tree_bough_lod.FRONT, tree_bough_lod.SIDE), 3)
+    variants = [cross[:1], cross, three_crosses]
+    atlas = dict(tree_bough_lod.atlas_sizes([(bough, boughs, variants)]))
+    # At the upper edges of the bands, the padded atlas has six 24×32 and two 24×16 tiles.
+    assert atlas['48/16'] == dict(tiles=8, padded_area=6 * 24 * 32 + 2 * 24 * 16, side=128)
+
+    # The covered source texels share the same blue channel, including on filtered edges.
+    tile = cross[0][3]
+    partial = (tile[..., 3] > 0.) & (tile[..., 3] < 1.)
+    assert partial.any()
+    np.testing.assert_allclose(tile[..., 2][partial], .4, atol=1e-6)
+
     cases = {view: result for view, result, _ in tree_bough_lod.measure_views(bough, bough, texture, variants)}
     edge = cases['side'][32]
     assert edge['single']['tone_pct'] is None
     assert edge['single']['open_pp'] > 90
     assert abs(edge['cross']['open_pp']) < 2
-    assert abs(edge['cross']['tone_pct']) < .01
+    assert abs(edge['cross']['tone_pct']) < 2
+    assert edge['cross']['coverage_px2'] < 6.
+
+    screening = []
+    for sample, fail_px, metric, error in (('source', 8, 'coverage_px2', 2.), ('holdout', 4, 'luma_px2', .2)):
+        side = {}
+        for px in tree_bough_lod.BOUGH_PX:
+            delta = dict(coverage_px2=1., luma_px2=.1)
+            if px == fail_px:
+                delta[metric] = error
+            side[px] = {name: delta for name in tree_bough_lod.OPTIONS}
+        screening.append(dict(sample=sample, metrics={'side': side}))
+    limits = tree_bough_lod.screening_limits(screening)
+    assert {sample: values['cross'] for sample, values in limits.items()} == dict(source=4, holdout=2, both=2)
 
 
 @pytest.fixture(scope='module')
