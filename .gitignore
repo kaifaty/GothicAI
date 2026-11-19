@@ -75,8 +75,10 @@ log.txt
 
 /tts-samples/
 
-# Test bench output (scripts/bench.sh)
+# Test bench output (scripts/bench.sh) and local clips, frames and sheets made
+# for a look check: they stay out of git (public repository).
 /.bench/
+/.bench-out/
 
 # Collected Ryzen test logs
 /.ryzen/
