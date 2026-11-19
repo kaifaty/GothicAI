@@ -4,15 +4,19 @@
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
-layout(binding = 1, r16)      uniform coherent image2D   mip0;
-layout(binding = 2, r16)      uniform coherent image2D   mip1;
-layout(binding = 3, r16)      uniform coherent image2D   mip2;
-layout(binding = 4, r16)      uniform coherent image2D   mip3;
-layout(binding = 5, r16)      uniform coherent image2D   mip4;
-layout(binding = 6, r16)      uniform coherent image2D   mip5;
-layout(binding = 7, r16)      uniform coherent image2D   mip6;
-layout(binding = 8, r16)      uniform coherent image2D   mip7; // 128x128
-//layout(binding = 9, r16)      uniform coherent image2D   mip8;
+#ifdef HIZ_HISTORY
+#define HIZ_FORMAT r32f
+#else
+#define HIZ_FORMAT r16
+#endif
+layout(binding = 1, HIZ_FORMAT) uniform coherent image2D mip0;
+layout(binding = 2, HIZ_FORMAT) uniform coherent image2D mip1;
+layout(binding = 3, HIZ_FORMAT) uniform coherent image2D mip2;
+layout(binding = 4, HIZ_FORMAT) uniform coherent image2D mip3;
+layout(binding = 5, HIZ_FORMAT) uniform coherent image2D mip4;
+layout(binding = 6, HIZ_FORMAT) uniform coherent image2D mip5;
+layout(binding = 7, HIZ_FORMAT) uniform coherent image2D mip6;
+layout(binding = 8, HIZ_FORMAT) uniform coherent image2D mip7; // 128x128
 
 layout(push_constant, std140) uniform PushConstant {
   uint baseMip; // 0: mips 1-4, a workgroup per 8x8 texels of mip 1; 4: the mips past 4, one workgroup

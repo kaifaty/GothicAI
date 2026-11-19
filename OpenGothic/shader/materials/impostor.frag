@@ -22,8 +22,14 @@ layout(location = 1) out uint outNormal;
 #if defined(MATERIAL_MAPS)
 layout(location = 2) out vec4 outOrm;
 layout(location = 3) out vec2 outMotion;
+#if defined(HISTORY_OWNER)
+layout(location = 4) out uint outHistoryOwner;
+#endif
 #else
 layout(location = 2) out vec2 outMotion;
+#if defined(HISTORY_OWNER)
+layout(location = 3) out uint outHistoryOwner;
+#endif
 #endif
 
 const int   Grid = 12;
@@ -179,6 +185,11 @@ void main() {
 #endif
   outDiffuse = vec4(albedo, float(hints)/255.0);
   outNormal = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u ? instance.info.x+1u : encodeNormal(normal);
+#if defined(HISTORY_OWNER)
+  // Keep the instance ID for parity with the 3a probe, outside the sampled
+  // cluster ID range. Impostors never seed the history.
+  outHistoryOwner = 0x80000000u | (instance.info.x+1u);
+#endif
   // The camera's motion is reconstructed from G-buffer depth. Distant static objects have zero residual motion.
   outMotion = vec2(0);
   }

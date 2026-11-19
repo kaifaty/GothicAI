@@ -13,6 +13,7 @@
 #include "blooddecals.h"
 #include "taa.h"
 #include "eyeadaptation.h"
+#include "hizhistoryverify.h"
 
 class Camera;
 
@@ -57,6 +58,15 @@ class Renderer final {
     Tempest::StorageImage landscapeDepth;
     bool captureLandscapeDepth = false;
     void captureTreeOcclusion(Tempest::Attachment& result, uint8_t fId, WorldView& view, const Camera& camera, bool verify);
+    struct {
+      Tempest::Attachment winners, earlyOwners, referenceOwners;
+      Tempest::StorageImage pyramid, earlyDepth;
+      Tempest::ZBuffer referenceDepth;
+      HiZHistoryVerify verify;
+      bool valid = false;
+      } treeHistory;
+    void drawTreeHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
+                         const BenchProbe::HistoryVerifyRequest& request);
 
     enum Quality : uint8_t {
       None,
@@ -109,12 +119,14 @@ class Renderer final {
     void surfelsTrace     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, Tempest::StorageBuffer& surfels, bool postPass);
 
     void drawHiZ          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
-    void buildHiZ         (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void buildHiZ         (Tempest::Encoder<Tempest::CommandBuffer>& cmd, Tempest::StorageImage* history = nullptr);
     void drawVsm          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void logVsmStats      (const WorldView& view);
     void logVsmFrame      (uint8_t fId);
     void copyVsmFrame     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
-    void drawGBuffer      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
+    void drawGBuffer      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
+                           DrawCommands::HistoryDraw history = DrawCommands::HistoryDraw::Off,
+                           Tempest::Attachment* winners = nullptr);
     void drawGWater       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void drawShadowMap    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void drawShadowResolve(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view,

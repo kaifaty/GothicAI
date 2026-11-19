@@ -33,11 +33,17 @@ class DrawCommands {
     static uint32_t hiddenTypes; // debug (test bench): a bit per Type that is not drawn
     static bool     hidePfxObjects; // debug (test bench), `view hide pfx` only: the particles of PfxObjects too
 
+    enum class HistoryDraw : uint8_t { Off, Unfiltered, Early, EarlyVerify, Filtered };
+    static bool treeHistoryEnabled();
+
     struct DrawCmd {
       const Tempest::RenderPipeline* pMain        = nullptr;
       const Tempest::RenderPipeline* pShadow      = nullptr;
       const Tempest::RenderPipeline* pVsm         = nullptr;
       const Tempest::RenderPipeline* pHiZ         = nullptr;
+      const Tempest::RenderPipeline* pHistoryGBuffer = nullptr;
+      const Tempest::RenderPipeline* pHistoryDepth   = nullptr;
+      const Tempest::RenderPipeline* pHistoryVerify  = nullptr;
       Type                           type         = Type::Landscape;
 
       Material::AlphaFunc            alpha        = Material::Solid;
@@ -64,13 +70,23 @@ class DrawCommands {
     uint16_t commandId(const Material& m, Type type, uint32_t bucketId, bool shadowOnly = false);
     void     addClusters(uint16_t cmdId, uint32_t meshletCount);
 
-    void     visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
+    void     visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass, bool history = false);
     void     visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void     writeTreeOcclusionDecisions(std::ostream& out);
     void     visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void     drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    void     drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, SceneGlobals::VisCamera viewId, Material::AlphaFunc func);
+    void     drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, SceneGlobals::VisCamera viewId, Material::AlphaFunc func,
+                        HistoryDraw history = HistoryDraw::Off);
+
+    bool prepareHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& winners, uint8_t fId);
+    bool hasHistory() const { return history.previousCount!=0; }
+    void classifyHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& depth,
+                         float depthRoundoff, bool late, bool reset);
+    void compactHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool early);
+    void finishHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& winners, uint8_t fId);
+    const Tempest::StorageBuffer& historyStatus() const { return history.status; }
+    uint32_t historyClusterCount() const;
 
     void     drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
@@ -140,6 +156,7 @@ class DrawCommands {
     const Tempest::StorageBuffer& orderedClusters();
 
     void                     setBindings(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const DrawCmd& cx, SceneGlobals::VisCamera viewId);
+    void                     sampleHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& owners, uint32_t phase);
 
     VisualObjects&           owner;
     DrawBuckets&             buckets;
@@ -151,6 +168,16 @@ class DrawCommands {
     std::vector<DrawCmd*>    ord;
     bool                     cmdDurtyBit = false;
     View                     views[SceneGlobals::V_Count];
+    struct {
+      View view;
+      Tempest::StorageBuffer commands, blocks, compactScratch, status, stats, counts[2];
+      Tempest::StorageBuffer read[Resources::MaxFramesInFlight];
+      bool written[Resources::MaxFramesInFlight] = {};
+      bool dirty = true;
+      uint32_t blockCount = 0;
+      uint32_t previousCount = 0;
+      uint32_t readIndex = 0;
+      } history;
 
     const bool               vsmSupported;
 

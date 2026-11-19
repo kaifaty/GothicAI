@@ -530,6 +530,7 @@ void Renderer::onWorldChanged() {
   taa.valid            = false;
   ssao.valid           = false;
   camHistory.hasCur    = false;
+  treeHistory.valid   = false;
   gi.resetHistory      = true;
   resetSkyFog();
   }
@@ -538,6 +539,7 @@ void Renderer::resetTemporal() {
   taa.valid  = false;
   ssao.valid = false;
   camHistory.hasCur = false;
+  treeHistory.valid = false;
   taa.frame = 0;
   taa.cur   = 0;
   // the phase of the SSAO cycle picks each texel's quarter of the sample set: a history that starts at another
@@ -758,6 +760,7 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
     }
 
   zbuffer = device.zbuffer(zBufferFormat,w,h);
+  treeHistory.valid = false;
   if(res!=fullRes)
     zbufferUi = device.zbuffer(zBufferFormat, fullRes); else
     zbufferUi = ZBuffer();
@@ -947,6 +950,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   wview.prepareGlobals(cmd,fId);
 
   if(settings.pathTraceEnabled && !captureLandscapeDepth) {
+    treeHistory.valid = false;
     ssao.valid = false; // no SSAO in this frame: its history is not the frame before the next one
     drawPathtrace(cmd, wview, fId);
     mainTiming.finish();
@@ -979,10 +983,26 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   if(treeProbe!=nullptr)
     copyProbeDepth(treeProbe->occluderDepth);
 
-  wview.visibilityPass(cmd, 1);
+  auto* bench = taa.shot || treeProbe!=nullptr || captureLandscapeDepth ? nullptr : BenchProbe::get();
+  const auto verify = bench!=nullptr ? bench->historyVerifyRequest() : BenchProbe::HistoryVerifyRequest{};
+  if(verify.finish)
+    bench->historyVerifyComplete(treeHistory.verify.finish());
+  const bool historyView = !taa.shot && treeProbe==nullptr && !captureLandscapeDepth;
+  const bool history = historyView && DrawCommands::treeHistoryEnabled() &&
+                       wview.treeHistoryCommands().prepareHistory(cmd, textureCast<const Texture2d&>(
+                           usesAttachment(treeHistory.winners, TextureFormat::R32U, zbuffer.size())), fId);
+  wview.visibilityPass(cmd, 1, history);
   if(treeProbe==nullptr && !captureLandscapeDepth)
     wview.visibilityStats(cmd, fId);
-  drawGBuffer(cmd, fId, wview);
+  if(history) {
+    drawTreeHistory(cmd, fId, wview, verify);
+    } else {
+    if(historyView)
+      treeHistory.valid = false;
+    if(verify)
+      bench->historyVerifyComplete(false);
+    drawGBuffer(cmd, fId, wview);
+    }
   if(captureLandscapeDepth) {
     // Water is a separate depth-writing landscape pass. Give it valid inputs
     // without composing sky, fog, reflections, or the rest of the scene.
@@ -1233,20 +1253,23 @@ void Renderer::drawHiZ(Encoder<CommandBuffer>& cmd, WorldView& view) {
   view.drawHiZ(cmd);
   }
 
-void Renderer::buildHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
-  assert(hiz.hiZ.w()<=128 && hiz.hiZ.h()<=128); // shader limitation
+void Renderer::buildHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Tempest::StorageImage* history) {
+  auto& image = history!=nullptr ? *history : hiz.hiZ;
+  const auto& potPipeline = history!=nullptr ? shaders.hizHistoryPot : shaders.hiZPot;
+  const auto& mipPipeline = history!=nullptr ? shaders.hizHistoryMip : shaders.hiZMip;
+  assert(image.w()<=128 && image.h()<=128); // shader limitation
 
-  cmd.setDebugMarker("HiZ-mip");
+  cmd.setDebugMarker(history!=nullptr ? "HiZ-history-mip" : "HiZ-mip");
   cmd.setFramebuffer({});
   cmd.setBinding(0, zbuffer, Sampler::nearest(ClampMode::ClampToEdge));
-  cmd.setBinding(1, hiz.hiZ);
-  cmd.setPipeline(shaders.hiZPot);
-  cmd.dispatch(size_t(hiz.hiZ.w()), size_t(hiz.hiZ.h()));
+  cmd.setBinding(1, image);
+  cmd.setPipeline(potPipeline);
+  cmd.dispatch(size_t(image.w()), size_t(image.h()));
 
-  const uint32_t maxBind = 8, mip = hiz.hiZ.mipCount();
-  const auto     wgSz = shaders.hiZMip.workGroupSize();
-  const int      wgW  = std::max(std::max(hiz.hiZ.w()/2, 1) / wgSz.x, 1);
-  const int      wgH  = std::max(std::max(hiz.hiZ.h()/2, 1) / wgSz.y, 1);
+  const uint32_t maxBind = 8, mip = image.mipCount();
+  const auto     wgSz = mipPipeline.workGroupSize();
+  const int      wgW  = std::max(std::max(image.w()/2, 1) / wgSz.x, 1);
+  const int      wgH  = std::max(std::max(image.h()/2, 1) / wgSz.y, 1);
   struct Push {
     uint32_t baseMip;
     uint32_t mip;
@@ -1255,10 +1278,9 @@ void Renderer::buildHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   push.mip     = mip;
 
   for(uint32_t i=0; i<maxBind; ++i)
-    cmd.setBinding(1+i, hiz.hiZ, Sampler::nearest(), std::min(i, mip-1));
+    cmd.setBinding(1+i, image, Sampler::nearest(), std::min(i, mip-1));
   cmd.setPushData(push);
-  cmd.setPipeline(shaders.hiZMip);
-  //cmd.dispatchThreads(std::max(uint32_t(hiz.hiZ.w())/2u, 1u), std::max(uint32_t(hiz.hiZ.h())/2u, 1u));
+  cmd.setPipeline(mipPipeline);
   cmd.dispatch(size_t(wgW), size_t(wgH));
 
   if(mip>5) {
@@ -1269,9 +1291,18 @@ void Renderer::buildHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
     }
   }
 
-void Renderer::drawGBuffer(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& view) {
+void Renderer::drawGBuffer(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& view,
+                            DrawCommands::HistoryDraw history, Attachment* winners) {
   cmd.setDebugMarker("GBuffer");
-  if(Shaders::options().doMaterialMaps) {
+  if(winners!=nullptr && Shaders::options().doMaterialMaps) {
+    cmd.setFramebuffer({{gbufDiffuse, Vec4(), Preserve}, {gbufNormal, Vec4(), Preserve},
+                        {gbufOrm, Vec4(1,1,0,0), Preserve}, {gbufMotion, Vec4(), Preserve},
+                        {*winners, Vec4(), Preserve}}, {zbuffer, Preserve, Preserve});
+    } else if(winners!=nullptr) {
+    cmd.setFramebuffer({{gbufDiffuse, Vec4(), Preserve}, {gbufNormal, Vec4(), Preserve},
+                        {gbufMotion, Vec4(), Preserve}, {*winners, Vec4(), Preserve}},
+                       {zbuffer, Preserve, Preserve});
+    } else if(Shaders::options().doMaterialMaps) {
     cmd.setFramebuffer({{gbufDiffuse, Tempest::Vec4(), Tempest::Preserve},
                         {gbufNormal, Tempest::Vec4(), Tempest::Preserve},
                         {gbufOrm, Tempest::Vec4(1,1,0,0), Tempest::Preserve},
@@ -1283,7 +1314,7 @@ void Renderer::drawGBuffer(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& 
                         {gbufMotion, Tempest::Vec4(), Tempest::Preserve}},
                        {zbuffer, Tempest::Preserve, Tempest::Preserve});
     }
-  view.drawGBuffer(cmd,fId,captureLandscapeDepth);
+  view.drawGBuffer(cmd,fId,captureLandscapeDepth,history);
   }
 
 void Renderer::drawGWater(Encoder<CommandBuffer>& cmd, WorldView& view) {

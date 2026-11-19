@@ -98,14 +98,16 @@ class WorldView {
     void updateRtScene(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
     void updateFrustrum (const Frustrum fr[]);
-    void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
+    void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass, bool history = false);
+    DrawCommands& treeHistoryCommands() { return visuals.treeHistoryCommands(); }
     void visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId, uint8_t layer);
     void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId, bool landscapeOnly);
+    void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId, bool landscapeOnly,
+                         DrawCommands::HistoryDraw history = DrawCommands::HistoryDraw::Off);
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
     void drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
@@ -130,6 +132,7 @@ class WorldView {
     void setTreeOcclusionProbe(bool verify) { sGlobal.setTreeOcclusionProbe(verify); }
     void writeTreeOcclusionProbe(std::ostream& out, std::ostream& decisions) { visuals.writeTreeOcclusionProbe(out, decisions); }
 
+    SceneGlobals&       sceneGlobals()       { return sGlobal; }
     const SceneGlobals& sceneGlobals() const { return sGlobal; }
     const Sky&          sky() const { return gSky; }
     const LightGroup&   lights() const { return gLights; }

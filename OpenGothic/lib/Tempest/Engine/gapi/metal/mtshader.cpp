@@ -242,6 +242,10 @@ MtShader::MtShader(MtDevice& dev, const void* source, size_t srcSize)
   //Log::d(msl);
 
   auto       opt = NsPtr<MTL::CompileOptions>::init();
+  // SPIRV-Cross emits [[position, invariant]], which Metal ignores by default.
+  if((stage==ShaderReflection::Vertex || stage==ShaderReflection::Mesh) &&
+     msl.find("[[position, invariant]]")!=std::string::npos)
+    opt->setPreserveInvariance(true);
   NS::Error* err = nullptr;
   auto       str = NsPtr<NS::String>(NS::String::string(msl.c_str(),NS::UTF8StringEncoding));
   str->retain();

@@ -70,6 +70,14 @@ const Shaders::Options& Shaders::options() {
   return instance->opts;
   }
 
+bool Shaders::isHiZHistorySupported() {
+  const auto& gpu = Resources::device().properties();
+  const size_t attachments = options().doMaterialMaps ? 5 : 4;
+  return gpu.render.maxColorAttachments >= attachments && gpu.hasAttachFormat(TextureFormat::R32U) &&
+         gpu.hasSamplerFormat(TextureFormat::R32U) && gpu.hasStorageFormat(TextureFormat::R32F) &&
+         gpu.hasSamplerFormat(TextureFormat::R32F);
+  }
+
 static RayTracingRule::Backend activeBackend() {
 #if defined(__APPLE__)
   return RayTracingRule::Backend::Metal;
@@ -108,6 +116,7 @@ void Shaders::compileKeyShaders() {
 void Shaders::compileShaders() noexcept {
   auto& device = Resources::device();
   const char* materialMaps = opts.doMaterialMaps ? "_orm" : "";
+  const bool historySupported = isHiZHistorySupported();
 
   copyBuf   = computeShader("copy.comp.sprv");
   copyImg   = computeShader("copy_img.comp.sprv");
@@ -129,6 +138,16 @@ void Shaders::compileShaders() noexcept {
   visibilityPassHiZProbe = computeShader("visibility_pass_hiz_probe.comp.sprv");
   visibilityPassHiZProbeOrd = computeShader("visibility_pass_hiz_probe_ordered.comp.sprv");
   visibilityStats        = computeShader("visibility_stats.comp.sprv");
+  if(historySupported) {
+    visibilityPassHistory    = computeShader("visibility_pass_history.comp.sprv");
+    visibilityPassHistoryOrd = computeShader("visibility_pass_history_ordered.comp.sprv");
+    hizHistoryPot            = computeShader("hiz_history_pot.comp.sprv");
+    hizHistoryMip            = computeShader("hiz_history_mip.comp.sprv");
+    hizHistoryClassify       = computeShader("hiz_history_classify.comp.sprv");
+    hizHistoryCompact        = computeShader("hiz_history_compact.comp.sprv");
+    hizHistorySample         = computeShader("hiz_history_sample.comp.sprv");
+    hizHistoryVerify         = computeShader("hiz_history_verify.comp.sprv");
+    }
 
   ssao                = computeShader("ssao.comp.sprv");
   ssaoBlur            = computeShader("ssao_blur.comp.sprv");
@@ -146,6 +165,11 @@ void Shaders::compileShaders() noexcept {
     sh      = GothicShader::get(string_frm("impostor", materialMaps, ".frag.sprv"));
     auto fs = device.shader(sh.data, sh.len);
     impostor = device.pipeline(Triangles, state, vs, fs);
+    if(historySupported) {
+      sh = GothicShader::get(string_frm("impostor", materialMaps, "_hist.frag.sprv"));
+      fs = device.shader(sh.data, sh.len);
+      impostorHistoryGBuffer = device.pipeline(Triangles, state, vs, fs);
+      }
     }
   if(opts.doMaterialMaps) {
     // Grass (graphics/grass/grassfield.h): the main pass' depth test; a blade is seen from both sides
@@ -158,6 +182,11 @@ void Shaders::compileShaders() noexcept {
     sh      = GothicShader::get("grass.frag.sprv");
     auto fs = device.shader(sh.data,sh.len);
     grass   = device.pipeline(Triangles,state,vs,fs);
+    if(historySupported) {
+      sh = GothicShader::get("grass_hist.frag.sprv");
+      fs = device.shader(sh.data, sh.len);
+      grassHistoryGBuffer = device.pipeline(Triangles, state, vs, fs);
+      }
     grassContactMask = computeShader("grass_contact_mask.comp.sprv");
     }
 
@@ -503,6 +532,8 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   if(pt!=PipelineType::T_Main && mat.alpha==Material::Water) {
     return nullptr;
     }
+  if((pt==T_HistoryDepth || pt==T_HistoryDepthVerify) && t==DrawCommands::Pfx)
+    return nullptr;
 
   const auto alpha   = (mat.isGhost ? Material::Ghost : mat.alpha);
   const bool trivial = (!mat.hasUvAnimation() && alpha==Material::Solid && t==DrawCommands::Landscape);
@@ -667,6 +698,9 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
       typeFs = typeFsV;
       break;
     case T_Main:
+    case T_HistoryGBuffer:
+    case T_HistoryDepth:
+    case T_HistoryDepthVerify:
       typeVs = typeVsM;
       typeFs = typeFsM;
       break;
@@ -676,7 +710,16 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
     return nullptr;
 
   const char* bindless = bl ? "_bindless" : "_slot";
-  const bool mapsMain = pt==T_Main && (alpha==Material::Solid || alpha==Material::AlphaTest);
+  const char* historyFragment = "";
+  switch(pt) {
+    case T_HistoryGBuffer:    historyFragment = "_hist";              break;
+    case T_HistoryDepth:      historyFragment = "_hist_depth";        break;
+    case T_HistoryDepthVerify: historyFragment = "_hist_depth_verify"; break;
+    default: break;
+    }
+  const bool  history = historyFragment[0]!='\0';
+  const char* historyGeometry = history && t!=DrawCommands::Pfx ? "_hist" : "";
+  const bool mapsMain = (pt==T_Main || history) && (alpha==Material::Solid || alpha==Material::AlphaTest);
   const bool mapsDepth = (pt==T_Depth || pt==T_Shadow) && alpha==Material::AlphaTest;
   const char* materialMaps = opts.doMaterialMaps && (mapsMain || mapsDepth) ? "_orm" : "";
 
@@ -703,16 +746,16 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
     b.pipeline = device.pipeline(Triangles, state, vs, tc, te, fs);
     }
   else if(options().doMeshShading && t!=DrawCommands::Pfx) {
-    auto shMs = GothicShader::get(string_frm("main_", vsTok, typeVs, materialMaps, bindless, ".mesh.sprv"));
-    auto shFs = GothicShader::get(string_frm("main_", fsTok, typeFs, materialMaps, bindless, ".frag.sprv"));
+    auto shMs = GothicShader::get(string_frm("main_", vsTok, typeVs, materialMaps, historyGeometry, bindless, ".mesh.sprv"));
+    auto shFs = GothicShader::get(string_frm("main_", fsTok, typeFs, materialMaps, historyFragment, bindless, ".frag.sprv"));
 
     auto ms = device.shader(shMs.data,shMs.len);
     auto fs = device.shader(shFs.data,shFs.len);
     b.pipeline = device.pipeline(state, Shader(), ms, fs);
     }
   else if(t!=DrawCommands::Pfx) {
-    auto shVs = GothicShader::get(string_frm("main_", vsTok, typeVs, materialMaps, bindless, ".vert.sprv"));
-    auto shFs = GothicShader::get(string_frm("main_", fsTok, typeFs, materialMaps, bindless, ".frag.sprv"));
+    auto shVs = GothicShader::get(string_frm("main_", vsTok, typeVs, materialMaps, historyGeometry, bindless, ".vert.sprv"));
+    auto shFs = GothicShader::get(string_frm("main_", fsTok, typeFs, materialMaps, historyFragment, bindless, ".frag.sprv"));
 
     auto vs = device.shader(shVs.data,shVs.len);
     auto fs = device.shader(shFs.data,shFs.len);
@@ -720,7 +763,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
     }
   else {
     auto shVs = GothicShader::get(string_frm("main_", vsTok, typeVs, materialMaps, ".vert.sprv"));
-    auto shFs = GothicShader::get(string_frm("main_", fsTok, typeFs, materialMaps, ".frag.sprv"));
+    auto shFs = GothicShader::get(string_frm("main_", fsTok, typeFs, materialMaps, historyFragment, ".frag.sprv"));
 
     auto vs = device.shader(shVs.data,shVs.len);
     auto fs = device.shader(shFs.data,shFs.len);

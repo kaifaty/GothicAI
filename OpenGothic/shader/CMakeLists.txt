@@ -114,6 +114,17 @@ function(add_frag_shader OUTPUT)
   set(OPENGOTHIC_SHADERS_SPRV ${OPENGOTHIC_SHADERS_SPRV} PARENT_SCOPE)
 endfunction(add_frag_shader)
 
+function(add_history_frag_shaders OUTPUT)
+  list(SUBLIST ARGV 1 -1 VARS)
+
+  add_frag_shader("${OUTPUT}_hist"              ${VARS} -DHISTORY_PAYLOAD -DHISTORY_OWNER)
+  add_frag_shader("${OUTPUT}_hist_depth"        ${VARS} -DHISTORY_PAYLOAD -DHISTORY_DEPTH)
+  add_frag_shader("${OUTPUT}_hist_depth_verify" ${VARS} -DHISTORY_PAYLOAD -DHISTORY_DEPTH -DHISTORY_OWNER)
+
+  set(OPENGOTHIC_SHADERS      ${OPENGOTHIC_SHADERS}      PARENT_SCOPE)
+  set(OPENGOTHIC_SHADERS_SPRV ${OPENGOTHIC_SHADERS_SPRV} PARENT_SCOPE)
+endfunction(add_history_frag_shaders)
+
 # cluster culling
 add_shader(cluster_init.comp            materials/cluster_init.comp)
 add_shader(cluster_patch.comp           materials/cluster_patch.comp)
@@ -125,24 +136,28 @@ add_shader(visibility_pass_hiz_ordered.comp    materials/visibility_pass.comp -D
 add_shader(visibility_pass_hiz_cr_ordered.comp materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DLARGE -DORDERED)
 add_shader(visibility_pass_hiz_probe.comp         materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DHIZ_PROBE)
 add_shader(visibility_pass_hiz_probe_ordered.comp materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DHIZ_PROBE -DORDERED)
+add_shader(visibility_pass_history.comp materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DHIZ_HISTORY)
+add_shader(visibility_pass_history_ordered.comp materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DHIZ_HISTORY -DORDERED)
 add_shader(visibility_stats.comp           materials/visibility_stats.comp)
 
 add_shader(impostor.vert     materials/impostor.vert)
 add_shader(impostor.frag     materials/impostor.frag)
 add_shader(impostor_orm.frag materials/impostor.frag -DMATERIAL_MAPS)
+add_shader(impostor_hist.frag     materials/impostor.frag -DHISTORY_OWNER)
+add_shader(impostor_orm_hist.frag materials/impostor.frag -DMATERIAL_MAPS -DHISTORY_OWNER)
 
 # mesh & vertex
-add_geom_shader(main_lnd       "-DMESH_TYPE=0" -DFLAT_NORMAL)
+add_geom_shader(main_lnd       "-DMESH_TYPE=0" -DFLAT_NORMAL -DLANDSCAPE_GBUFFER)
 add_geom_shader(main_lnd_f     "-DMESH_TYPE=0" -DFLAT_NORMAL -DFORWARD)
-add_geom_shader(main_lnd_d     "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY)
-add_geom_shader(main_lnd_d_at  "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DATEST)
+add_geom_shader(main_lnd_d     "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DHIZ_OCCLUDER)
+add_geom_shader(main_lnd_d_at  "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DHIZ_OCCLUDER -DATEST)
 add_geom_shader(main_lnd_v     "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DVIRTUAL_SHADOW)
 add_geom_shader(main_lnd_v_at  "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST)
 
 add_geom_shader(main_obj       "-DMESH_TYPE=1")
 add_geom_shader(main_obj_f     "-DMESH_TYPE=1" -DFORWARD)
-add_geom_shader(main_obj_d     "-DMESH_TYPE=1" -DDEPTH_ONLY)
-add_geom_shader(main_obj_d_at  "-DMESH_TYPE=1" -DDEPTH_ONLY -DATEST)
+add_geom_shader(main_obj_d     "-DMESH_TYPE=1" -DDEPTH_ONLY -DHIZ_OCCLUDER)
+add_geom_shader(main_obj_d_at  "-DMESH_TYPE=1" -DDEPTH_ONLY -DHIZ_OCCLUDER -DATEST)
 add_geom_shader(main_obj_v     "-DMESH_TYPE=1" -DDEPTH_ONLY -DVIRTUAL_SHADOW)
 add_geom_shader(main_obj_v_at  "-DMESH_TYPE=1" -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST)
 
@@ -168,12 +183,12 @@ add_geom_shader(main_mph_g     "-DMESH_TYPE=3" -DGBUFFER_MOTION)
 
 # The legacy variants remain in use when there is no material table. Position
 # varyings for the cotangent frame are needed only on the material-map path.
-add_geom_shader(main_lnd_orm      "-DMESH_TYPE=0" -DFLAT_NORMAL -DMATERIAL_MAPS)
+add_geom_shader(main_lnd_orm      "-DMESH_TYPE=0" -DFLAT_NORMAL -DMATERIAL_MAPS -DLANDSCAPE_GBUFFER)
 add_geom_shader(main_obj_g_orm    "-DMESH_TYPE=1" -DMATERIAL_MAPS -DGBUFFER_MOTION)
 add_geom_shader(main_ani_g_orm    "-DMESH_TYPE=2" -DMATERIAL_MAPS -DGBUFFER_MOTION)
 add_geom_shader(main_mph_g_orm    "-DMESH_TYPE=3" -DMATERIAL_MAPS -DGBUFFER_MOTION)
-add_geom_shader(main_lnd_d_at_orm "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
-add_geom_shader(main_obj_d_at_orm "-DMESH_TYPE=1" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
+add_geom_shader(main_lnd_d_at_orm "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DHIZ_OCCLUDER -DATEST -DMATERIAL_MAPS)
+add_geom_shader(main_obj_d_at_orm "-DMESH_TYPE=1" -DDEPTH_ONLY -DHIZ_OCCLUDER -DATEST -DMATERIAL_MAPS)
 add_geom_shader(main_ani_d_at_orm "-DMESH_TYPE=2" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 add_geom_shader(main_mph_d_at_orm "-DMESH_TYPE=3" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 
@@ -219,6 +234,27 @@ add_frag_shader(main_obj_g_at_orm -DGBUFFER -DGBUFFER_MOTION -DATEST -DMATERIAL_
 add_frag_shader(main_lnd_d_at_orm -DFLAT_NORMAL -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 add_frag_shader(main_obj_d_at_orm -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 
+# Both history phases use the same G-buffer geometry and sample the same fragment alpha.
+add_geom_shader(main_lnd_hist     "-DMESH_TYPE=0" -DFLAT_NORMAL -DHISTORY_PAYLOAD)
+add_geom_shader(main_obj_g_hist   "-DMESH_TYPE=1" -DGBUFFER_MOTION -DHISTORY_PAYLOAD)
+add_geom_shader(main_ani_g_hist   "-DMESH_TYPE=2" -DGBUFFER_MOTION -DHISTORY_PAYLOAD)
+add_geom_shader(main_mph_g_hist   "-DMESH_TYPE=3" -DGBUFFER_MOTION -DHISTORY_PAYLOAD)
+add_geom_shader(main_lnd_orm_hist   "-DMESH_TYPE=0" -DFLAT_NORMAL -DMATERIAL_MAPS -DHISTORY_PAYLOAD)
+add_geom_shader(main_obj_g_orm_hist "-DMESH_TYPE=1" -DGBUFFER_MOTION -DMATERIAL_MAPS -DHISTORY_PAYLOAD)
+add_geom_shader(main_ani_g_orm_hist "-DMESH_TYPE=2" -DGBUFFER_MOTION -DMATERIAL_MAPS -DHISTORY_PAYLOAD)
+add_geom_shader(main_mph_g_orm_hist "-DMESH_TYPE=3" -DGBUFFER_MOTION -DMATERIAL_MAPS -DHISTORY_PAYLOAD)
+
+add_history_frag_shaders(main_lnd_g_s  -DFLAT_NORMAL -DGBUFFER -DSIMPLE_MAT)
+add_history_frag_shaders(main_lnd_g    -DFLAT_NORMAL -DGBUFFER)
+add_history_frag_shaders(main_lnd_g_at -DFLAT_NORMAL -DGBUFFER -DATEST)
+add_history_frag_shaders(main_obj_g    -DGBUFFER -DGBUFFER_MOTION)
+add_history_frag_shaders(main_obj_g_at -DGBUFFER -DGBUFFER_MOTION -DATEST)
+add_history_frag_shaders(main_lnd_g_s_orm  -DFLAT_NORMAL -DGBUFFER -DSIMPLE_MAT -DMATERIAL_MAPS)
+add_history_frag_shaders(main_lnd_g_orm    -DFLAT_NORMAL -DGBUFFER -DMATERIAL_MAPS)
+add_history_frag_shaders(main_lnd_g_at_orm -DFLAT_NORMAL -DGBUFFER -DATEST -DMATERIAL_MAPS)
+add_history_frag_shaders(main_obj_g_orm    -DGBUFFER -DGBUFFER_MOTION -DMATERIAL_MAPS)
+add_history_frag_shaders(main_obj_g_at_orm -DGBUFFER -DGBUFFER_MOTION -DATEST -DMATERIAL_MAPS)
+
 # pfx geometry
 add_shader(main_pfx.vert       materials/pfx.vert   "-DMESH_TYPE=4" -DVT_COLOR)
 add_shader(main_pfx_f.vert     materials/pfx.vert   "-DMESH_TYPE=4" -DFORWARD    -DVT_COLOR)
@@ -245,6 +281,10 @@ add_shader(main_pfx_orm.vert       materials/pfx.vert  "-DMESH_TYPE=4" -DVT_COLO
 add_shader(main_pfx_d_at_orm.vert  materials/pfx.vert  "-DMESH_TYPE=4" -DVT_COLOR -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 add_shader(main_pfx_g_orm.frag     materials/main.frag "-DMESH_TYPE=4" -DVT_COLOR -DGBUFFER -DMATERIAL_MAPS)
 add_shader(main_pfx_g_at_orm.frag  materials/main.frag "-DMESH_TYPE=4" -DVT_COLOR -DGBUFFER -DATEST -DMATERIAL_MAPS)
+add_shader(main_pfx_g_hist.frag        materials/main.frag "-DMESH_TYPE=4" -DVT_COLOR -DGBUFFER -DHISTORY_OWNER)
+add_shader(main_pfx_g_at_hist.frag     materials/main.frag "-DMESH_TYPE=4" -DVT_COLOR -DGBUFFER -DATEST -DHISTORY_OWNER)
+add_shader(main_pfx_g_orm_hist.frag    materials/main.frag "-DMESH_TYPE=4" -DVT_COLOR -DGBUFFER -DMATERIAL_MAPS -DHISTORY_OWNER)
+add_shader(main_pfx_g_at_orm_hist.frag materials/main.frag "-DMESH_TYPE=4" -DVT_COLOR -DGBUFFER -DATEST -DMATERIAL_MAPS -DHISTORY_OWNER)
 add_shader(main_pfx_d_at_orm.frag  materials/main.frag "-DMESH_TYPE=4" -DVT_COLOR -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 
 
@@ -294,6 +334,7 @@ add_shader(blood_decal_orm.frag      blood/blood_decal.frag -DMATERIAL_MAPS)
 # grass round the camera (reports/engine/2026-11-14-grass-system): blades into the G-buffer with material maps
 add_shader(grass.vert                grass/grass.vert)
 add_shader(grass.frag                grass/grass.frag)
+add_shader(grass_hist.frag           grass/grass.frag -DHISTORY_OWNER)
 add_shader(grass_contact_mask.comp   grass/grass_contact_mask.comp)
 
 add_shader(irradiance.comp           lighting/irradiance.comp)
@@ -373,6 +414,12 @@ else()
   add_shader(hiz_mip.comp            hiz/hiz_mip.comp)
 endif()
 add_shader(hiz_pot.comp              hiz/hiz_pot.comp)
+add_shader(hiz_history_pot.comp      hiz/hiz_pot.comp -DHIZ_HISTORY)
+add_shader(hiz_history_mip.comp      hiz/hiz_mip.comp -DHIZ_HISTORY)
+add_shader(hiz_history_classify.comp hiz/hiz_history_classify.comp)
+add_shader(hiz_history_compact.comp  hiz/hiz_history_compact.comp)
+add_shader(hiz_history_sample.comp   hiz/hiz_history_sample.comp)
+add_shader(hiz_history_verify.comp   hiz/hiz_history_verify.comp)
 
 # RayQuery
 add_shader(rt_dbg.frag               lighting/rt_dbg/rt_dbg.frag -DRAY_QUERY -DRAY_QUERY_AT)

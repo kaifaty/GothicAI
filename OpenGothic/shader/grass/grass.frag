@@ -25,6 +25,9 @@ layout(location = 0) out vec4 outDiffuse;
 layout(location = 1) out uint outNormal;
 layout(location = 2) out vec4 outOrm;
 layout(location = 3) out vec2 outMotion;
+#if defined(HISTORY_OWNER)
+layout(location = 4) out uint outHistoryOwner;
+#endif
 
 void main() {
   // Darker at the root, lighter and greener or more like straw at the tip. Counted here, not per vertex: a blade
@@ -48,6 +51,9 @@ void main() {
   outDiffuse = vec4(color, float(GBufFoliageBit)/255.0);
   outNormal  = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u ? 0u : encodeNormal(normalize(inNormal));
   outOrm     = vec4(ao, GrassRoughness, through, 1.0);
+#if defined(HISTORY_OWNER)
+  outHistoryOwner = 0u;
+#endif
 
   // as motionResidual of materials/main.frag
   outMotion = vec2(0);

@@ -254,6 +254,8 @@ bool streamingWaitTick(World& w) {
 namespace testbench_detail {
 
 void run(World& w, Npc& pl, PlayerControl& ctrl) {
+  if(bench.historyVerify.pending())
+    return;
   if(npcDayCheckpointTick(w)) return;
   if(npcTierTestTick(bench.npcTierTest,w,pl,bench.frameMs))return;
   if(npcSpeedTick(bench.npcSpeedTest,w))return;
@@ -473,6 +475,8 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     const std::string line = bench.prog[bench.pc++];
     exec(line,w,pl,ctrl);
+    if(bench.historyVerify.pending())
+      return;
     if(bench.routeActive || bench.placedItems.probing || bench.world.waitStreaming || NavBench::running() || NavDemos::running() ||
        NpcDayJournal::running() || npcDayCheckpointRunning() || bench.npcTierTest.npc || bench.npcSpeedTest.npc) return;
     if(bench.movables.spellWaitFrozen>=0 || bench.movables.spellEquipPending) return;

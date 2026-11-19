@@ -454,6 +454,10 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     obj.clusterId = clusterId(*obj.bucketId, firstMeshlet, meshletCount, obj.bucketId.toInt(), obj.cmdId);
     clustersMem[obj.clusterId].instanceId = instanceId;
     }
+  if(type==DrawCommands::Static && FoliageTree::isTree(mat.foliage)) {
+    for(uint32_t i=0; i<obj.clusterCount; ++i)
+      clustersMem[obj.clusterId+i].historyGeneration |= DrawClusters::HistoryStatic;
+    }
 
   obj.textureCategory=staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic;
   // The submesh's density, measured when the mesh was loaded; a slice that matches none keeps the whole chain.
@@ -1050,6 +1054,10 @@ void VisualObjects::preFrameUpdateLevels() {
     obj.level = level;
     obj.shadowLevel = shadowLevel;
     const auto range = drawnMeshlets(obj);
+    if(c.commandId!=command || c.firstMeshlet!=range.first || c.meshletCount!=(obj.visible ? range.second : 0u)) {
+      constexpr auto typeMask = DrawClusters::HistoryStatic;
+      c.historyGeneration = (c.historyGeneration & typeMask) | ((c.historyGeneration+1) & ~typeMask);
+      }
     c.commandId    = command;
     c.firstMeshlet = range.first;
     c.meshletCount = obj.visible ? range.second : 0u;
@@ -1184,8 +1192,8 @@ void VisualObjects::preFrameUpdateMorph() {
     }
   }
 
-void VisualObjects::visibilityPass(Tempest::Encoder<Tempest::CommandBuffer> &cmd, int pass) {
-  drawCmd.visibilityPass(cmd, pass);
+void VisualObjects::visibilityPass(Tempest::Encoder<Tempest::CommandBuffer> &cmd, int pass, bool history) {
+  drawCmd.visibilityPass(cmd, pass, history);
   }
 
 void VisualObjects::visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
@@ -1213,14 +1221,13 @@ void VisualObjects::drawWater(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Water);
   }
 
-void VisualObjects::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
-  // return;
-  drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Solid);
-  drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::AlphaTest);
-  drawImpostors(cmd, fId);
+void VisualObjects::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, DrawCommands::HistoryDraw history) {
+  drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Solid, history);
+  drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::AlphaTest, history);
+  drawImpostors(cmd, fId, history!=DrawCommands::HistoryDraw::Off);
   }
 
-void VisualObjects::drawImpostors(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
+void VisualObjects::drawImpostors(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, bool history) {
   if(impostorDraws.empty() || (DrawCommands::hiddenTypes & (1u << DrawCommands::Static))!=0)
     return;
 
@@ -1248,7 +1255,7 @@ void VisualObjects::drawImpostors(Tempest::Encoder<CommandBuffer>& cmd, uint8_t 
   buffer.update(impostorInstances.data(), 0, bytes);
 
   const auto sampler = Sampler::trillinear(ClampMode::ClampToEdge);
-  cmd.setPipeline(Shaders::inst().impostor);
+  cmd.setPipeline(history ? Shaders::inst().impostorHistoryGBuffer : Shaders::inst().impostor);
   cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, buffer);
   for(size_t first=0; first<impostorDraws.size();) {

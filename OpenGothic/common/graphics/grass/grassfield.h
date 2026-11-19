@@ -74,7 +74,7 @@ class GrassField final {
 
     // the main thread, once a frame: what the ring needs, the worker's results into buffers
     void update();
-    void draw(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    void draw(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool historyOwner = false);
 
     struct Stats final {
       size_t cells     = 0; // with blades

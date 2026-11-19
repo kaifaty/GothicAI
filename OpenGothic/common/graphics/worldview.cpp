@@ -812,9 +812,9 @@ void WorldView::updateFrustrum(const Frustrum fr[]) {
     sGlobal.frustrum[i] = fr[i];
   }
 
-void WorldView::visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass) {
+void WorldView::visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass, bool history) {
   cmd.setDebugMarker("Visibility");
-  visuals.visibilityPass(cmd, pass);
+  visuals.visibilityPass(cmd, pass, history);
   }
 
 void WorldView::visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
@@ -838,17 +838,18 @@ void WorldView::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   visuals.drawVsm(cmd);
   }
 
-void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, bool landscapeOnly) {
+void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, bool landscapeOnly,
+                            DrawCommands::HistoryDraw history) {
   // The blades go first: the ground under them then fails the depth test before its layers are shaded
   // (reports/engine/2026-11-17-grass-cost). Their own marker gives them a row of their own in the pass timings
   if(grass && !landscapeOnly) {
     cmd.setDebugMarker("Grass");
-    grass->draw(cmd,fId);
+    grass->draw(cmd,fId,history!=DrawCommands::HistoryDraw::Off);
     cmd.setDebugMarker("GBuffer");
     }
-  visuals.drawGBuffer(cmd, fId);
+  visuals.drawGBuffer(cmd, fId, history);
   if(!landscapeOnly)
-    pfxGroup.drawGBuffer(cmd, fId);
+    pfxGroup.drawGBuffer(cmd, fId, history!=DrawCommands::HistoryDraw::Off);
   }
 
 void WorldView::drawWater(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {

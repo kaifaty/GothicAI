@@ -37,16 +37,30 @@ layout(push_constant, std430) uniform Push {
 #endif
 #endif
 
+// These passes share the main depth buffer. Keep their position invariant
+// across specializations with and without material and motion varyings.
+#if defined(GBUFFER_MOTION) || defined(LANDSCAPE_GBUFFER) || defined(HIZ_OCCLUDER) || defined(HISTORY_PAYLOAD)
+#define INVARIANT_MAIN_POSITION
+#endif
+
 #if defined(GL_VERTEX_SHADER)
 out gl_PerVertex {
+#if defined(INVARIANT_MAIN_POSITION)
+  invariant vec4 gl_Position;
+#else
   vec4  gl_Position;
+#endif
 #if defined(VIRTUAL_SHADOW)
   float gl_ClipDistance[VSM_CLIP_COUNT];
 #endif
   };
 #else
 out gl_MeshPerVertexEXT {
+#if defined(INVARIANT_MAIN_POSITION)
+  invariant vec4 gl_Position;
+#else
   vec4  gl_Position;
+#endif
 #if defined(VIRTUAL_SHADOW)
   float gl_ClipDistance[VSM_CLIP_COUNT];
 #endif
@@ -371,6 +385,10 @@ void main() {
 
   const uint payloadId = workIndex + firstMeshlet;
   const uvec4 task     = payload[payloadId];
+#if defined(HISTORY_PAYLOAD)
+  // Both history phases use this same vertex shader and carry the unchanged payload index.
+  const uint materialRef = payloadId;
+#else
   uint materialRef     = task.z;
 #if defined(MAT_CLUSTER_LEVEL)
   materialRef |= task.w << 16u;
@@ -379,6 +397,7 @@ void main() {
   // The probe uses the existing flat output to recover both the bucket and cluster.
   if((scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u)
     materialRef = payloadId;
+#endif
 #endif
 
 #if defined(VIRTUAL_SHADOW)

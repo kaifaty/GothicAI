@@ -9,6 +9,16 @@ class Npc;
 
 class BenchProbe {
   public:
+    struct HistoryVerifyRequest {
+      std::string_view segment;
+      uint32_t number = 0;
+      uint32_t frame = 0;
+      uint64_t elapsedMs = 0;
+      bool finish = false;
+
+      explicit operator bool() const { return !segment.empty(); }
+      };
+
     virtual ~BenchProbe() = default;
 
     static void install(BenchProbe* probe) { instance = probe; }
@@ -16,6 +26,8 @@ class BenchProbe {
 
     virtual bool active() const = 0;
     virtual bool orderedVisibility() const = 0;
+    virtual HistoryVerifyRequest historyVerifyRequest() { return {}; }
+    virtual void historyVerifyComplete(bool) {}
     virtual int bodyBlockVariant(const Npc& npc, int fallback) const = 0;
     virtual void destructionBreak(uintptr_t body, size_t pieces, float milliseconds, bool remnant) = 0;
     virtual void destructionRetire(uintptr_t body, size_t piece, bool expired, float observerDistanceCm) = 0;

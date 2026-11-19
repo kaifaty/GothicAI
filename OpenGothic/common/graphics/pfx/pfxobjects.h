@@ -36,7 +36,7 @@ class PfxObjects final {
 
     void       preFrameUpdate(uint8_t fId);
 
-    void       drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    void       drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool historyOwner = false);
     void       drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, int layer);
     void       drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void       drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);

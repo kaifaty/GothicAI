@@ -193,6 +193,8 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   defaults->set("INTERNAL",     "crownLight", 1); // graphics/crownlight.h
   defaults->set("INTERNAL",     "hizSkipCrowns", 1); // graphics/hizoccluders.h
   defaults->set("INTERNAL",     "hizPrecise", 1);
+  defaults->set("INTERNAL",     "hizHistory", 1);
+  defaults->set("INTERNAL",     "hizHistoryMinWins", 16);
   defaults->set("INTERNAL",     "treeWindFade", 1); // graphics/treewindfade.h
   defaults->set("INTERNAL",     "meshLevels", 1); // graphics/meshlevels.h
   defaults->set("INTERNAL",     "impostors", 1); // graphics/meshlevels.h

@@ -12,6 +12,7 @@
 #include "gothicglb.h"
 #include "graphics/drawclusters.h"
 #include "graphics/sceneglobals.h"
+#include "graphics/foliagewind.h"
 #include "resources.h"
 #include "shader.h"
 #include "worldchunkcook.h"
@@ -36,6 +37,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <limits>
@@ -109,6 +111,75 @@ void checkHiZCoverage() {
     require(mip==t.mip && covered==reference && covered==t.texels,std::string("HiZ coverage: ")+t.label);
     }
   std::printf("HiZ coverage: %zu pixel-boundary, screen-edge and mip cases\n",std::size(cases));
+  }
+
+void checkHistoryHiZContract() {
+  // Match the inclusive pixel cells and the finest mip that fits the 8x8 sample budget.
+  const auto screen = Tempest::Point(198,119);
+  constexpr int tile = 16;
+  constexpr int sampleWidth = 8;
+  struct Case {
+    std::array<float,4> rect;
+    int mip;
+    size_t samples;
+    };
+  const Case cases[] = {
+    {{15.25f,31.f,15.5f,31.f}, 0, 4},         // both axes cross a tile after the raster pad
+    {{16.25f,17.f,128.25f,18.f}, 1, 5},       // nine base texels cross before choosing mip 1
+    {{195.f,117.f,250.f,171.f}, 0, 1},        // screen edge inside padding of a rectangular pyramid
+    };
+  for(const auto& test : cases) {
+    const float left = test.rect[0] - 1.f, top = test.rect[1] - 1.f;
+    const float right = test.rect[2] + 1.f, bottom = test.rect[3] + 1.f;
+    const auto cell = [](float pixel, int size) {
+      return int(std::clamp(pixel,0.f,float(size - 1))) / tile;
+      };
+    int lx = cell(left,screen.x), ly = cell(top,screen.y);
+    int rx = cell(right,screen.x), ry = cell(bottom,screen.y);
+    int mip = 0;
+    while(rx - lx >= sampleWidth || ry - ly >= sampleWidth) {
+      lx >>= 1;
+      ly >>= 1;
+      rx >>= 1;
+      ry >>= 1;
+      ++mip;
+      }
+
+    std::set<std::pair<int,int>> covered, reference;
+    for(int y = ly; y <= ry; ++y)
+      for(int x = lx; x <= rx; ++x)
+        covered.emplace(x,y);
+    for(int y = 0; y < screen.y; ++y)
+      for(int x = 0; x < screen.x; ++x)
+        if(float(x + 1) > left && float(y + 1) > top && float(x) <= right && float(y) <= bottom)
+          reference.emplace(x / (tile << mip),y / (tile << mip));
+    require(mip == test.mip && covered == reference && covered.size() == test.samples,
+            "history HiZ covers all touched cells within the mip sample budget");
+    }
+
+  const auto hidden = [](float clipW, float znear, float projectedDepth, float depthRoundoff,
+                         const std::array<float,2>& texels) {
+    const float nearDepth = projectedDepth - (depthRoundoff + 8.f * std::numeric_limits<float>::epsilon());
+    return clipW > znear && nearDepth > 0.f &&
+           std::all_of(texels.begin(),texels.end(),[nearDepth](float z) { return nearDepth > z; });
+    };
+  constexpr float depth = 0.625f;
+  constexpr float depth16Step = 1.f / 65535.f;
+  require(hidden(12.f,10.f,depth + 2.f * depth16Step,depth16Step,{depth,depth}),
+          "history HiZ rejects only after the depth-format guard");
+  require(!hidden(12.f,10.f,depth,0.f,{depth,depth}) &&
+          !hidden(12.f,10.f,depth + depth16Step / 2.f,depth16Step,{depth,depth}) &&
+          !hidden(12.f,10.f,0.9f,0.f,{depth,1.f}) &&
+          !hidden(10.f,10.f,0.9f,0.f,{depth,depth}),
+          "history HiZ keeps equality, depth quantization, holes and the near plane");
+
+  const std::array history = {std::array{16u,17u},std::array{15u,18u}};
+  const auto early = [&](uint32_t slot, uint32_t previousCount, uint32_t generation) {
+    return slot < previousCount && history[slot][0] >= 16u && history[slot][1] == generation;
+    };
+  require(early(0,2,17) && !early(0,2,19) && !early(1,2,18) && !early(2,2,20) && !early(0,0,17),
+          "history HiZ accepts a retained slot and ignores recycled, unseeded, new and reset slots");
+  std::puts("History HiZ: framebuffer edges, mips, holes, ties, near plane, quantization and recycled slots");
   }
 
 struct TemporaryDirectory {
@@ -720,6 +791,232 @@ class GpuVisibilityCut {
     uint32_t count=0;
   };
 
+void checkGpuHistoryDepth(Tempest::Device& device) {
+  using namespace Tempest;
+  constexpr uint32_t side = 64;
+  constexpr uint32_t owner = 23;
+  constexpr uint32_t backdropOwner = 11;
+  constexpr uint32_t probeTag = 0x80000000u;
+  const auto shader = [&](const std::string& name) {
+    const auto code = GothicShader::get(name);
+    return device.shader(code.data,code.len);
+    };
+
+  RenderState state;
+  state.setCullFaceMode(RenderState::CullMode::NoCull);
+  state.setZTestMode(RenderState::ZTestMode::LEqual);
+  const auto pipeline = [&](const std::string& v, const std::string& f) {
+    return device.pipeline(Topology::Triangles,state,shader(v+"_slot.vert.sprv"),shader(f+"_slot.frag.sprv"));
+    };
+  const auto copyDepth = device.pipeline(shader("ssao_depth.comp.sprv"));
+
+  // This geometry has nonconstant projected depth. The object transform, tree
+  // wind, perspective and camera offset also exercise the actual shader path.
+  constexpr Resources::Vertex vertices[] = {
+    {{-0.85f,-0.85f,0.29f},{0.f,0.f,1.f},{0.f,0.f},0xffffffffu},
+    {{ 0.85f,-0.85f,0.54f},{0.f,0.f,1.f},{1.f,0.f},0xffffffffu},
+    {{ 0.85f, 0.85f,0.65f},{0.f,0.f,1.f},{1.f,1.f},0xffffffffu},
+    {{-0.85f, 0.85f,0.40f},{0.f,0.f,1.f},{0.f,1.f},0xffffffffu},
+    };
+  uint32_t indices[PackedMesh::MaxPrim] = {};
+  indices[0] = 1u << 8u | 2u << 16u;
+  indices[1] = 2u << 8u | 3u << 16u;
+  indices[PackedMesh::MaxPrim - 1] = 2u << 16u | 4u << 24u;
+  const GpuVisibilityCut::Instance instance[] = {
+    {{{{1.f,0.03f,0.f},{0.f,1.f,0.f},{0.f,0.f,1.f},{0.02f,0.f,0.f}}}},
+    {{{{1.f,0.03f,0.f},{0.f,1.f,0.f},{0.f,0.f,1.f},{0.02f,0.f,0.2f}}}},
+    };
+  SceneGlobals::UboGlobal globals{};
+  globals.viewProject = Matrix4x4::mkIdentity();
+  globals.viewProject[2][3] = 0.17f;
+  globals.viewProject[3][0] = 0.005f;
+  globals.viewFlags = SceneGlobals::VF_TAA;
+  globals.taaFrame = 7u;
+  globals.foliageWind = Vec4(0.6f,0.8f,0.7f,1.f);
+  globals.foliagePhase = Vec4(0.13f,0.27f,0.31f,0.44f);
+  globals.foliageSwing = Vec4(0.37f,0.04f,0.65f,0.f);
+  globals.screenRes = {int(side),int(side)};
+  const auto scene = device.ssbo(&globals,sizeof(globals));
+  globals.viewFlags |= SceneGlobals::VF_HIZ | SceneGlobals::VF_HIZ_NO_CANOPY;
+  const auto occluderScene = device.ssbo(&globals,sizeof(globals));
+  globals.viewFlags = SceneGlobals::VF_TAA | SceneGlobals::VF_TREE_OCCLUSION_PROBE;
+  const auto probeScene = device.ssbo(&globals,sizeof(globals));
+  const auto instances = device.ssbo(instance,sizeof(instance));
+  const auto ibo = device.ssbo(indices,sizeof(indices));
+  const auto vbo = device.ssbo(vertices,sizeof(vertices));
+
+  Pixmap checker(4,4,TextureFormat::RGBA8);
+  auto* pixels = static_cast<uint8_t*>(checker.data());
+  for(uint32_t y = 0; y < 4; ++y) {
+    for(uint32_t x = 0; x < 4; ++x) {
+      const uint32_t at = (y * 4 + x) * 4;
+      pixels[at + 0] = pixels[at + 1] = pixels[at + 2] = 255u;
+      pixels[at + 3] = ((x + y) % 2u) != 0u ? 73u : 255u;
+      }
+    }
+  const auto texture = device.texture(checker,false);
+  auto depth = device.zbuffer(TextureFormat::Depth32F,side,side);
+  auto diffuse = device.attachment(TextureFormat::RGBA8,side,side);
+  auto normal = device.attachment(TextureFormat::R32U,side,side);
+  auto referenceOwners = device.attachment(TextureFormat::R32U,side,side);
+  auto orm = device.attachment(TextureFormat::RGBA8,side,side);
+  auto motion = device.attachment(TextureFormat::RG16F,side,side);
+  auto earlyOwners = device.attachment(TextureFormat::R32U,side,side);
+  auto finalOwners = device.attachment(TextureFormat::R32U,side,side);
+  std::array<StorageImage,5> depths;
+  for(auto& copy : depths)
+    copy = device.image2d(TextureFormat::R32F,side,side);
+
+  const auto backdropLegacy = pipeline("main_obj_g_orm","main_obj_g_orm");
+  const auto backdropHistory = pipeline("main_obj_g_orm_hist","main_obj_g_orm_hist");
+  struct Fixture {
+    const char* label;
+    const char* geometry;
+    const char* material;
+    const char* occluder;
+    bool landscape;
+    bool canopy;
+    };
+  const Fixture fixtures[] = {
+    {"landscape", "main_lnd_orm", "main_lnd_g_s_orm", "main_lnd_d", true, false},
+    {"solid mesh", "main_obj_g_orm", "main_obj_g_orm", "main_obj_d", false, false},
+    {"alpha-tested crown", "main_obj_g_orm", "main_obj_g_at_orm", "main_obj_d", false, true},
+    };
+
+  for(const auto& f : fixtures) {
+    const auto occluder = pipeline(f.occluder,f.occluder);
+    const auto baseline = pipeline(f.geometry,f.material);
+    const std::string geometry = std::string(f.geometry)+"_hist";
+    const auto depthOnly = pipeline(geometry,std::string(f.material)+"_hist_depth");
+    const auto depthProbe = pipeline(geometry,std::string(f.material)+"_hist_depth_verify");
+    const auto gbuffer = pipeline(geometry,std::string(f.material)+"_hist");
+    const uint32_t instanceId = f.landscape ? 0xffffffffu : 0u;
+    const uint32_t legacyTask[] = {instanceId,0u,0u,owner-1u, 1u,0u,1u,backdropOwner-1u};
+    const uint32_t historyTask[] = {instanceId,0u,0u,owner, 1u,0u,1u,backdropOwner};
+    const auto legacyPayload = device.ssbo(legacyTask,sizeof(legacyTask));
+    const auto historyPayload = device.ssbo(historyTask,sizeof(historyTask));
+
+    uint32_t bucket[2][36] = {};
+    for(auto& b : bucket) {
+      b[12] = std::bit_cast<uint32_t>(1.f); // alphaWeight
+      b[15] = std::bit_cast<uint32_t>(1.f); // uvScale
+      }
+    if(f.canopy) {
+      bucket[0][14] = 0x200u | 0x8000u | 0x1000000u; // BK_HASHED_ALPHA | BK_FOLIAGE | BK_CANOPY
+      FoliageWind::Params foliage;
+      foliage.on = true;
+      foliage.anchor = FoliageWind::AnchorTree;
+      bucket[0][30] = FoliageWind::pack(foliage,FoliageWind::Both);
+      bucket[0][31] = std::bit_cast<uint32_t>(1.f); // foliageReach
+      }
+    const auto buckets = device.ssbo(bucket,sizeof(bucket));
+
+    auto command = device.commandBuffer();
+    {
+      auto encoder = command.startEncoding(device);
+      const auto sampler = Sampler::nearest(ClampMode::ClampToEdge);
+      const auto draw = [&](const RenderPipeline& pso, const StorageBuffer& ubo, const StorageBuffer& payload, uint32_t index = 0) {
+        const uint32_t push[] = {index,1u};
+        encoder.setBinding(0,ubo);
+        encoder.setBinding(1,payload);
+        encoder.setBinding(2,instances);
+        encoder.setBinding(3,buckets);
+        encoder.setBinding(4,ibo);
+        encoder.setBinding(5,vbo);
+        encoder.setBinding(6,texture);
+        encoder.setBinding(7,sampler);
+        encoder.setBinding(15,texture);
+        encoder.setBinding(16,texture);
+        encoder.setBinding(21,instances);
+        encoder.setBinding(23,texture);
+        encoder.setBinding(24,texture);
+        encoder.setBinding(25,texture);
+        encoder.setPushData(push);
+        encoder.setPipeline(pso);
+        encoder.draw(nullptr,0,PackedMesh::MaxInd);
+        };
+      const auto snapshot = [&](size_t index) {
+        encoder.setFramebuffer({});
+        encoder.setBinding(0,depth,sampler);
+        encoder.setBinding(1,depths[index]);
+        encoder.setPipeline(copyDepth);
+        encoder.dispatchThreads(side,side);
+        };
+      const auto prepass = [&] {
+        encoder.setFramebuffer({}, {depth,1.f,Preserve});
+        // Crowns are absent from the standard occluders. A solid mesh behind
+        // the crown gives this fixture real prepass depth under its alpha holes.
+        draw(occluder,occluderScene,legacyPayload,f.canopy ? 1u : 0u);
+        };
+
+      prepass();
+      snapshot(0);
+      encoder.setFramebuffer({{diffuse,Vec4(),Preserve},{referenceOwners,Vec4(),Preserve},{orm,Vec4(),Preserve},
+                              {motion,Vec4(),Preserve}}, {depth,Preserve,Preserve});
+      if(f.canopy)
+        draw(backdropLegacy,probeScene,legacyPayload,1u);
+      draw(baseline,probeScene,legacyPayload);
+      snapshot(1);
+
+      prepass();
+      encoder.setFramebuffer({{earlyOwners,Vec4(),Preserve}}, {depth,Preserve,Preserve});
+      draw(depthProbe,scene,historyPayload);
+      snapshot(2);
+
+      prepass();
+      encoder.setFramebuffer({}, {depth,Preserve,Preserve});
+      draw(depthOnly,scene,historyPayload);
+      snapshot(3);
+      encoder.setFramebuffer({{diffuse,Vec4(),Preserve},{normal,Vec4(),Preserve},{orm,Vec4(),Preserve},
+                              {motion,Vec4(),Preserve},{finalOwners,Vec4(),Preserve}}, {depth,Preserve,Preserve});
+      if(f.canopy)
+        draw(backdropHistory,scene,historyPayload,1u);
+      draw(gbuffer,scene,historyPayload);
+      snapshot(4);
+      }
+    device.submit(command).wait();
+
+    const auto referenceDepth = device.readPixels(depths[1]);
+    const auto baselineIds = device.readPixels(referenceOwners);
+    const auto earlyIds = device.readPixels(earlyOwners);
+    const auto finalIds = device.readPixels(finalOwners);
+    const auto prepassDepth = device.readPixels(depths[0]);
+    const auto depthWord = [](const Pixmap& image, uint32_t index) {
+      uint32_t value;
+      const auto* data = static_cast<const uint8_t*>(image.data());
+      std::memcpy(&value,data + index * sizeof(value),sizeof(value));
+      return value;
+      };
+    for(size_t pass : {2u,3u,4u}) {
+      const auto sample = device.readPixels(depths[pass]);
+      require(referenceDepth.dataSize()==sample.dataSize() &&
+              std::memcmp(referenceDepth.data(),sample.data(),sample.dataSize())==0,
+              std::string("GPU history ")+f.label+": 3a depth differs from pass "+std::to_string(pass));
+      }
+
+    uint32_t winners = 0, holes = 0;
+    for(uint32_t at = 0; at < side * side; ++at) {
+      const auto probe = depthWord(baselineIds,at);
+      const auto expected = probe == 0u ? 0u : (probe^probeTag)+1u;
+      const auto found = depthWord(finalIds,at);
+      const auto early = depthWord(earlyIds,at);
+      require(expected==found && early==(found==owner ? owner : 0u),
+              std::string("GPU history ")+f.label+": owner differs at pixel "+std::to_string(at));
+      const uint32_t x = at % side, y = at / side;
+      if(x>=16u && x<48u && y>=16u && y<48u) {
+        const auto z = std::bit_cast<float>(depthWord(prepassDepth,at));
+        require(z<1.f,std::string("GPU history ")+f.label+": missing occluder depth inside fixture");
+        winners += uint32_t(found==owner);
+        holes += uint32_t(found==backdropOwner);
+        }
+      }
+    require(f.canopy ? winners>0 && holes>0 && winners+holes==32u*32u : winners==32u*32u,
+            std::string("GPU history ")+f.label+": unexpected coverage inside fixture");
+    std::printf("GPU history depth (%s): bitwise depth and owner agreement, %u wins and %u backdrop pixels inside fixture\n",
+                f.label,winners,holes);
+    }
+  }
+
 size_t checkVisibilityCuts(const CookedChunk& chunk, const fs::path& path, Tempest::Device* device=nullptr) {
   const auto hierarchy=chunk.hierarchy();
   ClusterLod::Graph graph;
@@ -1188,6 +1485,7 @@ int main(int argc, char** argv) {
   try {
     require(argc==1 || (argc==2 && std::string_view(argv[1])=="--gpu"),"usage: gothic-wcb-contract [--gpu]");
     checkHiZCoverage();
+    checkHistoryHiZContract();
     fs::create_directories(temporary.path);
     selectionFixtures(temporary.path);
     chunkFixtures(temporary.path);
@@ -1219,6 +1517,7 @@ int main(int argc, char** argv) {
       api.emplace();
       device.emplace(*api);
       checkInstancedVisibilityCuts(*device);
+      checkGpuHistoryDepth(*device);
       }
     size_t samples=0, gpuCells=0;
     for(const auto& file:readWorldChunkManifest(world).chunks) {

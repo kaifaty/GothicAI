@@ -126,7 +126,8 @@ class VisualObjects final {
     void prepareGlobals (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void postFrameupdate();
 
-    void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
+    void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass, bool history = false);
+    DrawCommands& treeHistoryCommands() { return drawCmd; }
     void visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void writeTreeOcclusionProbe(std::ostream& out, std::ostream& decisions);
     void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -134,7 +135,7 @@ class VisualObjects final {
     void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, DrawCommands::HistoryDraw history);
     enum class BenchImpostors { Auto, Force, Off };
     static BenchImpostors benchImpostors;
     enum class BenchShadowLevels { Auto, On, Off, Full };
@@ -248,7 +249,7 @@ class VisualObjects final {
     void     preFrameUpdateTrees();
     void     preFrameUpdateLevels();
     void     setImpostorShadow(Object& obj, bool enable);
-    void     drawImpostors(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    void     drawImpostors(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool history);
     // the meshlets the object's cluster draws while visible: [first, first+count) of its bucket's mesh
     std::pair<uint32_t,uint32_t> drawnMeshlets(Object& obj);
 

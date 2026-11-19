@@ -288,29 +288,34 @@ void SceneGlobals::commitUbo(uint8_t fId) {
   uboGlobalCpu.foliageFade = Tempest::Vec4(TreeWindFade::enabled() ? FoliageTree::fadeScale(proj.at(1,1), uboGlobalCpu.screenRes.y) : 0.f,
                                            0.f, 0.f, 0.f);
   uboGlobalCpu.viewFlags = (uboGlobalCpu.viewFlags & ~Grass::PartTrackMask) | (Grass::benchPartsOff() & Grass::PartTrackMask);
-  UboGlobal perView[V_Count];
-  uboGlobalPf[fId][V_Main].update(&uboGlobalCpu);
-
-  for(size_t i=V_Shadow0; i<V_Count; ++i) {
-    auto& ubo = perView[i];
-    ubo = uboGlobalCpu;
-    if(V_Shadow0<=i && i<=V_ShadowLast)
-      ubo.viewProject = uboGlobalCpu.viewShadow[i-V_Shadow0];
-    if(i==V_Vsm)
-      ubo.viewProject = uboGlobalCpu.viewVirtualShadow;
-    if(isShadowView(VisCamera(i))) {
-      ubo.mipBias      = 0;
-      ubo.mipGradScale = 1;
-      }
-    if(i!=V_Main)
-      ubo.motionVectors = 0;
-    ubo.viewFlags = (uboGlobalCpu.viewFlags & ~VF_HIZ) | (i==V_HiZ ? VF_HIZ : 0) | (isShadowView(VisCamera(i)) ? VF_SHADOW : 0);
-    std::memcpy(ubo.frustrum, frustrum[i].f, sizeof(ubo.frustrum));
-    }
-
   for(size_t i=0; i<V_Count; ++i) {
-    uboGlobalPf[fId][i].update(&perView[i]);
+    const auto ubo = makeViewUbo(VisCamera(i));
+    uboGlobalPf[fId][i].update(&ubo);
     }
+  }
+
+SceneGlobals::UboGlobal SceneGlobals::makeViewUbo(VisCamera v) const {
+  auto ubo = uboGlobalCpu;
+  const bool shadow = isShadowView(v);
+  if(V_Shadow0<=v && v<=V_ShadowLast)
+    ubo.viewProject = uboGlobalCpu.viewShadow[v-V_Shadow0];
+  if(v==V_Vsm)
+    ubo.viewProject = uboGlobalCpu.viewVirtualShadow;
+  if(shadow) {
+    ubo.mipBias      = 0;
+    ubo.mipGradScale = 1;
+    }
+  if(v!=V_Main)
+    ubo.motionVectors = 0;
+  ubo.viewFlags = (uboGlobalCpu.viewFlags & ~VF_HIZ) | (v==V_HiZ ? VF_HIZ : 0) | (shadow ? VF_SHADOW : 0);
+  std::memcpy(ubo.frustrum, frustrum[v].f, sizeof(ubo.frustrum));
+  return ubo;
+  }
+
+Tempest::StorageBuffer SceneGlobals::treeHistoryReferenceUbo() const {
+  auto ubo = makeViewUbo(V_Main);
+  ubo.viewFlags |= VF_TREE_OCCLUSION_PROBE | VF_HIZ_HISTORY_REFERENCE;
+  return Resources::device().ssbo(Tempest::BufferHeap::Upload, &ubo, sizeof(ubo));
   }
 
 void SceneGlobals::prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {

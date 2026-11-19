@@ -293,6 +293,11 @@ uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId
   cx.pShadow     = pShadow;
   cx.pVsm        = pVsm;
   cx.pHiZ        = pHiZ;
+  if(pMain!=nullptr && (m.alpha==Material::Solid || m.alpha==Material::AlphaTest) && treeHistoryEnabled()) {
+    cx.pHistoryGBuffer = Shaders::inst().materialPipeline(m, type, Shaders::T_HistoryGBuffer, bindless);
+    cx.pHistoryDepth   = Shaders::inst().materialPipeline(m, type, Shaders::T_HistoryDepth, bindless);
+    cx.pHistoryVerify  = Shaders::inst().materialPipeline(m, type, Shaders::T_HistoryDepthVerify, bindless);
+    }
   cx.bucketId    = bindless ? 0xFFFFFFFF : bucketId;
   cx.type        = type;
   cx.alpha       = m.alpha;
@@ -321,6 +326,7 @@ void DrawCommands::commit(Encoder<CommandBuffer>& enc) {
   if(!cmdDurtyBit && !cmdChg)
     return;
   cmdDurtyBit = false;
+  history.dirty = true;
 
   ord.resize(cmd.size());
   for(size_t i=0; i<cmd.size(); ++i)
@@ -376,7 +382,7 @@ void DrawCommands::commit(Encoder<CommandBuffer>& enc) {
     }
   }
 
-void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
+void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool useHistory) {
   static bool freeze = false;
   if(freeze)
     return;
@@ -444,6 +450,10 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
         const std::vector<uint32_t> empty(clusters.size());
         treeOcclusionDecisions = Resources::device().ssbo(Tempest::BufferHeap::Readback, empty);
         cmd.setBinding(11, treeOcclusionDecisions);
+        } else if(useHistory) {
+        pso = ordered ? &Shaders::inst().visibilityPassHistoryOrd : &Shaders::inst().visibilityPassHistory;
+        cmd.setBinding(11, history.status);
+        cmd.setBinding(12, history.commands);
         }
       } else if(viewport==SceneGlobals::V_HiZ) {
       pso = ordered ? &Shaders::inst().visibilityPassHiZCrOrd : &Shaders::inst().visibilityPassHiZCr;
@@ -723,7 +733,8 @@ void DrawCommands::drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
     }
   }
 
-void DrawCommands::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, SceneGlobals::VisCamera viewId, Material::AlphaFunc func) {
+void DrawCommands::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, SceneGlobals::VisCamera viewId,
+                              Material::AlphaFunc func, HistoryDraw historyDraw) {
   struct Push { uint32_t firstMeshlet; uint32_t meshletCount; } push = {};
 
   auto b = std::lower_bound(ord.begin(), ord.end(), func, [](const DrawCmd* l, Material::AlphaFunc f){
@@ -733,7 +744,6 @@ void DrawCommands::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Sce
     return f < r->alpha;
     });
 
-  auto& view = views[viewId];
   const auto hidden = scene.isLandscapeMask() && ownMeshMask ? ~((1u << Static) | (1u << Movable)) : hiddenTypes;
   for(auto i=b; i!=e; ++i) {
     auto& cx = **i;
@@ -753,7 +763,13 @@ void DrawCommands::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Sce
         pso = cx.pShadow;
         break;
       case SceneGlobals::V_Main:
-        pso = cx.pMain;
+        switch(historyDraw) {
+          case HistoryDraw::Off:         pso = cx.pMain; break;
+          case HistoryDraw::Early:       pso = cx.pHistoryDepth; break;
+          case HistoryDraw::EarlyVerify: pso = cx.pHistoryVerify; break;
+          case HistoryDraw::Unfiltered:
+          case HistoryDraw::Filtered:    pso = cx.pHistoryGBuffer; break;
+          }
         break;
       case SceneGlobals::V_HiZ:
       case SceneGlobals::V_Count:
@@ -766,7 +782,12 @@ void DrawCommands::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Sce
     push.firstMeshlet = cx.firstPayload;
     push.meshletCount = cx.maxPayload;
 
+    const bool compacted = historyDraw==HistoryDraw::Filtered || historyDraw==HistoryDraw::Early ||
+                           historyDraw==HistoryDraw::EarlyVerify;
+    const auto& view = compacted ? history.view : views[viewId];
     setBindings(cmd, cx, viewId);
+    if(compacted)
+      cmd.setBinding(L_Payload, view.visClusters);
     cmd.setPushData(push);
     cmd.setPipeline(*pso);
     if(cx.isMeshShader())
