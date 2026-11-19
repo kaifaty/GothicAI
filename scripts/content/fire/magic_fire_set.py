@@ -382,6 +382,38 @@ def fire_bow() -> list:
     ]
 
 
+# the arrow's mesh (ITRW_ARROW.MRM) lies along its X: the head at -71..-57 cm points where it flies (the bullet's matrix
+# turns -X to the way), the fletching at +9..+23; the pitch-soaked tow is wound just behind the head
+ARROW_TOW = (-52.0, 0.0, 0.0)
+
+
+def fire_arrow() -> list:
+    """The fire arrow (ITRW_ADDON_FIREARROW, SPELLFX_FIREARROW; magic-fire/weapon.md): the game burns the whole shaft;
+    ours burns where a fire arrow burns, the tow wound behind its head. One flame stands on the tow and leans with the
+    air: pressed back along the way in flight, upright once the arrow sticks. Short tongues around the tow keep a
+    short tail behind it in flight, embers fall behind on the way, a thin pitch smoke rises from a stuck arrow. The
+    light is the game's (FIRESMALL, 100 / 300 / 400 cm by the arrow's level: in the hand, flying, stuck)."""
+    x, y, z = ARROW_TOW
+    tow = {'shpFOR_S': 'OBJECT', 'shpOffsetVec_S': f'{x:g} {y:g} {z:g}'}
+    ball = {**tow, 'shpType_S': 'SPHERE', 'shpIsVolume': 1}
+    return [
+        {'name': 'OWN_FARROW_LICKS', 'base': 'OWN_HAND_LICKS', 'inherit': 0.9, 'wind': 0.2,
+         'set': {**ball, 'shpDim_S': '2.5', 'ppsValue': 30.0, 'visSizeStart_S': '13 20', 'visSizeEndScale': 0.6,
+                 'lspPartAvg': 280.0, 'lspPartVar': 80.0, 'velAvg': 0.02, 'velVar': 0.01, 'flyGravity_S': '0 0.0001 0'}},
+        of_torch('OWN_TORCH_SPARKS', 'OWN_FARROW_EMBERS',
+                 {**ball, 'shpDim_S': '2', 'ppsValue': 8.0, 'velAvg': 0.08, 'velVar': 0.04, 'flyGravity_S': '0 0.0001 0',
+                  'lspPartAvg': 800.0, 'lspPartVar': 350.0, 'visSizeStart_S': '0.5 0.5'}, inherit=0.1, minPixels=2.0),
+        of_torch('OWN_TORCH_SOOT', 'OWN_FARROW_SMOKE',
+                 {**tow, 'shpType_S': 'POINT', 'shpIsVolume': 0, 'shpDim_S': '0 0 0', 'ppsValue': 2.0,
+                  'visSizeStart_S': '6 6', 'visSizeEndScale': 5.0, 'lspPartAvg': 1600.0, 'lspPartVar': 400.0,
+                  'visAlphaStart': 70.0}, inherit=0.0),
+        {'name': 'FIRE_ARROW', 'base': 'OWN_HAND_FLAME', 'replaces': True, 'wind': 0.3,
+         'with': ['OWN_FARROW_LICKS', 'OWN_FARROW_EMBERS', 'OWN_FARROW_SMOKE'],
+         'set': {**tow, 'shpOffsetVec_S': f'{x:g} {y + 17:g} {z:g}', 'visSizeStart_S': '24 34'},
+         'lean': {'rise': 1.8, 'max_deg': 87, 'response': 0.03}},
+    ]
+
+
 def body_fire() -> list:
     """The fire on a burning body (body-fire.md, concept A: the body burns like a wick).
 
@@ -430,7 +462,7 @@ def body_fire() -> list:
 
 def cmd_build(_args) -> int:
     PARTICLES.parent.mkdir(parents=True, exist_ok=True)
-    effects = firebolt() + fireball() + charged_fireball() + firestorm() + firerain() + fire_bow() + body_fire()
+    effects = firebolt() + fireball() + charged_fireball() + firestorm() + firerain() + fire_bow() + fire_arrow() + body_fire()
     PARTICLES.write_text(json.dumps({'format': 1, 'effects': effects}, indent=1) + '\n')
     print(f'{PARTICLES.relative_to(ROOT)}: {len(effects)} effects')
     return 0

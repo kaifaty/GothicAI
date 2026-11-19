@@ -2848,6 +2848,138 @@
    }
   },
   {
+   "name": "OWN_FARROW_LICKS",
+   "base": "OWN_HAND_LICKS",
+   "inherit": 0.9,
+   "wind": 0.2,
+   "set": {
+    "shpFOR_S": "OBJECT",
+    "shpOffsetVec_S": "-52 0 0",
+    "shpType_S": "SPHERE",
+    "shpIsVolume": 1,
+    "shpDim_S": "2.5",
+    "ppsValue": 30.0,
+    "visSizeStart_S": "13 20",
+    "visSizeEndScale": 0.6,
+    "lspPartAvg": 280.0,
+    "lspPartVar": 80.0,
+    "velAvg": 0.02,
+    "velVar": 0.01,
+    "flyGravity_S": "0 0.0001 0"
+   }
+  },
+  {
+   "name": "OWN_FARROW_EMBERS",
+   "base": "FIRE_SPARKS",
+   "set": {
+    "ppsValue": 8.0,
+    "shpType_S": "SPHERE",
+    "shpDim_S": "2",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "-52 0 0",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 90.0,
+    "dirAngleElevVar": 30.0,
+    "velAvg": 0.08,
+    "velVar": 0.04,
+    "lspPartAvg": 800.0,
+    "lspPartVar": 350.0,
+    "flyGravity_S": "0 0.0001 0",
+    "visOrientation_S": "VELO",
+    "visSizeStart_S": "0.5 0.5",
+    "visSizeEndScale": 0.7,
+    "visTexColorStart_S": "255 95 10",
+    "visTexColorEnd_S": "255 50 0",
+    "visAlphaStart": 255.0,
+    "visAlphaEnd": 64.0,
+    "visAlphaFunc_S": "ADD",
+    "shpFOR_S": "OBJECT"
+   },
+   "curl": {
+    "strength": 1.5,
+    "frequency": 4,
+    "speed": 0.3
+   },
+   "drag": 2,
+   "stretch": 0.025,
+   "minPixels": 2.0,
+   "inherit": 0.1
+  },
+  {
+   "name": "OWN_FARROW_SMOKE",
+   "base": "LIGHTSMOKE",
+   "flipbook": {
+    "cols": 8,
+    "rows": 8,
+    "frames": 64,
+    "fps": 10
+   },
+   "set": {
+    "visName_S": "OWN_SMOKE_WISPY.TGA",
+    "visTexAniFPS": 0.0,
+    "visTexAniIsLooping": 0,
+    "visAlphaFunc_S": "BLEND",
+    "visTexColorStart_S": "49 45 42",
+    "visTexColorEnd_S": "64 60 57",
+    "visAlphaStart": 70.0,
+    "visAlphaEnd": 0.0,
+    "visSizeStart_S": "6 6",
+    "visSizeEndScale": 5.0,
+    "lspPartAvg": 1600.0,
+    "lspPartVar": 400.0,
+    "ppsValue": 2.0,
+    "ppsIsLooping": 1,
+    "ppsIsSmooth": 1,
+    "ppsFPS": 0.5,
+    "ppsScaleKeys_S": "0.7 1.2 1 0.8 1.3 1",
+    "shpType_S": "POINT",
+    "shpIsVolume": 0,
+    "shpDim_S": "0 0 0",
+    "shpOffsetVec_S": "-52 0 0",
+    "dirMode_S": "DIR",
+    "dirFOR_S": "WORLD",
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "dirAngleElev": 90.0,
+    "dirAngleElevVar": 12.0,
+    "velAvg": 0.06,
+    "velVar": 0.015,
+    "flyGravity_S": "0 0 0",
+    "shpFOR_S": "OBJECT"
+   },
+   "curl": {
+    "strength": 0.6,
+    "frequency": 3,
+    "speed": 0.2
+   },
+   "drag": 0.8,
+   "inherit": 0.0
+  },
+  {
+   "name": "FIRE_ARROW",
+   "base": "OWN_HAND_FLAME",
+   "replaces": true,
+   "wind": 0.3,
+   "with": [
+    "OWN_FARROW_LICKS",
+    "OWN_FARROW_EMBERS",
+    "OWN_FARROW_SMOKE"
+   ],
+   "set": {
+    "shpFOR_S": "OBJECT",
+    "shpOffsetVec_S": "-52 17 0",
+    "visSizeStart_S": "24 34"
+   },
+   "lean": {
+    "rise": 1.8,
+    "max_deg": 87,
+    "response": 0.03
+   }
+  },
+  {
    "name": "OWN_BODY_TALL",
    "base": "OWN_HAND_LICKS",
    "inherit": 0.85,
