@@ -355,7 +355,15 @@ void vsmLayoutRecords(Tempest::Device& device) {
   constexpr uint32_t Pool = 64*64;   // the pool's pages, as the game's 8192x8192
   constexpr uint32_t Sun0 = 16;      // the bin of mip 0's centre ring: the lamps' 16 bins come first
   constexpr uint32_t Meshlets = 10;  // of the one cluster, whole in every entry
-  struct Cluster { float sphere[4]; uint32_t bucketId_commandId, firstMeshlet; int32_t meshletCount; uint32_t instanceId; };
+  struct Cluster { // Cluster of scene.glsl: 48 bytes with the tree's own shadow range, empty here
+    float sphere[4];
+    uint32_t bucketId_commandId, firstMeshlet;
+    int32_t meshletCount;
+    uint32_t instanceId;
+    uint32_t shadowFirstMeshlet = 0;
+    int32_t shadowMeshletCount = 0;
+    uint32_t shadowCommandId = 0, padding = 0;
+    };
   struct Light   { float pos[3], range, color[3], cookie, sourceSize, nearLimit, padding[2]; }; // LightSource, scene.glsl
   struct Entry   { int x, y, mip, w, h; };
   const size_t headerWords = shaders.vsmClear.sizeofBuffer(0, 0)/sizeof(uint32_t);

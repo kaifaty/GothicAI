@@ -97,6 +97,7 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/game/gamescript*", "gothic"),
     ("common/game/itemdefinitionruntime", "gothic"),
     ("common/game/npcdefinitionruntime", "gothic"),
+    ("common/game/npchelperruntime", "gothic"),
     ("common/game/placementdefinitionruntime", "gothic"),
     ("common/game/activitydefinitionruntime", "gothic"),
     ("common/game/routinedefinitionruntime", "gothic"),
@@ -128,7 +129,6 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/dmusic/*", "gothic"),
     ("common/programdata", "gothic"),
     ("common/itemdefinitions", "rpg"),
-    ("common/npcdefinitions", "rpg"),
     ("common/placementdefinitions", "rpg"),
     ("common/activitydefinitions", "rpg"),
     ("common/routinedefinitions", "rpg"),
@@ -159,6 +159,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     # The platform: resources of our formats, render, animation, physics, sound, nets.
     # Installation identity and ready-base validation use file I/O only.
     ("common/baseidentity", "platform"),
+    # The NPC definitions reader is a codec over asset types and file I/O only.
+    ("common/npcdefinitions", "platform"),
     ("common/asset/*", "platform"),
     ("common/graphics/*", "platform"),
     ("common/physics/*", "platform"),

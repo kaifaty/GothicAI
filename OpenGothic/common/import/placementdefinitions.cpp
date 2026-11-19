@@ -1,5 +1,6 @@
 #include "baseimport.h"
 #include "npcsnapshot.h"
+#include "definitionjson.h"
 #include "asset/placementdefinitions.h"
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
@@ -384,24 +385,16 @@ std::vector<uint32_t> corpus(const NpcSnapshot::Program& program,const fs::path&
   std::sort(ids.begin(),ids.end(),[&](uint32_t a,uint32_t b) { return program.data.symbols[a].name<program.data.symbols[b].name; });
   return ids;
   }
-Json text(std::string_view value,Allocator& allocator) { return Json(value.data(),rapidjson::SizeType(value.size()),allocator); }
-void put(Json& json,const char* name,Json value,Allocator& allocator) { json.AddMember(text(name,allocator),value,allocator); }
-std::string bytes(std::string_view value) {
-  std::string encoded;
-  for(auto byte:value) {
-    const auto character=uint8_t(byte);
-    if(character<128) encoded+=char(character);
-    else { encoded+=char(0xc0|(character>>6)); encoded+=char(0x80|(character&63)); }
-    }
-  return encoded;
-  }
+using DefinitionJson::text;
+using DefinitionJson::put;
+using DefinitionJson::encode;
 Json valueJson(const Value& value,Allocator& allocator) {
   Json json(rapidjson::kObjectType),data;
   const char* type=nullptr;
   switch(value.kind) {
     case Value::Kind::Int: type="int"; data.SetInt(value.integer); break;
     case Value::Kind::Float: type="float"; data.SetDouble(value.real); break;
-    case Value::Kind::String: type="string"; data=text(bytes(value.text),allocator); break;
+    case Value::Kind::String: type="string"; data=text(encode(value.text),allocator); break;
     case Value::Kind::Symbol: type="symbol"; data=text(value.text,allocator); break;
     case Value::Kind::Self: type="self"; break;
     case Value::Kind::Null: type="null"; break;
@@ -447,24 +440,7 @@ Json envelope(const NpcSnapshot::Program& program,Allocator& allocator) {
   put(json,"string_encoding",text("unicode-byte-mapping",allocator),allocator);
   return json;
   }
-void difference(const Json& expected,const Json& actual,const std::string& path,int& errors) {
-  if(expected==actual) return;
-  if(expected.IsObject() && actual.IsObject()) {
-    for(auto it=expected.MemberBegin();it!=expected.MemberEnd();++it) {
-      const auto found=actual.FindMember(it->name);
-      if(found==actual.MemberEnd()) { ++errors; std::cerr<<path<<'.'<<it->name.GetString()<<": missing field\n"; }
-      else difference(it->value,found->value,path+"."+it->name.GetString(),errors);
-      }
-    for(auto it=actual.MemberBegin();it!=actual.MemberEnd();++it)
-      if(!expected.HasMember(it->name)) { ++errors; std::cerr<<path<<'.'<<it->name.GetString()<<": unexpected field\n"; }
-    }
-  else if(expected.IsArray() && actual.IsArray()) {
-    if(expected.Size()!=actual.Size()) { ++errors; std::cerr<<path<<": count differs\n"; }
-    for(rapidjson::SizeType i=0;i<std::min(expected.Size(),actual.Size());++i)
-      difference(expected[i],actual[i],path+"["+std::to_string(i+1)+"]",errors);
-    }
-  else { ++errors; std::cerr<<path<<": value differs from fresh VM\n"; }
-  }
+using DefinitionJson::difference;
 }
 
 NpcSnapshot::PlacementCounts NpcSnapshot::writePlacements(const Program& program,const fs::path& file,

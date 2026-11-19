@@ -63,6 +63,7 @@ target_link_libraries(content-convert PRIVATE gothic-npc-snapshot)
 add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
   ../../OpenGothic/common/game/itemdefinitionruntime.cpp
   ../../OpenGothic/common/game/npcdefinitionruntime.cpp
+  ../../OpenGothic/common/game/npchelperruntime.cpp
   ../../OpenGothic/common/game/placementdefinitionruntime.cpp
   ../../OpenGothic/common/game/routinedefinitionruntime.cpp
   ../../OpenGothic/common/world/objects/npcroutinetable.cpp

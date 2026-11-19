@@ -1,41 +1,17 @@
 #include "activitydefinitions.h"
 
-#include <rapidjson/document.h>
+#include "definitionjson.h"
 
 #include <fstream>
 #include <stdexcept>
 
 namespace {
 using Json = rapidjson::Value;
-void require(bool ok, const std::string& why) {
-  if(!ok) throw std::runtime_error(why);
-  }
-const Json& at(const Json& value, const char* key) {
-  require(value.IsObject() && value.HasMember(key),std::string("missing field ")+key);
-  return value[key];
-  }
-std::string string(const Json& value) {
-  require(value.IsString(),"expected a string");
-  return {value.GetString(),value.GetStringLength()};
-  }
-std::string bytes(const Json& value) {
-  const auto text=string(value);
-  std::string out;
-  for(size_t i=0;i<text.size();++i) {
-    const auto c=uint8_t(text[i]);
-    if(c<128) out+=char(c);
-    else {
-      require((c==0xc2 || c==0xc3) && i+1<text.size() && (uint8_t(text[i+1])&0xc0)==0x80,
-              "invalid script byte string");
-      out+=char(((c&3)<<6)|(uint8_t(text[++i])&63));
-      }
-    }
-  return out;
-  }
-int32_t integer(const Json& value) {
-  require(value.IsInt(),"expected int32 value");
-  return value.GetInt();
-  }
+using DefinitionJson::require;
+using DefinitionJson::at;
+using DefinitionJson::string;
+using DefinitionJson::bytes;
+using DefinitionJson::integer;
 ActivityDefinitions::MobActivity mob(const Json& json) {
   using namespace ActivityDefinitions;
   require(json.IsObject() && json.MemberCount()==9,"unexpected parameter field");

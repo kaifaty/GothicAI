@@ -11,7 +11,7 @@
 #include <string_view>
 
 namespace LoadProbe::Npcs {
-inline std::atomic<uint64_t> constructors{0}, constructorNs{0}, deferredCalls{0};
+inline std::atomic<uint64_t> constructors{0}, constructorNs{0}, deferredCalls{0}, scriptCalls{0};
 inline thread_local unsigned initializationDepth=0;
 inline bool enabled() {
   static const bool value=[] {
@@ -44,11 +44,11 @@ inline void deferred() {
   if(enabled()) deferredCalls.fetch_add(1,std::memory_order_relaxed);
   }
 inline void mark(std::string_view stage) {
-  if(stage=="session_begin") { constructors=0; constructorNs=0; deferredCalls=0; }
+  if(stage=="session_begin") { constructors=0; constructorNs=0; deferredCalls=0; scriptCalls=0; }
   char line[224];
-  std::snprintf(line,sizeof(line),"[loadprobe-npcs] stage=%.*s vm_constructors=%llu vm_ms=%.6f deferred_calls=%llu",
+  std::snprintf(line,sizeof(line),"[loadprobe-npcs] stage=%.*s vm_constructors=%llu vm_ms=%.6f deferred_calls=%llu script_calls=%llu",
                 int(stage.size()),stage.data(),(unsigned long long)constructors.load(),
-                double(constructorNs.load())/1e6,(unsigned long long)deferredCalls.load());
+                double(constructorNs.load())/1e6,(unsigned long long)deferredCalls.load(),(unsigned long long)scriptCalls.load());
   Tempest::Log::i(line);
   }
 }

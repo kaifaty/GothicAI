@@ -75,6 +75,15 @@ class StaticMesh {
       std::vector<std::pair<size_t,size_t>> sub;
       };
 
+    // GPU layout of a tree's rest box for one material and one visual meshlet range.
+    struct TreeHiZBounds {
+      Tempest::Vec3 min;
+      uint32_t      firstMeshlet = 0;
+      Tempest::Vec3 max;
+      uint32_t      meshletCount = 0;
+      };
+    static_assert(sizeof(TreeHiZBounds)==32);
+
     struct Impostor {
       float                              px = 0;
       std::array<Tempest::Texture2d,3>     textures; // albedo/coverage, normal/depth, ORM
@@ -111,6 +120,8 @@ class StaticMesh {
     // The meshlets (first, count) the submesh at this slice draws at a level of detail: 0 or one the mesh has not, its own
     std::pair<uint32_t,uint32_t>          levelMeshlets(size_t iboOffset, size_t iboLen, size_t level) const;
     MeshLevels::Selection                pickLevel(uint8_t previous, float height, bool allowImpostor) const;
+    auto                                 treeHiZBounds() const -> std::span<const TreeHiZBounds> { return treeHiZBoxes; }
+    const TreeHiZBounds*                  treeHiZBox(uint32_t firstMeshlet, uint32_t meshletCount) const;
 
     const Tempest::StorageBuffer& vboBuffer() const;
     const Tempest::StorageBuffer& ibo8Buffer() const;
@@ -144,6 +155,8 @@ class StaticMesh {
 
   private:
     void initSubMeshes(const PackedMesh& mesh);
+    void initTreeHiZBoxes(const PackedMesh& mesh);
     void retireRange();
     std::shared_ptr<LandscapeRange> pageRange;
+    std::vector<TreeHiZBounds> treeHiZBoxes;
   };

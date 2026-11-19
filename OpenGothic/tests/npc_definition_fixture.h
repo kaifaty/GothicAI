@@ -6,6 +6,7 @@
 #include "npcsnapshotfields.h"
 #include "programdata.h"
 
+#include <array>
 #include <bit>
 #include <stdexcept>
 #include <type_traits>
@@ -149,6 +150,164 @@ inline void activities(Fixture& f,uint32_t self,uint32_t perceptionHandler,uint3
   f.op(Op::RSR);
   }
 
+// The six deferred helper forms, with live equipment effects and two ordered ambient items.
+// Their bytecode goes through the same import recognizer as an installed program.
+struct Helpers {
+  uint32_t fight, add, visual, ambient, skeleton, attributes, precedingRandom, head;
+  };
+inline Helpers helpers(Fixture& f,uint32_t npcClass,uint32_t self,uint32_t random,uint32_t create,
+                       uint32_t armor,uint32_t ambientItem,uint32_t trailerItem) {
+  auto constant=[&](const char* name,int value) {
+    const auto id=f.symbol(name,Type::INT,1,Flag::CONST); f.p.symbols[id].int_values[0]=value; return id;
+    };
+  auto text=[&](const char* value) {
+    const auto id=f.symbol("$HELPER_"+std::to_string(f.p.symbols.size()),Type::STRING,1,Flag::CONST);
+    f.p.symbols[id].string_values[0]=value; return id;
+    };
+  auto function=[&](const char* name,std::initializer_list<Type> types,std::initializer_list<const char*> names) {
+    const auto id=f.fn(name,types);
+    uint32_t parameter=id;
+    for(const auto* local:names) {
+      auto& symbol=f.p.symbols[++parameter]; symbol.name=std::string(name)+"."+local;
+      if(symbol.type==uint32_t(Type::INSTANCE)) symbol.parent=int32_t(npcClass);
+      }
+    return id;
+    };
+  auto parameters=[&](uint32_t fn) {
+    for(auto i=f.p.symbols[fn].count;i>0;--i) {
+      const auto type=Type(f.p.symbols[fn+i].type);
+      f.op(type==Type::INSTANCE ? Op::PUSHVI : Op::PUSHV,fn+i);
+      f.op(type==Type::INSTANCE ? Op::MOVVI : type==Type::STRING ? Op::MOVS : Op::MOVI);
+      }
+    };
+  auto jump=[&](Op op) { f.op(op,0u); return f.p.bytecode.size()-4; };
+  auto land=[&](size_t at) {
+    const auto to=uint32_t(f.p.bytecode.size());
+    for(size_t i=0;i<4;++i) f.p.bytecode[at+i]=std::byte((to>>(8*i))&255);
+    };
+  auto member=[&](uint32_t npc,const char* name,uint8_t index=0) {
+    f.op(Op::GMOVI,npc); f.op(Op::PUSHVV,f.find(name)); f.p.bytecode.push_back(std::byte(index));
+    };
+  auto assign=[&](uint32_t npc,const char* name,uint8_t index,int value) {
+    f.op(Op::PUSHI,uint32_t(value)); member(npc,name,index); f.op(Op::MOVI);
+    };
+  const std::array<uint32_t,4> talents={constant("NPC_TALENT_1H",1),constant("NPC_TALENT_2H",2),
+      constant("NPC_TALENT_BOW",3),constant("NPC_TALENT_CROSSBOW",4)};
+  constant("MALE",0); constant("ATR_STRENGTH",4); constant("AIV_GENDER",17);
+  const auto skill=f.fn("NPC_SETTALENTSKILL",{Type::INSTANCE,Type::INT,Type::INT},true);
+  Helpers h{};
+  h.add=function("B_ADDFIGHTSKILL",{Type::INSTANCE,Type::INT,Type::INT},{"SLF","TALENT","PERCENT"});
+  f.begin(h.add); parameters(h.add);
+  for(uint8_t i=1;i<=4;++i) {
+    f.op(Op::PUSHV,talents[i-1]); f.op(Op::PUSHV,h.add+2); f.op(Op::EQ); const auto next=jump(Op::BZ);
+    f.op(Op::PUSHV,h.add+3); member(h.add+1,"C_NPC.HITCHANCE",i); f.op(Op::ADD);
+    member(h.add+1,"C_NPC.HITCHANCE",i); f.op(Op::MOVI);
+    for(uint32_t tier=0;tier<3;++tier) {
+      f.op(Op::PUSHI,tier*30); member(h.add+1,"C_NPC.HITCHANCE",tier==0 && i==2 ? 1 : i);
+      f.op(Op::GTE); const auto skip=jump(Op::BZ);
+      f.op(Op::PUSHVI,h.add+1); f.op(Op::PUSHV,talents[i-1]); f.op(Op::PUSHI,tier); f.op(Op::BE,skill); land(skip);
+      }
+    land(next);
+    }
+  f.op(Op::RSR);
+  const auto real=function("B_RAISEREALFIGHTTALENTPERCENT",{Type::INSTANCE,Type::INT,Type::INT},{"OTH","TALENT","PERCENT"});
+  f.begin(real); parameters(real);
+  for(uint8_t i=1;i<=4;++i) {
+    constant(("AIV_TALENT_"+std::to_string(i)).c_str(),83+i);
+    f.op(Op::PUSHV,talents[i-1]); f.op(Op::PUSHV,real+2); f.op(Op::EQ); const auto next=jump(Op::BZ);
+    f.op(Op::PUSHV,real+3); member(real+1,"C_NPC.AIVAR",uint8_t(83+i)); f.op(Op::ADD);
+    member(real+1,"C_NPC.AIVAR",uint8_t(83+i)); f.op(Op::MOVI); land(next);
+    }
+  f.op(Op::RSR);
+  const auto raise=function("B_RAISEFIGHTTALENT",{Type::INSTANCE,Type::INT,Type::INT},{"OTH","TALENT","PERCENT"});
+  f.begin(raise); parameters(raise);
+  for(const auto target:{real,h.add}) {
+    f.op(Op::PUSHVI,raise+1); f.op(Op::PUSHV,raise+2); f.op(Op::PUSHV,raise+3); f.call(target);
+    }
+  f.op(Op::RSR);
+  h.fight=function("B_SETFIGHTSKILLS",{Type::INSTANCE,Type::INT},{"SLF","PERCENT"});
+  f.begin(h.fight); parameters(h.fight);
+  for(const auto talent:talents) {
+    f.op(Op::PUSHVI,h.fight+1); f.op(Op::PUSHV,talent); f.op(Op::PUSHV,h.fight+2); f.call(raise);
+    }
+  f.op(Op::RSR);
+  const auto model=f.fn("MDL_SETVISUAL",{Type::INSTANCE,Type::STRING},true);
+  const auto body=f.fn("MDL_SETVISUALBODY",{Type::INSTANCE,Type::STRING,Type::INT,Type::INT,Type::STRING,Type::INT,Type::INT,Type::INT},true);
+  const auto scale=f.fn("MDL_SETMODELSCALE",{Type::INSTANCE,Type::FLOAT,Type::FLOAT,Type::FLOAT},true);
+  const auto overlay=f.fn("MDL_APPLYOVERLAYMDS",{Type::INSTANCE,Type::STRING},true);
+  const auto humans=text("HUMANS.MDS"),maleBody=text("hum_body_Naked0"),femaleBody=text("Hum_Body_Babe0");
+  h.head=text("");
+  h.visual=function("B_SETNPCVISUAL",{Type::INSTANCE,Type::INT,Type::STRING,Type::INT,Type::INT,Type::INT},
+                    {"SLF","GENDER","HEADMESH","FACETEX","BODYTEX","ARMORINSTANCE"});
+  f.begin(h.visual); parameters(h.visual);
+  f.op(Op::PUSHV,h.visual+2); member(h.visual+1,"C_NPC.AIVAR",17); f.op(Op::MOVI);
+  f.op(Op::PUSHVI,h.visual+1); f.op(Op::PUSHV,humans); f.op(Op::BE,model);
+  f.op(Op::PUSHI,0u); f.op(Op::PUSHV,h.visual+2); f.op(Op::EQ); const auto female=jump(Op::BZ);
+  auto visualBody=[&](uint32_t mesh) {
+    f.op(Op::PUSHVI,h.visual+1); f.op(Op::PUSHV,mesh); f.op(Op::PUSHV,h.visual+5); f.op(Op::PUSHI,0u);
+    f.op(Op::PUSHV,h.visual+3); f.op(Op::PUSHV,h.visual+4); f.op(Op::PUSHI,0u); f.op(Op::PUSHV,h.visual+6); f.op(Op::BE,body);
+    };
+  visualBody(maleBody);
+  for(const auto& choice:{std::pair{50,0.9f},std::pair{100,1.1f}}) {
+    f.op(Op::PUSHI,uint32_t(choice.first)); member(h.visual+1,"C_NPC.ATTRIBUTE",4);
+    f.op(choice.first==50 ? Op::LT : Op::GT); const auto skip=jump(Op::BZ);
+    f.op(Op::PUSHVI,h.visual+1); f.op(Op::PUSHI,std::bit_cast<uint32_t>(choice.second));
+    f.op(Op::PUSHI,std::bit_cast<uint32_t>(1.f)); f.op(Op::PUSHI,std::bit_cast<uint32_t>(1.f)); f.op(Op::BE,scale); land(skip);
+    }
+  const auto done=jump(Op::B); land(female);
+  f.op(Op::PUSHI,3u); f.op(Op::PUSHV,h.visual+5); f.op(Op::LTE);
+  f.op(Op::PUSHI,0u); f.op(Op::PUSHV,h.visual+5); f.op(Op::GTE); f.op(Op::AND); const auto textureDone=jump(Op::BZ);
+  f.op(Op::PUSHI,4u); f.op(Op::PUSHV,h.visual+5); f.op(Op::ADD); f.op(Op::PUSHV,h.visual+5); f.op(Op::MOVI); land(textureDone);
+  visualBody(femaleBody); land(done); f.op(Op::RSR);
+  const auto mil=constant("GIL_MIL",2),bau=constant("GIL_BAU",8);
+  std::array<uint32_t,2> tables{};
+  for(size_t table=0;table<tables.size();++table) {
+    const char* name=table==0 ? "B_CREATEAMBIENTINV_MIL" : "B_CREATEAMBIENTINV_BAU";
+    tables[table]=function(name,{Type::INT},{"INVENTORYSET"}); f.begin(tables[table]); parameters(tables[table]);
+    for(uint32_t roll=0;roll<7;++roll) {
+      f.op(Op::PUSHI,roll); f.op(Op::PUSHV,tables[table]+1); f.op(Op::EQ); const auto next=jump(Op::BZ);
+      f.op(Op::PUSHVI,self); f.op(Op::PUSHI,ambientItem); f.op(Op::PUSHI,roll+1+uint32_t(table)); f.op(Op::BE,create);
+      f.op(Op::PUSHVI,self); f.op(Op::PUSHI,trailerItem); f.op(Op::PUSHI,2u); f.op(Op::BE,create); land(next);
+      }
+    f.op(Op::RSR);
+    }
+  h.ambient=function("B_CREATEAMBIENTINV",{Type::INSTANCE},{"SLF"});
+  const auto draw=f.symbol("B_CREATEAMBIENTINV.ZUFALL",Type::INT);
+  f.begin(h.ambient); parameters(h.ambient);
+  f.op(Op::PUSHI,7u); f.op(Op::BE,random); f.op(Op::PUSHV,draw); f.op(Op::MOVI);
+  f.op(Op::PUSHV,mil); member(h.ambient+1,"C_NPC.GUILD"); f.op(Op::EQ); const auto fallback=jump(Op::BZ);
+  f.op(Op::PUSHV,draw); f.call(tables[0]); const auto ambientDone=jump(Op::B); land(fallback);
+  f.op(Op::PUSHV,draw); f.call(tables[1]); land(ambientDone); f.op(Op::RSR);
+  (void)bau;
+  h.skeleton=f.fn("B_SETVISUALS_SKELETON_LORD"); f.begin(h.skeleton);
+  f.op(Op::PUSHVI,self); f.op(Op::PUSHV,text("HumanS.mds")); f.op(Op::BE,model);
+  for(const auto* name:{"humans_1hST1.mds","humans_2hST2.mds","humans_BowT1.mds","humans_CBowT1.mds"}) {
+    f.op(Op::PUSHVI,self); f.op(Op::PUSHV,text(name)); f.op(Op::BE,overlay);
+    }
+  f.op(Op::PUSHVI,self); f.op(Op::PUSHI,0u); f.op(Op::PUSHV,h.head); f.op(Op::PUSHI,0u); f.op(Op::PUSHI,0u);
+  f.op(Op::PUSHI,armor); f.call(h.visual); f.op(Op::RSR);
+  constant("NPC_TALENT_MAGE",7);
+  h.attributes=function("B_SETATTRIBUTESTOCHAPTER",{Type::INSTANCE,Type::INT},{"SLF","KAP"});
+  f.begin(h.attributes); parameters(h.attributes);
+  f.op(Op::PUSHVI,h.attributes+1); f.op(Op::PUSHI,7u); f.op(Op::PUSHI,6u); f.op(Op::BE,skill);
+  for(uint32_t chapter=0;chapter<=6;++chapter) {
+    f.op(Op::PUSHI,chapter); f.op(Op::PUSHV,h.attributes+2); f.op(chapter==6 ? Op::GTE : Op::EQ); const auto next=jump(Op::BZ);
+    assign(h.attributes+1,"C_NPC.LEVEL",0,int(chapter*10+3));
+    assign(h.attributes+1,"C_NPC.ATTRIBUTE",4,int(chapter*25+10));
+    assign(h.attributes+1,"C_NPC.AIVAR",81,int(chapter*25+10)); land(next);
+    }
+  // Preserve Gothic's integer evaluation order, including truncation before multiplication.
+  for(const auto& out:{std::pair{"C_NPC.EXP",1u},std::pair{"C_NPC.EXP_NEXT",2u}}) {
+    f.op(Op::PUSHI,1u); member(h.attributes+1,"C_NPC.LEVEL"); f.op(Op::ADD);
+    f.op(Op::PUSHI,2u); f.op(Op::PUSHI,out.second); member(h.attributes+1,"C_NPC.LEVEL"); f.op(Op::ADD);
+    f.op(Op::DIV); f.op(Op::PUSHI,500u); f.op(Op::MUL); f.op(Op::MUL); member(h.attributes+1,out.first); f.op(Op::MOVI);
+    }
+  f.op(Op::RSR);
+  h.precedingRandom=f.fn("DRAW_BEFORE_AMBIENT"); f.begin(h.precedingRandom);
+  f.op(Op::PUSHI,1000u); f.op(Op::BE,random); member(self,"C_NPC.AIVAR",1); f.op(Op::MOVI); f.op(Op::RSR);
+  return h;
+  }
+
 inline NpcSnapshot::Program program() {
   Fixture f;
   const auto npcClass=f.cls<INpc>("C_NPC"),itemClass=f.cls<IItem>("C_ITEM");
@@ -173,6 +332,8 @@ inline NpcSnapshot::Program program() {
   const auto callback=f.fn("ON_EQUIP"); f.begin(callback);
   f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::PUSHI,5); f.op(Op::ADD);
   f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::MOVI);
+  f.op(Op::PUSHI,60u); f.op(Op::PUSHVV,f.find("C_NPC.ATTRIBUTE")); f.p.bytecode.push_back(std::byte{4}); f.op(Op::ADDMOVI);
+  f.op(Op::PUSHI,10u); f.op(Op::PUSHVV,f.find("C_NPC.HITCHANCE")); f.p.bytecode.push_back(std::byte{1}); f.op(Op::ADDMOVI);
   f.set(f.find("C_NPC.LEVEL"),5); f.op(Op::RSR);
   const auto addAfterEquip=f.fn("ADD_AFTER_EQUIP"); f.begin(addAfterEquip);
   f.op(Op::PUSHV,f.find("C_NPC.ATTRIBUTE")); f.op(Op::PUSHI,15); f.op(Op::ADD);
@@ -187,12 +348,7 @@ inline NpcSnapshot::Program program() {
   f.set(f.find("C_ITEM.VALUE"),13); f.op(Op::RSR);
   const auto itemPrototype=f.symbol("IT_NPC_PROTOTYPE",Type::PROTOTYPE,0,Flag::CONST,int32_t(itemClass));
   f.begin(itemPrototype); f.set(f.find("C_ITEM.VALUE"),1); f.op(Op::RSR);
-  const auto ambient=f.fn("B_CREATEAMBIENTINV",{Type::INSTANCE});
-  const auto count=f.symbol("B_CREATEAMBIENTINV.COUNT",Type::INT);
-  f.begin(ambient); f.op(Op::PUSHV,ambient+1); f.op(Op::MOVVI);
-  f.op(Op::PUSHI,7); f.op(Op::BE,random); f.op(Op::PUSHI,1); f.op(Op::ADD);
-  f.op(Op::PUSHV,count); f.op(Op::MOVI);
-  f.op(Op::PUSHV,ambient+1); f.op(Op::PUSHI,ambientItem); f.op(Op::PUSHV,count); f.op(Op::BE,create); f.op(Op::RSR);
+  const auto helper=helpers(f,npcClass,self,random,create,item,ambientItem,trailerItem);
   const auto point=f.symbol("POINT",Type::STRING,1,Flag::CONST); f.p.symbols[point].string_values[0]="TEST_WP";
   const auto state=f.fn("ZS_TEST"); f.begin(state);
   f.op(Op::PUSHI,7); f.op(Op::BE,random); f.op(Op::RSR);
@@ -201,7 +357,8 @@ inline NpcSnapshot::Program program() {
   f.op(Op::PUSHI,state); f.op(Op::PUSHV,point); f.op(Op::BE,ta); f.op(Op::RSR);
   const auto prototype=f.symbol("NPC_BASE",Type::PROTOTYPE,0,Flag::CONST,int32_t(npcClass)); f.begin(prototype);
   f.set(f.find("C_NPC.DAILY_ROUTINE"),int(routine));
-  f.set(f.find("C_NPC.ATTRIBUTE"),10); f.set(f.find("C_NPC.GUILD"),2); f.op(Op::RSR);
+  f.set(f.find("C_NPC.ATTRIBUTE"),10); f.set(f.find("C_NPC.GUILD"),2);
+  f.op(Op::PUSHI,40u); f.op(Op::PUSHVV,f.find("C_NPC.ATTRIBUTE")); f.p.bytecode.push_back(std::byte{4}); f.op(Op::MOVI); f.op(Op::RSR);
   const auto npc=f.symbol("NPC_NO_ID",Type::INSTANCE,0,Flag::CONST,int32_t(prototype)); f.begin(npc);
   f.call(prototype);
   // Untouched AIVAR elements have the same zero value in fresh NPCs and snapshots.
@@ -213,18 +370,24 @@ inline NpcSnapshot::Program program() {
   // CreateInvItems does not allocate an item for a zero amount, even for a prototype symbol.
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,itemPrototype); f.op(Op::PUSHI,0); f.op(Op::BE,create);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,item); f.op(Op::PUSHI,3); f.op(Op::BE,create);
-  f.op(Op::PUSHV,self); f.op(Op::PUSHI,item); f.op(Op::BE,equip);
+  f.op(Op::PUSHV,self); f.op(Op::PUSHI,0u); f.op(Op::PUSHV,helper.head); f.op(Op::PUSHI,0u); f.op(Op::PUSHI,0u);
+  f.op(Op::PUSHI,item); f.call(helper.visual);
+  f.op(Op::PUSHV,self); f.op(Op::PUSHI,30u); f.call(helper.fight);
   // The helper must read the attribute after on_equip added five, then add fifteen.
   f.call(addAfterEquip);
   // Moving the helper to the end reads forty instead of fifteen; EXP preserves its result.
   f.set(f.find("C_NPC.ATTRIBUTE"),40);
   f.set(f.find("C_NPC.LEVEL"),30);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,std::bit_cast<uint32_t>(1.25f)); f.op(Op::BE,fatness);
-  f.op(Op::PUSHV,self); f.call(ambient);
+  f.call(helper.precedingRandom);
+  f.op(Op::PUSHV,self); f.call(helper.ambient);
   // The ambient item must precede this distinct item, and ITEM must end on the trailer.
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,trailerItem); f.op(Op::PUSHI,1); f.op(Op::BE,create); f.op(Op::RSR);
   const auto named=f.symbol("NPC_WITH_ID",Type::INSTANCE,0,Flag::CONST,int32_t(prototype)); f.begin(named);
-  f.call(prototype); f.set(f.find("C_NPC.ID"),123); f.op(Op::RSR);
+  f.call(prototype); f.set(f.find("C_NPC.ID"),123);
+  f.call(helper.skeleton);
+  f.op(Op::PUSHV,self); f.op(Op::PUSHI,3u); f.call(helper.attributes);
+  f.op(Op::PUSHV,self); f.op(Op::PUSHI,1u); f.op(Op::PUSHI,60u); f.call(helper.add); f.op(Op::RSR);
   const auto dependent=f.symbol("NPC_GLOBAL",Type::INSTANCE,0,Flag::CONST,int32_t(npcClass)); f.begin(dependent);
   f.op(Op::PUSHV,chapter); f.op(Op::PUSHV,f.find("C_NPC.LEVEL")); f.op(Op::MOVI); f.op(Op::RSR);
   const auto writer=f.symbol("NPC_WRITER",Type::INSTANCE,0,Flag::CONST,int32_t(npcClass)); f.begin(writer);

@@ -238,6 +238,7 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   textureGeneration=generation;
 
   std::vector<BucketGpu> bucket;
+  std::vector<StaticMesh::TreeHiZBounds> treeBounds;
   uint32_t diffuseFrames=uint32_t(bucketsCpu.size());
   for(auto& i:bucketsCpu)
     if(i.mat.hasFrameAnimation())
@@ -441,6 +442,13 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       bx.flags |= BK_EYE;
     if(i.mat.alpha==Material::Water)
       bx.flags |= BK_WATER;
+    if(i.staticMesh!=nullptr && (i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest) &&
+       (bx.flags & (BK_MORPH|BK_STRAND|BK_GRASS|BK_VERGE|BK_TRACK))==0 && FoliageTree::isTree(i.mat.foliage)) {
+      const auto bounds = i.staticMesh->treeHiZBounds();
+      bx.treeHiZFirst = uint32_t(treeBounds.size());
+      bx.treeHiZCount = uint32_t(bounds.size());
+      treeBounds.insert(treeBounds.end(),bounds.begin(),bounds.end());
+      }
     bucket.push_back(bx);
     }
 
@@ -451,6 +459,11 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   Resources::recycle(std::move(bucketsGpu));
   bucketsGpu = device.ssbo(Uninitialized,bucket.size()*sizeof(bucket[0]));
   bucketsGpu.updateAsync(bucket.data(),0,bucket.size()*sizeof(bucket[0]));
+  if(treeBounds.empty())
+    treeBounds.emplace_back(); // binding for views without trees
+  Resources::recycle(std::move(treeHiZBoundsGpu));
+  treeHiZBoundsGpu = device.ssbo(Uninitialized,treeBounds.size()*sizeof(treeBounds[0]));
+  treeHiZBoundsGpu.updateAsync(treeBounds.data(),0,treeBounds.size()*sizeof(treeBounds[0]));
 
   updateBindlessArrays(true,fId);
   return true;

@@ -6,17 +6,112 @@ twice in the mode of pairs (reports/engine/2026-11-16-modern-trees/two-sided.md)
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 import fir
 import fir_tree
+import tree_bough_lod
 import tree_density
 import tree_glb
 import tree_prefix
 
 HERE = Path(__file__).resolve().parent
+
+
+def test_bough_lod_measures_a_small_fir(tmp_path, monkeypatch):
+    def quad(camera):
+        plane = np.column_stack((tree_bough_lod.UV * (2., 1.) - (1., .5), np.zeros(4)))
+        return plane @ tree_bough_lod.basis(camera).T
+
+    def part(name, position, phase, index, cutout):
+        colour = np.zeros((len(position), 4), np.uint8)
+        colour[:, 1] = phase
+        if cutout:
+            colour[:, 2] = 255
+            colour[::4, 2] = 0
+        uv = np.tile(tree_bough_lod.UV, (len(position) // 4, 1))
+        return dict(name=name, position=np.asarray(position, np.float32),
+                    normal=np.tile((0., 0., 1.), (len(position), 1)), uv=uv,
+                    colour=colour, index=index, cutout=cutout)
+
+    indices = tree_bough_lod.QUAD
+    front, side = quad(tree_bough_lod.FRONT), quad(tree_bough_lod.SIDE)
+    wood = part('wood', [(-.1, 0., -.3), (.1, 0., -.3), (.1, 0., 7.15), (-.1, 0., 7.15)], 0, indices, False)
+    foliage = part('foliage', np.concatenate((front, side, front, front + (.1, .1, 1.))),
+                   [23] * 12 + [0] * 4, np.concatenate([indices + i for i in (0, 4, 8, 12)]), True)
+    branch = SimpleNamespace(number=1, phase=23 / 255, points=np.zeros((1, 3)),
+                             azimuth=0., height=.2, whorl=0, length=2.)
+    cards = [dict(first=i, branch=1, cluster=1, role='hang') for i in (0, 4, 8)]
+    cards.append(dict(first=12, branch=0, cluster=0, role='sleeve'))
+    metrics = dict(cards_total=4, cards={'mock': 4}, cards_by_role={'hang': 3, 'sleeve': 1})
+    monkeypatch.setattr(fir_tree, 'build', lambda *_: SimpleNamespace(
+        parts=[wood, foliage], branches=[branch], stubs=0, cards=cards, metrics=metrics))
+    config = dict(id='mock', cards={'top': [.8]}, whorl={'skirt': 1})
+    glb = tmp_path / 'mock.glb'
+    tree_glb.write(glb, [wood, foliage], extras=dict(tree='mock', seed=7, scale=1.))
+
+    boughs, projected, census, (leaves, tree) = tree_bough_lod.measure_branches(glb, config)
+    assert census['branches'] == 1
+    assert census['types'] == {'skirt': 1}
+    assert (census['wood'], census['fixed_foliage'], census['full']) == (2, 2, 10)
+    assert projected.shape == (24, 1)
+    budget = {row['tree_px']: row['options'] for row in tree_bough_lod.budgets(boughs, projected, census)}
+    assert budget[800]['48/16']['steady'] == 10
+    # The mock bough spans about 31 px at 100 px tree height and 15.5 px at 50 px.
+    assert budget[100]['32/8'] == dict(steady=16, submitted=22, fading=1, stages=[0, 1, 0])
+    assert budget[50]['48/16'] == dict(steady=8, submitted=20, fading=1, stages=[0, 0, 1])
+
+    bough = boughs[0]
+    texture = np.zeros((5, 7, 4), np.float32)
+    texture[1:4, 1:6] = (.2, .3, .4, 1.)
+    texture[2:4, 4:] = (.8, .6, .4, 1.)
+    cross = tree_bough_lod.bake(bough, texture, (tree_bough_lod.FRONT, tree_bough_lod.SIDE), 1)
+    three_crosses = tree_bough_lod.bake(bough, texture, (tree_bough_lod.FRONT, tree_bough_lod.SIDE), 3)
+    variants = [cross[:1], cross, three_crosses]
+    atlas = dict(tree_bough_lod.atlas_sizes([(bough, boughs, variants)]))
+    # At the upper edges of the bands, the padded atlas has six 24×32 and two 24×16 tiles.
+    assert atlas['48/16'] == dict(tiles=8, padded_area=6 * 24 * 32 + 2 * 24 * 16, side=128)
+
+    # The covered source texels share the same blue channel, including on filtered edges.
+    tile = cross[0][3]
+    partial = (tile[..., 3] > 0.) & (tile[..., 3] < 1.)
+    assert partial.any()
+    np.testing.assert_allclose(tile[..., 2][partial], .4, atol=1e-6)
+
+    cases = {view: result for view, result, _ in tree_bough_lod.measure_views(bough, bough, texture, variants)}
+    edge = cases['side'][32]
+    assert edge['single']['tone_pct'] is None
+    assert edge['single']['open_pp'] > 90
+    assert abs(edge['cross']['open_pp']) < 2
+    assert abs(edge['cross']['tone_pct']) < 2
+    assert edge['cross']['coverage_px2'] < 6.
+
+    screening = []
+    for sample, fail_px, metric, error in (('source', 8, 'coverage_px2', 2.), ('holdout', 4, 'luma_px2', .2)):
+        side = {}
+        for px in tree_bough_lod.BOUGH_PX:
+            delta = dict(coverage_px2=1., luma_px2=.1)
+            if px == fail_px:
+                delta[metric] = error
+            side[px] = {name: delta for name in tree_bough_lod.OPTIONS}
+        screening.append(dict(sample=sample, metrics={'side': side}))
+    limits = tree_bough_lod.screening_limits(screening)
+    assert {sample: values['cross'] for sample, values in limits.items()} == dict(source=4, holdout=2, both=2)
+
+    merges, ends = tree_bough_lod.hierarchy_merges(leaves, tree, census)
+    merge, = merges
+    end, = ends
+    assert (merge.leaves, end.leaves) == (3, 4)
+    assert merge.low >= end.high
+    samples = [800, (merge.high + merge.low) / 2, (end.high + end.low) / 2, 30]
+    curve = tree_bough_lod.hierarchy_curve(merges, ends, census, [(3, 8), (2, 6), (2, 6), (1, 4)], samples)
+    assert curve['effective'] == [[4, 10], [3.5, 9], [2, 5], [1, 2]]
+    assert curve['submitted'] == [[4, 10], [6, 14], [4, 10], [1, 2]]
+    assert curve['turnover'][1] == pytest.approx(.5 * 3 / 4)
+    assert curve['current_turnover'] == [0, 1, 1, 0]
 
 
 @pytest.fixture(scope='module')
