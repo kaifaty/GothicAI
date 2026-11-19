@@ -441,14 +441,153 @@ def replay_precise(path, lines, shared, geometry):
     )
 
 
+def history_owner_samples(ids, main, previous, vp, previous_vp):
+    """Approximate the missing previous owner IDs using depth agreement with the diagnostic frame."""
+    h, w = ids.shape
+    y, x = np.mgrid[2:h:4, 2:w:4]
+    z = previous[y, x]
+    clip = np.stack((2 * (x + .5) / w - 1, 2 * (y + .5) / h - 1, z, np.ones(x.shape)), axis=-1)
+    current = clip @ (np.linalg.inv(previous_vp.astype(float)) @ vp.astype(float))
+    x_ndc, y_ndc, depth = (current[..., :3] / current[..., 3:]).transpose(2, 0, 1)
+    x = (x_ndc * .5 + .5) * w
+    y = (y_ndc * .5 + .5) * h
+    inside = (current[..., 3] > 0) & (x >= 0) & (x < w) & (y >= 0) & (y < h) & (z < 1)
+    x, y, depth = x[inside].astype(int), y[inside].astype(int), depth[inside]
+    agree = np.abs(main[y, x] - depth) <= 2e-5
+    owners, counts = np.unique(ids[y[agree], x[agree]], return_counts=True)
+    return {int(owner) for owner, count in zip(owners, counts, strict=True) if count >= 16}
+
+
+class HistoryDepth(Depth):
+    @staticmethod
+    def encode(z):
+        return z
+
+    def sample(self, rect, base_skip, width):
+        if width == 0:
+            texels = self.crop(self.pixels, rect)
+        else:
+            lo, hi = np.clip(self.rectangle(rect), 0, self.screen - 1) // self.tile
+            mip = base_skip
+            while ((hi >> mip) - (lo >> mip)).max() >= width:
+                mip += 1
+            x0, y0 = lo >> mip
+            x1, y1 = hi >> mip
+            texels = self.mips[mip][y0:y1 + 1, x0:x1 + 1]
+        return texels.max(), texels.size
+
+
+def replay_history(path, shared, geometry):
+    lines = path.with_suffix(".txt").read_text().splitlines()
+    w, h, hw, hh, near = map(float, lines[0].split()[:5])
+    screen = np.array([int(w), int(h)])
+    precise = len(lines[0].split()) == 6
+    vp = np.array(lines[1].split(), dtype=np.float32).reshape(4, 4)
+    last_vp = np.loadtxt(path.with_suffix(".previous.txt"), dtype=np.float32).reshape(4, 4)
+    planes = np.array([line.split() for line in lines[2:8]], dtype=np.float32)
+
+    def image(suffix, dtype="<f4"):
+        return np.fromfile(path.with_suffix(suffix), dtype=dtype).reshape(screen[::-1])
+
+    pre, main, ids = image(".pre.f32"), image(".main.f32"), image(".id.u32", "<u4")
+    seeds = history_owner_samples(ids, main, image(".previous.f32"), vp, last_vp)
+    owners, counts = np.unique(ids, return_counts=True)
+    pixels = dict(zip(map(int, owners), map(int, counts), strict=True))
+    if precise:
+        decisions = np.fromfile(path.with_suffix(".decisions.u32"), dtype="<u4").reshape(-1, 3)
+        seeds = {o for o in seeds if o & CLUSTER_TAG and o != TERRAIN_ID and decisions[o ^ CLUSTER_TAG, 0] & PRECISE}
+    else:
+        stock = Depth(pre, np.array([int(hw), int(hh)]))
+        stock.load_gpu(path.with_suffix(".hiz.u16"))
+
+    trees, visible = [], set()
+    for line in lines[8:]:
+        fields = line.split()
+        instance, level, meshlets, crown = map(int, fields[:4])
+        model = np.array(fields[8:24], dtype=np.float32).reshape(4, 4)[:, :3]
+        root = tuple(model[3])
+        lone = root[0] == 48500 and root[2] == 500
+        owner = (int(fields[32]) | CLUSTER_TAG) if precise else instance + 1
+        if pixels.get(owner, 0):
+            visible.add(root)
+        key = np.array(fields[24:30], dtype=np.float32).reshape(2, 3)
+        if precise:
+            if not decisions[owner ^ CLUSTER_TAG, 0] & PRECISE:
+                continue
+            box = np.array(fields[33:39], dtype=np.float32).reshape(2, 3)
+        else:
+            sphere = np.array(fields[4:8], dtype=np.float32)
+            if not meshlets or not in_frustum(sphere, planes):
+                continue
+            margin, faded = map(float, fields[30:32])
+            wide = grow(key, margin)
+            if not stock.test(*project(wide, model, vp, near), "stock")[0]:
+                continue
+        error, mesh = min((float(np.max(np.abs(key - value))), name) for name, value in shared.items())
+        if error > .02:
+            raise ValueError(f"No spruce with bounds {key}. Closest {mesh}, {error:g} cm off")
+        tight, triangles, _ = geometry[mesh, level, bool(crown)]
+        if not precise:
+            box = np.clip(grow(tight, faded), wide[0], wide[1])
+            if not stock.test(*project(box, model, vp, near), "precise")[0]:
+                continue
+        rect, z = project(box, model, vp, near)
+        rect[0] -= 1 / screen
+        rect[1] += 1 / screen
+        trees.append((root, owner, triangles, rect, z - 8 * np.finfo(np.float32).eps, lone))
+
+    tree_ids = {owner for _, owner, *_ in trees}
+    if not precise:
+        seeds &= tree_ids | {TERRAIN_ID}
+    seed_depth = np.where(np.isin(ids, list(seeds)), np.minimum(pre, main), pre)
+    forest = [tree for tree in trees if not tree[-1]]
+    hidden = {root for root, *_ in forest} - visible
+    seed_triangles = sum(tris for _, o, tris, *_ in trees if o in seeds)
+    other_seed_meshlets = sum(int(decisions[o ^ CLUSTER_TAG, 1]) for o in seeds - tree_ids) if precise else None
+    result = dict(
+        zero_pixel_trees=len(hidden), zero_pixel_triangles=sum(tris for root, _, tris, *_ in forest if root in hidden),
+        seed_clusters=len(seeds), seed_fir_triangles=seed_triangles, other_seed_meshlets=other_seed_meshlets,
+    )
+    for name, depth, excluded in (("phase_one", seed_depth, seeds), ("full_depth_limit", main, set())):
+        pyramid = HistoryDepth(depth, pyramid_size(screen, 512))
+        variants = [(f"{512 >> mip}x{width}", mip, width) for mip in range(3, -1, -1) for width in (2, 4, 8)]
+        counts = {}
+        for variant, mip, width in (*variants, ("pixels", 0, 0)):
+            kept, saved, lost, samples, tests = set(), 0, 0, 0, 0
+            for root, owner, triangles, rect, z, _ in forest:
+                if owner in excluded or z <= 0:
+                    kept.add(root)
+                    continue
+                furthest, reads = pyramid.sample(rect, mip, width)
+                samples += reads
+                tests += 1
+                if min(z, 1) <= furthest:
+                    kept.add(root)
+                else:
+                    lost += pixels.get(owner, 0)
+                    if root in hidden:
+                        saved += triangles
+            counts[variant] = dict(
+                trees_removed=len(hidden - kept), hidden_triangles_removed=saved, lost_pixels=lost,
+                mean_reads=round(samples / tests, 2) if tests else 0,
+            )
+        result[name] = counts
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("content", type=Path)
     parser.add_argument("capture", nargs="+", type=Path)
     parser.add_argument("--repo", default=Path.cwd(), type=Path)
+    parser.add_argument("--history", action="store_true", help="Replay the step 3b two-phase estimate")
     args = parser.parse_args()
     meshes = read_geometry(args.repo, args.content)
-    print(json.dumps({p.stem: replay(p, *meshes) for p in args.capture}, indent=2))
+    if args.history:
+        result = {str(p): replay_history(p, *meshes) for p in args.capture}
+    else:
+        result = {p.stem: replay(p, *meshes) for p in args.capture}
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
