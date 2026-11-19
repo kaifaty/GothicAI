@@ -27,6 +27,7 @@ const uint GrassPartNormal      = 32u;
 const uint GrassPartPaint       = 64u;
 const uint GrassPartHide        = 128u;
 const uint GrassPartCover       = 256u; // the paint of the meadow's own ground (grass_layers.glsl): sward green, earth red
+const uint GrassPartVolume      = 1024u; // the far volume off (grass_volume.glsl): the pairs of one run
 const uint GrassPartBands       = 512u; // the ground of the grass painted by the bands of its distance (grassPaintFarBand)
 const uint GrassPartLayers      = 4096u; // a ground with its own layers as a painted ground: no layers, its blades as there
 const uint GrassPartCells       = 8192u;

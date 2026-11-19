@@ -1,0 +1,96 @@
+# The far volume of the grass (reports/engine/2026-11-19-grass-far-volume): pairs of one moment, with the layer and
+# without it (`grass parts 1024`), still air, noon. Fields from above, where the ground past 48 m fills the frame,
+# and at the game's eye height, where it should hardly show. Run on Ryzen at 2560x1440 with the live game's set:
+#   TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_CONTENT=<set> scripts/bench.sh grass-far-volume <out>
+# Shots <view>-on and <view>-off; with `grass parts 512` <view>-bands, the ground by the bands of its distance.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+cloth wind calm
+# Onar's fields from the slope above them
+goto NW_BIGFARM_FARM4_PATH_07
+cam at 64807 5560 -10675 55841 1768 -11459
+clear 3000
+wait 15000
+grass wait
+wait 2000
+grass stats
+shot onar-on
+wait 300
+grass parts 1024
+wait 1000
+shot onar-off
+wait 300
+grass parts 512
+wait 1000
+shot onar-bands
+wait 300
+grass parts 0
+# Sekob's field from the hill west of it
+goto NW_FARM3_PATH_04
+cam at 37000 7177 -23500 44000 2791 -23500
+wait 15000
+grass wait
+wait 2000
+grass stats
+shot sekob-on
+wait 300
+grass parts 1024
+wait 1000
+shot sekob-off
+wait 300
+grass parts 512
+wait 1000
+shot sekob-bands
+wait 300
+grass parts 0
+# Lobart's pasture from the slope east of it
+goto NW_FARM1_PATH_CITY_SHEEP_02
+cam at 17262 4949 -10500 11200 1382 -14000
+wait 15000
+grass wait
+wait 2000
+grass stats
+shot lobart-on
+wait 300
+grass parts 1024
+wait 1000
+shot lobart-off
+wait 300
+grass parts 512
+wait 1000
+shot lobart-bands
+wait 300
+grass parts 0
+cam game
+# Sekob's field from the path, the game's camera
+goto NW_FARM3_PATH_04
+face -65
+wait 15000
+grass wait
+wait 2000
+shot sekob-eye-on
+wait 300
+grass parts 1024
+wait 1000
+shot sekob-eye-off
+wait 300
+grass parts 0
+# the meadow by the road from the tavern, the game's camera
+goto NW_TAVERNE_BIGFARM_05
+face 100
+wait 15000
+grass wait
+wait 2000
+shot road-eye-on
+wait 300
+grass parts 1024
+wait 1000
+shot road-eye-off
+wait 300
+grass parts 0

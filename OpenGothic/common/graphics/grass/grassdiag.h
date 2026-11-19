@@ -27,8 +27,9 @@ enum Part : uint32_t {
   PartCover       = 256, // the meadow's own ground painted by its cover: sward green, earth red (grass_layers.glsl)
   PartBands       = 512, // the ground of the grass painted by the bands of its distance (grassPaintFarBand), the
                          // blades as they are; with PartHide the whole ground (reports/engine/2026-11-18-grass-volume)
-  // 1024 and 2048 took back parts of a palette the blades of a ground with its own layers had for one round
-  // (reports/engine/2026-11-14-meadow-ground, "Что отняло жизнь": the table was made with them); unused since
+  PartVolume      = 1024, // the far volume of the ground off (grass_volume.glsl): «было | стало» within one run
+  // 2048 took back a part of a palette the blades of a ground with its own layers had for one round
+  // (reports/engine/2026-11-14-meadow-ground, "Что отняло жизнь": the table was made with it); unused since
   PartLayers      = 4096, // a ground with its own layers as a painted ground: no layers, its blades as there
   PartCells       = 8192, // with the mask's paint (1+64+128): squares of 0.5 m in red, of 5 m in green, by the world's x and z
   PartTrack       = 16384, // a road with `track` as with its `verge` alone: the painted road and the strip (grass_track.glsl)

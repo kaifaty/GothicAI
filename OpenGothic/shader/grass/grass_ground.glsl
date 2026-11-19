@@ -2,6 +2,7 @@
 #define GRASS_GROUND_GLSL
 
 #include "grass/grass_common.glsl"
+#include "grass/grass_volume.glsl"
 #include "materials/foliage_wind.glsl"
 
 // The ground of a material with `grass` (BK_GRASS; reports/engine/2026-11-14-grass-system), in the landscape's
@@ -75,6 +76,15 @@ void grassGround(uint bits, vec3 pos, vec3 normal, float sward, inout vec4 diffu
     tint     *= 1.0 + GrassLeanSheen*k*min(lean/(0.5*GrassLeanMaxTan), 1.0);
     normalOut = encodeNormal(normalize(mix(decodeNormal(normalOut), gn, k) - vec3(scene.foliageWind.x, 0.0, scene.foliageWind.y)*(lean*GrassNormalLean*k)));
     orm.r     = mix(orm.r, GrassFarAo, k);
+    if((scene.viewFlags & VF_GRASS_VOLUME)!=0u && (partsOff & GrassPartVolume)==0u) {
+      // past where the blades thin out, the grass that is there as a volume (grass_volume.glsl)
+      const float kv = stand*smoothstep(ring.y*GrassVolumeFrom, ring.z, d);
+      if(kv>0.0) {
+        const vec4 vol = grassVolume(pos, gn, toEye/d, d, grassPackedHeight(bits), lean, kv);
+        tint  *= vol.rgb;
+        orm.r *= vol.w;
+        }
+      }
     orm.g     = mix(orm.g, GrassRoughness, far);
     orm.b     = grassPackedThrough(bits)*k;
     diffuse.a = float(int(diffuse.a*255.0 + 0.5) | GBufFoliageBit)/255.0;

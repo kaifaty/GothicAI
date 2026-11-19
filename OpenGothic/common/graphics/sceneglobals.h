@@ -41,6 +41,7 @@ class SceneGlobals final {
       VF_CROWN_MASK = 0x80,
       VF_HIZ_NO_CANOPY = 0x100,
       VF_TREE_OCCLUSION_PROBE = 0x200,
+      VF_GRASS_VOLUME = 0x400,
       };
 
     static bool isShadowView(VisCamera v);

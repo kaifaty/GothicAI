@@ -127,6 +127,16 @@ inline Switch enabled() {
   return switchState();
   }
 
+// The far ground of the grass as a volume (shader/grass/grass_volume.glsl, reports/engine/2026-11-19-grass-far-volume):
+// on unless OPENGOTHIC_GRASS_VOLUME=0
+inline bool volumeEnabled() {
+  static const bool on = [] {
+    const char* e = std::getenv("OPENGOTHIC_GRASS_VOLUME");
+    return e==nullptr || std::string_view(e)!="0";
+    }();
+  return on;
+  }
+
 // The ring, cm. Full density to `full`; from there the share of blades left is full/d and each is d/full wider;
 // from `fadeFrom` to `radius` the height and the share go to nothing. The ground takes the far look of the grass
 // from fadeFrom/2 to fadeFrom

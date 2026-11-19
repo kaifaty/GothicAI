@@ -152,6 +152,7 @@ const uint VF_GRASS_CONTACT = 0x40; // blades shade the ground and each other by
 const uint VF_CROWN_MASK = 0x80; // a crown shows its openness as a colour instead of its albedo (OPENGOTHIC_CROWN_LIGHT=mask)
 const uint VF_TREE_OCCLUSION_PROBE = 0x200; // a bench-only G-buffer records the winning instance per pixel
 const uint VF_HIZ_NO_CANOPY = 0x100; // the occluder pass leaves the crowns of trees out, BK_CANOPY (graphics/hizoccluders.h)
+const uint VF_GRASS_VOLUME = 0x400; // the far ground of the grass is a volume (grass/grass_volume.glsl)
 const uint VF_HAIR_DEBUG = 0x4; // hair pixels show the strand's direction as a colour instead of light (OPENGOTHIC_HAIR_DEBUG=1)
 
 const uint BK_SOLID = 0x1;
