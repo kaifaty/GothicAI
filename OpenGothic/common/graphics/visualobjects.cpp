@@ -501,7 +501,8 @@ VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat
 
 VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen, const PackedMesh::Cluster* cluster,
-                                       DrawCommands::Type type, const Vec3* texturePosition, const TexelDensity* texel) {
+                                       DrawCommands::Type type, const Vec3* texturePosition, const TexelDensity* texel,
+                                       std::span<const PackedMesh::ClusterLevel> levels) {
   LoadProbe::Vobs::Scope probe("draw_instance");
   std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
@@ -518,7 +519,8 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   obj.iboLen    = uint32_t(iboLen);
   obj.bucketId  = bucketsMem.alloc(mat, mesh);
   obj.cmdId     = drawCmd.commandId(mat, type, obj.bucketId.toInt());
-  obj.clusterId = clusterId(cluster, mesh.firstMeshlet()+iboOff/PackedMesh::MaxInd, iboLen/PackedMesh::MaxInd, obj.bucketId.toInt(), obj.cmdId);
+  obj.clusterId = clusterId(cluster, mesh.firstMeshlet()+iboOff/PackedMesh::MaxInd, iboLen/PackedMesh::MaxInd,
+                           obj.bucketId.toInt(), obj.cmdId, levels);
   obj.alpha     = mat.alpha;
   obj.timeShift = -scene.tickCount;
 
@@ -622,11 +624,12 @@ void VisualObjects::setInstanceHistory(bool enabled) {
   instanceMem.setHistory(enabled);
   }
 
-uint32_t VisualObjects::clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId) {
+uint32_t VisualObjects::clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId,
+                                  uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels) {
   if(commandId==uint16_t(-1))
     return uint32_t(-1);
 
-  const auto ret = clustersMem.alloc(cx, firstMeshlet, meshletCount, bucketId, commandId);
+  const auto ret = clustersMem.alloc(cx, firstMeshlet, meshletCount, bucketId, commandId, levels);
   drawCmd.addClusters(commandId, uint32_t(meshletCount));
   return uint32_t(ret);
   }
@@ -1132,7 +1135,7 @@ void VisualObjects::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fI
   }
 
 void VisualObjects::drawImpostors(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
-  if(impostorDraws.empty())
+  if(impostorDraws.empty() || (DrawCommands::hiddenTypes & (1u << DrawCommands::Static))!=0)
     return;
 
   const auto meshOf = [this](size_t id) { return objects[id].bucketId->staticMesh; };

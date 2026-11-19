@@ -32,6 +32,7 @@ class Renderer final {
     // bench `ssao study <bits>` (reports/engine/2026-11-13-ssao-behind-camera): 1 the samples of ssao.comp behind
     // the camera are read off the screen as before 2026-11-13, 2 the frame is the blurred occlusion alone (red)
     static uint32_t benchSsaoStudy;
+    static bool     benchClusterLodMask;
 
     void drawScene(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
                    bool sceneActive);
@@ -43,7 +44,7 @@ class Renderer final {
 
     // reuse: an image of an earlier call to draw into again, if its size still fits (a video frame every step)
     Tempest::Attachment screenshoot(uint8_t frameId, Tempest::Attachment&& reuse = Tempest::Attachment(),
-                                    bool benchShot = false);
+                                    bool benchShot = false, Tempest::Pixmap* landscapeCoverage = nullptr);
 
   private:
     struct TreeOcclusionProbe {
@@ -52,6 +53,8 @@ class Renderer final {
       };
     TreeOcclusionProbe* treeProbe = nullptr;
     uint32_t treeProbeIndex = 0;
+    Tempest::StorageImage landscapeDepth;
+    bool captureLandscapeDepth = false;
     void captureTreeOcclusion(Tempest::Attachment& result, uint8_t fId, WorldView& view, const Camera& camera);
 
     enum Quality : uint8_t {

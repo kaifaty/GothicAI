@@ -1603,12 +1603,14 @@ void MainWindow::render(){
       }
     if(capture) {
       profile.flag(FrameProfile::Flag::CaptureRequested);
-      // filming draws every frame of the video into one image: a new one each step costs an allocation
-      auto   tex = Bench::withUi() ? screenshotWithUi(std::move(captureImage))
-                                       : renderer.screenshoot(cmdId,std::move(captureImage),!Bench::filming());
       Pixmap pm;
+      const bool landscapeMask = Renderer::benchClusterLodMask;
+      // filming draws every frame of the video into one image: a new one each step costs an allocation
+      auto tex = Bench::withUi() && !landscapeMask ? screenshotWithUi(std::move(captureImage))
+            : renderer.screenshoot(cmdId,std::move(captureImage),!Bench::filming(),landscapeMask ? &pm : nullptr);
       if(!tex.isEmpty()) {
-        pm = device.readPixels(textureCast<const Texture2d&>(tex));
+        if(!landscapeMask)
+          pm = device.readPixels(textureCast<const Texture2d&>(tex));
         profile.flag(FrameProfile::Flag::CaptureReadCompleted);
         }
       Bench::capture(pm,Gothic::interfaceScale(this));

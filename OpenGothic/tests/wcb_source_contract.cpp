@@ -9,7 +9,7 @@
 //     for the cell's full triangle list and for every third triangle reversed,
 //     and the counters show which path ran.
 //   - Every fallback gives the GLB result and its log line.
-//   - The catalogue reader retains the same v3 graph as a direct build from
+//   - The catalogue reader retains the same v4 graph as a direct build from
 //     the GLB while the cell is resident and skips it when disabled.
 //   - Two threads reading at once give the single-thread result.
 //   - The cook rewrites a .wcb whose bytes changed at the same length.
@@ -198,9 +198,12 @@ void hierarchyRead(const fs::path& root) {
   std::map<std::pair<uint32_t,uint32_t>,uint32_t> pairs;
   std::map<uint32_t,uint32_t> materials;
   const auto& polygons=glb.mesh.polygons;
+  const auto lockedMaterials=clusterLodLockedMaterials(dir,glb.mesh.materials);
   for(size_t i=0;i<ordinals.size();++i) {
     ClusterLod::Triangle triangle {};
-    triangle.material=materials.try_emplace(polygons.material_indices[i],uint32_t(materials.size())).first->second;
+    const auto material=polygons.material_indices[i];
+    triangle.material=materials.try_emplace(material,uint32_t(materials.size())).first->second;
+    triangle.locked=lockedMaterials[material]!=0;
     for(size_t c=0;c<3;++c) {
       const auto p=polygons.vertex_indices[3*i+c], f=polygons.feature_indices[3*i+c];
       const auto [it,inserted]=pairs.try_emplace({p,f},uint32_t(vertices.size()));
@@ -241,8 +244,8 @@ void hierarchyRead(const fs::path& root) {
     });
   const Tempest::Vec3 inside((float(id.x)+0.5f)*ChunkId::Size,0,(float(id.z)+0.5f)*ChunkId::Size);
   residency.update(inside,inside,0.f);
-  require(source->reads().cooked==1 && cooked.clusterHierarchy && cooked.clusterHierarchy->version()==3,
-          "the game's catalogue reader must return the v3 hierarchy from the .wcb");
+  require(source->reads().cooked==1 && cooked.clusterHierarchy && cooked.clusterHierarchy->version()==wcb::Version,
+          "the game's catalogue reader must return the v4 hierarchy from the .wcb");
   require(source->cooked().clusterHierarchy(cell)==cooked.clusterHierarchy,"the resident cell must retain its graph");
   const auto actual=cooked.clusterHierarchy->hierarchy();
   require(sameBytes(actual.vertices,refs) && sameBytes(actual.vertexIndices,direct.vertexIndices) &&
@@ -272,7 +275,13 @@ void hierarchyRead(const fs::path& root) {
   const auto message=log.take();
   require(message.find("1_0.wcb")!=std::string::npos && message.find("the cell reads its GLB")!=std::string::npos &&
           message.find("vertex")!=std::string::npos,"the fallback log must name the .wcb and the bad vertex reference");
-  std::puts("Cluster hierarchy: catalogue matches a direct GLB build, switches off, and diagnoses bad references");
+  put32(bytes,4,wcb::OldHierarchyVersion);
+  writeBytes(path,bytes);
+  const auto previous=start().source;
+  const auto previousMesh=previous->readLandscape(cell);
+  require(previous->reads().cooked==1 && !previousMesh.clusterHierarchy && compareReads(cooked,previousMesh).empty(),
+          "a v3 chunk must keep its cooked level 0 without the obsolete hierarchy");
+  std::puts("Cluster hierarchy: catalogue matches a direct build, switches off, diagnoses bad references, and keeps v3 geometry");
   }
 
 struct Outcome {

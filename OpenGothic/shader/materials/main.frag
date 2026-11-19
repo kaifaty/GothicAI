@@ -23,7 +23,7 @@
 #include "virtual_shadow/vsm_sun_shadow.glsl"
 #endif
 
-#if defined(MAT_MOTION)
+#if defined(MAT_MOTION) || defined(MAT_CLUSTER_LEVEL)
 layout(location = 0) in flat uint materialRef;
 uint bucketId;
 #elif defined(MAT_VARYINGS)
@@ -32,7 +32,6 @@ layout(location = 0) in flat uint bucketId;
 #if defined(MAT_VARYINGS)
 layout(location = 1) in Varyings  shInp;
 #endif
-
 #if defined(VIRTUAL_SHADOW)
 layout(location = 3) in flat uint vsmMipId;
 #endif
@@ -1057,13 +1056,21 @@ void main() {
 #if defined(GBUFFER)
   const bool treeProbe = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u;
 #endif
-#if defined(MAT_MOTION)
+#if defined(MAT_CLUSTER_LEVEL)
+  bucketId = materialRef & 0xffffu;
+  uint clusterLevel = materialRef >> 16u;
+#elif defined(MAT_MOTION)
   bucketId = materialRef;
+#endif
+#if defined(MAT_MOTION)
   uint probeInstance = 0u;
   if(treeProbe) {
     const uvec4 task = payload[materialRef];
     bucketId = task.z;
     probeInstance = task.x;
+#if defined(MAT_CLUSTER_LEVEL)
+    clusterLevel = 0u;
+#endif
     }
 #endif
 
@@ -1136,6 +1143,20 @@ void main() {
   mainEmissive(t);
 #elif defined(GHOST) && !defined(DEPTH_ONLY)
   mainGhost(t);
+#endif
+
+#if defined(MAT_CLUSTER_LEVEL)
+  if(clusterLevel != 0u) {
+    const vec3 color = debugColors[(clusterLevel - 1u) % uint(debugColors.length())];
+#if defined(GBUFFER)
+    outDiffuse.rgb = color;
+#else
+    outColor.rgb = color * scene.exposure;
+#if defined(WATER)
+    outDiffuse.rgb = color;
+#endif
+#endif
+    }
 #endif
 
 #if DEBUG_DRAW && !defined(GBUFFER) && !defined(DEPTH_ONLY)

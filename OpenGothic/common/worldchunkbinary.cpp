@@ -159,7 +159,7 @@ void Writer::strings(uint32_t type, const std::string& bytes) {
   }
 
 static uint64_t checkPrologueImpl(std::span<const uint8_t> bytes, uint64_t fileSize, const char* magicBytes,
-                                  uint32_t version, uint32_t legacyVersion, uint32_t headerSize, size_t alignment,
+                                  uint32_t version, uint32_t minVersion, uint32_t headerSize, size_t alignment,
                                   const std::string& kind, const std::string& name) {
   if(bytes.size()<headerSize)
     reject(kind,name,"header","truncated: "+std::to_string(bytes.size())+" bytes, the header alone is "+
@@ -168,9 +168,9 @@ static uint64_t checkPrologueImpl(std::span<const uint8_t> bytes, uint64_t fileS
   if(std::memcmp(b,magicBytes,4)!=0)
     reject(kind,name,"header","wrong magic, not a "+kind);
   const auto actualVersion = le32(b+4);
-  if(actualVersion!=version && actualVersion!=legacyVersion)
+  if(actualVersion<minVersion || actualVersion>version)
     reject(kind,name,"header","version "+std::to_string(actualVersion)+", this reader reads "+std::to_string(version)+
-           (version==legacyVersion ? "" : " or "+std::to_string(legacyVersion)));
+           (version==minVersion ? "" : " through "+std::to_string(minVersion)));
   if(le32(b+8)!=ByteOrder)
     reject(kind,name,"header","byte order mark is not little-endian");
   if(le32(b+12)!=headerSize)
@@ -289,13 +289,13 @@ void checkChunkPrologue(std::span<const uint8_t> bytes, uint64_t fileSize, const
 
 std::vector<wcb::SectionView> chunkDirectory(std::span<const uint8_t> bytes, uint64_t fileSize, const std::string& name) {
   const auto* b = bytes.data();
-  const bool version3 = wcb::le32(b+4)==wcb::Version;
+  const bool hierarchyLayout = wcb::le32(b+4)>=wcb::OldHierarchyVersion;
   const auto offset   = wcb::le64(b+128);
-  if(version3 && offset!=wcb::HeaderSize)
-    wcb::reject(what,name,"directory","version 3 requires the directory immediately after the header");
-  const auto sectionSpecs = std::span<const wcb::SectionSpec>(specs,version3 ? currentSections : baseSections);
+  if(hierarchyLayout && offset!=wcb::HeaderSize)
+    wcb::reject(what,name,"directory","the hierarchy layout requires the directory immediately after the header");
+  const auto sectionSpecs = std::span<const wcb::SectionSpec>(specs,hierarchyLayout ? currentSections : baseSections);
   auto sections = wcb::readDirectoryImpl(bytes,fileSize,wcb::HeaderSize,wcb::le32(b+124),offset,sectionSpecs,what,name);
-  if(version3) {
+  if(hierarchyLayout) {
     uint64_t end = 0;
     for(size_t i=0;i<sections.size();++i) {
       const auto& section = sections[i];
@@ -359,14 +359,14 @@ std::vector<uint8_t> encodeCookedChunk(const CookedChunkData& data, uint32_t ver
   using wcb::count32;
   if(version!=wcb::Version && version!=wcb::LegacyVersion)
     throw std::runtime_error("cooked chunk: cannot write version "+std::to_string(version));
-  const bool version3 = version==wcb::Version;
-  const uint32_t sectionCount = version3 ? currentSections : baseSections;
+  const bool withHierarchy = version==wcb::Version;
+  const uint32_t sectionCount = withHierarchy ? currentSections : baseSections;
   const auto& h = data.header;
   wcb::Writer w;
   w.out.reserve(wcb::HeaderSize+wcb::EntrySize*sectionCount+data.positions.size()*sizeof(wcb::Position)+
                 data.features.size()*sizeof(wcb::Feature)+data.triangles.size()*sizeof(wcb::Triangle)+
                 data.materials.size()*(sizeof(wcb::Material)+64)+wcb::SectionAlign*sectionCount+
-                (version3 ? data.hierarchy.byteSize() : 0));
+                (withHierarchy ? data.hierarchy.byteSize() : 0));
   for(const auto c:magic)
     w.u8(uint8_t(c));
   w.u32(version);
@@ -419,7 +419,7 @@ std::vector<uint8_t> encodeCookedChunk(const CookedChunkData& data, uint32_t ver
       w.material(source,m,strings);
     });
   w.strings(Strings,strings);
-  if(version3) {
+  if(withHierarchy) {
     const auto& graph = data.hierarchy;
     const auto sphere = [&](const ClusterLod::Sphere& s) {
       for(const auto axis:s.center)
@@ -530,12 +530,6 @@ CookedChunk CookedChunk::openRecords(std::span<const uint8_t> bytes, const std::
   }
 
 CookedChunk CookedChunk::read(const std::filesystem::path& path, bool readHierarchy) {
-  if(readHierarchy) {
-    auto bytes = std::make_shared<const std::vector<uint8_t>>(gothicglb::readFile(path));
-    const std::span<const uint8_t> view(*bytes);
-    return open(view,path.string(),std::move(bytes));
-    }
-
   const auto name = path.string();
 #ifdef _WIN32
   const std::unique_ptr<std::FILE,decltype(&std::fclose)> file(_wfopen(path.c_str(),L"rb"),std::fclose);
@@ -563,10 +557,11 @@ CookedChunk CookedChunk::read(const std::filesystem::path& path, bool readHierar
     };
   extend(std::min(fileSize,size_t(wcb::HeaderSize)),"header");
   checkChunkPrologue(*bytes,fileSize,name);
-  if(wcb::le32(bytes->data()+4)==wcb::LegacyVersion) {
+  const auto version = wcb::le32(bytes->data()+4);
+  if(version==wcb::LegacyVersion || (version==wcb::Version && readHierarchy)) {
     extend(fileSize,"sections");
     const std::span<const uint8_t> view(*bytes);
-    return openRecords(view,name,std::move(bytes),chunkDirectory(view,fileSize,name),false);
+    return openRecords(view,name,std::move(bytes),chunkDirectory(view,fileSize,name),readHierarchy);
     }
 
   const size_t directoryEnd = wcb::HeaderSize + currentSections*wcb::EntrySize;
