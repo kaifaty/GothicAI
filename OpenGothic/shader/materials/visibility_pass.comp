@@ -33,6 +33,9 @@ layout(push_constant, std430) uniform UboPush {
   uint      lodDebug;
   vec4      lodCamera;
   vec4      lodForwardAndGuard;
+#if defined(TREE_BOUGH_LOD)
+  uint      boughToken;
+#endif
   } push;
 
 Instance pullInstance(uint i) {
@@ -60,6 +63,11 @@ Instance pullInstance(uint i) {
 const uint L_ClusterLevelIndex = 8;
 const uint L_ClusterLevel = 9;
 #include "materials/cluster_lod.glsl"
+
+#if defined(TREE_BOUGH_LOD)
+#include "materials/tree_bough_visibility.glsl"
+bool boughWholeBox;
+#endif
 
 #if defined(MAIN_VIEW) && !defined(LARGE)
 #include "materials/tree_hiz_bounds.glsl"
@@ -149,7 +157,11 @@ bool projectInstance(const Cluster cluster, inout bool preciseBox, out vec4 aabb
   // bound for the animated geometry is available.
   if(preciseBox && ((bucket[bId].flags & (BK_SKIN | BK_MORPH | BK_STRAND))!=0u || obj.fatness!=0))
     preciseBox = false;
-  if(preciseBox) {
+  if(preciseBox
+#if defined(TREE_BOUGH_LOD)
+     && !boughWholeBox
+#endif
+     ) {
     vec3 lo, hi;
     if(treeHiZBox(cluster, bucket[bId], obj.mat, scene.camPos, scene.foliageFade.x, lo, hi)) {
       b[0] = lo;
@@ -275,6 +287,18 @@ void runCluster(const uint clusterId) {
   if(!frustrumTest(cluster.sphere))
     return;
 
+#if defined(TREE_BOUGH_LOD)
+  const uint tree = boughEntry(clusterId);
+  const uint command = cluster.bucketId_commandId & 0xffffu;
+  const uint treeCommands = tree==0u ? 0xffffffffu : boughData[tree+1u];
+  const bool useBough = tree!=0u && command==(treeCommands & 0xffffu) && pullInstance(cluster.instanceId).deformCount==0u;
+  boughWholeBox = useBough;
+#if defined(LARGE)
+  if(useBough)
+    return; // a crown participating in the cut is never a HiZ occluder
+#endif
+#endif
+
   uint level;
   if(!clusterLodVisible(clusterId, cluster.instanceId, level))
     return;
@@ -324,6 +348,18 @@ void runCluster(const uint clusterId) {
   if(!(preciseBox ? hiZTestPrecise(aabb, depthMin) : hiZTest(aabb, depthMin)))
 #endif
     return;
+#endif
+
+#if defined(TREE_BOUGH_LOD) && !defined(LARGE)
+  if(useBough) {
+    boughState[boughData[tree+5u]] = push.boughToken;
+#if defined(HIZ_HISTORY)
+    historyStatus[clusterId] = 1u | 32u | 64u; // submitted, eligible for late HiZ, never an early seed
+#endif
+    return;
+    }
+  if(tree!=0u && command==(treeCommands >> 16u))
+    boughState[boughData[tree+5u]] = push.boughToken | 1u;
 #endif
 
 #if !defined(MAIN_VIEW)

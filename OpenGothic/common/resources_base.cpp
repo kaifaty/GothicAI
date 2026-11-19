@@ -629,6 +629,14 @@ void Resources::indexMeshOverrides() {
       (std::filesystem::path("meshes")/relative).lexically_normal().generic_string(),
       wayHeightFileStamp(meshFile)
       };
+    if(entry.value.HasMember("hierarchy")) {
+      const auto& value = entry.value["hierarchy"];
+      const auto path = value.IsString() ? std::string(value.GetString(),value.GetStringLength()) : std::string();
+      if(contentPath(path,"JSON"))
+        mesh.hierarchy = (root/path).lexically_normal();
+      else
+        Log::e("meshes: invalid hierarchy path for \"",key,"\"");
+      }
     if(entry.value.HasMember("levels")) {
       mesh.hasLevels = true;
       std::string error;

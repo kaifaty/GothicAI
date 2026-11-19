@@ -520,7 +520,8 @@ bool Shaders::isGi2Supported() {
   return true;
   }
 
-const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommands::Type t, PipelineType pt, bool bl) const {
+const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommands::Type t, PipelineType pt, bool bl,
+                                                bool compactBough) const {
   if(t==DrawCommands::Static) {
     // same shader
     t = DrawCommands::Movable;
@@ -537,13 +538,16 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
 
   const auto alpha   = (mat.isGhost ? Material::Ghost : mat.alpha);
   const bool trivial = (!mat.hasUvAnimation() && alpha==Material::Solid && t==DrawCommands::Landscape);
+  if(compactBough && (t!=DrawCommands::Movable || alpha!=Material::AlphaTest || (pt!=T_Main && pt!=T_HistoryGBuffer)))
+    return nullptr;
 
   // materials.json "two_sided": an object's mesh without culling in every pass, the same shaders. The world mesh,
   // skins, morphs and particles are drawn as they were
   const bool twoSided = (mat.twoSided!=Material::TwoSided::Off && t==DrawCommands::Movable);
 
   for(auto& i:materials) {
-    if(i.alpha==alpha && i.type==t && i.pipelineType==pt && i.bindless==bl && i.trivial==trivial && i.twoSided==twoSided)
+    if(i.alpha==alpha && i.type==t && i.pipelineType==pt && i.bindless==bl && i.trivial==trivial &&
+       i.twoSided==twoSided && i.compactBough==compactBough)
       return &i.pipeline;
     }
 
@@ -632,6 +636,10 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
       fsTok = "obj";
       break;
     }
+  if(compactBough) {
+    vsTok = "bough";
+    fsTok = "bough";
+    }
 
   const char* typeVsM = nullptr;
   const char* typeVsD = nullptr;
@@ -718,7 +726,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
     default: break;
     }
   const bool  history = historyFragment[0]!='\0';
-  const char* historyGeometry = history && t!=DrawCommands::Pfx ? "_hist" : "";
+  const char* historyGeometry = history && t!=DrawCommands::Pfx && !compactBough ? "_hist" : "";
   const bool mapsMain = (pt==T_Main || history) && (alpha==Material::Solid || alpha==Material::AlphaTest);
   const bool mapsDepth = (pt==T_Depth || pt==T_Shadow) && alpha==Material::AlphaTest;
   const char* materialMaps = opts.doMaterialMaps && (mapsMain || mapsDepth) ? "_orm" : "";
@@ -731,6 +739,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   b.bindless     = bl;
   b.trivial      = trivial;
   b.twoSided     = twoSided;
+  b.compactBough = compactBough;
 
   auto& device = Resources::device();
   if(mat.isTesselated() && device.properties().tesselationShader && t==DrawCommands::Landscape && true) {

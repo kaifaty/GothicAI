@@ -13,6 +13,10 @@
 
 #if !defined(GL_VERTEX_SHADER)
 #extension GL_EXT_mesh_shader : enable
+#endif
+#if defined(TREE_BOUGH_CARDS)
+#include "tree_bough_cards.glsl"
+#elif !defined(GL_VERTEX_SHADER)
 layout(local_size_x = 64) in;
 layout(triangles, max_vertices = MaxVert, max_primitives = MaxPrim) out;
 #endif
@@ -196,6 +200,7 @@ void initVsm(uvec4 task) {
   }
 #endif
 
+#if !defined(TREE_BOUGH_CARDS)
 uvec2 processMeshlet(const uint meshletId, const uint bucketId) {
 #if defined(BINDLESS)
   nonuniformEXT uint bId = bucketId;
@@ -237,9 +242,14 @@ uvec3 processPrimitive(const uint meshletId, const uint bucketId, const uint out
   prim.z = ((bits >> 16) & 0xFF);
   return prim;
   }
+#endif
 
 vec4  processVertex(out Varyings var, uint instanceOffset, const uint meshletId, const uint bucketId, const uint laneID) {
+#if defined(TREE_BOUGH_CARDS)
+  const uint vboOffset = boughFirstVertex(meshletId, bucketId) + laneID;
+#else
   const uint vboOffset = meshletId * MaxVert + laneID;
+#endif
 #if (MESH_TYPE==T_PFX)
   const Vertex vert = pullVertex(instanceOffset);
 #else
@@ -252,7 +262,9 @@ vec4  processVertex(out Varyings var, uint instanceOffset, const uint meshletId,
 #endif
   }
 
-#if defined(GL_VERTEX_SHADER)
+#if defined(GL_VERTEX_SHADER) && defined(TREE_BOUGH_CARDS)
+#include "tree_bough_vertex.glsl"
+#elif defined(GL_VERTEX_SHADER)
 void vertexShader(const uvec4 task, const uint materialRef) {
   const uint  instanceId = task.x;
   const uint  meshletId  = task.y;
@@ -283,9 +295,14 @@ void vertexShader(const uvec4 task, const uint materialRef) {
 void meshShader(const uvec4 task, const uint materialRef) {
   const uint  instanceId = task.x;
   const uint  meshletId  = task.y;
-  const uint  bucketId   = task.z;
 
+#if defined(TREE_BOUGH_CARDS)
+  const uint  bucketId   = boughBucket(task);
+  const uvec2 mesh       = boughMeshlet(task, bucketId);
+#else
+  const uint  bucketId   = task.z;
   const uvec2 mesh       = processMeshlet(meshletId, bucketId);
+#endif
   const uint  vertCount  = mesh.x;
   const uint  primCount  = mesh.y;
 
@@ -306,6 +323,9 @@ void meshShader(const uvec4 task, const uint materialRef) {
 #endif
     vec4 pos = processVertex(var, instanceId, meshletId, bucketId, laneID);
     gl_MeshVerticesEXT[laneID].gl_Position = pos;
+#if defined(TREE_BOUGH_CARDS)
+    boughFadeOut[laneID] = boughFade(task);
+#endif
 #if defined(VIRTUAL_SHADOW)
     vsmClip[laneID] = pos.xyw;
 #endif
@@ -385,7 +405,9 @@ void main() {
 
   const uint payloadId = workIndex + firstMeshlet;
   const uvec4 task     = payload[payloadId];
-#if defined(HISTORY_PAYLOAD)
+#if defined(TREE_BOUGH_CARDS)
+  const uint materialRef = boughBucket(task);
+#elif defined(HISTORY_PAYLOAD)
   // Both history phases use this same vertex shader and carry the unchanged payload index.
   const uint materialRef = payloadId;
 #else

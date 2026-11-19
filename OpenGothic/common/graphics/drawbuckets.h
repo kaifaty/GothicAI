@@ -10,6 +10,7 @@
 
 class StaticMesh;
 class AnimMesh;
+namespace TreeBough { struct Page; }
 
 class DrawBuckets {
   public:
@@ -18,7 +19,11 @@ class DrawBuckets {
     struct Bucket {
       const StaticMesh* staticMesh = nullptr;
       const AnimMesh*   animMesh   = nullptr;
+      const TreeBough::Page* boughPage = nullptr;
       Material          mat;
+
+      const Tempest::StorageBuffer& iboBuffer() const;
+      const Tempest::StorageBuffer& vboBuffer() const;
       };
 
     class Id {
@@ -42,7 +47,7 @@ class DrawBuckets {
       friend class DrawBuckets;
       };
 
-    Id   alloc(const Material& mat, const StaticMesh& mesh);
+    Id   alloc(const Material& mat, const StaticMesh& mesh, const TreeBough::Page* page = nullptr);
     Id   alloc(const Material& mat, const AnimMesh&   mesh);
     void invalidate(const StaticMesh& mesh);
 

@@ -1,0 +1,187 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+#include "scene.glsl"
+#include "materials/tree_bough_cut.glsl"
+
+layout(local_size_x = 64) in;
+layout(binding = 0, std140) uniform Scene        { SceneDesc scene;      };
+layout(binding = 1, std430) buffer MainPayload  { uvec4 mainPayload[];  };
+layout(binding = 2, std430) readonly buffer Mem  { uint instanceMem[];   };
+layout(binding = 3, std430) readonly buffer Data { uint data[];          };
+layout(binding = 4, std430) buffer MainDraws    { IndirectCmd mainCmd[]; };
+layout(binding = 5, std430) readonly buffer Cls { Cluster clusters[];   };
+layout(binding = 6, std430) buffer CutState     { uint state[];          };
+layout(binding = 7, std430) readonly buffer Ref { uint reference[];     };
+layout(binding = 8, std430) buffer BoughDraws   { IndirectCmd cmd[];     };
+layout(binding = 9, std430) buffer BoughPayload { uvec4 payload[];       };
+layout(binding = 10, std430) readonly buffer HiZHistory { uint historyStatus[]; };
+
+layout(push_constant, std430) uniform Push {
+  uint token;
+  uint flags; // bit 0: CPU reference, bit 1: counters, bit 2: HiZ probe, bit 3: late history HiZ
+  float nearZ;
+  uint init;
+  } push;
+
+shared uint hasCompact;
+shared uint mainOffset;
+shared uint stats[4];
+uint instanceId, nodeBase, rangeBase, historyBase;
+uvec4 countByLane = uvec4(0);
+
+vec3 readVec(uint offset) {
+  return uintBitsToFloat(uvec3(data[offset], data[offset+1u], data[offset+2u]));
+  }
+
+BoughNode boughGetNode(uint i) {
+  uint at = nodeBase+i*16u;
+  return BoughNode(vec4(0), readVec(at+4u), uintBitsToFloat(data[at+7u]),
+                   readVec(at+8u), uintBitsToFloat(data[at+11u]),
+                   uintBitsToFloat(data[at+12u]), uintBitsToFloat(data[at+13u]),
+                   data[at+14u], data[at+15u]);
+  }
+
+bool boughWasCoarse(uint i) {
+  return (atomicOr(state[historyBase+i/32u], 0u) & (1u << (i%32u))) != 0u;
+  }
+
+void boughSetCoarse(uint i, bool coarse) {
+  uint mask = 1u << (i%32u);
+  if(coarse)
+    atomicOr(state[historyBase+i/32u], mask);
+  else
+    atomicAnd(state[historyBase+i/32u], ~mask);
+  }
+
+void boughEmit(uint i, uint transition, float weight) {
+  uint at = rangeBase+i*4u;
+  uint firstIndex = data[at], indexCount = data[at+1u];
+  uint key = data[at+2u], command = key & 0xffffu, bucket = key >> 16u;
+  uint offset = cmd[command].writeOffset + atomicAdd(cmd[command].instanceCount, 1u);
+  uint band = uint(round(clamp(weight, 0.0, 1.0)*16777215.0));
+  payload[offset] = uvec4(instanceId, firstIndex, bucket | (transition << 16u), (indexCount << 24u) | band);
+  if((push.flags & 2u)!=0u) {
+    bool source = boughGetNode(i).subtreeEnd==i+1u;
+    uint cards = data[at+3u];
+    countByLane += uvec4(1u, source ? cards : 0u, source ? 0u : cards, indexCount/3u);
+    }
+  }
+
+vec3 transformColumn(uint offset) {
+  return uintBitsToFloat(uvec3(instanceMem[offset], instanceMem[offset+1u], instanceMem[offset+2u]));
+  }
+
+void main() {
+  const uint lane = gl_LocalInvocationIndex;
+  if(push.init!=0u) {
+    uint i = gl_GlobalInvocationID.x;
+    if(i<cmd.length())
+      cmd[i].instanceCount = 0u;
+    if(i<5u)
+      state[i] = 0u;
+    return;
+    }
+
+  const uint entry = data[1] + gl_WorkGroupID.x*8u;
+  const uint clusterId = data[entry];
+  const uint asset = data[entry+4u];
+  const uint stateBase = data[entry+5u];
+  const uint ref = data[entry+6u];
+  const uint status = state[stateBase];
+  if((status & ~1u)!=push.token)
+    return;
+  if((push.flags & 8u)!=0u && (status & 1u)==0u && (historyStatus[clusterId] & 8u)!=0u)
+    return;
+
+  const Cluster cluster = clusters[clusterId];
+  instanceId = cluster.instanceId;
+  const uint transform = instanceId*16u;
+  const vec3 x = transformColumn(transform), y = transformColumn(transform+3u);
+  const vec3 z = transformColumn(transform+6u), origin = transformColumn(transform+9u);
+  const float focal = 0.5*float(scene.screenRes.y)*abs(scene.project[1][1]);
+  if(lane==0u && (push.flags & 2u)!=0u) {
+    vec3 center = mat3(x, y, z)*readVec(asset+8u) + origin;
+    float height = uintBitsToFloat(data[asset+11u]) * length(y) * focal / max(length(center-scene.camPos), 1.0);
+    atomicMax(state[4], uint(clamp(height*1000.0, 0.0, 4294967040.0)));
+    }
+  if((status & 1u)!=0u)
+    return; // impostor
+
+  const vec3 forward = vec3(scene.view[0][2], scene.view[1][2], scene.view[2][2]);
+  const vec3 shear = abs(vec3(dot(x, y), dot(y, z), dot(z, x)));
+  const vec3 scale = vec3(dot(x, x), dot(y, y), dot(z, z)) + shear + shear.zxy;
+  const float scaleBound = sqrt(max(max(scale.x, scale.y), scale.z));
+  BoughProjection projection = BoughProjection(vec3(dot(forward, x), dot(forward, y), dot(forward, z)),
+                                                dot(forward, origin)+scene.view[3][2], focal*scaleBound, push.nearZ);
+  const uint rootBase = data[asset], rootCount = data[asset+1u], nodeCount = data[asset+3u];
+  nodeBase = data[asset+2u];
+  rangeBase = data[asset+4u];
+  historyBase = stateBase+1u;
+
+  const bool useReference = (push.flags & 1u)!=0u;
+  if(lane==0u)
+    hasCompact = useReference ? reference[ref] : 0u;
+  if(lane<4u)
+    stats[lane] = 0u;
+  barrier();
+
+  if(!useReference) {
+    // A conservative asset-wide screen scale can prove that every band is open in the close-up.
+    const vec3 farthest = mix(readVec(asset+15u), readVec(asset+12u), lessThan(projection.forwardLocal, vec3(0)));
+    const float farDepth = projection.originDepth+dot(projection.forwardLocal,farthest);
+    const float openScale = uintBitsToFloat(data[asset+7u]);
+    if(farDepth>projection.nearZ && projection.focalScale<=farDepth*openScale) {
+      for(uint i=lane; i<rootCount; i+=gl_WorkGroupSize.x) {
+        if(boughWalk(data[rootBase+i], projection, false)) {
+          atomicOr(hasCompact, 1u);
+          break;
+          }
+        }
+      }
+    }
+  barrier();
+
+  if(hasCompact==0u) {
+    // No node has been merged and no band participates. The old full canopy is more compact.
+    if(!useReference)
+      for(uint i=lane; i<(nodeCount+31u)/32u; i+=gl_WorkGroupSize.x)
+        state[historyBase+i] = 0u;
+    const uint command = data[entry+1u] & 0xffffu;
+    const uint first = data[entry+2u], count = data[entry+3u];
+    if(lane==0u) {
+      mainOffset = mainCmd[command].writeOffset + atomicAdd(mainCmd[command].instanceCount, count);
+      if((push.flags & 2u)!=0u) {
+        atomicAdd(state[0], data[asset+5u]);
+        atomicAdd(state[1], data[asset+5u]);
+        atomicAdd(state[3], data[asset+6u]);
+        }
+      }
+    barrier();
+    const uint bucket = cluster.bucketId_commandId >> 16u;
+    const uint probeId = (push.flags & 4u)!=0u ? clusterId : 0u;
+    for(uint i=lane; i<count; i+=gl_WorkGroupSize.x)
+      mainPayload[mainOffset+i] = uvec4(instanceId, first+i, bucket, probeId);
+    return;
+    }
+
+  if(useReference) {
+    for(uint i=lane; i<nodeCount; i+=gl_WorkGroupSize.x) {
+      const uint transition = reference[ref+1u+i*2u];
+      if(transition!=0xffffffffu)
+        boughEmit(i, transition, uintBitsToFloat(reference[ref+2u+i*2u]));
+      }
+    } else {
+    for(uint i=lane; i<rootCount; i+=gl_WorkGroupSize.x)
+      boughWalk(data[rootBase+i], projection, true);
+    }
+
+  if((push.flags & 2u)!=0u) {
+    for(uint i=0u; i<4u; ++i)
+      if(countByLane[i]>0u)
+        atomicAdd(stats[i], countByLane[i]);
+    barrier();
+    if(lane<4u && stats[lane]>0u)
+      atomicAdd(state[lane], stats[lane]);
+    }
+  }

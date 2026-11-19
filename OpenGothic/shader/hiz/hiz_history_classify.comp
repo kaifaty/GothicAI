@@ -34,6 +34,7 @@ const uint Tested = 4u;
 const uint Rejected = 8u;
 const uint Canopy = 16u;
 const uint Eligible = 32u;
+const uint Bough = 64u;
 const float Epsilon = 1.1920928955078125e-7;
 
 bool finiteValues(vec4 value) {
@@ -50,8 +51,8 @@ mat4x3 treeTransform(uint slot) {
       uintBitsToFloat(uvec3(instanceMem[at + 9u], instanceMem[at + 10u], instanceMem[at + 11u])));
   }
 
-bool projectBox(Cluster cluster, Bucket bucket, out vec4 rect, out float nearDepth) {
-  if(cluster.instanceId == 0xffffffffu || bucket.treeHiZCount == 0u ||
+bool projectBox(Cluster cluster, Bucket bucket, bool bough, out vec4 rect, out float nearDepth) {
+  if(cluster.instanceId == 0xffffffffu || (!bough && bucket.treeHiZCount == 0u) ||
      (bucket.flags & (BK_SKIN | BK_MORPH | BK_STRAND)) != 0u)
     return false;
 
@@ -61,8 +62,12 @@ bool projectBox(Cluster cluster, Bucket bucket, out vec4 rect, out float nearDep
 
   const mat4x3 object = treeTransform(cluster.instanceId);
   vec3 low, high;
-  if(!treeHiZBox(cluster, bucket, object, scene.camPos, scene.foliageFade.x, low, high))
+  if(bough) {
+    low = bucket.bbox[0].xyz;
+    high = bucket.bbox[1].xyz;
+    } else if(!treeHiZBox(cluster, bucket, object, scene.camPos, scene.foliageFade.x, low, high)) {
     return false;
+    }
   if(!finiteValues(vec4(low, 0.0)) || !finiteValues(vec4(high, 0.0)) || any(greaterThan(low, high)))
     return false;
 
@@ -146,7 +151,7 @@ void main() {
     uint flags = status[id];
     if((bucket.flags & BK_CANOPY) != 0u)
       flags |= Canopy;
-    if(id < push.previousCount && previous[id].x >= push.threshold &&
+    if((flags & Bough) == 0u && id < push.previousCount && previous[id].x >= push.threshold &&
        previous[id].y == cluster.historyGeneration) {
       flags |= Early;
       if(push.statsEnabled != 0u) {
@@ -162,7 +167,7 @@ void main() {
     return;
   vec4 rect;
   float nearDepth;
-  if(!projectBox(cluster, bucket, rect, nearDepth))
+  if(!projectBox(cluster, bucket, (status[id] & Bough) != 0u, rect, nearDepth))
     return;
 
   const bool hidden = fullyHidden(rect, nearDepth);

@@ -32,6 +32,9 @@ layout(location = 0) in flat uint bucketId;
 #if defined(MAT_VARYINGS)
 layout(location = 1) in Varyings  shInp;
 #endif
+#if defined(TREE_BOUGH_CARDS)
+layout(location = 7) in flat uvec2 boughFadeIn;
+#endif
 #if defined(VIRTUAL_SHADOW)
 layout(location = 3) in flat uint vsmMipId;
 #endif
@@ -1066,7 +1069,9 @@ void main() {
 #if defined(GBUFFER) && !defined(HISTORY_DEPTH)
   const bool treeProbe = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u;
 #endif
-#if defined(HISTORY_PAYLOAD)
+#if defined(TREE_BOUGH_CARDS)
+  bucketId = materialRef;
+#elif defined(HISTORY_PAYLOAD)
   const uvec4 historyTask = payload[materialRef];
   const uint historyOwner = historyTask.w & 0x00FFFFFFu;
   bucketId = historyTask.z;
@@ -1077,7 +1082,7 @@ void main() {
 #elif defined(MAT_MOTION)
   bucketId = materialRef;
 #endif
-#if defined(GBUFFER) && defined(MAT_CLUSTER_LEVEL) && !defined(HISTORY_PAYLOAD)
+#if defined(GBUFFER) && defined(MAT_CLUSTER_LEVEL) && !defined(HISTORY_PAYLOAD) && !defined(TREE_BOUGH_CARDS)
   uint probeCluster = 0u;
   if(treeProbe) {
     const uvec4 task = payload[materialRef];
@@ -1147,7 +1152,7 @@ void main() {
   if(treeProbe) {
 #if defined(HISTORY_PAYLOAD)
     outNormal = historyOwner == 0u ? 0u : (0x80000000u | (historyOwner - 1u));
-#elif defined(MAT_CLUSTER_LEVEL)
+#elif defined(MAT_CLUSTER_LEVEL) && !defined(TREE_BOUGH_CARDS)
     outNormal = 0x80000000u | probeCluster;
 #else
     outNormal = 0u;
@@ -1172,7 +1177,7 @@ void main() {
   mainGhost(t);
 #endif
 
-#if defined(MAT_CLUSTER_LEVEL) && !defined(HISTORY_DEPTH)
+#if defined(MAT_CLUSTER_LEVEL) && !defined(HISTORY_DEPTH) && !defined(TREE_BOUGH_CARDS)
   if(clusterLevel != 0u) {
     const vec3 color = debugColors[(clusterLevel - 1u) % uint(debugColors.length())];
 #if defined(GBUFFER)

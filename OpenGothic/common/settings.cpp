@@ -197,6 +197,8 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   defaults->set("INTERNAL",     "hizHistoryMinWins", 16);
   defaults->set("INTERNAL",     "treeWindFade", 1); // graphics/treewindfade.h
   defaults->set("INTERNAL",     "meshLevels", 1); // graphics/meshlevels.h
+  defaults->set("INTERNAL",     "treeBoughLod", 0); // graphics/treeboughasset.h
+  defaults->set("INTERNAL",     "treeBoughLodCpu", 0);
   defaults->set("INTERNAL",     "impostors", 1); // graphics/meshlevels.h
   defaults->set("INTERNAL",     "shadowLevels", 1); // graphics/meshlevels.h
 

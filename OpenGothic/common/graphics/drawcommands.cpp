@@ -13,6 +13,7 @@
 #include "graphics/mesh/submesh/animmesh.h"
 #include "graphics/mesh/submesh/staticmesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/treeboughrender.h"
 #include "graphics/visualobjects.h"
 #include "shaders.h"
 
@@ -191,8 +192,8 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
     cmd.setBinding(L_Vbo, buckets.vbo());
     }
   else if(bx.staticMesh!=nullptr) {
-    cmd.setBinding(L_Ibo, bx.staticMesh->ibo8Buffer());
-    cmd.setBinding(L_Vbo, bx.staticMesh->vboBuffer());
+    cmd.setBinding(L_Ibo, bx.iboBuffer());
+    cmd.setBinding(L_Vbo, bx.vboBuffer());
     }
   else {
     cmd.setBinding(L_Ibo, bx.animMesh->ibo8);
@@ -312,6 +313,8 @@ void DrawCommands::addClusters(uint16_t cmdId, uint32_t meshletCount) {
   }
 
 void DrawCommands::commit(Encoder<CommandBuffer>& enc) {
+  if(boughs)
+    boughs->commit(enc);
   bool cmdChg = false;
   for(auto& v:views) {
     if(isViewEnabled(v.viewport)) {
@@ -423,8 +426,9 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
       float znear;
       uint32_t ownMeshMask;
       alignas(16) LodPush lod;
+      uint32_t boughToken;
       } push = {};
-    static_assert(offsetof(Push,lod)==16 && sizeof(Push)==64);
+    static_assert(offsetof(Push,lod)==16 && offsetof(Push,boughToken)==64);
     push.firstMeshlet = 0;
     push.meshletCount = uint32_t(clusters.size());
     push.znear        = scene.znear;
@@ -441,7 +445,7 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
       order = &orderedClusters();
       push.meshletCount = uint32_t(orderIds.size());
       }
-    auto* pso = ordered ? &Shaders::inst().visibilityPassShOrd : &Shaders::inst().visibilityPassSh;
+    const auto* pso = ordered ? &Shaders::inst().visibilityPassShOrd : &Shaders::inst().visibilityPassSh;
     if(viewport==SceneGlobals::V_Main) {
       pso = ordered ? &Shaders::inst().visibilityPassHiZOrd : &Shaders::inst().visibilityPassHiZ;
       cmd.setBinding(10, buckets.treeHiZBounds());
@@ -470,9 +474,25 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
     cmd.setBinding(9,         clusters.levelsSsbo());
     if(order!=nullptr)
       cmd.setBinding(T_Order,  *order);
-    cmd.setPushData(push);
+    if(viewport==SceneGlobals::V_Main) {
+      boughExpanded = false;
+      boughHistoryToken = 0;
+      }
+    const bool boughCull = boughs && boughs->ready() && ((hiddenTypes >> Static) & 1u)==0u &&
+                          (viewport==SceneGlobals::V_Main || viewport==SceneGlobals::V_HiZ);
+    if(boughCull)
+      pso = &boughs->cull(cmd, viewport==SceneGlobals::V_HiZ, scene.isTreeOcclusionProbe(), useHistory, ordered, push.boughToken);
+    cmd.setPushData(&push, boughCull ? offsetof(Push,boughToken)+sizeof(push.boughToken) : offsetof(Push,boughToken));
     cmd.setPipeline(*pso);
     cmd.dispatchThreads(ordered ? 1 : push.meshletCount);
+    if(push.boughToken!=0u) {
+      if(useHistory) {
+        boughHistoryToken = push.boughToken;
+        } else {
+        boughs->expand(cmd,push.boughToken,false);
+        boughExpanded = true;
+        }
+      }
     }
   }
 
@@ -512,6 +532,8 @@ void DrawCommands::visibilityStats(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   // nothing runs
   if(!FrameProfile::enabled())
     return;
+  if(boughs && boughHistoryToken==0)
+    boughs->readStats(cmd, fId, boughExpanded);
   if(statsWritten[fId]) {
     uint32_t v[4] = {};
     Resources::device().readBytes(statsRead[fId], v, sizeof(v));
@@ -794,4 +816,7 @@ void DrawCommands::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Sce
       cmd.dispatchMeshIndirect(view.indirectCmd, sizeof(IndirectCmd)*id + sizeof(uint32_t)); else
       cmd.drawIndirect(view.indirectCmd, sizeof(IndirectCmd)*id);
     }
+  if(boughExpanded && viewId==SceneGlobals::V_Main && func==Material::AlphaTest &&
+     historyDraw!=HistoryDraw::Early && historyDraw!=HistoryDraw::EarlyVerify && ((hidden>>Static) & 1u)==0u)
+    boughs->draw(cmd,historyDraw);
   }

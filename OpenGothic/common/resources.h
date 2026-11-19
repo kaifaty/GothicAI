@@ -759,6 +759,7 @@ class Resources final {
       // "levels" of the record (graphics/meshlevels.h): coarser GLBs and the pixels under which each is drawn
       std::vector<std::pair<std::filesystem::path,float>> levels;
       MeshImpostor impostor;
+      std::filesystem::path hierarchy;
       };
     // A level of detail of an own static mesh, its submeshes in the order of the mesh's (PackedMesh::addLevel)
     struct MeshLevel {

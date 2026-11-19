@@ -1,0 +1,448 @@
+#include "treeboughrender.h"
+
+#include <algorithm>
+#include <bit>
+#include <cmath>
+#include <cstring>
+#include <limits>
+#include <stdexcept>
+
+#include "frameprofile.h"
+#include "graphics/drawclusters.h"
+#include "graphics/mesh/submesh/staticmesh.h"
+#include "graphics/shaders.h"
+#include "graphics/treeboughasset.h"
+#include "graphics/treeboughdraw.h"
+#include "graphics/visualobjects.h"
+#include "shader.h"
+
+using namespace Tempest;
+
+namespace {
+
+ComputePipeline compute(std::string_view name) {
+  auto& device = Resources::device();
+  const auto shader = GothicShader::get(name);
+  return device.pipeline(device.shader(shader.data,shader.len));
+  }
+
+uint32_t stateWords(const TreeBough::Asset& asset) {
+  return 1u + uint32_t((asset.nodes.size()+31u)/32u);
+  }
+
+Vec3 column(const Matrix4x4& m, size_t i) {
+  return Vec3(m[i][0], m[i][1], m[i][2]);
+  }
+
+TreeBough::Projection project(const Matrix4x4& m, const SceneGlobals& scene) {
+  const Vec3 x = column(m,0), y = column(m,1), z = column(m,2);
+  const auto dot = Vec3::dotProduct;
+  const float xy = std::abs(dot(x,y)), yz = std::abs(dot(y,z)), zx = std::abs(dot(z,x));
+  const float scale = std::sqrt(std::max({dot(x,x)+xy+zx, dot(y,y)+yz+xy, dot(z,z)+zx+yz}));
+  const Vec3 forward(scene.view[0][2], scene.view[1][2], scene.view[2][2]);
+  return {Vec3(dot(forward,x), dot(forward,y), dot(forward,z)),
+          dot(forward,column(m,3))+scene.view[3][2],
+          0.5f*float(scene.screenRes().y)*std::abs(scene.verticalProjection())*scale, scene.znear};
+  }
+
+void putVec(std::vector<uint32_t>& words, Vec3 v) {
+  words.push_back(std::bit_cast<uint32_t>(v.x));
+  words.push_back(std::bit_cast<uint32_t>(v.y));
+  words.push_back(std::bit_cast<uint32_t>(v.z));
+  }
+
+void demandProxyTextures(const TreeBough::Asset& asset, bool add) {
+  for(size_t i=2; i<asset.pages.size(); ++i)
+    Resources::textureDemand(asset.pages[i].material,Resources::TextureCategory::Static,add);
+  }
+
+}
+
+TreeBoughRender::TreeBoughRender(DrawCommands& owner)
+  : owner(owner), expandPipeline(compute("tree_bough_expand.comp.sprv")),
+    copyPipeline(compute("tree_bough_buffer.comp.sprv")), cpu(TreeBough::cpuEnabled()) {}
+
+TreeBoughRender::~TreeBoughRender() {
+  for(const auto& [mesh,asset]:assets)
+    demandProxyTextures(*mesh->treeBough,false);
+  }
+
+uint32_t TreeBoughRender::command(const Material& material, uint16_t bucket, uint32_t indices) {
+  const bool bindless = Shaders::options().doBindless;
+  const uint32_t bucketId = bindless ? uint32_t(-1) : bucket;
+  const auto pso = Shaders::inst().materialPipeline(material, DrawCommands::Static, Shaders::T_Main, bindless, true);
+  for(uint32_t i=0; i<commands.size(); ++i)
+    if(commands[i].draw.pMain==pso && commands[i].draw.bucketId==bucketId && commands[i].vertexCount==indices)
+      return i;
+  if(commands.size()>=65536)
+    throw std::runtime_error("Too many compact foliage draw commands");
+  auto& dest = commands.emplace_back();
+  dest.draw.pMain = pso;
+  if(DrawCommands::treeHistoryEnabled())
+    dest.draw.pHistoryGBuffer = Shaders::inst().materialPipeline(material, DrawCommands::Static,
+                                                                  Shaders::T_HistoryGBuffer, bindless, true);
+  dest.draw.alpha = material.alpha;
+  dest.draw.type = DrawCommands::Static;
+  dest.draw.bucketId = bucketId;
+  dest.vertexCount = indices;
+  return uint32_t(commands.size()-1);
+  }
+
+void TreeBoughRender::registerAsset(const StaticMesh& mesh, Asset& asset) {
+  const auto& source = *mesh.treeBough;
+  asset.buckets.resize(source.pages.size());
+  std::map<std::pair<uint32_t,uint32_t>,uint32_t> perClass;
+  asset.rangeCommands.resize(source.ranges.size(), uint32_t(-1));
+  for(size_t i=0; i<source.ranges.size(); ++i) {
+    const auto& range = source.ranges[i];
+    if(range.indexCount==0)
+      continue;
+    auto& bucket = asset.buckets[range.primitive];
+    const auto& page = source.pages[range.primitive];
+    auto pos = perClass.lower_bound({range.primitive,0});
+    if(pos==perClass.end() || pos->first.first!=range.primitive)
+      bucket = owner.buckets.alloc(page.material,mesh,&page);
+    const uint32_t count = Shaders::options().doMeshShading ? TreeBough::MaxIndices :
+      *std::lower_bound(TreeBough::indexClasses.begin(), TreeBough::indexClasses.end(), range.indexCount);
+    auto [at, newClass] = perClass.try_emplace({range.primitive,count},0);
+    if(newClass)
+      at->second = command(page.material, bucket.toInt(), count);
+    asset.rangeCommands[i] = at->second | (uint32_t(bucket.toInt()) << 16u);
+    }
+
+  // Worst possible binary cut for each command. Leaves of distinct roots can all contribute together.
+  std::vector<uint32_t> branch(source.nodes.size());
+  for(const auto& [key,id]:perClass) {
+    std::fill(branch.begin(), branch.end(), 0u);
+    uint32_t capacity = 0;
+    for(size_t i=source.nodes.size(); i-- > 0;) {
+      const bool canDraw = asset.rangeCommands[i]!=uint32_t(-1) && source.ranges[i].primitive==key.first &&
+                           (asset.rangeCommands[i] & 0xffffu)==id;
+      const uint32_t want = std::max(branch[i], uint32_t(canDraw));
+      const uint32_t parent = source.nodes[i].parent;
+      if(parent==TreeBough::NoNode)
+        capacity += want;
+      else
+        branch[parent] += want;
+      }
+    asset.capacity.emplace_back(id,capacity);
+    }
+  }
+
+void TreeBoughRender::add(const StaticMesh& mesh, uint32_t cluster, uint16_t main, uint16_t impostor,
+                          uint32_t first, uint32_t count) {
+  auto [asset, inserted] = assets.try_emplace(&mesh);
+  if(inserted) {
+    registerAsset(mesh,asset->second);
+    demandProxyTextures(*mesh.treeBough,true);
+    }
+  ++asset->second.refs;
+  for(auto [id,capacity]:asset->second.capacity)
+    commands[id].draw.maxPayload += capacity;
+
+  const uint32_t words = stateWords(*mesh.treeBough);
+  const auto gap = std::find_if(freeState.begin(), freeState.end(), [&](const auto& item) { return item.second>=words; });
+  uint32_t offset = stateSize;
+  if(gap==freeState.end()) {
+    stateSize += words;
+    } else {
+    offset = gap->first;
+    const uint32_t rest = gap->second-words;
+    freeState.erase(gap);
+    if(rest>0)
+      freeState.emplace(offset+words,rest);
+    }
+  clearState.emplace_back(offset,words);
+  entries.emplace(cluster,Entry{&mesh,uint32_t(main) | (uint32_t(impostor)<<16u),first,count,offset,0});
+  if(cpu)
+    references.try_emplace(cluster).first->second.history.resize(words-1u);
+  dirty = true;
+  }
+
+void TreeBoughRender::remove(uint32_t cluster) {
+  const auto found = entries.find(cluster);
+  if(found==entries.end())
+    return;
+  const auto& e = found->second;
+  auto asset = assets.find(e.mesh);
+  for(auto [id,capacity]:asset->second.capacity)
+    commands[id].draw.maxPayload -= capacity;
+  if(--asset->second.refs==0) {
+    demandProxyTextures(*e.mesh->treeBough,false);
+    assets.erase(asset);
+    }
+  auto gap = freeState.emplace(e.stateOffset,stateWords(*e.mesh->treeBough)).first;
+  if(gap!=freeState.begin()) {
+    const auto prev = std::prev(gap);
+    if(prev->first+prev->second==gap->first) {
+      prev->second += gap->second;
+      freeState.erase(gap);
+      gap = prev;
+      }
+    }
+  const auto next = std::next(gap);
+  if(next!=freeState.end() && gap->first+gap->second==next->first) {
+    gap->second += next->second;
+    freeState.erase(next);
+    }
+  references.erase(cluster);
+  entries.erase(found);
+  dirty = true;
+  }
+
+void TreeBoughRender::setTransform(uint32_t cluster, const Matrix4x4& transform) {
+  const auto ref = references.find(cluster);
+  if(ref!=references.end())
+    ref->second.transform = transform;
+  }
+
+void TreeBoughRender::copy(Encoder<CommandBuffer>& enc, const StorageBuffer& source, StorageBuffer& destination,
+                           uint32_t offset, uint32_t count, uint32_t sourceCount) {
+  const uint32_t push[] = {offset,count,sourceCount};
+  enc.setFramebuffer({});
+  enc.setBinding(0, source);
+  enc.setBinding(1, destination);
+  enc.setPushData(push);
+  enc.setPipeline(copyPipeline);
+  enc.dispatchThreads(count);
+  }
+
+void TreeBoughRender::uploadData(Encoder<CommandBuffer>& enc) {
+  auto& device = Resources::device();
+  const uint32_t mapCount = entries.rbegin()->first+1u;
+  std::vector<uint32_t> words(4u+mapCount);
+  words[0] = mapCount;
+  const uint32_t entryBase = uint32_t(words.size());
+  words[1] = entryBase;
+  words.resize(words.size()+entries.size()*8u);
+  for(auto& [mesh,asset]:assets) {
+    const auto& source = *mesh->treeBough;
+    const auto& box = mesh->bbox.bbox;
+    const auto& bound = mesh->drawn.bbox;
+    const uint32_t base = uint32_t(words.size());
+    const uint32_t roots = base+20u;
+    const uint32_t nodes = roots+uint32_t(source.roots.size());
+    const uint32_t ranges = nodes+16u*uint32_t(source.nodes.size());
+    float ratio = 0.f;
+    for(const auto& n:source.nodes)
+      if(n.highPx>0.f)
+        ratio = std::max(ratio,std::max(n.highPx,n.thresholdPx*1.1f)/n.diameter);
+    words.insert(words.end(),{roots,uint32_t(source.roots.size()),nodes,uint32_t(source.nodes.size()),
+                              ranges,source.sourceCards,source.sourceTriangles,std::bit_cast<uint32_t>(ratio)});
+    putVec(words,(box[0]+box[1])*0.5f);
+    words.push_back(std::bit_cast<uint32_t>(box[1].y-box[0].y));
+    putVec(words,bound[0]);
+    putVec(words,bound[1]);
+    words.resize(roots);
+    words.insert(words.end(),source.roots.begin(),source.roots.end());
+    words.resize(ranges);
+    std::memcpy(words.data()+nodes,source.nodes.data(),source.nodes.size()*sizeof(TreeBough::Node));
+    for(size_t i=0; i<source.ranges.size(); ++i) {
+      const auto& r = source.ranges[i];
+      words.insert(words.end(),{r.firstIndex,r.indexCount,asset.rangeCommands[i],r.cardCount});
+      }
+    asset.offset = base;
+    }
+  uint32_t entry = entryBase;
+  referenceSize = 0;
+  for(auto& [cluster,v]:entries) {
+    words[4u+cluster] = entry;
+    v.referenceOffset = referenceSize;
+    if(cpu)
+      referenceSize += 1u + 2u*uint32_t(v.mesh->treeBough->nodes.size());
+    const uint32_t record[] = {cluster,v.commands,v.first,v.count,assets.at(v.mesh).offset,
+                               v.stateOffset,v.referenceOffset,0u};
+    std::copy_n(record,8,words.data()+entry);
+    entry += 8u;
+    }
+  Resources::recycle(std::move(data));
+  data = device.ssbo(words);
+
+  if(state.byteSize()<size_t(stateSize)*sizeof(uint32_t)) {
+    const uint32_t nextSize = std::bit_ceil(stateSize);
+    auto next = device.ssbo(Uninitialized, size_t(nextSize)*sizeof(uint32_t));
+    if(state.isEmpty()) {
+      const std::vector<uint32_t> zero(nextSize);
+      next.updateAsync(zero.data(),0,zero.size()*sizeof(uint32_t));
+      } else {
+      copy(enc,state,next,0,nextSize,uint32_t(state.byteSize()/sizeof(uint32_t)));
+      Resources::recycle(std::move(state));
+      }
+    state = std::move(next);
+    }
+  // The initialized metadata may follow earlier frames in the same queue. Clear only recycled or new slots.
+  for(auto [offset,count]:clearState)
+    copy(enc,data,state,offset,count,0);
+  clearState.clear();
+
+  std::vector<DrawCommands::IndirectCmd> draws;
+  draws.reserve(commands.size());
+  size_t capacity = 0;
+  for(auto& c:commands) {
+    const bool mesh = c.draw.isMeshShader();
+    c.draw.firstPayload = uint32_t(capacity);
+    capacity += c.draw.maxPayload;
+    draws.push_back({c.vertexCount,0,mesh ? 1u : 0u,mesh ? 1u : 0u,c.draw.firstPayload});
+    }
+  Resources::recycle(std::move(indirect));
+  indirect = device.ssbo(draws);
+  const size_t bytes = capacity*4u*sizeof(uint32_t);
+  if(payload.byteSize()<bytes || payload.byteSize()>bytes*2u) {
+    Resources::recycle(std::move(payload));
+    payload = device.ssbo(Uninitialized,bytes);
+    }
+  }
+
+void TreeBoughRender::uploadReference() {
+  auto& device = Resources::device();
+  std::vector<uint32_t> words(referenceSize,uint32_t(-1));
+  std::vector<TreeBough::Selected> selected;
+  for(const auto& [cluster,entry]:entries) {
+    const auto& c = owner.clusters[cluster];
+    if(c.meshletCount==0 || c.commandId!=uint16_t(entry.commands))
+      continue;
+    auto& ref = references.at(cluster);
+    const auto& asset = *entry.mesh->treeBough;
+    TreeBough::select(asset,project(ref.transform,owner.scene),ref.history,selected);
+    auto* out = words.data()+entry.referenceOffset;
+    out[0] = 0;
+    for(const auto& s:selected) {
+      const uint32_t at = 1u + s.node*2u;
+      out[at] = s.transition;
+      out[at+1u] = std::bit_cast<uint32_t>(s.weight);
+      if(s.transition!=0u || asset.nodes[s.node].subtreeEnd!=s.node+1u)
+        out[0] = 1;
+      }
+    }
+  Resources::recycle(std::move(referenceData));
+  referenceData = device.ssbo(words);
+  }
+
+void TreeBoughRender::commit(Encoder<CommandBuffer>& enc) {
+  if(entries.empty()) {
+    clearState.clear();
+    return;
+    }
+  if(dirty) {
+    uploadData(enc);
+    dirty = false;
+    }
+  if(cpu)
+    uploadReference();
+  }
+
+const ComputePipeline& TreeBoughRender::cull(Encoder<CommandBuffer>& enc, bool hiZ, bool probe, bool history,
+                                            bool ordered, uint32_t& token) {
+  const uint32_t index = hiZ ? 0u : probe ? 1u : history ? 2u : 3u;
+  auto& pipeline = cullPipelines[index][ordered];
+  if(pipeline.isEmpty()) {
+    static const char* names[4][2] = {
+      {"visibility_bough_cr.comp.sprv","visibility_bough_cr_ordered.comp.sprv"},
+      {"visibility_bough_probe.comp.sprv","visibility_bough_probe_ordered.comp.sprv"},
+      {"visibility_bough_history.comp.sprv","visibility_bough_history_ordered.comp.sprv"},
+      {"visibility_bough.comp.sprv","visibility_bough_ordered.comp.sprv"},
+      };
+    pipeline = compute(names[index][ordered]);
+    }
+  enc.setBinding(13,data);
+  if(!hiZ)
+    enc.setBinding(14,state);
+  if(!hiZ) {
+    epoch += 2u;
+    if(epoch==0u)
+      epoch = 2u;
+    token = epoch;
+    }
+  return pipeline;
+  }
+
+void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool lateHiZ) {
+  auto& view = owner.views[SceneGlobals::V_Main];
+  const auto& scene = owner.scene;
+  uint32_t flags = uint32_t(cpu);
+  flags |= FrameProfile::enabled() ? 2u : 0u;
+  flags |= scene.isTreeOcclusionProbe() ? 4u : 0u;
+  flags |= lateHiZ ? 8u : 0u;
+  struct Push { uint32_t token, flags; float nearZ; uint32_t init; };
+  enc.setBinding(0,scene.uboGlobal[SceneGlobals::V_Main]);
+  enc.setBinding(1,view.visClusters);
+  enc.setBinding(2,owner.owner.instanceSsbo());
+  enc.setBinding(3,data);
+  enc.setBinding(4,view.indirectCmd);
+  enc.setBinding(5,owner.clusters.ssbo());
+  enc.setBinding(6,state);
+  enc.setBinding(7,cpu ? referenceData : data);
+  enc.setBinding(8,indirect);
+  enc.setBinding(9,payload);
+  enc.setBinding(10,lateHiZ ? owner.history.status : data);
+  enc.setPipeline(expandPipeline);
+  enc.setPushData(Push{token,flags,scene.znear,1});
+  enc.dispatchThreads(std::max<size_t>(5,commands.size()));
+  enc.setPushData(Push{token,flags,scene.znear,0});
+  enc.dispatch(entries.size());
+  }
+
+void TreeBoughRender::draw(Encoder<CommandBuffer>& enc, DrawCommands::HistoryDraw history) {
+  for(size_t i=0; i<commands.size(); ++i) {
+    const auto& c = commands[i].draw;
+    const auto pso = history==DrawCommands::HistoryDraw::Off ? c.pMain : c.pHistoryGBuffer;
+    if(c.maxPayload==0 || pso==nullptr)
+      continue;
+    owner.setBindings(enc,c,SceneGlobals::V_Main);
+    enc.setBinding(DrawCommands::L_Payload,payload);
+    const uint32_t push[] = {c.firstPayload,c.maxPayload};
+    enc.setPushData(push);
+    enc.setPipeline(*pso);
+    const size_t offset = i*sizeof(DrawCommands::IndirectCmd);
+    if(c.isMeshShader())
+      enc.dispatchMeshIndirect(indirect,offset+sizeof(uint32_t));
+    else
+      enc.drawIndirect(indirect,offset);
+    }
+  }
+
+void TreeBoughRender::readStats(Encoder<CommandBuffer>& enc, uint8_t frame, bool expanded) {
+  auto& device = Resources::device();
+  constexpr FrameProfile::Amount names[] = {FrameProfile::Amount::TreeBoughNodes,FrameProfile::Amount::TreeBoughSourceCards,
+    FrameProfile::Amount::TreeBoughParentCards,FrameProfile::Amount::TreeBoughTriangles,FrameProfile::Amount::TreeBoughHeightPx};
+  uint32_t values[std::size(names)] = {};
+  if(readPending[frame]) {
+    device.readBytes(stats[frame],values,sizeof(values));
+    for(size_t i=0; i<std::size(names); ++i)
+      FrameProfile::add(names[i],values[i]);
+    readPending[frame] = false;
+    }
+  if(!expanded)
+    return;
+  if(stats[frame].isEmpty())
+    stats[frame] = device.ssbo(BufferHeap::Readback,Uninitialized,sizeof(values));
+  copy(enc,state,stats[frame],0,uint32_t(std::size(names)),uint32_t(std::size(names)));
+  readPending[frame] = true;
+  }
+
+void DrawCommands::addBough(const StaticMesh& mesh, uint32_t cluster, uint16_t main, uint16_t impostor,
+                           uint32_t first, uint32_t count) {
+  if(!boughs)
+    boughs = std::make_unique<TreeBoughRender>(*this);
+  boughs->add(mesh,cluster,main,impostor,first,count);
+  }
+
+void DrawCommands::removeBough(uint32_t cluster) {
+  if(boughs)
+    boughs->remove(cluster);
+  }
+
+void DrawCommands::setBoughTransform(uint32_t cluster, const Matrix4x4& transform) {
+  if(boughs)
+    boughs->setTransform(cluster,transform);
+  }
+
+void DrawCommands::finishBoughVisibility(Encoder<CommandBuffer>& enc, uint8_t fId, bool late) {
+  if(boughHistoryToken==0u)
+    return;
+  boughs->expand(enc,boughHistoryToken,late);
+  boughHistoryToken = 0;
+  boughExpanded = true;
+  if(FrameProfile::enabled())
+    boughs->readStats(enc,fId,true);
+  }

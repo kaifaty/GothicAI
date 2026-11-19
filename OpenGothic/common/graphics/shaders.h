@@ -159,7 +159,8 @@ class Shaders {
     // Inventory
     Tempest::RenderPipeline  inventory;
 
-    const Tempest::RenderPipeline* materialPipeline(const Material& desc, DrawCommands::Type t, PipelineType pt, bool bindless) const;
+    const Tempest::RenderPipeline* materialPipeline(const Material& desc, DrawCommands::Type t, PipelineType pt,
+                                                    bool bindless, bool compactBough = false) const;
 
   private:
     struct Entry {
@@ -170,6 +171,7 @@ class Shaders {
       bool                    bindless     = false;
       bool                    trivial      = false;
       bool                    twoSided     = false;
+      bool                    compactBough = false;
       };
 
     void                     setupOptions();

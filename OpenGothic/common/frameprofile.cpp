@@ -43,7 +43,8 @@ const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_cal
   "main_clusters","main_meshlets","main_canopy_clusters","main_canopy_meshlets",
   "mesh_level0","mesh_level1","mesh_level2","mesh_level3","mesh_level4","mesh_impostors",
   "hiz_history_early_clusters","hiz_history_early_meshlets","hiz_history_tested_clusters",
-  "hiz_history_rejected_clusters","hiz_history_rejected_meshlets"};
+  "hiz_history_rejected_clusters","hiz_history_rejected_meshlets",
+  "tree_bough_nodes","tree_bough_source_cards","tree_bough_parent_cards","tree_bough_triangles","tree_bough_height_mpx"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }
