@@ -26,9 +26,19 @@ const uint VSM_MAX_MESHLETS = 512u*1024u;
 // not keep an older frame's pair (vsm_cull_meshlets.comp, vsm_pack_draws.comp)
 const uint VSM_PAIR_SKIP = 0xFFFFFFFFu;
 // The bins of pairs in the order they are drawn when the pairs are short: the lamps' faces by the lamp's distance from
-// the camera, then the sun's pages by mip from the finest and in a mip by the ring of the page table the entry reaches
+// the camera, then the sun's pages by mip from the finest and in a mip by the ring of the page table, from the centre
+// out. A ring is VSM_RING_WIDTH pages wide, so a mip uses VSM_RING_BINS/VSM_RING_WIDTH of its bins
 const int  VSM_LAMP_BINS = 16;
 const int  VSM_RING_BINS = VSM_PAGE_TBL_SIZE/2;
+// The layout of the sun's entries (vsm_clump_pages.comp, vsm_merge_pages.comp) is a function of the marked pages on the
+// grid of the page table alone: quads of 2x2 pages at even x and y, stripes of them that end at the next ring and at
+// each VSM_STRIPE_PAGES-th column. The table's centre is even, so a quad of the grid and a stripe lie in one ring of
+// VSM_RING_WIDTH pages, and an entry's bin is the bin of each of its pages, whatever else is marked and whatever bins
+// the frame before drew. Before, quads took the grid from the first marked page of a stripe of rows and stripes ran
+// across rings: a page's bin followed the marks of TAA's jittered frame, and, split by the cut, the demand followed the
+// cut (reports/engine/2026-11-16-modern-trees/shadow-flicker.md, «Третий круг»)
+const int  VSM_RING_WIDTH   = 2;
+const int  VSM_STRIPE_PAGES = 8;
 const int  VSM_PAIR_BINS = VSM_LAMP_BINS + VSM_PAGE_MIPS*VSM_RING_BINS;
 const int  VSM_BIN_WORDS = (VSM_PAIR_BINS+31)/32;
 // No sphere of an object's meshlets (Bucket::meshletSpheres): its cluster is taken whole
@@ -61,12 +71,13 @@ uint vsmLampBin(float dist) {
   return uint(clamp(findMSB(uint(dist/256.0))+1, 0, VSM_LAMP_BINS-1));
   }
 
-// A sun's entry's bin: its mip, then the ring of the mip's page table its farthest page is in, from the centre out
+// A sun's entry's bin: its mip, then the ring of the mip's page table its farthest page is in, from the centre out;
+// an entry holds one ring (VSM_RING_WIDTH)
 uint vsmSunBin(const ivec3 page, const ivec2 sz) {
   const int c  = VSM_PAGE_TBL_SIZE/2;
   const int rx = max(page.x+sz.x-1-c, c-1-page.x);
   const int ry = max(page.y+sz.y-1-c, c-1-page.y);
-  return uint(VSM_LAMP_BINS + page.z*VSM_RING_BINS + clamp(max(rx, ry), 0, VSM_RING_BINS-1));
+  return uint(VSM_LAMP_BINS + page.z*VSM_RING_BINS + clamp(max(rx, ry)/VSM_RING_WIDTH, 0, VSM_RING_BINS-1));
   }
 
 uint packVsmPageInfo(ivec3 at, ivec2 size) {

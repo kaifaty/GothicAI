@@ -14,7 +14,7 @@ class DrawClusters {
 
     using Bucket = DrawBuckets::Bucket;
 
-    struct Cluster final {
+    struct alignas(16) Cluster final {
       Tempest::Vec3 pos;
       float         r            = 0;
       uint16_t      commandId    = 0;
@@ -22,7 +22,12 @@ class DrawClusters {
       uint32_t      firstMeshlet = 0;
       uint32_t      meshletCount = 0;
       uint32_t      instanceId   = 0;
+      uint32_t      shadowFirstMeshlet = 0;
+      uint32_t      shadowMeshletCount = 0; // zero keeps the visual range and command
+      uint32_t      shadowCommandId    = 0;
+      uint32_t      padding            = 0;
       };
+    static_assert(sizeof(Cluster)==48);
 
     Cluster& operator[](size_t i) { return clusters[i]; }
     size_t   size() const { return clusters.size(); }

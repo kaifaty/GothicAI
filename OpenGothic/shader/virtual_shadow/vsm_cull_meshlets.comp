@@ -85,7 +85,7 @@ bool meshletInEntry(const vec4 local, const Instance obj, const float scale, con
 
 void cullCandidate(const uint c) {
   const uvec4   cand    = candidates[c];
-  const Cluster cluster = clusters[cand.x];
+  const Cluster cluster = shadowCluster(clusters[cand.x]);
   const uint    entry   = cand.y & 0xFFFFu;
   const uint    bin     = cand.y >> 16;
   const uint    lane    = gl_LocalInvocationIndex;

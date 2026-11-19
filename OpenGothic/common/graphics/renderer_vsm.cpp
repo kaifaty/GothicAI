@@ -2,6 +2,8 @@
 
 #include <Tempest/Application>
 #include <Tempest/Log>
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -9,6 +11,43 @@
 #include "frameprofile.h"
 
 using namespace Tempest;
+
+namespace {
+// VsmHeader of vsm_common.glsl: the bins of pairs are the lamps by distance, then the sun's mips by ring
+constexpr uint32_t VsmLampBins = 16, VsmRingBins = 16, VsmPairBins = VsmLampBins+16*VsmRingBins;
+constexpr uint32_t VsmBinWords = (VsmPairBins+31)/32;
+struct VsmHeaderCpu {
+  uint32_t pageCount, meshletCount, counterM, counterV;
+  uint32_t pagePerMip[16];
+  int32_t  pageBbox[16][4];
+  uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax;
+  uint32_t pairSpill, candidateCount, clusterPairs;
+  uint32_t admitBits[VsmBinWords], admitPrevBits[VsmBinWords];
+  uint32_t pairDemand[VsmPairBins];
+  };
+
+bool vsmBinSet(const uint32_t* bits, uint32_t bin) {
+  return (bits[bin/32] & (1u << (bin%32)))!=0;
+  }
+
+std::string vsmBinName(uint32_t bin) {
+  if(bin<VsmLampBins)
+    return "L" + std::to_string(bin);
+  if(bin>=VsmPairBins)
+    return "none";
+  return "m" + std::to_string((bin-VsmLampBins)/VsmRingBins) + "r" + std::to_string((bin-VsmLampBins)%VsmRingBins);
+  }
+
+std::string vsmBitsHex(const uint32_t* bits) {
+  std::string ret;
+  char buf[16] = {};
+  for(uint32_t i=0; i<VsmBinWords; ++i) {
+    std::snprintf(buf, sizeof(buf), i==0 ? "%08x" : ".%08x", bits[i]);
+    ret += buf;
+    }
+  return ret;
+  }
+}
 
 void Renderer::drawVsmDbg(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
   static bool enable = false;
@@ -30,10 +69,12 @@ void Renderer::drawVsmDbg(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const W
   cmd.draw(nullptr, 0, 3);
   }
 
-void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
+void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& wview) {
   if(!settings.vsmEnabled)
     return;
   FrameProfile::Scope timing(FrameProfile::Zone::EncodeShadows);
+  logVsmFrame(fId);
+  ++vsm.frameNo;
 
   static bool omniLights = true;
   const bool doVirtualFog = sky.quality!=VolumetricLQ;
@@ -162,6 +203,7 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
 
   cmd.setDebugMarker("VSM-visibility");
   wview.visibilityVsm(cmd);
+  copyVsmFrame(cmd, fId);
 
   cmd.setDebugMarker("VSM-rendering");
   cmd.setFramebuffer({}, {pageData, 0.f, Tempest::Preserve});
@@ -178,15 +220,7 @@ void Renderer::logVsmStats(const WorldView& wview) {
     return;
   vsm.statsTime = now;
 
-  struct Header { // VsmHeader of vsm_common.glsl
-    uint32_t pageCount, meshletCount, counterM, counterV;
-    uint32_t pagePerMip[16];
-    int32_t  pageBbox[16][4];
-    uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax;
-    uint32_t pairSpill, candidateCount, clusterPairs;
-    uint32_t admitBits[9], admitPrevBits[9]; // VSM_BIN_WORDS
-    uint32_t pairDemand[16+16*16];          // VSM_PAIR_BINS: the lamps by distance, then the sun's mips by ring
-    } h = {};
+  VsmHeaderCpu h = {};
   uint32_t visibleLights = 0;
   auto& device = Resources::device();
   device.waitIdle();
@@ -212,7 +246,7 @@ void Renderer::logVsmStats(const WorldView& wview) {
          ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
   // the pairs of the lamps and of each sun's mip with any, and how many of them the bins left out this frame
   // (vsm_cull_meshlets.comp) did not draw
-  const auto drawn = [&](uint32_t bin) { return (h.admitBits[bin/32] & (1u << (bin%32)))!=0; };
+  const auto drawn = [&](uint32_t bin) { return vsmBinSet(h.admitBits, bin); };
   std::string classes;
   for(uint32_t c=0; c<17; ++c) {
     const uint32_t first = c==0 ? 0 : 16+(c-1)*16;
@@ -251,4 +285,84 @@ void Renderer::logVsmStats(const WorldView& wview) {
   std::memset(p, 0, sizeof(p));
   vsm.lampProbe.update(p, 0, sizeof(p));
   vsm.lampArmed = true;
+  }
+
+void Renderer::copyVsmFrame(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  // OPENGOTHIC_VSM_STATS=frames: VsmHeader after the meshlets' pass, into this frame slot's buffer the CPU can read
+  if(!settings.vsmStatsFrames)
+    return;
+  auto& dst = vsm.frameStats[fId];
+  if(dst.isEmpty())
+    dst = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, sizeof(VsmHeaderCpu));
+  cmd.setFramebuffer({});
+  cmd.setDebugMarker("VSM-frame-stats");
+  cmd.setBinding(0, dst);
+  cmd.setBinding(1, vsm.pageList);
+  cmd.setPipeline(shaders.copyBuf);
+  cmd.dispatchThreads(sizeof(VsmHeaderCpu)/sizeof(uint32_t));
+  vsm.frameStatsNo     [fId] = vsm.frameNo;
+  vsm.frameStatsWritten[fId] = true;
+  }
+
+void Renderer::logVsmFrame(uint8_t fId) {
+  // OPENGOTHIC_VSM_STATS=frames: a line for the frame this slot drew last time - its fence has been waited for, so
+  // nothing waits for the GPU. The bins of pairs (vsm_cull_meshlets.comp, admit()): the demand of each, drawn (+) or
+  // left out (-); the selection admit() makes of this demand and of the bins of the frame before, made again here
+  // (gpu==cpu), and whether the bins it took for the frame before's are the ones that frame drew (prev==last)
+  if(!settings.vsmStatsFrames || !vsm.frameStatsWritten[fId] || vsm.frameStats[fId].isEmpty())
+    return;
+  vsm.frameStatsWritten[fId] = false;
+  VsmHeaderCpu h = {};
+  Resources::device().readBytes(vsm.frameStats[fId], &h, sizeof(h));
+  const uint64_t no  = vsm.frameStatsNo[fId];
+  const uint32_t cap = DrawCommands::vsmPairCap();
+
+  uint32_t cpu[VsmBinWords] = {};
+  uint32_t sum = 0;
+  for(uint32_t bin=0; bin<VsmPairBins; ++bin) {
+    const uint32_t d     = h.pairDemand[bin];
+    const uint32_t limit = vsmBinSet(h.admitPrevBits, bin) ? cap : cap - cap/8u;
+    if(d>limit || sum>limit-d)
+      break;
+    sum += d;
+    cpu[bin/32] |= 1u << (bin%32);
+    }
+
+  uint64_t demand = 0, admitted = 0;
+  uint32_t cut    = VsmPairBins;
+  std::string bins;
+  for(uint32_t bin=0; bin<VsmPairBins; ++bin) {
+    const uint32_t d  = h.pairDemand[bin];
+    const bool     in = vsmBinSet(h.admitBits, bin);
+    demand += d;
+    if(in)
+      admitted += d;
+    if(!in && cut==VsmPairBins)
+      cut = bin;
+    if(d>0)
+      bins += " " + vsmBinName(bin) + (in ? "+" : "-") + std::to_string(d);
+    }
+  // a bench's shot draws a second frame through the same slot, so a frame may come before the one ahead of it: the
+  // pair is checked by whichever of the two comes second
+  const size_t   last     = size_t(no-1)%4;
+  const size_t   next     = size_t(no+1)%4;
+  const bool     sameCpu  = std::equal(std::begin(cpu), std::end(cpu), std::begin(h.admitBits));
+  const bool     hasLast  = no>1 && vsm.frameLoggedNo[last]==no-1;
+  const bool     sameLast = std::equal(std::begin(vsm.frameLoggedAdmit[last]), std::end(vsm.frameLoggedAdmit[last]),
+                                       std::begin(h.admitPrevBits));
+  const bool     hasNext  = vsm.frameLoggedNo[next]==no+1;
+  const bool     sameNext = std::equal(std::begin(vsm.frameLoggedPrev[next]), std::end(vsm.frameLoggedPrev[next]),
+                                       std::begin(h.admitBits));
+  std::string cutText = vsmBinName(cut);
+  if(cut<VsmPairBins)
+    cutText += " " + std::to_string(h.pairDemand[cut]) + (vsmBinSet(h.admitPrevBits, cut) ? " drawn before" : " left out before");
+  Log::i("vsm frame ", no, ": candidates ", h.candidateCount, (h.candidateCount>cap ? " LOST" : ""),
+         ", entries ", h.pageListCount, " (omni ", h.pageOmniCount, "), drawn ", h.meshletCount, ", demand ", demand,
+         ", admitted ", admitted, ", cut ", cutText, ", ", (sameCpu ? "gpu==cpu" : "GPU!=CPU"),
+         ", ", (!hasLast ? "prev ?" : (sameLast ? "prev==last" : "PREV!=LAST")),
+         (!hasNext ? "" : (sameNext ? ", next's prev==this" : ", NEXT'S PREV!=THIS")), ", spilled ", h.pairSpill,
+         ", admit ", vsmBitsHex(h.admitBits), ", prev ", vsmBitsHex(h.admitPrevBits), ", bins", bins);
+  vsm.frameLoggedNo[no%4] = no;
+  std::copy(std::begin(h.admitBits),     std::end(h.admitBits),     std::begin(vsm.frameLoggedAdmit[no%4]));
+  std::copy(std::begin(h.admitPrevBits), std::end(h.admitPrevBits), std::begin(vsm.frameLoggedPrev[no%4]));
   }

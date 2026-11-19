@@ -22,7 +22,15 @@ void vsmPairCapRecords(Tempest::Device& device) {
   // the bins of vsm_common.glsl: a lamp 5 m from the camera, then the centre ring of mips 0, 1 and 2
   constexpr uint32_t Slots = 64, Draws = 2, Old = 999, Skip = 0xFFFFFFFFu, Lamp = 1, Sun0 = 16, Sun1 = 32, Sun2 = 48;
   constexpr uint32_t ObjectMeshlet = 10, SpheresAt = 2; // the object's first meshlet, its mesh's first sphere
-  struct Cluster { float sphere[4]; uint32_t bucketId_commandId, firstMeshlet; int32_t meshletCount; uint32_t instanceId; };
+  struct Cluster {
+    float sphere[4];
+    uint32_t bucketId_commandId, firstMeshlet;
+    int32_t meshletCount;
+    uint32_t instanceId;
+    uint32_t shadowFirstMeshlet = 0;
+    int32_t shadowMeshletCount = 0;
+    uint32_t shadowCommandId = 0, padding = 0;
+    };
   struct Cmd     { uint32_t vertexCount, instanceCount, firstVertex, firstInstance, writeOffset; };
   struct Light   { float pos[3], range, color[3], cookie, sourceSize, nearLimit, padding[2]; }; // LightSource, scene.glsl
   struct Header  { // VsmHeader of vsm_common.glsl
@@ -148,6 +156,7 @@ void vsmPairCapRecords(Tempest::Device& device) {
       enc.setBinding(1, candidates);
       enc.setBinding(2, instanceBuf);
       enc.setBinding(3, bucketBuf);
+      enc.setBinding(4, cmdBuf);
       enc.setBinding(5, clusterBuf);
       enc.setBinding(6, lightBuf);
       enc.setBinding(7, pageHiZ);
@@ -160,7 +169,6 @@ void vsmPairCapRecords(Tempest::Device& device) {
       enc.dispatchThreads(2, 17);
 
       struct CullPush { uint32_t pairCap, emit; } cull = {cap, 0};
-      enc.setBinding(4, cmdBuf);
       enc.setBinding(7, sphereBuf);
       enc.setBinding(9, payloadSrc);
       enc.setPipeline(shaders.vsmCullMeshlets);
@@ -290,6 +298,19 @@ void vsmPairCapRecords(Tempest::Device& device) {
   require(pairsOf(all, 1, 0).size()==1 && pairsOf(all, 1, 1).size()==1 && pairsOf(all, 1, 2).size()==1 &&
           pairsOf(all, 1, 3).empty(), "a cluster without spheres goes whole into each entry");
 
+  {
+  Cluster shadowClusters[2] = {clusters[0], clusters[1]};
+  shadowClusters[0].shadowFirstMeshlet = ObjectMeshlet+2;
+  shadowClusters[0].shadowMeshletCount = 5;
+  clusterBuf.update(shadowClusters, 0, sizeof(shadowClusters));
+  const Frame shadow = run(false, Slots, {}, 0, zero, older);
+  require(shadow.header.clusterPairs==23 && shadow.header.meshletCount==14 && shadow.header.pairSpill==0 &&
+          pairsOf(shadow, 0, 0)==ids({5, 6}) && pairsOf(shadow, 0, 1)==ids({2, 5, 6}) &&
+          pairsOf(shadow, 0, 2)==ids({2, 5, 6}) && pairsOf(shadow, 0, 3)==ids({2, 5, 6}),
+          ("sun and lamp entries must cull and pack only the selected shadow meshlets"+demand(shadow)).c_str());
+  clusterBuf.update(clusters, 0, sizeof(clusters));
+  }
+
   // a cap of 16: the lamp's 6 and mip 0's 5 go in, mip 1's 6 would make 17: it and all after it are left out, mip 2's 5
   // too, though they would fit
   const Frame edge = run(false, 16, admitted(all), 0, zero, older);
@@ -311,4 +332,292 @@ void vsmPairCapRecords(Tempest::Device& device) {
   const Frame exact = run(false, 17, prefix(Sun2), 0, zero, older);
   require(admitted(exact)==prefix(Sun2) && exact.header.meshletCount==17 && exact.header.pairSpill==0,
           ("a bin drawn the frame before goes in up to the cap and exactly at it"+demand(exact)).c_str());
+  }
+
+// The layout of the sun's entries and the selection over frames (shadow-flicker.md, «Третий круг»): the engine's own
+// vsm_clear, vsm_mark_pages, vsm_clump_pages, vsm_list_pages, vsm_alloc_pages, vsm_merge_pages, vsm_visibility_pass and
+// vsm_cull_meshlets on a screen of 32x32 pixels, a pixel marking a cell of mip 0's page table. An entry takes the bin of
+// its farthest page (vsmSunBin). Before, quads took their grid from the first marked page of a stripe of rows and
+// stripes ran across rings, so a page's bin followed the marks of TAA's jittered frame; the layout split by the cut
+// made the demand follow the cut, and the cut swung from frame to frame. Now the layout is the marks' on the grid of
+// the table: the same whatever bins the frame before drew, one more mark changes no entry but its own, each entry lies
+// in one ring, and with the demand at the edge of the hysteresis the same bins are drawn frame after frame.
+void vsmLayoutRecords(Tempest::Device& device) {
+  Resources resources(device);
+  Shaders   shaders;
+  shaders.waitCompiler();
+  if(!Shaders::isVsmSupported()) {
+    std::cout << "vsm layout: skipped, no virtual shadow maps on this device\n";
+    return;
+    }
+
+  constexpr int      Tbl  = 32;      // VSM_PAGE_TBL_SIZE
+  constexpr uint32_t Pool = 64*64;   // the pool's pages, as the game's 8192x8192
+  constexpr uint32_t Sun0 = 16;      // the bin of mip 0's centre ring: the lamps' 16 bins come first
+  constexpr uint32_t Meshlets = 10;  // of the one cluster, whole in every entry
+  struct Cluster { float sphere[4]; uint32_t bucketId_commandId, firstMeshlet; int32_t meshletCount; uint32_t instanceId; };
+  struct Light   { float pos[3], range, color[3], cookie, sourceSize, nearLimit, padding[2]; }; // LightSource, scene.glsl
+  struct Entry   { int x, y, mip, w, h; };
+  const size_t headerWords = shaders.vsmClear.sizeofBuffer(0, 0)/sizeof(uint32_t);
+  const size_t admitAt     = 4 + 16 + 16*4 + 8; // VsmHeader: counts, pagePerMip, pageBbox, then 8 counters
+  const size_t demandAt    = admitAt + 2*9;     // after admitBits and admitPrevBits
+  require(sizeof(Cluster)==shaders.vsmCullMeshlets.sizeofBuffer(5, 1), "the test's Cluster follows scene.glsl");
+  const auto ring = [](int x, int y) { // vsmSunBin's ring of a page: the square around the table's centre, 2 pages wide
+    return std::max(std::max(x-Tbl/2, Tbl/2-1-x), std::max(y-Tbl/2, Tbl/2-1-y))/2;
+    };
+  const auto prefix = [](uint32_t bins) {
+    std::array<uint32_t,9> ret = {};
+    for(uint32_t b=0; b<bins; ++b)
+      ret[b/32] |= 1u << (b%32);
+    return ret;
+    };
+
+  // the screen is the page table: the camera's and the sun's views are the same, lifted 100 above the planet's
+  // surface so the planet does not hide the sun; a pixel's derivatives are a texel of mip 0. The sun's view of the
+  // clusters scales x and y by 1/1024 per cm, as the game's (vsm_cull.glsl)
+  SceneGlobals::UboGlobal ubo;
+  ubo.viewProject = Tempest::Matrix4x4::mkIdentity();
+  ubo.viewProject.scale(1.f/1024.f, 1.f/1024.f, 1.f);
+  ubo.viewProjectLwcInv = Tempest::Matrix4x4::mkIdentity();
+  ubo.viewProjectLwcInv.translate(0, 100, 0);
+  ubo.viewVirtualShadowLwc = Tempest::Matrix4x4::mkIdentity();
+  ubo.viewVirtualShadowLwc.translate(0, -100, 0);
+  ubo.vsmDdx       = Tempest::Vec4(1.f/4096.f, 0, 0, 0);
+  ubo.vsmDdy       = Tempest::Vec4(0, 1.f/4096.f, 0, 0);
+  ubo.sunDir       = Tempest::Vec3(0, 0.6f, 0.8f); // the normal of a zero G-buffer texel is (0,0,1)
+  ubo.screenResInv = Tempest::Vec2(1.f/Tbl, 1.f/Tbl);
+  auto sceneUbo = device.ssbo(&ubo, sizeof(ubo));
+
+  Tempest::Pixmap diffusePm(Tbl, Tbl, Tempest::TextureFormat::RGBA8);
+  Tempest::Pixmap normalPm (Tbl, Tbl, Tempest::TextureFormat::R32U);
+  std::memset(diffusePm.data(), 0, diffusePm.dataSize());
+  std::memset(normalPm.data(),  0, normalPm.dataSize());
+  auto diffuse = device.texture(diffusePm, false);
+  auto normal  = device.texture(normalPm,  false);
+  auto pageTbl = device.image3d(Tempest::TextureFormat::R32U, Tbl, Tbl, 16);
+  auto pageHiZ = device.image3d(Tempest::TextureFormat::R32U, Tbl, Tbl, 16);
+  const std::vector<uint32_t> noFaces(6, 0u); // a lamp's six faces, none marked
+  auto omni    = device.ssbo(noFaces.data(), noFaces.size()*sizeof(uint32_t));
+  auto pageTmp = device.ssbo(Tempest::Uninitialized, shaders.vsmAllocPages.sizeofBuffer(3, Pool));
+  auto dbg     = device.image2d(Tempest::TextureFormat::R32U, 64, 64);
+
+  // one cluster of the landscape kind (no spheres of its meshlets: whole in each entry), over all of mip 0 and in
+  // front of the marked receivers (depth 0.5)
+  const Cluster cluster = {{0.f, 0.f, 0.6f, 1024.f}, 0u, 0, int32_t(Meshlets), 0xFFFFFFFFu};
+  std::vector<uint32_t> bucket(36, 0);     // Bucket of scene.glsl, std140: meshletSpheres at 32
+  bucket[32] = 0xFFFFFFFFu;
+  const Light light = {{0.f, 0.f, 0.f}, 1.f, {1.f, 1.f, 1.f}, 0.f, 0.f, 0.f, {0.f, 0.f}};
+  std::vector<float> instance(16, 0.f), spheres(4, 0.f);
+  auto clusterBuf  = device.ssbo(&cluster, sizeof(cluster));
+  auto bucketBuf   = device.ssbo(bucket.data(), bucket.size()*sizeof(uint32_t));
+  auto lightBuf    = device.ssbo(&light, sizeof(light));
+  auto instanceBuf = device.ssbo(instance.data(), instance.size()*sizeof(float));
+  auto sphereBuf   = device.ssbo(spheres.data(), spheres.size()*sizeof(float));
+  const uint32_t noLod[1] = {};        // the cluster has no levels of the cluster hierarchy (cluster_lod.glsl)
+  const uint32_t lodRecord[12] = {};
+  auto lodIndices  = device.ssbo(noLod, sizeof(noLod));
+  auto lodRecords  = device.ssbo(lodRecord, sizeof(lodRecord));
+
+  // a frame of renderer_vsm.cpp from the marks to the entries and, with a cap, the meshlets' pass under it. `words` is
+  // the buffer of the header and the entries: its admitBits are the bins the frame before drew (vsm_clear.comp moves
+  // them), and the frame leaves its own there
+  const auto frame = [&](const std::vector<std::pair<int,int>>& marks, std::vector<uint32_t>& words, uint32_t cap) {
+    Tempest::Pixmap depthPm(Tbl, Tbl, Tempest::TextureFormat::R32F);
+    auto* z = reinterpret_cast<float*>(depthPm.data());
+    std::fill(z, z+Tbl*Tbl, 1.f); // the sky marks nothing
+    for(auto [x, y] : marks)
+      z[y*Tbl + x] = 0.5f;
+    auto depth      = device.texture(depthPm, false);
+    auto pages      = device.ssbo(words.data(), words.size()*sizeof(uint32_t));
+    auto candidates = device.ssbo(Tempest::Uninitialized, size_t(std::max(cap, 1u))*4*sizeof(uint32_t));
+    auto payload    = device.ssbo(Tempest::Uninitialized, size_t(std::max(cap, 1u))*4*sizeof(uint32_t));
+    const uint32_t zero[5] = {};
+    auto cmdBuf     = device.ssbo(zero, sizeof(zero));
+
+    auto command = device.commandBuffer();
+    {
+    auto enc = command.startEncoding(device);
+    enc.setBinding(0, pages);
+    enc.setBinding(1, pageTbl);
+    enc.setBinding(2, pageHiZ);
+    enc.setPipeline(shaders.vsmClear);
+    enc.dispatchThreads(Tbl, Tbl, 16);
+
+    const float mipBias = 0;
+    enc.setBinding(0, sceneUbo);
+    enc.setBinding(1, diffuse, Tempest::Sampler::nearest());
+    enc.setBinding(2, normal,  Tempest::Sampler::nearest());
+    enc.setBinding(3, depth,   Tempest::Sampler::nearest());
+    enc.setBinding(4, pageTbl);
+    enc.setBinding(5, pageHiZ);
+    enc.setPushData(&mipBias, sizeof(mipBias));
+    enc.setPipeline(shaders.vsmMarkPages);
+    enc.dispatchThreads(Tbl, Tbl);
+
+    enc.setBinding(0, pages);
+    enc.setBinding(1, pageTbl);
+    enc.setPipeline(shaders.vsmClumpPages);
+    enc.dispatchThreads(Tbl, Tbl, 16);
+
+    enc.setBinding(0, pages);
+    enc.setBinding(1, pageTbl);
+    enc.setBinding(2, omni);
+    enc.setBinding(3, pageTmp);
+    enc.setBinding(4, dbg);
+    enc.setPipeline(shaders.vsmListPages);
+    enc.dispatch(16+1); // the last group lists the lamps' faces and counts the entries
+    enc.setPipeline(shaders.vsmAllocPages);
+    enc.dispatch(1);
+    enc.setPipeline(shaders.vsmMergePages);
+    enc.dispatch(1);
+
+    if(cap>0) {
+      struct Push {
+        uint32_t meshletCount, candidateCap, padding[2];
+        float lodPx, lodProjection, lodHeight;
+        uint32_t lodDebug;
+        float lodCamera[4], lodForwardAndGuard[4];
+        } push = {1, cap, {}, 0.f, 0.f, 0.f, 0, {}, {}};
+      static_assert(sizeof(Push)==64);
+      enc.setBinding(0, sceneUbo);
+      enc.setBinding(1, candidates);
+      enc.setBinding(2, instanceBuf);
+      enc.setBinding(3, bucketBuf);
+      enc.setBinding(4, cmdBuf);
+      enc.setBinding(5, clusterBuf);
+      enc.setBinding(6, lightBuf);
+      enc.setBinding(7, pageHiZ);
+      enc.setBinding(8, pages);
+      enc.setBinding(9, dbg);
+      enc.setBinding(10, lodIndices);
+      enc.setBinding(11, lodRecords);
+      enc.setPushData(&push, sizeof(push));
+      enc.setPipeline(shaders.vsmVisibilityPass);
+      enc.dispatchThreads(1, 17);
+
+      struct CullPush { uint32_t pairCap, emit; } cull = {cap, 0};
+      enc.setBinding(7, sphereBuf);
+      enc.setBinding(9, payload);
+      enc.setPipeline(shaders.vsmCullMeshlets);
+      for(cull.emit=0; cull.emit<2; ++cull.emit) {
+        enc.setPushData(&cull, sizeof(cull));
+        enc.dispatch(3);
+        }
+      }
+    }
+    device.submit(command).wait();
+    device.readBytes(pages, words.data(), words.size()*sizeof(uint32_t));
+
+    std::vector<Entry> ret;
+    for(uint32_t i=0; i<words[0] && headerWords+i<words.size(); ++i) {
+      const uint32_t p = words[headerWords+i];
+      if(p==0 || (p & 1u)!=0 || ((p >> 24) & 0xF)==0)
+        continue; // none, a lamp's face, or a page of a block placed with its first one
+      ret.push_back(Entry{int((p >> 1) & 0xFF), int((p >> 9) & 0xFF), int((p >> 17) & 0x7F),
+                          int((p >> 24) & 0xF), int((p >> 28) & 0xF)});
+      }
+    return ret;
+    };
+  const auto header = [&](const std::array<uint32_t,9>& drawnBefore) {
+    std::vector<uint32_t> words(std::max(shaders.vsmClear.sizeofBuffer(0, Pool)/sizeof(uint32_t), demandAt+272), 0u);
+    for(size_t i=0; i<drawnBefore.size(); ++i)
+      words[admitAt+i] = drawnBefore[i];
+    return words;
+    };
+  const auto admitted = [&](const std::vector<uint32_t>& words) {
+    std::array<uint32_t,9> ret = {};
+    for(size_t i=0; i<ret.size(); ++i)
+      ret[i] = words[admitAt+i];
+    return ret;
+    };
+  const auto text = [](const std::vector<Entry>& es) {
+    std::string ret;
+    for(auto& e : es)
+      ret += " (" + std::to_string(e.x) + "," + std::to_string(e.y) + " " + std::to_string(e.w) + "x" + std::to_string(e.h) + ")";
+    return ret;
+    };
+  const auto has = [](const std::vector<Entry>& es, Entry e) {
+    return std::any_of(es.begin(), es.end(), [&](const Entry& a) {
+      return a.x==e.x && a.y==e.y && a.mip==e.mip && a.w==e.w && a.h==e.h;
+      });
+    };
+  const auto layout = [&](const std::vector<std::pair<int,int>>& marks, const std::array<uint32_t,9>& drawnBefore) {
+    auto words = header(drawnBefore);
+    return frame(marks, words, 0);
+    };
+
+  // a row through the centre, x 10..21 of y 16 (rings 2, 1, 0, 0, 1, 2), and a block of 4x4 pages at x 17..20,
+  // y 12..15, half a quad of the grid off it on the left
+  std::vector<std::pair<int,int>> marks;
+  for(int x=10; x<=21; ++x)
+    marks.push_back({x, 16});
+  for(int x=17; x<=20; ++x)
+    for(int y=12; y<=15; ++y)
+      marks.push_back({x, y});
+
+  const auto base = layout(marks, {});
+  for(auto& e : base) {
+    bool one = e.mip==0 && (e.h==1 || (e.x%2==0 && e.y%2==0));
+    for(int x=e.x; x<e.x+e.w; ++x)
+      for(int y=e.y; y<e.y+e.h; ++y)
+        one &= ring(x, y)==ring(e.x, e.y);
+    require(one && e.x/8==(e.x+e.w-1)/8,
+            ("an entry lies in one ring, its quads on the table's grid, its stripe in one of the grid's columns:"+text(base)).c_str());
+    }
+  for(auto [x, y] : marks) {
+    const auto n = std::count_if(base.begin(), base.end(), [x=x, y=y](const Entry& e) {
+      return e.x<=x && x<e.x+e.w && e.y<=y && y<e.y+e.h;
+      });
+    require(n==1, ("each marked page is in one entry:"+text(base)).c_str());
+    }
+  require(base.size()==11 && has(base, {16, 12, 0, 4, 2}) && has(base, {20, 12, 0, 2, 2}) &&
+          has(base, {14, 16, 0, 2, 1}) && has(base, {16, 16, 0, 2, 1}) && has(base, {10, 16, 0, 2, 1}),
+          ("quads of the grid, stripes cut at each ring and at column 16:"+text(base)).c_str());
+
+  // the same layout whatever bins the frame before drew
+  for(auto drawnBefore : {prefix(16+16*16), prefix(Sun0+1), prefix(Sun0+2), prefix(Sun0+16+1)}) {
+    const auto es = layout(marks, drawnBefore);
+    bool same = es.size()==base.size();
+    for(auto& e : es)
+      same &= has(base, e);
+    require(same, ("the layout does not follow the bins the frame before drew:"+text(base)+" |"+text(es)).c_str());
+    }
+
+  // one more mark far off and one at the row's end, as the jitter marks a page at an edge or not: no entry of the
+  // other pages changes, the new ones are entries of their own
+  {
+  auto more = marks;
+  more.push_back({3, 3});
+  more.push_back({22, 16});
+  const auto es = layout(more, {});
+  bool kept = es.size()==base.size()+2 && has(es, {3, 3, 0, 1, 1}) && has(es, {22, 16, 0, 1, 1});
+  for(auto& e : base)
+    kept &= has(es, e);
+  require(kept, ("one more mark changes no entry but its own:"+text(base)+" |"+text(es)).c_str());
+  }
+
+  // the selection frame after frame with the demand at the edge: the cluster asks 10 pairs of each entry, 30 of ring 0,
+  // 40 of ring 1 and 40 of ring 2. Under a cap of 72 ring 1 goes in with the whole cap (70) but not under 7/8 of it
+  // (63): from a frame that drew none of mip 0 ring 1 stays out, from one that drew all it stays in - and the layout,
+  // the demand and the bins drawn are the same in every frame
+  struct Run { std::array<uint32_t,9> start, drawn; uint32_t pairs; };
+  for(const Run& run : {Run{prefix(0), prefix(Sun0+1), 30u}, Run{prefix(16+16*16), prefix(Sun0+2), 70u}}) {
+    auto words = header(run.start);
+    for(int f=0; f<4; ++f) {
+      const auto es = frame(marks, words, 72);
+      const uint32_t* d = &words[demandAt];
+      require(es.size()==base.size() && d[Sun0]==30 && d[Sun0+1]==40 && d[Sun0+2]==40,
+              ("the demand of each ring is the same in every frame: "+std::to_string(d[Sun0])+", "+
+               std::to_string(d[Sun0+1])+", "+std::to_string(d[Sun0+2])+","+text(es)).c_str());
+      require(admitted(words)==run.drawn && words[1]==run.pairs,
+              ("with the demand at the edge the same bins are drawn frame after frame: frame "+std::to_string(f)+
+               ", drawn "+std::to_string(words[1])).c_str());
+      }
+    }
+  }
+
+// the records of this header, one call of material_texture_test.cpp
+void vsmRecords(Tempest::Device& device) {
+  vsmPairCapRecords(device);
+  vsmLayoutRecords(device);
   }
