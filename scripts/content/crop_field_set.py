@@ -13,14 +13,16 @@ without touching what it copies:
 - two records of that atlas: `OWN_CROP_RYE` is foliage, the wind leans the stalks about the row's root line (the
   engine's `line` anchor: the roots on the mesh's X); `OWN_CROP_DRY` stands still, for the stooks. Both are
   `"two_sided": "same"`;
-- the meshes, `meshes/crop_field/`: a row of rye is three cards 10 cm apart, 1.5 m long, bent in four links; a row
-  of stubble two cards; a stook six to eight sheaves leant into a tent, each sheaf two crossed cards;
+- the meshes, `meshes/crop_field/`: a row of rye is three cards 10 cm apart, 1.5 m long, bent in four links, with
+  five cards of ears laid over its top every way; a tuft is two crossed cards of a few stalks, for the reaped edge;
+  a row of stubble two cards; a stook six to eight sheaves leant into a tent, each sheaf a body of eight sides with
+  a fan of three cards of ears;
 - the places, `worlds/<WORLD>/vobs.d/crop-field.json`: a field is cut across its long axis into three to five strips
   about 6.5 m wide (rye, stubble, rye, plough, stubble, the next field a strip on; or the mirror of it, whichever
-  leaves more of the original's work spots and items in the open); rows of rye stand 30 cm apart along the strip with rows across them, none within CLEAR of a work
-  spot or an item; the original's cards of grain on the field (NW_NATURE_PLANT_03) are removed.
+  leaves more of the original's work spots and items in the open); rows of rye stand 30 cm apart along the strip with rows across them, the last EDGE of a strip is
+  single tufts that thin out, none within CLEAR of a work spot or an item; the original's cards of grain on the field (NW_NATURE_PLANT_03) are removed.
 
-The ground keeps the original's texture. No levels of detail: a row is 24 triangles.
+The ground keeps the original's texture. No levels of detail: a row is 34 triangles.
 """
 from __future__ import annotations
 
@@ -39,12 +41,12 @@ import numpy as np
 HERE = Path(__file__).parent
 HOME = Path.home() / '.local/share/gothic-ai'
 STAGING = HOME / 'content-staging'
-WORK = HOME / 'crop-fields/work/cards'
+WORK = HOME / 'crop-fields/work/cards-2'
 ATLAS = 2048
 DENSITY = 512
 FOLDER = 'crop_field'
 RYE, DRY = 'OWN_CROP_RYE', 'OWN_CROP_DRY'
-FOLIAGE = dict(wind=1., flutter=.5, translucency=.45)
+FOLIAGE = dict(wind=1.4, flutter=.6, translucency=.45)
 NORMAL_UP = .7              # share of straight up in a vertex normal: the field is lit as one surface
 ROUGH = .9
 AO_ROOT = .55
@@ -53,6 +55,8 @@ ROW_GAP = 30.               # cm between rows of rye along the strip
 ROW_STEP = 135.             # cm between rows end to end (a row is 150)
 CROSS_GAP = 75.             # cm between the rows across
 STUBBLE_GAP = 38.
+EDGE = 90.                  # cm of a strip's edge that stands as single tufts, not as rows
+TUFTS_M2 = 7.               # tufts a square metre of that edge
 CLEAR = 130.                # cm round a work spot or an item where no rye stands
 STRIP_WIDTH = 650.          # cm: a field is cut into strips about this wide, three to five of them
 STOOK_STEP = 700.           # cm between stooks along a stubble strip
@@ -113,23 +117,69 @@ def card(mesh, cell: dict, z: float, turn: float = 0., links: int = 4, mirror: b
         mesh.quad((low[0], low[1], high[1], high[0]), out, both=True)
 
 
-def sheaf(mesh, cell: dict, foot, top, turn: float) -> None:
-    """A sheaf from its foot to its top (cm, the mesh's axes) as two crossed cards about that axis."""
+def tilted(mesh, cell: dict, x: float, y: float, z: float, yaw: float, tilt: float, mirror: bool = False) -> None:
+    """A card of ears over the top of a row: from (x, y, z) up and over by `tilt` degrees from the vertical, turned
+    about Y by `yaw`."""
+    c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
+    along, back = np.array((c, 0., -s)), np.array((s, 0., c))
+    t = math.radians(tilt)
+    rise = np.array((0., math.cos(t), 0.)) + back * math.sin(t)
+    out = np.cross(along, rise)
+    if out[1] < 0:
+        out = -out
+    half, height = cell['width_cm'] / 2, cell['height_cm']
+    u0, u1 = cell['u'][::-1] if mirror else cell['u']
+    normal = unit(NORMAL_UP * np.array((0., 1., 0.)) + (1 - NORMAL_UP) * out)
+    foot = np.array((x, y, z))
+    mesh.quad([(foot - along * half, normal, (u0, cell['v_root'])), (foot + along * half, normal, (u1, cell['v_root'])),
+               (foot + rise * height + along * half, normal, (u1, cell['v_tip'])),
+               (foot + rise * height - along * half, normal, (u0, cell['v_tip']))], out, both=True)
+
+
+SHEAF_BODY = ((0., 17.), (.3, 11.), (.54, 6.5), (.64, 8.5))    # share of the picture's height, radius in cm
+SHEAF_SIDES = 8
+
+
+def sheaf(mesh, cell: dict, foot, top, turn: float, centre) -> None:
+    """A sheaf from its foot to its top (cm, the mesh's axes): a body of eight sides from the butts to over the
+    band, the straw of the picture's middle wrapped round it, and the fan of ears above as three crossed cards.
+    centre: the stook's middle, the normals lean away from it."""
     foot, top = np.asarray(foot, np.float64), np.asarray(top, np.float64)
     axis = unit(top - foot)
     length = np.linalg.norm(top - foot)
     first = unit(np.cross(axis, (0., 1., 0.)))
     second = np.cross(axis, first)
-    c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+    away = unit((foot - np.asarray(centre)) * (1, 0, 1) + (1e-3, 0, 0))
+    middle = (cell['u'][0] + cell['u'][1]) / 2
+    per_cm = (cell['u'][1] - cell['u'][0]) / cell['width_cm']
+    rings = []
+    for share, radius in SHEAF_BODY:
+        v = cell['v_root'] + (cell['v_tip'] - cell['v_root']) * share
+        ring = []
+        for k in range(SHEAF_SIDES + 1):
+            angle = 2 * math.pi * k / SHEAF_SIDES + math.radians(turn)
+            around = first * math.cos(angle) + second * math.sin(angle)
+            # the picture's straw is as wide as the sheaf is there: its middle goes round, there and back
+            u = middle + (radius * .8 * per_cm) * (1 if k % 2 else -1)
+            ring.append((foot + axis * length * share + around * radius,
+                         unit(.55 * around + .25 * away + .2 * np.array((0., 1., 0.))), (u, v)))
+        rings.append(ring)
+    for low, high in zip(rings, rings[1:]):
+        for k in range(SHEAF_SIDES):
+            face = unit(low[k][1] + low[k + 1][1])
+            mesh.quad((low[k], low[k + 1], high[k + 1], high[k]), face)
+    start = .5
     half = cell['width_cm'] / 2
-    for across in (first * c + second * s, second * c - first * s):
+    v0 = cell['v_root'] + (cell['v_tip'] - cell['v_root']) * start
+    for k in range(3):
+        angle = math.pi * k / 3 + math.radians(turn)
+        across = first * math.cos(angle) + second * math.sin(angle)
         out = np.cross(across, axis)
-        normal = unit(.5 * np.array((0., 1., 0.)) + .5 * unit(foot * (1, 0, 1) + (1e-3, 0, 0)))
-        corners = [(foot - across * half, normal, (cell['u'][0], cell['v_root'])),
-                   (foot + across * half, normal, (cell['u'][1], cell['v_root'])),
-                   (foot + axis * length + across * half, normal, (cell['u'][1], cell['v_tip'])),
-                   (foot + axis * length - across * half, normal, (cell['u'][0], cell['v_tip']))]
-        mesh.quad(corners, out, both=True)
+        normal = unit(.5 * np.array((0., 1., 0.)) + .5 * away)
+        low_at, high_at = foot + axis * length * start, foot + axis * length
+        mesh.quad([(low_at - across * half, normal, (cell['u'][0], v0)), (low_at + across * half, normal, (cell['u'][1], v0)),
+                   (high_at + across * half, normal, (cell['u'][1], cell['v_tip'])),
+                   (high_at - across * half, normal, (cell['u'][0], cell['v_tip']))], out, both=True)
 
 
 def build_meshes(cards, cells: dict, directory: Path, rng) -> dict:
@@ -140,6 +190,7 @@ def build_meshes(cards, cells: dict, directory: Path, rng) -> dict:
         mesh.write(directory / f'{name}.glb', material, group='UNDEF')
         made[name] = dict(glb=f'{FOLDER}/{name}.glb', triangles=mesh.triangles, material=material)
 
+    ear_cards = ('ears_a', 'ears_b')
     for name, (a, b, c), flip in (('A', ('rye_a', 'rye_b', 'rye_c'), (False, True, False)),
                                   ('B', ('rye_c', 'rye_a', 'rye_b'), (True, False, True)),
                                   ('C', ('rye_b', 'rye_c', 'rye_a'), (False, False, True))):
@@ -147,11 +198,18 @@ def build_meshes(cards, cells: dict, directory: Path, rng) -> dict:
         card(mesh, cells[a], -10., turn=-5., mirror=flip[0], lean=-3.)
         card(mesh, cells[b], 0., turn=3., mirror=flip[1], shift=6.)
         card(mesh, cells[c], 10., turn=7., mirror=flip[2], lean=4., shift=-5.)
+        # the top: ears laid over the row every way, so that from above it is ears and not the cards' edges
+        for k in range(5):
+            tilted(mesh, cells[ear_cards[k % 2]], rng.uniform(-55, 55), rng.uniform(100, 116), rng.uniform(-16, 16),
+                   rng.uniform(0, 360), rng.uniform(42, 68), mirror=bool(k % 2))
         write(f'{RYE}_ROW_{name}', mesh, RYE)
-    mesh = cards.Mesh()
-    card(mesh, cells['rye_thin'], -6., turn=-6.)
-    card(mesh, cells['rye_c'], 5., turn=5., mirror=True)
-    write(f'{RYE}_ROW_EDGE', mesh, RYE)
+    for name, (a, b) in (('A', ('tuft_a', 'tuft_c')), ('B', ('tuft_b', 'tuft_d')), ('C', ('tuft_d', 'tuft_a')),
+                         ('D', ('tuft_c', 'tuft_b'))):
+        mesh = cards.Mesh()                     # single stalks: the reaped edge of a strip, a straggler in the stubble
+        turn = rng.uniform(0, 180)
+        card(mesh, cells[a], 0., turn=turn, lean=rng.uniform(-6, 6))
+        card(mesh, cells[b], 0., turn=turn + rng.uniform(60, 120), mirror=True, lean=rng.uniform(-6, 6))
+        write(f'{RYE}_TUFT_{name}', mesh, RYE)
     for name, (a, b) in (('A', ('stubble_a', 'stubble_b')), ('B', ('stubble_b', 'stubble_a'))):
         mesh = cards.Mesh()
         card(mesh, cells[a], -8., turn=-7., links=1, lean=-3.)
@@ -162,12 +220,12 @@ def build_meshes(cards, cells: dict, directory: Path, rng) -> dict:
         height = cells['sheaf']['height_cm']
         for k in range(count):
             angle = 2 * math.pi * (k + rng.uniform(-.2, .2)) / count
-            radius = rng.uniform(38, 50)
+            radius = rng.uniform(40, 52)
             foot = np.array((math.cos(angle) * radius, 0., math.sin(angle) * radius))
             reach = rng.uniform(.94, 1.)
-            tilt = math.asin(min((radius - rng.uniform(4, 9)) / (height * reach), .9))
+            tilt = math.asin(min((radius - rng.uniform(6, 12)) / (height * reach), .9))
             top = foot * (1 - math.sin(tilt) * height * reach / radius) + (0., math.cos(tilt) * height * reach, 0.)
-            sheaf(mesh, cells['sheaf'], foot, top, rng.uniform(0, 90))
+            sheaf(mesh, cells['sheaf'], foot, top, rng.uniform(0, 45), (0., 0., 0.))
         write(f'{DRY}_STOOK_{name}', mesh, DRY)
     return made
 
@@ -319,18 +377,29 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int = 
                         continue
                     p = world(uu, vv)
                     if clear(p):
-                        edge = vv - low - wander(uu, 0) < 45 or high + wander(uu, 1) - vv < 45
-                        if edge:   # the reaped edge is thin and uneven, some of it lower
-                            add(f'{RYE}_ROW_EDGE' if rng.random() < .8 else rows[rng.integers(3)], *p, u_axis, jitter=16.,
-                                sink=rng.uniform(2, 22))
-                        else:
+                        edge = vv - low - wander(uu, 0) < EDGE or high + wander(uu, 1) - vv < EDGE
+                        if not edge:
                             add(rows[rng.integers(3)], *p, u_axis, sink=rng.uniform(2, 12))
             for u in np.arange(u0, u1, CROSS_GAP):
                 for v in np.arange(low + 75, high - 60, ROW_STEP):
                     uu, vv = u + rng.normal(0, 10), v + rng.normal(0, 15)
                     p = world(uu, vv)
-                    if clear(p) and low + 95 + wander(uu, 0) < vv < high - 95 + wander(uu, 1):
+                    if clear(p) and low + EDGE + 60 + wander(uu, 0) < vv < high - EDGE - 60 + wander(uu, 1):
                         add(rows[rng.integers(3)], *p, v_axis, jitter=18., sink=rng.uniform(2, 12))
+            # the reaped edge: single tufts, thinner outwards, some lower, a few left standing in the stubble
+            for side, sign in ((0, 1.), (1, -1.)):
+                for _ in range(round((u1 - u0) / 100 * (EDGE + 60) / 100 * TUFTS_M2)):
+                    uu = rng.uniform(u0, u1)
+                    inward = rng.uniform(-60, EDGE) ** 1.0
+                    if inward < 0 and rng.random() < .75:      # few of them outside the line
+                        continue
+                    if rng.random() > .35 + .65 * np.clip(inward / EDGE, 0, 1):
+                        continue
+                    vv = (low if side == 0 else high) + wander(uu, side) + sign * (20 + inward)
+                    p = world(uu, vv)
+                    if clear(p):
+                        add(f'{RYE}_TUFT_{"ABCD"[rng.integers(4)]}', *p, unit(rng.normal(0, 1, 2)), jitter=180.,
+                            sink=rng.uniform(2, 14) + (rng.uniform(10, 45) if rng.random() < .2 else 0.))
         elif kind == 'stubble':
             for v in np.arange(low + 10, high - 10, STUBBLE_GAP):
                 for u in np.arange(u0 + rng.uniform(0, ROW_STEP), u1, ROW_STEP):
