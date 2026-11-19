@@ -103,11 +103,14 @@ inline uint8_t pick(const float* px, size_t count, uint8_t current, float height
   return uint8_t(level);
   }
 
-// A caster keeps close-up detail and reaches the last available GLB sooner than the picture. Sun and lamps share
-// this choice, measured at 1080p with the main view's field of view. Neither shadow path takes the impostor card.
+// Keep the visual GLB when the tree fills at least 800 pixels at 1080p. Farther out, sun and lamps share the
+// coarser scale based on the main view's field of view. Neither shadow path takes the impostor card.
 inline uint8_t pickShadow(size_t count, uint8_t current, float heightAt1080, uint8_t visualGlb, bool enabled) {
-  constexpr float px[MaxLevels] = {2400.f, 1400.f, 800.f, 400.f};
-  return enabled ? pick(px, std::min(count, MaxLevels), current, heightAt1080) : visualGlb;
+  constexpr float closeUpPx = 800.f;
+  constexpr float px[MaxLevels] = {2400.f, 1400.f, closeUpPx, 400.f};
+  if(!enabled || heightAt1080>=closeUpPx)
+    return visualGlb;
+  return pick(px, std::min(count, MaxLevels), current, heightAt1080);
   }
 
 }

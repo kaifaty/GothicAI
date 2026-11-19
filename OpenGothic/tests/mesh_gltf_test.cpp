@@ -1543,10 +1543,11 @@ void levelCases(const Fixture& fixture) {
   levelSwitchCase("shadow-env");
   levelSwitchCase("shadow-ini");
 
-  require(MeshLevels::pickShadow(4, 0, 2500.f, 0, true)==0 && MeshLevels::pickShadow(4, 0, 390.f, 0, true)==4 &&
+  require(MeshLevels::pickShadow(4, 4, 1200.f, 0, true)==0 && MeshLevels::pickShadow(4, 0, 800.f, 1, true)==1 &&
+          MeshLevels::pickShadow(4, 0, 799.f, 0, true)==3 && MeshLevels::pickShadow(4, 0, 390.f, 0, true)==4 &&
           MeshLevels::pickShadow(4, 4, 420.f, 1, true)==4 && MeshLevels::pickShadow(4, 4, 450.f, 1, true)==3 &&
           MeshLevels::pickShadow(2, 0, 390.f, 0, true)==2 && MeshLevels::pickShadow(4, 3, 2500.f, 4, false)==4,
-          "shadow LOD must use its own thresholds and hysteresis, stop at the last GLB, and fall back to the visual GLB");
+          "shadow LOD must match the near visual GLB and use its own thresholds and hysteresis farther away");
 
   // Spruce A, 18 m, at 1920x1080 and 67.5 degrees: 400, 200, 100 and 50 px at 36, 73, 145 and 291 m
   const float px[] = {400,200,100,50};

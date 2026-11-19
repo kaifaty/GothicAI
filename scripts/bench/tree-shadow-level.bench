@@ -2,7 +2,9 @@
 # Use the tree-impostor forest set with its L1-L4 and the campfire at (53325,1675,-10448).
 # Use OPENGOTHIC_VSM_PAIRS=4194304 and OPENGOTHIC_VSM_STATS=1. Wait for one sample under each reference frame.
 # The normal-cap measurements use tree-shadow-level-pairs.bench with OPENGOTHIC_VSM_STATS=1.
-# Each deterministic streaming wait pins texture residency until its shot.
+# Use OPENGOTHIC_FOLIAGE=light, OPENGOTHIC_EYE=0, OPENGOTHIC_TAA=0 and OPENGOTHIC_UPSCALE=off
+# to isolate the shadow comparison. Each streaming wait pins texture residency until its shot.
+# The near view also repeats the full caster and records the opaque depth and view projection.
 # @timeout 240
 seed 73013
 cheat god
@@ -18,11 +20,13 @@ clear 3000
 cam at 53990 1760 -10780 54680 1570 -11040
 wait real 6000
 ztimer multiplyer 0
+impostor probe on
 shadow levels full
 wait real 750
 log shadow-pairs under-6m full begin
 wait real 6500
 streaming wait
+pos
 shot under-6m-full
 wait 200
 log shadow-pairs under-6m full end
@@ -31,9 +35,21 @@ wait real 750
 log shadow-pairs under-6m on begin
 wait real 6500
 streaming wait
+pos
 shot under-6m-on
 wait 200
 log shadow-pairs under-6m on end
+shadow levels full
+wait real 750
+log shadow-pairs under-6m full-repeat begin
+wait real 6500
+streaming wait
+pos
+shot under-6m-full-repeat
+wait 200
+log shadow-pairs under-6m full-repeat end
+impostor probe off
+shadow levels on
 ztimer realtime
 
 # The 30 m and 100 m cameras from perf-trees.bench.
@@ -47,6 +63,7 @@ wait real 750
 log shadow-pairs near-30 full begin
 wait real 6500
 streaming wait
+pos
 shot near-30-full
 wait 200
 log shadow-pairs near-30 full end
@@ -55,6 +72,7 @@ wait real 750
 log shadow-pairs near-30 on begin
 wait real 6500
 streaming wait
+pos
 shot near-30-on
 wait 200
 log shadow-pairs near-30 on end
@@ -70,6 +88,7 @@ wait real 750
 log shadow-pairs far-100 full begin
 wait real 6500
 streaming wait
+pos
 shot far-100-full
 wait 200
 log shadow-pairs far-100 full end
@@ -78,6 +97,7 @@ wait real 750
 log shadow-pairs far-100 on begin
 wait real 6500
 streaming wait
+pos
 shot far-100-on
 wait 200
 log shadow-pairs far-100 on end
@@ -95,6 +115,7 @@ wait real 750
 log shadow-pairs lamp-night full begin
 wait real 6500
 streaming wait
+pos
 shot lamp-night-full
 wait 200
 log shadow-pairs lamp-night full end
@@ -103,6 +124,7 @@ wait real 750
 log shadow-pairs lamp-night on begin
 wait real 6500
 streaming wait
+pos
 shot lamp-night-on
 wait 200
 log shadow-pairs lamp-night on end

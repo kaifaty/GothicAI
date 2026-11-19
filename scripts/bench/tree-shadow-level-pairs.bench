@@ -20,12 +20,6 @@ ztimer multiplyer 0
 log shadow-pairs inside on begin
 wait real 11000
 log shadow-pairs inside on end
-shadow levels off
-wait real 1000
-log shadow-pairs inside off begin
-wait real 11000
-log shadow-pairs inside off end
-shadow levels on
 ztimer realtime
 
 goto pos 48765 6250 -3156
@@ -37,12 +31,6 @@ ztimer multiplyer 0
 log shadow-pairs near-30 on begin
 wait real 11000
 log shadow-pairs near-30 on end
-shadow levels off
-wait real 1000
-log shadow-pairs near-30 off begin
-wait real 11000
-log shadow-pairs near-30 off end
-shadow levels on
 ztimer realtime
 
 goto pos 42364 1700 -8973
@@ -54,12 +42,6 @@ ztimer multiplyer 0
 log shadow-pairs far-100 on begin
 wait real 11000
 log shadow-pairs far-100 on end
-shadow levels off
-wait real 1000
-log shadow-pairs far-100 off begin
-wait real 11000
-log shadow-pairs far-100 off end
-shadow levels on
 ztimer realtime
 
 goto pos 23216 4300 -8618
@@ -71,12 +53,6 @@ ztimer multiplyer 0
 log shadow-pairs far-300 on begin
 wait real 11000
 log shadow-pairs far-300 on end
-shadow levels off
-wait real 1000
-log shadow-pairs far-300 off begin
-wait real 11000
-log shadow-pairs far-300 off end
-shadow levels on
 ztimer realtime
 
 cam game
@@ -91,21 +67,5 @@ wait 500
 log shadow-pairs pass on begin
 wait 9000
 log shadow-pairs pass on end
-release forward
-wait 500
-
-shadow levels off
-cam game
-goto pos 54500 1640 -12700
-clear 5000
-face 110
-streaming wait
-wait real 15000
-set time 12 0
-press forward
-wait 500
-log shadow-pairs pass off begin
-wait 9000
-log shadow-pairs pass off end
 release forward
 wait 500
