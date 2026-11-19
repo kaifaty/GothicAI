@@ -152,3 +152,5 @@ def test_tree_occlusion_probe_detects_clear_depth_outside_the_projected_box():
 
     # At the bottom of pack_depth's range, the HiZ bias adds two R16 steps.
     assert Depth.encode(np.float32(0.95)) == 2
+    clear = Depth(np.ones((1, 1), dtype=np.float32), (1, 1))
+    assert clear.test(np.array([[0, 0], [1, 1]], dtype=np.float32), 1, 'precise') == (True, 0)

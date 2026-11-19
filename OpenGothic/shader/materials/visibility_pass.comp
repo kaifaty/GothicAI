@@ -225,7 +225,8 @@ bool hiZTestPrecise(vec4 sbbox, float depthMin) {
     z = max(z, texelFetch(hiZ, ivec2(lo.x, hi.y), mip).x);
   if(lo.x != hi.x && lo.y != hi.y)
     z = max(z, texelFetch(hiZ, hi, mip).x);
-  return !(packHiZ(depthMin) > z);
+  // The packed far plane can round above 1, while clear depth must still pass an equal-depth fragment.
+  return !(min(packHiZ(depthMin), 1.0) > z);
   }
 
 

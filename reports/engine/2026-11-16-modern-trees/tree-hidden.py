@@ -101,7 +101,10 @@ class Depth:
         if method == "stock" and span:
             x1, y1 = x0 + 1, y0 + 1
         z = self.mips[lod][y0:y1 + 1, x0:x1 + 1].max()
-        return bool(pack_depth(depth) <= np.float32(z / 65535)), lod
+        packed = pack_depth(depth)
+        if method == "precise":
+            packed = min(packed, 1.)
+        return bool(packed <= np.float32(z / 65535)), lod
 
 
 def project(box, model, vp, near):
