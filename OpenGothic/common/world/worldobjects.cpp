@@ -539,6 +539,7 @@ bool WorldObjects::keepsNearPolicy(const Npc& npc) {
 
 void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   updateSimTiers(true);
+  reservations.tick();
   const auto& logic = NpcLogicAudit::stats();
   const uint64_t logicBefore[] = {logic.ticks,logic.bodyMismatch,logic.weaponMismatch,
                                  logic.early,logic.late,logic.events,logic.eventMismatch,
@@ -802,6 +803,7 @@ void WorldObjects::removeNpc(Npc& npc) {
   auto ptr = takeNpc(&npc);
   if(ptr==nullptr)
     return;
+  npc.stopActivityEvents(ActivityEvents::Interrupted);
   npc.endMeleeAiSpecial();
   BodyObservations::forget(&npc);
   auto& point = owner.deadPoint();
@@ -1506,10 +1508,13 @@ Interactive *WorldObjects::availableMob(const Npc &pl, std::string_view dest) {
     if(i->checkMobName(dest))
       return i;
     }
+  // A routine activity walks to the object it reserved; others do not get it meanwhile.
+  if(auto i = reservations.reserved(pl); i!=nullptr && i->checkMobName(dest) && i->isAvailable())
+    return i;
 
   float curDist=dist*dist;
   interactiveObj.find(pl.position(),dist,[&](Interactive& i){
-    if(i.isAvailable() && i.checkMobName(dest)) {
+    if(i.checkMobName(dest) && reservations.isFree(i,pl)) {
       float d = pl.qDistTo(i);
       if(d<curDist){
         ret    = &i;

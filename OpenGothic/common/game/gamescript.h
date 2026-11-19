@@ -215,6 +215,8 @@ class GameScript final : public GameRules {
     void      fixNpcPosition(Npc& npc, float angle0, float distBias) override;
     StartupFloor& startupFloor() { return floorDefer; }
 
+    const ActivityDefinitions::MobActivity* eventActivity(ScriptFn init) override;
+
   private:
     friend struct NpcDefinitionContract;
     bool invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe);
@@ -527,6 +529,7 @@ class GameScript final : public GameRules {
     NpcDefinitionRuntime::Definitions                           npcDefinitions;
     PlacementDefinitionRuntime::Definitions                     placementDefinitions;
     ActivityDefinitionRuntime::Definitions                      activityDefinitions;
+    bool                                                        activityEvents = ActivityDefinitionRuntime::events();
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};

@@ -14,6 +14,7 @@
 #include "objects/vob.h"
 #include "npcsimtier.h"
 #include "animationlod.h"
+#include "mobreservations.h"
 
 class Npc;
 class Item;
@@ -193,6 +194,7 @@ class WorldObjects final {
     void           drawMeleeShadow  (DbgPainter& p) const;
 
     Interactive*   availableMob(const Npc& pl, std::string_view name);
+    MobReservations& mobReservations() { return reservations; }
     void           setMobRoutine(gtime time, std::string_view scheme, int32_t state);
 
     void           sendPassivePerc  (Npc& self, Npc& other, Npc* victim, Item* itm, int32_t perc, std::shared_ptr<HeroDeed> deed = {});
@@ -242,6 +244,8 @@ class WorldObjects final {
       };
 
     World&                             owner;
+    // First: NPCs give their reservations up when they are destroyed.
+    MobReservations                    reservations{owner};
 
     std::vector<CollisionZone*>        collisionZn;
     std::vector<std::unique_ptr<Vob>>  rootVobs;

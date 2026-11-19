@@ -1,4 +1,5 @@
 #include "npc.h"
+#include "world/mobreservations.h"
 #include "world/npcactivityprobe.h"
 
 #include <Tempest/Log>
@@ -708,6 +709,11 @@ bool Npc::isAiBusy() const {
 
 void Npc::clearAiQueue() {
   if(BodyController::deferNative(*this,[this] { clearAiQueue(); })) return;
+  if(activityEvents.stage==ActivityEvents::Stage::Attach) {
+    // the queued use is gone with the queue: give the reservation up and look again
+    owner.mobReservations().release(*this);
+    wakeActivity(ActivityEvents::AttachFailed);
+    }
   stopPhysicsInvestigation(false);
   currentLookAt    = nullptr;
   currentLookAtNpc = nullptr;

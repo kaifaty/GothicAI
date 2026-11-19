@@ -18,11 +18,15 @@ enum class Mode : uint8_t { Off, Accepted, All };
 Mode mode();
 // The states whose record parity is accepted; other captured states need "all".
 bool accepted(std::string_view state);
+// OPENGOTHIC_ACTIVITY_EVENTS: unset (or any other value) runs record activities at objects by events
+// (world/activityevents.h), "0" polls their Loop from the record as before.
+bool events();
 
 struct Phase {
   const ActivityDefinitions::MobActivity* activity = nullptr;
   ActivityDefinitions::Phase              phase = ActivityDefinitions::Phase::Init;
   uint32_t                                helper = 0;
+  std::string_view                        state;  // the key of `activity` in Definitions
   };
 // Phases point into `activities`: moving keeps the nodes, a copy would not.
 struct Definitions {

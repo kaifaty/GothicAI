@@ -18,6 +18,8 @@
 #include "world/objects/npc.h"
 #include "world/npcsimtier.h"
 #include "world/npclogicalstate.h"
+#include "world/activityevents.h"
+#include "world/mobreservations.h"
 #include "world/waypoint.h"
 #include "world/world.h"
 
@@ -331,7 +333,10 @@ void finish(World& w, Journal& j, const char* reason) {
                 (unsigned long long)(s.graphFallbackNpcTicks-j.tiersAtStart.graphFallbackNpcTicks),fullMs,simpMs,
                 (unsigned long long)(s.toFull-j.tiersAtStart.toFull),
                 (unsigned long long)(s.toSimplified-j.tiersAtStart.toSimplified),s.full,s.simplified);
-  writeHeader(w,j,std::string(buf)+",\"logic_audit\":"+NpcLogicAudit::stats().json());
+  // The last check for reservations without a living owner, then the day's activity counters.
+  w.mobReservations().audit(true);
+  writeHeader(w,j,std::string(buf)+",\"logic_audit\":"+NpcLogicAudit::stats().json()+
+                  ",\"activity_events\":"+ActivityEvents::json());
   // Play after the journal goes back to the shared stream. Only the streams registered here are
   // dropped: BodyArena's own isolation is a separate user (it clears all streams on reset), and the
   // two must not run in one scenario.
@@ -410,6 +415,7 @@ bool NpcDayJournal::start(World& w, const Options& options, std::string& error) 
   j.tiersAtStart = w.npcSimTierStats();
   j.tiersAtSample = j.tiersAtStart;
   NpcLogicAudit::reset();
+  ActivityEvents::reset();
 
   // Keys: the symbol plus an ordinal among NPCs of the same symbol, ordered
   // by their position at the start, then by their place in the world array.

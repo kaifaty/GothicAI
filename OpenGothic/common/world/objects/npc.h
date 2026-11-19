@@ -26,6 +26,7 @@
 #include "physics/dynamicworld.h"
 #include "physics/collisionworld.h"
 #include "physics/ragdoll.h"
+#include "world/activityevents.h"
 #include "world/aiqueue.h"
 #include "world/npclogicalstate.h"
 #include "world/objects/attention.h"
@@ -397,6 +398,11 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     void      aiPush(AiQueue::AiAction&& a);
     void      resumeAiRoutine();
+    // A routine activity run by events (world/activityevents.h): a wake for its automaton, ignored
+    // when the state polls its Loop; stopping it gives its object's reservation up.
+    void      wakeActivity(uint16_t wakes);
+    void      stopActivityEvents(uint16_t why);
+    const ActivityEvents::State& activityEventState() const { return activityEvents; }
     // external AI control (ai_bridge): routines and script perceptions are paused
     void      setExternalControl(bool e) { externalCtrl = e; }
     bool      isExternalControl() const  { return externalCtrl; }
@@ -1014,6 +1020,10 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     bool      isPlayerEnabledState(const ::AiState& st) const;
     void      tickRoutine();
+    void      startActivityEvents();
+    bool      tickActivityEvents();
+    void      stepActivityEvents(uint16_t wakes);
+    void      seekActivityPlace();
     int       invokeRoutine(ScriptFn function);
     void      nextAiAction(AiQueue& queue, uint64_t dt);
     bool      startQueuedState(const AiQueue::AiAction& act);
@@ -1370,6 +1380,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     std::optional<NpcSimTier>       simTierOverrideValue; // bench-only, not serialized
     NpcLogicalState                logicalBody;
     AiState                        aiState;
+    ActivityEvents::State          activityEvents; // transient, not serialized
     ScriptFn                       aiPrevState;
     AiQueue                        aiQueue;
     AiQueue                        aiQueueOverlay;

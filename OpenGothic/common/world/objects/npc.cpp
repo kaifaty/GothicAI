@@ -287,6 +287,7 @@ Npc::~Npc(){
   NpcKeys::forget(this);
   BodyObservations::forget(this);
   Bench::bodyForget(this);
+  stopActivityEvents(ActivityEvents::Interrupted);
   if(currentInteract)
     currentInteract->detach(*this,true);
   owner.rules().detachNpc(hnpc,*this);

@@ -87,6 +87,7 @@ void Npc::setBodyTrace(BodyTrace trace) {
 
 void Npc::clearState(bool noFinalize) {
   if(BodyController::deferNative(*this,[this,noFinalize] { clearState(noFinalize); })) return;
+  stopActivityEvents(ActivityEvents::Interrupted);
   if(aiState.funcIni.isValid() && aiState.started) {
     if(!noFinalize)
       owner.rules().invokeState(this,currentOther,currentVictim,aiState.funcEnd);  // cleanup
@@ -154,8 +155,13 @@ void Npc::tickRoutine() {
     // WA: for gothic1 dialogs
     perceptionNextTime   = owner.tickCount();
     invokeRoutine(aiState.funcIni);
+    startActivityEvents();
     return;
     }
+
+  // A routine activity run by events runs no Loop (world/activityevents.h).
+  if(tickActivityEvents())
+    return;
 
   const bool fastPath = (aiPolicy==NpcProcessPolicy::AiFar2 && routines.empty()); //HACK: don't process far away Npc
   if(aiState.loopNextTime<=owner.tickCount()) {

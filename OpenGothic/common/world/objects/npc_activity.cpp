@@ -2,6 +2,7 @@
 
 #include "game/bodycontroller.h"
 #include "settings.h"
+#include "world/mobreservations.h"
 #include "world/npcactivityprobe.h"
 #include "world/objects/interactive.h"
 #include "world/world.h"
@@ -33,6 +34,7 @@ bool Npc::setInteraction(Interactive *id, bool quick) {
 
   if(id->attach(*this)) {
     currentInteract = id;
+    owner.mobReservations().attached(*this,*id);
     if(auto* probe=NpcActivityProbe::instance) probe->mob(*this,*id,true);
     if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual)) {
       mvAlgo.resetCharacterVirtual(true);
@@ -63,5 +65,7 @@ void Npc::quitInteraction() {
     processDefInvTorch();
   setDirectionY(0);
   if(auto* probe=NpcActivityProbe::instance) probe->mob(*this,*currentInteract,false);
+  auto* mob = currentInteract;
   currentInteract=nullptr;
+  owner.mobReservations().detached(*this,*mob);
   }

@@ -253,6 +253,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     void                 disableCollizionZone(CollisionZone& z);
 
     Interactive*         availableMob(const Npc &pl, std::string_view name);
+    MobReservations&     mobReservations() { return wobj.mobReservations(); }
     Interactive*         findInteractive(const Npc& pl);
     void                 setMobRoutine(gtime time, std::string_view scheme, int32_t state);
 
