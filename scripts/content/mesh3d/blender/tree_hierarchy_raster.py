@@ -147,13 +147,6 @@ def raster(parts, projection, low, ppm, shape, *, foliage=None):
     return pixels_out.reshape(*shape, 8), depth.reshape(shape)
 
 
-def projected_frame(parts, projection, ppm, padding=2):
-    xy = np.concatenate([part['position'] for part in parts]) @ projection[:, :2]
-    low = xy.min(axis=0) - padding / ppm
-    shape = tuple(np.maximum(1, np.ceil((xy.max(axis=0) - low) * ppm + padding).astype(int))[::-1])
-    return low, shape
-
-
 def _normal_and_openness(full, proxy):
     shared = np.minimum(full[..., 3], proxy[..., 3])
     common = shared > 1e-8
