@@ -49,6 +49,9 @@ stand in a grid of `--count` (forest_layout(), X0 and the next constants) on the
 and spruce A alone on the hill west of it (LONE) unless `--no-sample`. The layer is
 worlds/NEWWORLD/vobs.d/tree-cost.json, the numbers of the spruces are in tree-cost.json of the set. `--count 0`
 is the control: the same set without the forest. The spruces of `--share 1` are those of `probe`, byte for byte.
+
+`eye-threshold` copies the current probe set and places the original spruce A and three relaxed cuts from
+`tree_hierarchy_probe.py --eye` in one row. All four use the same existing impostor.
 """
 from __future__ import annotations
 
@@ -86,6 +89,9 @@ PROBE = (((38700., 3456.2, 1000.), 40., 1.2, 33),
          ((40400., 3378., 950.), 250., .8, 48),
          ((41250., 3323.5, 650.), 0., 1., None),
          ((42100., 3227.1, 1600.), 170., .9, 59))
+# Across the view of fir-eye-threshold.bench. The root heights follow the hill west of Akil's farm.
+EYE_ROW = ((47403.5, 6113.4, 816.2), (47701.2, 6160.5, -294.6),
+           (47998.8, 6062.2, -1405.4), (48296.5, 6144.0, -2516.2))
 
 # The cost stand (tree-cost mode, reports/engine/2026-11-16-modern-trees/tree-cost.md): a grid of SIDE x SIDE spruces,
 # STEP apart (the original's forest has 6.6 m to the nearest neighbour), each shifted up to JITTER, in the basin
@@ -357,6 +363,62 @@ def probe(args) -> int:
     return 0
 
 
+def eye_threshold(args) -> int:
+    """Stage the existing spruce and three relaxed cuts with the same terminal impostor."""
+    sys.path.insert(0, str(BLENDER))
+    from tree_hierarchy_probe import EYE_FACTORS, LEVEL_HEIGHTS, eye_material
+
+    config = json.loads(args.config.read_text())
+    work, output = stage(args.control.resolve(), args.set)
+    visual = f'{VISUAL}_4'
+    mesh_index = work / 'meshes/meshes.json'
+    control = json.loads(mesh_index.read_text())[visual]
+    impostor_source = json.loads((args.impostor_from / 'meshes/meshes.json').read_text())[visual]
+    impostor, = (level for level in impostor_source['levels'] if 'impostor' in level)
+    for file in impostor['impostor'].values():
+        source = args.impostor_from / 'meshes' / file
+        target = work / 'meshes' / file
+        if target.exists():
+            target.unlink()
+        shutil.copyfile(source, target)
+
+    levels = [level for level in control['levels'] if 'glb' in level]
+    if tuple(level['px'] for level in levels) != LEVEL_HEIGHTS:
+        raise ValueError('The control must carry the four current mesh levels')
+    meshes = {f'{VISUAL}_EYE_CONTROL': dict(control, levels=[*levels, impostor])}
+    materials = {}
+    material_index = work / 'materials/materials.json'
+    source_name = config['materials']['boughs']
+    source = json.loads(material_index.read_text())[f'{source_name}.TGA']
+    for k in EYE_FACTORS:
+        folder = f'eye-{k}'
+        relative = f'{FOLDER}/{folder}'
+        for directory, files in (('meshes', ('base.glb', 'L1.glb', 'L2.glb', 'L3.glb', 'L4.glb')),
+                                 ('materials', ('albedo.dds', 'normal.dds', 'orm.dds'))):
+            dest = work / directory / relative
+            dest.mkdir()
+            for file in files:
+                shutil.copyfile(args.variants / folder / file, dest / file)
+        entry = dict(glb=f'{relative}/base.glb')
+        entry['levels'] = [dict(glb=f'{relative}/L{number}.glb', px=height)
+                           for number, height in enumerate(LEVEL_HEIGHTS, 1)] + [impostor]
+        meshes[f'{VISUAL}_EYE_{k}'] = entry
+        maps = {kind: f'{relative}/{kind}.dds' for kind in ('albedo', 'normal', 'orm')}
+        materials[f'{eye_material(source_name, k)}.TGA'] = dict(source, **maps)
+    rewrite(mesh_index, meshes)
+    rewrite(material_index, materials)
+
+    layers = work / 'worlds' / WORLD / 'vobs.d'
+    (layers / 'fir-probe.json').unlink()
+    placements = [dict(key=f'fir-eye-{i}', kind='mesh', visual=name, position=position,
+                       yaw_deg=0, collision='none')
+                  for i, (name, position) in enumerate(zip(meshes, EYE_ROW, strict=True))]
+    (layers / 'fir-eye-threshold.json').write_text(json.dumps(dict(format=1, add=placements), indent=1) + '\n')
+    work.rename(output)
+    print(output)
+    return 0
+
+
 def forest_layout(count: int) -> list[dict]:
     """The places of a forest of `count` spruces, a square of an even number: column, row, x and z in Gothic
     centimetres, yaw, and the number of the spruce of PROBE (1 to 5)."""
@@ -519,8 +581,14 @@ def main() -> int:
         levels.add_argument('--random-levels', action='store_const', const='random', dest='levels',
                             help='with random detail levels from the cost stand. Bake impostors for the new set '
                                  'with impostor_bake.py')
+    command = commands.add_parser('eye-threshold', help='stage current and relaxed spruce levels for the eye test')
+    command.add_argument('set')
+    command.add_argument('--control', type=Path, required=True)
+    command.add_argument('--impostor-from', type=Path, required=True)
+    command.add_argument('--variants', type=Path, required=True)
     args = parser.parse_args()
-    return dict(textures=textures, probe=probe, forest=forest)[args.command](args)
+    return {'textures': textures, 'probe': probe, 'forest': forest,
+            'eye-threshold': eye_threshold}[args.command](args)
 
 
 if __name__ == '__main__':

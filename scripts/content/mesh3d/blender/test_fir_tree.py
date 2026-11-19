@@ -177,6 +177,13 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path):
     assert [by_kind[kind].threshold_px for kind in ('hang', 'end')] == pytest.approx([15.65663567, 14.31727433])
     assert tree_hierarchy_probe.cut(nodes, roots, 1e6, 1.) == sorted(cut)
     assert tree_hierarchy_probe.cut(nodes, roots, 1e-6, 1.) == sorted(roots)
+    height = 4 * by_kind['hang'].threshold_px / by_kind['hang'].diameter
+    strict = tree_hierarchy_probe.cut(nodes, roots, height, 1.)
+    assert tree_hierarchy_probe.cut(nodes, roots, height, 1., k=1) == strict
+    relaxed = tree_hierarchy_probe.cut(nodes, roots, height, 1., k=8)
+    assert relaxed != strict
+    assert relaxed == tree_hierarchy_probe.cut(nodes, roots, height / 8, 1.)
+    assert sorted(leaf for ident in relaxed for leaf in nodes[ident - 1].leaves) == sorted(cut)
     for node in nodes:
         if node.children:
             assert 0 < node.low_px < node.threshold_px < node.high_px <= node.max_px

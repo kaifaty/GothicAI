@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import math
 import multiprocessing
+import struct
+from importlib.util import module_from_spec, spec_from_file_location
 from collections import defaultdict
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -174,39 +176,43 @@ def split_groups(foliage, nodes, leaves, axis, tier):
         yield groups
 
 
-def trials(node, foliage, nodes, texture, axes, budget_limit):
-    ppm = BAKE / node.diameter
+def support_budgets(node, foliage, nodes, axis):
     tier = node.kind == 'tier' and len({nodes[i - 1].branch for i in node.leaves}) > 1
     max_budget = max(2 if tier else 1, min(LIMIT[node.kind], len(node.leaves) - 1))
-    minimum = 2 if tier else 1
-    group_iter = split_groups(foliage, nodes, node.leaves, axes[0], tier)
+    group_iter = split_groups(foliage, nodes, node.leaves, axis, tier)
     groups = next(group_iter)
-    cache = {}
-    for budget in range(1, max_budget + 1):
-        if tier and budget < 2:
-            continue
+    for budget in range(2 if tier else 1, max_budget + 1):
         supports = max(2 if tier and budget > 1 else 1, (budget + 1) // 2)
         if len(groups) < supports:
             groups = next(group_iter)
         crosses = set(sorted(range(supports), key=lambda i: -len(groups[i]))[:budget - supports])
+        yield budget, tier, [(group, 1 + (i in crosses)) for i, group in enumerate(groups)]
+
+
+def card_planes(foliage, nodes, group):
+    axis, up, side = frame(foliage, nodes, group)
+    return [projection(axis, direction(camera)) for camera in (.82 * up + .57 * side, -.57 * up + .82 * side)]
+
+
+def trials(node, foliage, nodes, texture, axes, budget_limit):
+    ppm = BAKE / node.diameter
+    cache = {}
+    for budget, tier, groups in support_budgets(node, foliage, nodes, axes[0]):
         cards = []
-        for i, group in enumerate(groups):
+        for group, count in groups:
             if group not in cache:
                 source = source_part(foliage, nodes, group, texture)
-                axis, up, side = frame(foliage, nodes, group)
-                cameras = (.82 * up + .57 * side, -.57 * up + .82 * side)
-                cache[group] = (source, axis, cameras, [])
-            source, axis, cameras, baked = cache[group]
-            for j in range(1 + (i in crosses)):
+                cache[group] = (source, card_planes(foliage, nodes, group), [])
+            source, planes, baked = cache[group]
+            for j in range(count):
                 if j == len(baked):
-                    plane = projection(axis, direction(cameras[j]))
-                    baked.append(bake_card(source, plane, ppm, node.rest_low, node.rest_high))
+                    baked.append(bake_card(source, planes[j], ppm, node.rest_low, node.rest_high))
                 if baked[j] is not None:
                     cards.append(baked[j])
         if len(cards) == budget and (not tier or len({card['colour'][0, 1] for card in cards}) >= 2):
             yield cards
             # If every cheaper bake was empty or lost a wind support, retain a diagnostic.
-            if budget >= max(minimum, budget_limit):
+            if budget >= max(2 if tier else 1, budget_limit):
                 return
 
 
@@ -452,3 +458,220 @@ def pack(output: Path, fits: dict[int, Fit]):
     atlas = dict(pages=pages, pad_px=PAD, tiles=sum(len(fit.cards) for fit in fits.values()),
                  bytes=sum(page['bytes'] for page in pages), raw_bytes=len(pages) * PAGE * PAGE * 8)
     return parents, atlas
+
+
+def card_tangent_normals(card, normals):
+    """Invert the engine's cotangent frame for each stored triangle."""
+    height, width = normals.shape[:2]
+    scaled_uv = dict(card, uv=card['uv'] * (width, height))
+    u, v, face_normal = measure._cotangent_edges(scaled_uv)
+    n = direction(card['normal'][0])
+    tangent, bitangent = np.cross(u, n), np.cross(v, n)
+    scale = np.maximum(np.linalg.norm(tangent, axis=1), np.linalg.norm(bitangent, axis=1))
+    scale *= np.where(face_normal @ n < 0, -1., 1.)
+    y, x = np.ogrid[:height, :width]
+    u_above_v = (x + .5) / width >= (y + .5) / height
+    result = np.empty_like(normals)
+    for face, mask in enumerate((u_above_v, ~u_above_v)):
+        basis = np.stack((tangent[face] / scale[face], bitangent[face] / scale[face], n))
+        local = normals[mask] @ np.linalg.inv(basis)
+        # DXT5nm reconstructs positive Z. The opposite hemisphere projects onto the tangent plane.
+        local[:, 2] = np.maximum(local[:, 2], 0.)
+        lengths = np.linalg.norm(local, axis=1, keepdims=True)
+        result[mask] = np.where(lengths > 1e-8, local / np.maximum(lengths, 1e-8), (0., 0., 1.))
+    return result
+
+
+def eye_camera_frame(camera):
+    aim, outward, root, centre, focal = camera
+    forward = -np.asarray(outward)
+    right = direction(np.cross(forward, (0., 1., 0.)))
+    up = np.cross(right, forward)
+    basis = np.stack((right, up, forward), axis=1)
+    # tree_glb.to_gltf rotates to Y up; loadGltfMesh mirrors X.
+    model = basis[[0, 2, 1]] * np.array((-1., -1., 1.))[:, None]
+    origin = (np.asarray(root) - aim) @ basis
+    return model, origin, centre @ model + origin, focal
+
+
+def card_screen_span(card, camera, screen_ppm):
+    """Upper bound of the length of each projected UV derivative at the stage's upper threshold."""
+    model, origin, centre, focal = camera
+    # MeshLevels divides by the radius to the full mesh's box centre. Solve
+    # for the camera depth along the route at that radius.
+    distance = focal / screen_ppm
+    row_depth = math.sqrt(distance ** 2 - np.dot(centre[:2], centre[:2])) - centre[2]
+    points = card['position'] @ model + origin
+    points[:, 2] += row_depth
+    faces = points[card['index']]
+    a, b, c, d = points
+    edges = np.array(((b - a, c - b), (c - d, d - a)))
+    # For axis e, the projective derivative is f*(e.xy*p.z-p.xy*e.z)/p.z^2.
+    # The numerator is affine over each triangle and its norm is bounded by the corners.
+    numerator = edges[:, None, :, :2] * faces[:, :, None, 2:] - faces[:, :, None, :2] * edges[:, None, :, 2:]
+    span = focal * np.linalg.norm(numerator, axis=-1).max(axis=1) / np.min(faces[..., 2], axis=1)[:, None] ** 2
+    return span.max(axis=0)
+
+
+def rebake_parent(task):
+    node_id, stored, screen_ppm, camera = task
+    nodes, foliage, texture = _worker_input
+    node = nodes[node_id - 1]
+    budget = len(stored['position']) // 4
+    axis = frame(foliage, nodes, node.leaves)[0]
+    groups = next(groups for size, _, groups in support_budgets(node, foliage, nodes, axis) if size == budget)
+    index = 0
+    cards = []
+    for group, count in groups:
+        source = dict(source_part(foliage, nodes, group, texture), tangent_normal=foliage['tangent_normal'])
+        for plane in card_planes(foliage, nodes, group)[:count]:
+            vertices = slice(index * 4, (index + 1) * 4)
+            card = {key: stored[key][vertices] for key in fir_hierarchy.VERTEX_FIELDS}
+            card['index'] = stored['index'][index * 2:(index + 1) * 2] - index * 4
+            if not np.array_equal(card['index'], QUAD) or not np.array_equal(card['uv'], UV):
+                raise ValueError(f'Node {node_id}: expected stored quads in bake order')
+            coords = source['position'] @ plane[:, :2]
+            low, high = coords.min(axis=0), coords.max(axis=0)
+            # Keep the previous UV rectangle, including the original bake's sub-texel margin.
+            old_ppm = BAKE / node.diameter
+            extent = np.ceil((high - low) * old_ppm) / old_ppm
+            origin = (low + high - extent) / 2
+            if not np.allclose(anchored_colour(source, card['position'])[:, :3], card['colour'][:, :3]):
+                raise ValueError(f'Node {node_id}: stored wind anchor differs from its bake support')
+            p = card['position']
+            span = np.array((max(np.linalg.norm(p[1] - p[0]), np.linalg.norm(p[2] - p[3])),
+                             max(np.linalg.norm(p[3] - p[0]), np.linalg.norm(p[2] - p[1]))))
+            screen_span = np.maximum(extent, span) * screen_ppm
+            if camera is not None:
+                screen_span = np.maximum(screen_span, card_screen_span(card, camera, screen_ppm))
+            width, height = np.ceil(1.5 * screen_span).astype(int)
+            sampled, _ = measure.raster([source], plane, origin, 2 * np.array((width, height)) / extent,
+                                        (2 * height, 2 * width))
+            tile = sampled.reshape(height, 2, width, 2, 8).mean(axis=(1, 3))
+            alpha = tile[..., 3]
+            covered = alpha > 0
+            if not covered.any():
+                raise ValueError(f'Node {node_id}: the fixed card has no coverage')
+            material = np.concatenate((tile[..., :3], tile[..., 4:7]), axis=2)
+            material /= np.maximum(alpha[..., None], 1e-8)
+            dilate(material, covered)
+            colour = card['colour'].copy()
+            colour[:, 3] = np.rint(255 * tile[..., 7].sum() / alpha.sum())
+            cards.append(dict(card, colour=colour, rgba=np.dstack((material[..., :3], alpha)),
+                              tangent_normal=card_tangent_normals(card, material[..., 3:])))
+            index += 1
+    return node_id, cards
+
+
+def eye_layout(fits, side):
+    tiles = [(card['rgba'].shape[0] + 2 * PAD, card['rgba'].shape[1] + 2 * PAD, node_id, i)
+             for node_id, cards in fits.items() for i, card in enumerate(cards)]
+    x = y = row = 0
+    for height, width, node_id, i in sorted(tiles, key=lambda item: (-item[0], -item[1], item[2], item[3])):
+        if x + width > side:
+            x, y, row = 0, y + row, 0
+        if width > side or y + height > side:
+            raise ValueError(f'Node {node_id}: parent cards exceed one {side}-pixel atlas page')
+        yield node_id, i, x, y
+        x += width
+        row = max(row, height)
+
+
+def write_eye_atlas(output, source, page, kind, codec):
+    """Keep the original and new pages in the top quadrants at each whole-block mip."""
+    original = source.read_bytes()
+    side, width = struct.unpack_from('<II', original, 12)
+    if side != width or side != page.shape[0]:
+        raise ValueError(f'{source}: expected the original square DDS')
+    fourcc, block_bytes = (b'DXT1', 8) if kind == 'orm' else (b'DXT5', 16)
+    levels = int(math.log2(side)) - 1
+    if original[:4] != b'DDS ' or original[84:88] != fourcc or struct.unpack_from('<I', original, 28)[0] < levels:
+        raise ValueError(f'{source}: expected a {fourcc.decode()} mip chain')
+    header = bytearray(original[:128])
+    struct.pack_into('<III', header, 12, 2 * side, 2 * side, 4 * (side // 4) ** 2 * block_bytes)
+    struct.pack_into('<I', header, 28, levels)
+    offset = len(header)
+    with output.open('wb') as file:
+        file.write(header)
+        for level in range(levels):
+            if kind == 'albedo':
+                pixels = rgba_bytes(page)
+            elif kind == 'normal':
+                normal = page / np.maximum(np.linalg.norm(page, axis=2, keepdims=True), 1e-8)
+                pixels = np.full((*page.shape[:2], 4), 255, np.uint8)
+                pixels[..., [3, 1]] = np.rint(np.clip(normal[..., :2] * .5 + .5, 0., 1.) * 255).astype(np.uint8)
+            else:
+                pixels = np.rint(page * 255).astype(np.uint8)
+            blocks = codec.blocks(pixels)
+            encode = codec.bc1 if kind == 'orm' else codec.bc3
+            encoded = np.concatenate([encode(blocks[i:i + 8192]) for i in range(0, len(blocks), 8192)])
+            stride = side // 4 * block_bytes
+            size = side // 4 * stride
+            combined = np.zeros((side // 2, 2 * stride), np.uint8)
+            combined[:side // 4, :stride] = np.frombuffer(original, np.uint8, size, offset).reshape(-1, stride)
+            combined[:side // 4, stride:] = encoded.reshape(-1, stride)
+            file.write(combined.tobytes())
+            offset += size
+            if level + 1 < levels:
+                if kind == 'albedo':
+                    alpha = page[..., 3:4]
+                    premultiplied = codec.downsample(page[..., :3] * alpha)
+                    alpha = codec.downsample(alpha)
+                    page = np.concatenate((premultiplied / np.maximum(alpha, 1e-8), alpha), axis=2)
+                    dilate(page[..., :3], page[..., 3] > 0)
+                else:
+                    page = codec.downsample(page)
+                side //= 2
+
+
+def rebake_variant(output, foliage, nodes, parents, px_per_m, source_material, *, camera=None, jobs=1):
+    """Reprint selected cards next to the unmodified boughs page in a square atlas."""
+    arguments = (nodes, foliage, foliage['rgba'])
+    workers = (multiprocessing.get_context('fork').Pool(jobs, prepare_worker, arguments)
+               if jobs > 1 else nullcontext())
+    frame = eye_camera_frame(camera) if camera is not None else None
+    tasks = [(node_id, parents[node_id], ppm, frame) for node_id, ppm in sorted(px_per_m.items())]
+    with workers as pool:
+        if pool is not None:
+            fits = dict(pool.imap(rebake_parent, tasks, chunksize=4))
+        else:
+            prepare_worker(*arguments)
+            fits = dict(map(rebake_parent, tasks))
+
+    side = foliage['rgba'].shape[0]
+    rgba = np.zeros((side, side, 4), np.float32)
+    normal = np.zeros((side, side, 3), np.float32)
+    normal[..., 2] = 1.
+    pad = ((PAD, PAD), (PAD, PAD), (0, 0))
+    for node_id, i, x, y in eye_layout(fits, side):
+        card = fits[node_id][i]
+        height, width = card['rgba'].shape[:2]
+        region = np.s_[y:y + height + 2 * PAD, x:x + width + 2 * PAD]
+        rgba[region] = np.pad(card['rgba'], pad, mode='edge')
+        normal[region] = np.pad(card['tangent_normal'], pad, mode='edge')
+        card['uv'] = ((np.array((side + x + PAD, y + PAD)) + card['uv'] * (width, height))
+                      / (2 * side)).astype(np.float32)
+
+    output.mkdir(parents=True, exist_ok=True)
+    spec = spec_from_file_location('tree_atlas_dds', Path(__file__).parents[2] / 'test-material.py')
+    codec = module_from_spec(spec)
+    spec.loader.exec_module(codec)
+    orm = np.empty((side // 2, side // 2, 3), np.float32)
+    orm[:] = (1., .85, 0.)
+    for kind, page in (('albedo', rgba), ('normal', normal), ('orm', orm)):
+        write_eye_atlas(output / f'{kind}.dds', source_material / f'boughs-{kind}.dds', page, kind, codec)
+    size = sum((output / f'{kind}.dds').stat().st_size for kind in ('albedo', 'normal', 'orm'))
+
+    with Image.open(output / 'albedo.dds') as image:
+        rgba = linear_rgba(np.asarray(image.convert('RGBA')))
+    with Image.open(output / 'normal.dds') as image:
+        xy = np.asarray(image.convert('RGBA'), dtype=np.float32)[..., [3, 1]] * (2 / 255) - 1
+    normal = np.dstack((xy, np.sqrt(np.maximum(0, 1 - np.sum(xy ** 2, axis=-1)))))
+    textures = dict(rgba=rgba, tangent_normal=normal)
+    mapped = {}
+    for node_id, cards in fits.items():
+        part = dict(parents[node_id], **textures, coverage=True, cutout=True)
+        for key in ('uv', 'colour'):
+            part[key] = np.concatenate([card[key] for card in cards])
+        mapped[node_id] = part
+    return dict(foliage, **textures, uv=foliage['uv'] * .5), mapped, size
