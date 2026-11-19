@@ -352,7 +352,8 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int = 
         rotation = np.stack([side, up, out], axis=1)
         added.append(dict(key=f'crop-{field_number + 1}-{len(added) + 1:05d}', kind='mesh', visual=visual,
                           position=[round(x, 1), round(hit[0] - sink, 1), round(z, 1)],
-                          rotation=[[round(float(c), 5) for c in row] for row in rotation], collision='none'))
+                          rotation=[[round(float(c), 5) for c in row] for row in rotation],
+                          collision='mesh' if '_STOOK_' in visual else 'none'))    # a stook stands in the way, the rye does not
         counts[visual] = counts.get(visual, 0) + 1
         return True
 
