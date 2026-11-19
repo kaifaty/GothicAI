@@ -5,6 +5,7 @@
 #include "scene.glsl"
 #include "common.glsl"
 #include "grass/grass_common.glsl"
+#include "grass/grass_blade_hint.glsl"
 
 // A blade's pixel in the G-buffer (reports/engine/2026-11-14-grass-system): as a leaf's (GBufFoliageBit, the
 // share of the sun through it in the channel of metal), an own material by its mark. Needs the material maps'
@@ -48,7 +49,7 @@ void main() {
     ao      = 1.0;
     through = 0.0;
     }
-  outDiffuse = vec4(color, float(GBufFoliageBit)/255.0);
+  outDiffuse = vec4(color, float(GBufGrassBladeHint)/255.0);
   outNormal  = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u ? 0u : encodeNormal(normalize(inNormal));
   outOrm     = vec4(ao, GrassRoughness, through, 1.0);
 #if defined(HISTORY_OWNER)

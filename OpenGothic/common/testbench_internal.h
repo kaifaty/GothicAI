@@ -1688,6 +1688,7 @@ void waterFilmFraming(WaterFilmContext ctx,World& world,uint32_t width,uint32_t 
 bool waterFilmCommand(WaterFilmContext ctx,const std::vector<std::string>& a,World& w,Npc& pl);
 bool foliageCommand(const std::vector<std::string>& a,World& w); // testbench_foliage.cpp: waits by the world's wind
 bool grassCommand(const std::vector<std::string>& a,World& w);   // testbench_grass.cpp: the ring's wait and counts
+bool grassCageCommand(const std::vector<std::string>& args);
 
 bool waterOwns(Water& state,const DynamicWorld::WaterBodySnapshot& body);
 void waterFields(Water& state,const WaterContext& context,World& world);

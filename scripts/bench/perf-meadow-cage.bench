@@ -1,0 +1,133 @@
+# Repeat the five perf-meadow views with 0, 1 and 2 extra probe cage LOD steps.
+# The first view sample keeps the baseline label. The 4 s GI settle counts toward
+# the 20 s loading wait before each view's first sample.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+
+# View 1: close to the ground, looking uphill along the meadow.
+goto pos 41701 3320 795
+clear 3000
+cam at 41452 3421 -168 40003 3790 -1503
+grass cage 0
+wait 4000
+wait 16000
+grass stats
+perf sample perf-meadow-cage/view-1
+wait 8000
+perf stop
+grass cage 1
+wait 4000
+perf sample perf-meadow-cage/view-1-n1
+wait 8000
+perf stop
+grass cage 2
+wait 4000
+perf sample perf-meadow-cage/view-1-n2
+wait 8000
+perf stop
+
+# View 2: among the clumps, looking east.
+goto pos 40003 3790 -1503
+cam at 40503 3581 -902 41503 3480 -902
+grass cage 0
+wait 4000
+wait 16000
+grass stats
+perf sample perf-meadow-cage/view-2
+wait 8000
+perf stop
+grass cage 1
+wait 4000
+perf sample perf-meadow-cage/view-2-n1
+wait 8000
+perf stop
+grass cage 2
+wait 4000
+perf sample perf-meadow-cage/view-2-n2
+wait 8000
+perf stop
+
+# View 3: the whole meadow from above.
+goto NW_TAVERNE_TROLLAREA_04
+cam at 38907 4994 -1252 42532 2685 438
+grass cage 0
+wait 4000
+wait 16000
+grass stats
+perf sample perf-meadow-cage/view-3
+wait 8000
+perf stop
+grass cage 1
+wait 4000
+perf sample perf-meadow-cage/view-3-n1
+wait 8000
+perf stop
+grass cage 2
+wait 4000
+perf sample perf-meadow-cage/view-3-n2
+wait 8000
+perf stop
+
+# View 4: restart the same walk for each mode. Disarm clears any active route.
+cam game
+walkmode walk
+disarm
+goto NW_TAVERNE_TROLLAREA_03
+face wp NW_TAVERNE_TROLLAREA_04
+grass cage 0
+wait 4000
+wait 16000
+perf sample perf-meadow-cage/view-4
+walkto NW_TAVERNE_TROLLAREA_05
+wait 12000
+perf stop
+disarm
+goto NW_TAVERNE_TROLLAREA_03
+face wp NW_TAVERNE_TROLLAREA_04
+grass cage 1
+wait 4000
+perf sample perf-meadow-cage/view-4-n1
+walkto NW_TAVERNE_TROLLAREA_05
+wait 12000
+perf stop
+disarm
+goto NW_TAVERNE_TROLLAREA_03
+face wp NW_TAVERNE_TROLLAREA_04
+grass cage 2
+wait 4000
+perf sample perf-meadow-cage/view-4-n2
+walkto NW_TAVERNE_TROLLAREA_05
+wait 12000
+perf stop
+grass stats
+
+# View 5: on the cart track, looking uphill with the game's camera.
+disarm
+walkmode run
+goto pos 41940 3300 -317
+face -122
+grass cage 0
+wait 4000
+wait 16000
+grass stats
+perf sample perf-meadow-cage/view-5
+wait 8000
+perf stop
+grass cage 1
+wait 4000
+perf sample perf-meadow-cage/view-5-n1
+wait 8000
+perf stop
+grass cage 2
+wait 4000
+perf sample perf-meadow-cage/view-5-n2
+wait 8000
+perf stop

@@ -4,6 +4,7 @@
 #extension GL_GOOGLE_include_directive    : enable
 
 #include "lighting/rt/probe_common.glsl"
+#include "lighting/rt/probe_pixel_cage.glsl"
 #include "lighting/tonemapping.glsl"
 #include "scene.glsl"
 #include "common.glsl"
@@ -26,6 +27,10 @@ layout(binding = 9, std430) buffer          Tbo  { uint voteTiles[]; }; // a vot
 
 shared ivec3 pLow, pHigh;
 shared uint  tidSh;
+#if defined(GRASS_CAGE)
+shared int   pLod;
+shared bool  pBlade;
+#endif
 
 ivec2 screenSize, fragCoord;
 uint  threadId;
@@ -133,7 +138,10 @@ void main() {
   const bool  sky  = (z>=SKY_DEPTH);
 
   const vec3 basePos = unprojectDepth(z);
-  const int  lod     = probeGridLod(basePos, scene.camPos, scene.probeLodScale);
+#if defined(GRASS_CAGE)
+  const bool blade   = !sky && isGBufGrassBlade(texelFetch(gbufDiffuse, fragCoord, 0).a);
+#endif
+  const int  lod     = probePixelLod(basePos, scene.camPos, scene.probeLodScale, blade);
   const vec3 pos     = basePos + norm*probeCageBias;
 
   probeQuery pq;
@@ -146,10 +154,19 @@ void main() {
   if(gl_LocalInvocationIndex==tidSh) {
     pLow  = pq.pLow;
     pHigh = pq.pHigh;
+#if defined(GRASS_CAGE)
+    pLod   = lod;
+    pBlade = blade;
+#endif
     }
   barrier();
 
-  if(pLow==pq.pLow && pHigh==pq.pHigh) {
+  if(pLow==pq.pLow && pHigh==pq.pHigh
+#if defined(GRASS_CAGE)
+     // Identical indices may address different probe cells at different steps.
+     && ((!blade && !pBlade) || pLod==lod)
+#endif
+     ) {
     if(gl_LocalInvocationIndex!=tidSh)
       return;
     norm = vec3(0); // full cage

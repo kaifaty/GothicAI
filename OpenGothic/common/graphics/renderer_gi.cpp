@@ -1,13 +1,13 @@
 #include "renderer.h"
 #include "settings.h"
 #include "renderer_internal.h"
-
 #include <Tempest/Log>
 #include <cmath>
 #include <cstdlib>
 #include <string_view>
 
 #include "frameprofile.h"
+#include "graphics/grass/grasscage.h"
 
 using namespace Tempest;
 using RendererInternal::nextPot;
@@ -516,7 +516,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     cmd.setBinding(7, freeList);
     cmd.setBinding(8, newList);
     cmd.setBinding(9, voteTiles);
-    cmd.setPipeline(shaders.probeVote);
+    GrassCage::bind(cmd, shaders.probeVote, shaders.probeVoteGrassCage);
     cmd.dispatchThreads(sceneDepth.size());
 
     cmd.setBinding(0, voteTable);
@@ -539,7 +539,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     cmd.setBinding(7, freeList);
     cmd.setBinding(8, newList);
     cmd.setBinding(9, voteTiles);
-    cmd.setPipeline(shaders.probeAlocation);
+    GrassCage::bind(cmd, shaders.probeAlocation, shaders.probeAllocGrassCage);
     cmd.dispatchThreads(sceneDepth.size());
 
     // the requests of probes at hits of the last frame's lighting, then the vote table is clean for this frame's
@@ -864,7 +864,7 @@ void Renderer::drawAmbient(Encoder<CommandBuffer>& cmd, const WorldView& view) {
     cmd.setBinding(5, gi.hashTable);
     cmd.setBinding(6, gi.probes);
     cmd.setBinding(7, gi.probesLighting, Sampler::nearest());
-    cmd.setPipeline(shaders.probeAmbient);
+    GrassCage::bind(cmd, shaders.probeAmbient, shaders.probeAmbientGrassCage);
     }
   else if(settings.zCloudShadowScale) {
     cmd.setBinding(3, sky.irradianceLut);

@@ -126,6 +126,8 @@ class Shaders {
     Tempest::ComputePipeline probeVote, probePrune, probeAlocation, probeHitAlloc, probeClearVotes;
     Tempest::ComputePipeline probeTrace, probeRelight, probeRelightNew, probeLighting, probeStats;
     Tempest::RenderPipeline  probeAmbient;
+    Tempest::ComputePipeline probeVoteGrassCage, probeAllocGrassCage;
+    Tempest::RenderPipeline  probeAmbientGrassCage;
 
     // GI-Surf
     Tempest::RenderPipeline  surfDbg;
@@ -180,6 +182,7 @@ class Shaders {
     Tempest::RenderPipeline  postEffect(std::string_view name, Tempest::RenderState::ZTestMode ztest);
     Tempest::RenderPipeline  postEffect(std::string_view vs, std::string_view fs, Tempest::RenderState::ZTestMode ztest = Tempest::RenderState::ZTestMode::LEqual);
     Tempest::ComputePipeline computeShader(std::string_view name);
+    void                     compileGrassCage(const Tempest::RenderState& state, const Tempest::Shader& vs);
     Tempest::RenderPipeline  fogShader (std::string_view name);
     Tempest::RenderPipeline  inWaterShader   (std::string_view name, bool isScattering);
     Tempest::RenderPipeline  reflectionShader(std::string_view name, bool hasMeshlets);

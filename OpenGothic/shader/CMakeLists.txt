@@ -442,6 +442,8 @@ add_shader(probe_prune.comp          lighting/rt/probe_aux.comp        -DPRUNE)
 add_shader(probe_stats.comp          lighting/rt/probe_aux.comp        -DSTATS)
 add_shader(probe_vote.comp           lighting/rt/probe_allocation.comp -DVOTE)
 add_shader(probe_allocation.comp     lighting/rt/probe_allocation.comp -DALLOC)
+add_shader(probe_vote_grass_cage.comp       lighting/rt/probe_allocation.comp -DVOTE -DGRASS_CAGE)
+add_shader(probe_allocation_grass_cage.comp lighting/rt/probe_allocation.comp -DALLOC -DGRASS_CAGE)
 add_shader(probe_trace.comp          lighting/rt/probe_trace.comp      -DRAY_QUERY -DRAY_QUERY_AT)
 add_shader(fog_sky_vis.comp          lighting/rt/fog_sky_vis.comp      -DRAY_QUERY -DRAY_QUERY_AT)
 add_shader(probe_relight.comp        lighting/rt/probe_lighting.comp -DRELIGHT)
@@ -452,6 +454,7 @@ add_shader(probe_lighting_orm.comp   lighting/rt/probe_lighting.comp -DMATERIAL_
 add_shader(probe_ambient.vert        triangle.vert)
 add_shader(probe_ambient.frag        lighting/rt/probe_ambient.frag --target-env vulkan1.1)
 add_shader(probe_ambient_orm.frag     lighting/rt/probe_ambient.frag -DMATERIAL_MAPS --target-env vulkan1.1)
+add_shader(probe_ambient_grass_cage.frag    lighting/rt/probe_ambient.frag -DMATERIAL_MAPS -DGRASS_CAGE --target-env vulkan1.1)
 
 # Surfels
 add_shader(surf_dbg.vert             lighting/surfels/surf_dbg.vert)

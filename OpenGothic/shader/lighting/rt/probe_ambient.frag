@@ -11,6 +11,7 @@
 #extension GL_KHR_shader_subgroup_shuffle : enable
 
 #include "lighting/rt/probe_common.glsl"
+#include "lighting/rt/probe_pixel_cage.glsl"
 #include "lighting/tonemapping.glsl"
 #include "lighting/purkinje_shift.glsl"
 #include "scene.glsl"
@@ -191,8 +192,7 @@ void main() {
 #endif
 
   const vec3  basePos = unprojectDepth(z);
-  // must be exactly same as in allocation !
-  const int   lod     = probeGridLod(basePos, scene.camPos, scene.probeLodScale);
+  const int   lod     = probePixelLod(basePos, scene.camPos, scene.probeLodScale, isGBufGrassBlade(diff4.a));
   const vec3  pos     = basePos + norm*probeCageBias;
 #if defined(MATERIAL_MAPS)
   const bool  crown   = ownMaterial && isGBufCrown(diff4.a);

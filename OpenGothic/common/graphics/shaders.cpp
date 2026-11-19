@@ -391,6 +391,8 @@ void Shaders::compileShaders() noexcept {
     sh = GothicShader::get(string_frm("probe_ambient", materialMaps, ".frag.sprv"));
     fs = device.shader(sh.data,sh.len);
     probeAmbient = device.pipeline(Triangles,state,vs,fs);
+    if(opts.doMaterialMaps)
+      compileGrassCage(state, vs);
     }
 
   if(isGi2Supported()) {

@@ -53,6 +53,8 @@ std::string grassFields(const GrassField* field) {
 // the command is taken again every 30 ms); `grass stats` writes the counts of the last frame. Both write an event.
 // `grass parts <mask>` switches parts of the look off or paints the cover (Grass::Part); 0 gives the look back
 bool grassCommand(const std::vector<std::string>& a,World& w) {
+  if(a.size()>=2 && a[0]=="grass" && a[1]=="cage")
+    return grassCageCommand(a);
   if(a.size()<2 || a[0]!="grass" || (a[1]!="wait" && a[1]!="stats" && a[1]!="parts"))
     return false;
   if(a[1]=="parts") {
