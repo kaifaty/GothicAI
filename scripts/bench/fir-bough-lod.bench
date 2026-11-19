@@ -163,9 +163,8 @@ stop
 wait 500
 
 # Matched stills after the clip. The three eyes lie on the fly path at about 56.5, 51 and 45.5 px.
-# The depth reference hides the static geometry so that the compact crown can be isolated without an ID tag.
+# The background hides static geometry for comparison with the RGB of each representation.
 deterministic on
-impostor probe on
 impostor off
 set time 12 0
 cam at 23928.10 16019.27 -7275.71 47854.16 7003.70 -864.74
@@ -212,5 +211,4 @@ shot joint-after-background
 wait 200
 view full
 impostor auto
-impostor probe off
 deterministic off
