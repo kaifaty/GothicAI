@@ -978,6 +978,9 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
     i->view.tick(dt);
   for(auto& i:item)
     i.view.tick(dt);
+  // a stuck arrow's effect fades, the arrow stays
+  for(auto& pin:stuckArrows)
+    pin.view.tick(dt);
 
   // Effects retain their world-clock lifetime while the actor's solved bones hold still.
   if(pausePose)
