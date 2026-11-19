@@ -100,7 +100,10 @@ PERF_WAIT="${PERF_WAIT:-600}"
 PERF_WAIT=$((10#$PERF_WAIT))
 if [[ $# == 0 ]]; then PLACES=(market harbour forest interior combat); else PLACES=("$@"); fi
 for place in "${PLACES[@]}"; do
-  case "$place" in market|market-walk|harbour|harbour-night|house-night|forest|interior|combat|shot|face|face-far|rock|meadow|grass|grass-track|grass-fields|grass-pack|grass-fields-pack|trees|xardas|temple|fires|firerain|crops|crops-onar) ;; *) fail "unknown place: $place (market market-walk harbour harbour-night house-night forest interior combat shot face face-far rock meadow grass grass-track grass-fields grass-pack grass-fields-pack trees xardas temple fires firerain crops crops-onar)" ;; esac
+  case "$place" in
+    market|market-walk|harbour|harbour-night|house-night|forest|interior|combat|shot|face|face-far|rock|meadow|grass|grass-track|grass-fields|grass-pack|grass-fields-pack|grass-ground|grass-ground-fields|trees|xardas|temple|fires|firerain|crops|crops-onar) ;;
+    *) fail "unknown place: $place (market market-walk harbour harbour-night house-night forest interior combat shot face face-far rock meadow grass grass-track grass-fields grass-pack grass-fields-pack grass-ground grass-ground-fields trees xardas temple fires firerain crops crops-onar)" ;;
+  esac
 done
 export PERF_WINDOW PERF_REPEAT PERF_WAIT
 export PERF_ARGS="${PERF_ARGS:-}" PERF_ENV="${PERF_ENV:-}" PERF_VID_RES="${PERF_VID_RES:-0}" PERF_INI="${PERF_INI:-}"
@@ -306,10 +309,12 @@ subprocess.run(['bash', str(Path(scenario).parents[1] / 'base-ensure.sh'), env['
 command = [env['GAME_BIN'], '-g', env['GOTHIC_DIR'], '-window', '-devmode',
            '-nomenu', '-nointro', '-w', 'NEWWORLD.ZEN', *meta['game_args']]
 meta.update(place=place, repeat=int(repeat), command=command)
+# The meadow ground scenario has 354 s of scripted waits.
+timeout = 420 if place == 'grass-ground' else 300
 with (leaf / 'game.log').open('w') as log:
     process = subprocess.Popen(command, cwd=leaf / 'run', env=env, stdout=log, stderr=subprocess.STDOUT)
     try:
-        code = process.wait(timeout=300)
+        code = process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         process.terminate()
         try:
@@ -317,7 +322,7 @@ with (leaf / 'game.log').open('w') as log:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
-        raise SystemExit('perf: game timed out after 300s; stopped only this run')
+        raise SystemExit(f'perf: game timed out after {timeout}s; stopped only this run')
 meta['exit_code'] = code
 (leaf / 'metadata.json').write_text(json.dumps(meta, indent=2) + '\n')
 if code:
@@ -347,6 +352,12 @@ try:
     elif place in ('grass-pack', 'grass-fields-pack'):
         segments_expected = [f'perf-{place}/view-{view}-pack{pack}'
                              for view in range(1, 5) for pack in (1, 4, 16, 64)]
+    elif place in ('grass-ground', 'grass-ground-fields'):
+        ground_samples = ('', '-nolayers', '-nopainted', '-noborder', '-nobare', '-nobetween',
+                          '-nosward', '-nolayermaps', '-nogrounddetail', '-notone')
+        views = (3, 4, 5) if place == 'grass-ground' else (1, 4)
+        segments_expected = [f'perf-{place}/view-{view}{suffix}'
+                             for view in views for suffix in ground_samples]
     else:
         segments_expected = [f'perf-{place}/view-{view}' for view in range(1, 5)]
     for segment in segments_expected:

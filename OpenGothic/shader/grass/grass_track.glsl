@@ -197,29 +197,32 @@ void grassTrack(uint tex, float crustK, float looseK, float knobs, vec2 uv, vec2
   orm.a = 1.0;
   }
 
-// The ground's own material, whichever its record has: the meadow's two layers (BK_GROUND) with the road's earth
-// in its notches, the strip of them along a road (BK_VERGE), the road's own track (BK_TRACK). k0, k1, knobs:
-// Bucket::fringeBottom0, fringeBottom1, foliageReach. Returns what grassLayers does
-float grassOwnGround(uint flags, uint tex, float swardK, float earthK, float farK, float k0, float k1, float knobs,
-                     vec2 uv, vec2 duvdx, vec2 duvdy, vec3 pos, vec3 normal, vec3 dpdx, vec3 dpdy,
-                     inout vec4 diffuse, inout uint normalOut, inout vec4 orm) {
-  const float ringW = scene.grassRing.w;
-  if(ringW<=0.0)
+// The meadow's own layers with the road's earth in its notches (BK_GROUND), or the strip along a road (BK_VERGE).
+// A verge can leave the earth of its strip to the road's track.
+float grassOwnLayers(Bucket material, vec3 pos, vec3 normal, vec3 dpdx, vec3 dpdy, out GrassLayer layer, out float strip) {
+  strip = 0.0;
+  if((material.flags & (BK_GROUND | BK_VERGE))==0u)
     return -1.0;
-  const bool verge    = (flags & BK_VERGE)!=0u;
-  // the bench's: the road as with its verge alone, the meadow's notches its own earth
-  const bool trackOff = (grassPartsOff(ringW) & GrassPartTrack)!=0u;
-  const bool track    = (flags & BK_TRACK)!=0u && !trackOff;
-  float sward = -1.0, strip = 0.0;
-  if((flags & (BK_GROUND | BK_VERGE))!=0u) {
-    const float otherK = verge ? (track ? k1 : 0.0) : (trackOff ? 0.0 : k0);
-    sward = grassLayers(flags, tex, swardK, earthK, farK, tex + (verge ? 3u : 2u), otherK, pos, normal, dpdx, dpdy,
-                        diffuse, normalOut, orm, strip);
+  const bool verge = (material.flags & BK_VERGE)!=0u;
+  const bool trackOff = (grassPartsOff(scene.grassRing.w) & GrassPartTrack)!=0u;
+  const bool track = (material.flags & BK_TRACK)!=0u && !trackOff;
+  const float otherK = verge ? (track ? material.fringeBottom1 : 0.0) : (trackOff ? 0.0 : material.fringeBottom0);
+  return grassLayers(material.flags, material.fringeTex, material.fringeScale, material.fringeTop0, material.fringeTop1,
+                     material.fringeTex + (verge ? 3u : 2u), otherK, pos, normal, dpdx, dpdy, layer, strip);
+  }
+
+void grassOwnGround(Bucket material, float sward, GrassLayer layer, float strip, vec2 uv, vec2 duvdx, vec2 duvdy,
+                    vec3 pos, vec3 normal, vec3 dpdx, vec3 dpdy, inout vec4 diffuse, inout uint normalOut, inout vec4 orm) {
+  if(sward!=-1.0) {
+    grassBlendLayer(layer, sward, diffuse, normalOut, orm);
+    return;
     }
-  if(track && sward==-1.0)
-    grassTrack(tex + (verge ? 2u : 0u), k0, k1, knobs, uv, duvdx, duvdy, pos, normal, dpdx, dpdy, strip,
-               diffuse, normalOut, orm);
-  return sward;
+  const float ringW = scene.grassRing.w;
+  if(ringW<=0.0 || (material.flags & BK_TRACK)==0u || (grassPartsOff(ringW) & GrassPartTrack)!=0u)
+    return;
+  const bool verge = (material.flags & BK_VERGE)!=0u;
+  grassTrack(material.fringeTex + (verge ? 2u : 0u), material.fringeBottom0, material.fringeBottom1, material.foliageReach,
+             uv, duvdx, duvdy, pos, normal, dpdx, dpdy, strip, diffuse, normalOut, orm);
   }
 
 #endif

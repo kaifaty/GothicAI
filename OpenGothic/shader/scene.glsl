@@ -78,6 +78,7 @@ struct SceneDesc {
   // the houses whose windows fade with their lamps (windowHouse, materials/window_glow.glsl): three vectors a house,
   // xyz the box's centre and w the cosine of its yaw; xyz its half size and w the sine; x the bedtime
   vec4  house[3*HOUSE_MAX];
+  uint  grassGroundParts; // `grass ground <mask>` of the bench
   };
 
 // bench `vsm study <bits>`: the shadow test on a mesh's facets (reports/render-features/2026-11-11-facet-shards)

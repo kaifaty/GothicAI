@@ -66,10 +66,9 @@ int grassCoverBorder(ivec2 p, int s, int reach) {
 
 // Grass::coverLevel: with the tufts' noise on what is neither none nor whole, and the isles' and the breaks' on the
 // sward that thins towards a spot. bare: grassCoverBare at the place
-int grassCoverLevel(ivec2 p, int border, out int bare) {
-  bare = grassCoverBare(p);
+int grassCoverLevel(ivec2 p, int border, int bare, bool betweenOff) {
   const int level = min(border, 256-bare);
-  if(level<=0 || level>=256)
+  if(level<=0 || level>=256 || betweenOff)
     return level;
   const int inside = min(bare, 256-bare);
   const int isles  = inside<=0 ? 0 :
