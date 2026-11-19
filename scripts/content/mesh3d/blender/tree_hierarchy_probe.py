@@ -44,13 +44,12 @@ def schedule(nodes, fits, parents, height_m, certify):
     states = {}
     for node in nodes:
         if not node.children:
-            states[node.id] = ((1, node.index_count // 3), math.inf, math.inf)
+            states[node.id] = ((1, node.index_count // 3), math.inf)
             continue
         children = [states[child] for child in node.children]
-        before = tuple(map(sum, zip(*(cost for cost, *_ in children))))
-        ready_px = min(state[1] for state in children)
-        ready_height = min(state[2] for state in children)
-        states[node.id] = (before, ready_px, ready_height)
+        before = tuple(map(sum, zip(*(cost for cost, _ in children))))
+        ready_px = min(low_px for _, low_px in children)
+        states[node.id] = (before, ready_px)
         fit = fits[node.id]
         node.max_px = fit.max_px
         after = (len(fit.cards), len(parents[node.id]['index']))
@@ -59,8 +58,9 @@ def schedule(nodes, fits, parents, height_m, certify):
 
         # Leave room for both the +12% ID stagger and the upper edge of the band.
         stagger = 1 + .24 * ((node.id * .61803398875) % 1 - .5)
-        scale = height_m / node.diameter
-        upper_limit = min(fit.max_px, ready_px, ready_height / scale)
+        # Keep node-local bounds decreasing toward the root. A parent's larger
+        # box also puts its band below the descendants in whole-tree pixels.
+        upper_limit = min(fit.max_px, ready_px)
         centre = min(fit.target_px, upper_limit / (1.12 * (1 + lod.BAND))) * stagger
         high = certify(node, centre * (1 + lod.BAND))
         if not high:
@@ -69,8 +69,9 @@ def schedule(nodes, fits, parents, height_m, certify):
         node.threshold_px = centre
         node.high_px = high
         node.low_px = centre * (1 - lod.BAND)
+        scale = height_m / node.diameter
         merges.append(lod.CutMerge(node.high_px * scale, node.low_px * scale, before, after, node.leaf_count))
-        states[node.id] = (after, node.low_px, node.low_px * scale)
+        states[node.id] = (after, node.low_px)
     return merges
 
 

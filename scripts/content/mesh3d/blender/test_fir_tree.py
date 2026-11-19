@@ -4,6 +4,7 @@ boughs' planes, the clusters of shoots and the cover of the branches' axes, the 
 twice in the mode of pairs (reports/engine/2026-11-16-modern-trees/two-sided.md)."""
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -133,6 +134,9 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path):
                 uv=foliage['uv'][:4], colour=np.zeros((4, 4), np.uint8), index=tree_bough_lod.QUAD)
     source = tmp_path / 'source.glb'
     tree_glb.write(source, [wood, foliage])
+    # Ordinary GLB bytes from the writer before hierarchy export.
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == (
+        'f5bd74e310945ab5d634f6de7d7a61820e76cf9c4107c9a7656a51185ebd8b7c')
     parts = tree_glb.read(source)
     cards = [dict(role=role, branch=branch, cluster=cluster, first=4 * i, count=4)
              for i, (role, branch, cluster) in enumerate(roles)]
@@ -168,6 +172,9 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path):
             for ident, parent in parents.items()}
     merges = tree_hierarchy_probe.schedule(nodes, fits, parents, 1., lambda node, high: high)
     assert len(merges) == len(parents)
+    # The cluster and the branch tip have the same fit and no child bands.
+    # Their IDs place them on opposite sides of the unstaggered centre.
+    assert [by_kind[kind].threshold_px for kind in ('hang', 'end')] == pytest.approx([15.65663567, 14.31727433])
     assert tree_hierarchy_probe.cut(nodes, roots, 1e6, 1.) == sorted(cut)
     assert tree_hierarchy_probe.cut(nodes, roots, 1e-6, 1.) == sorted(roots)
     for node in nodes:
@@ -373,6 +380,22 @@ def test_prefix_render_samples_atlas_and_interpolates_openness():
     assert tone == pytest.approx([126, 25 / 6, 6])
 
 
+def assert_ordinary_glb(tree, stored):
+    """Check the unmarked writer's normal bytes without relying on a platform's generated vertices."""
+    for part, saved in zip(tree.parts, stored, strict=True):
+        normals = part['normal']
+        gltf_normals = np.stack((normals[:, 0], normals[:, 2], -normals[:, 1]), axis=1)
+        length = np.maximum(np.linalg.norm(gltf_normals, axis=1, keepdims=True), 1e-9)
+        assert saved['normal'].tobytes() == (normals / length).tobytes()
+        cutout = part['cutout']
+        expected = dict(name=part['name'], doubleSided=cutout, extras=dict(group='UNDEF' if cutout else 'WOOD'),
+                        pbrMetallicRoughness=dict(metallicFactor=0., roughnessFactor=1.))
+        if cutout:
+            expected.update(alphaMode='MASK', alphaCutoff=.5)
+        assert saved['material'] == expected
+        assert 'card_id' not in saved
+
+
 def test_colour_0_is_laid_out_for_the_tree_wind(spruce):
     layout = spruce['metrics']['colour_0']
     assert layout['colour_format'] == 'VEC4 UNSIGNED_BYTE normalized'
@@ -386,6 +409,7 @@ def test_colour_0_is_laid_out_for_the_tree_wind(spruce):
     assert cards['sides'] == 'material' and cards['pairs'] == 0 and cards['single'] == cards['triangles']
     assert layout['openness']['corr_with_radius_share'] > .9
     wood, boughs = tree_glb.read(spruce['glb'])
+    assert_ordinary_glb(spruce['tree'], [wood, boughs])
     assert (wood['material']['name'], boughs['material']['name']) == ('OWN_TREE_FIR_BARK', 'OWN_TREE_FIR_BOUGHS')
     assert wood['material'].get('alphaMode') != 'MASK' and boughs['material']['alphaMode'] == 'MASK'
     assert boughs['material']['doubleSided'] and not wood['material']['doubleSided']
@@ -418,7 +442,6 @@ def test_the_mode_of_pairs_only_adds_the_twins(config, spruce, tmp_path):
 
 def digest(tree) -> str:
     """The arrays of a built tree at a millimetre: the same spruce on every platform gives the same digest."""
-    import hashlib
     h = hashlib.sha256()
     for p in tree.parts:
         h.update(np.rint(p['position'] * 1000).astype(np.int64).tobytes())
@@ -445,7 +468,7 @@ def test_spruce_a_is_built_as_before_and_thin_is_a_separate_step(config):
 
 
 @pytest.mark.parametrize(('px', 'old_share'), [(400, .5), (200, .25), (100, .125), (50, 1 / 32)])
-def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, config, px, old_share):
+def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, config, px, old_share, tmp_path):
     tree = spruce['tree']
     before = digest(tree)
     normals = [part['normal'].copy() for part in tree.parts]
@@ -467,6 +490,9 @@ def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, co
     assert [settings['px'] for settings in config['levels']] == [400, 200, 100, 50]
     settings = next(level for level in config['levels'] if level['px'] == px)
     level = fir_tree.design_level(tree, settings, mask, atlas)
+    glb = tmp_path / 'level.glb'
+    tree_glb.write(glb, level.parts)
+    assert_ordinary_glb(level, tree_glb.read(glb))
     level_wood, level_boughs = level.parts
     triangles = sum(len(part['index']) for part in level.parts)
     assert triangles <= int(tree.metrics['triangles'] * settings['share'])
