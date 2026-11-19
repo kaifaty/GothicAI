@@ -545,6 +545,8 @@ def build_report(directory):
         view_samples = {}
         repeat_reports = []
         expected_views = {"view-1", "view-5"} if place == "grass-track" else {"view-1", "view-2", "view-3", "view-4"}
+        if place in {"grass-pack", "grass-fields-pack"}:
+            expected_views = {f"view-{view}-pack{pack}" for view in range(1, 5) for pack in (1, 4, 16, 64)}
         for repeat, views in repeats.items():
             if place != "streaming-flythrough" and not expected_views <= views.keys():
                 missing = ", ".join(sorted(expected_views - views.keys()))
