@@ -20,7 +20,7 @@ int32_t& grassCageSteps() {
     const auto parsed = GrassCage::parseSteps(value);
     if(parsed>=0)
       return parsed;
-    Log::w("OPENGOTHIC_GRASS_CAGE expects 0, 1 or 2");
+    Log::e("OPENGOTHIC_GRASS_CAGE expects 0, 1 or 2");
     return 0;
     }();
   return steps;

@@ -192,7 +192,7 @@ void main() {
 #endif
 
   const vec3  basePos = unprojectDepth(z);
-  const int   lod     = probePixelLod(basePos, scene.camPos, scene.probeLodScale, isGBufGrassBlade(diff4.a));
+  const int   lod     = probePixelLod(basePos, scene.camPos, scene.probeLodScale, z<SKY_DEPTH && isGBufGrassBlade(diff4.a));
   const vec3  pos     = basePos + norm*probeCageBias;
 #if defined(MATERIAL_MAPS)
   const bool  crown   = ownMaterial && isGBufCrown(diff4.a);
