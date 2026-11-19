@@ -22,15 +22,6 @@ void vsmPairCapRecords(Tempest::Device& device) {
   // the bins of vsm_common.glsl: a lamp 5 m from the camera, then the centre ring of mips 0, 1 and 2
   constexpr uint32_t Slots = 64, Draws = 2, Old = 999, Skip = 0xFFFFFFFFu, Lamp = 1, Sun0 = 16, Sun1 = 32, Sun2 = 48;
   constexpr uint32_t ObjectMeshlet = 10, SpheresAt = 2; // the object's first meshlet, its mesh's first sphere
-  struct Cluster {
-    float sphere[4];
-    uint32_t bucketId_commandId, firstMeshlet;
-    int32_t meshletCount;
-    uint32_t instanceId;
-    uint32_t shadowFirstMeshlet = 0;
-    int32_t shadowMeshletCount = 0;
-    uint32_t shadowCommandId = 0, padding = 0;
-    };
   struct Cmd     { uint32_t vertexCount, instanceCount, firstVertex, firstInstance, writeOffset; };
   struct Light   { float pos[3], range, color[3], cookie, sourceSize, nearLimit, padding[2]; }; // LightSource, scene.glsl
   struct Header  { // VsmHeader of vsm_common.glsl
@@ -47,7 +38,7 @@ void vsmPairCapRecords(Tempest::Device& device) {
     };
   const size_t headerSize = shaders.vsmClear.sizeofBuffer(0, 0);
   require(headerSize>=sizeof(Header) && headerSize<sizeof(Header)+16, "the test's VsmHeader follows vsm_common.glsl");
-  require(sizeof(Cluster)*2==shaders.vsmCullMeshlets.sizeofBuffer(5, 2), "the test's Cluster follows scene.glsl");
+  require(sizeof(DrawClusters::Cluster)*2==shaders.vsmCullMeshlets.sizeofBuffer(5, 2), "the cluster array follows scene.glsl");
   require(sizeof(Light)==shaders.vsmCullMeshlets.sizeofBuffer(6, 1), "the test's LightSource follows scene.glsl");
   require(shaders.vsmCullMeshlets.sizeofBuffer(3, 1)==144, "Bucket of scene.glsl is DrawBuckets::BucketGpu's 144 bytes");
 
@@ -77,9 +68,9 @@ void vsmPairCapRecords(Tempest::Device& device) {
     spheres[i+3] = 1.e6f; // any sphere read past the mesh's own would take every meshlet
   for(uint32_t i=0; i<7; ++i)
     std::memcpy(&spheres[(SpheresAt+ObjectMeshlet+i)*4], meshlets[i], sizeof(meshlets[i]));
-  const Cluster clusters[2] = {
-    {{0.f, 0.f, 0.f, 400.f}, (0u << 16) | 0u, ObjectMeshlet, 7, 0u},
-    {{32.f, 32.f, 0.f, 20.f}, (1u << 16) | 1u, 77, 1, 0xFFFFFFFFu},
+  const DrawClusters::Cluster clusters[2] = {
+    {{0.f, 0.f, 0.f}, 400.f, 0, 0, ObjectMeshlet, 7, 0u},
+    {{32.f, 32.f, 0.f}, 20.f, 1, 1, 77, 1, 0xFFFFFFFFu},
     };
   std::vector<uint32_t> bucket(2*36, 0); // Bucket of scene.glsl, std140: bboxRadius at 10, meshletSpheres at 32
   const float radius = 390.f;
@@ -299,7 +290,7 @@ void vsmPairCapRecords(Tempest::Device& device) {
           pairsOf(all, 1, 3).empty(), "a cluster without spheres goes whole into each entry");
 
   {
-  Cluster shadowClusters[2] = {clusters[0], clusters[1]};
+  DrawClusters::Cluster shadowClusters[2] = {clusters[0], clusters[1]};
   shadowClusters[0].shadowFirstMeshlet = ObjectMeshlet+2;
   shadowClusters[0].shadowMeshletCount = 5;
   clusterBuf.update(shadowClusters, 0, sizeof(shadowClusters));
@@ -355,13 +346,12 @@ void vsmLayoutRecords(Tempest::Device& device) {
   constexpr uint32_t Pool = 64*64;   // the pool's pages, as the game's 8192x8192
   constexpr uint32_t Sun0 = 16;      // the bin of mip 0's centre ring: the lamps' 16 bins come first
   constexpr uint32_t Meshlets = 10;  // of the one cluster, whole in every entry
-  struct Cluster { float sphere[4]; uint32_t bucketId_commandId, firstMeshlet; int32_t meshletCount; uint32_t instanceId; };
   struct Light   { float pos[3], range, color[3], cookie, sourceSize, nearLimit, padding[2]; }; // LightSource, scene.glsl
   struct Entry   { int x, y, mip, w, h; };
   const size_t headerWords = shaders.vsmClear.sizeofBuffer(0, 0)/sizeof(uint32_t);
   const size_t admitAt     = 4 + 16 + 16*4 + 8; // VsmHeader: counts, pagePerMip, pageBbox, then 8 counters
   const size_t demandAt    = admitAt + 2*9;     // after admitBits and admitPrevBits
-  require(sizeof(Cluster)==shaders.vsmCullMeshlets.sizeofBuffer(5, 1), "the test's Cluster follows scene.glsl");
+  require(sizeof(DrawClusters::Cluster)==shaders.vsmCullMeshlets.sizeofBuffer(5, 1), "the cluster follows scene.glsl");
   const auto ring = [](int x, int y) { // vsmSunBin's ring of a page: the square around the table's centre, 2 pages wide
     return std::max(std::max(x-Tbl/2, Tbl/2-1-x), std::max(y-Tbl/2, Tbl/2-1-y))/2;
     };
@@ -403,7 +393,7 @@ void vsmLayoutRecords(Tempest::Device& device) {
 
   // one cluster of the landscape kind (no spheres of its meshlets: whole in each entry), over all of mip 0 and in
   // front of the marked receivers (depth 0.5)
-  const Cluster cluster = {{0.f, 0.f, 0.6f, 1024.f}, 0u, 0, int32_t(Meshlets), 0xFFFFFFFFu};
+  const DrawClusters::Cluster cluster = {{0.f, 0.f, 0.6f}, 1024.f, 0, 0, 0, Meshlets, 0xFFFFFFFFu};
   std::vector<uint32_t> bucket(36, 0);     // Bucket of scene.glsl, std140: meshletSpheres at 32
   bucket[32] = 0xFFFFFFFFu;
   const Light light = {{0.f, 0.f, 0.f}, 1.f, {1.f, 1.f, 1.f}, 0.f, 0.f, 0.f, {0.f, 0.f}};

@@ -1,4 +1,5 @@
 #include "commandline.h"
+#include "graphics/drawclusters.h"
 #include "graphics/material.h"
 #include "graphics/mesh/submesh/animmesh.h"
 #include "graphics/mesh/skeleton.h"
