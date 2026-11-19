@@ -1,0 +1,43 @@
+# Onar's north field after step B of reports/content/2026-11-19-crop-fields/alive.md: the wind's waves shown by the
+# field's light and the depth shade of a wall of rye (anchor "field" of the foliage record). Three cameras of
+# crop-onar-alive.bench for the pairs «шаг А | шаг Б» and two clips of a gust.
+#   TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_CONTENT=<set> scripts/bench.sh crop-onar-wave <out>
+# @timeout 600
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+goto pos 57094 1850 -11100
+cam at 57600 2160 -9800 58600 2060 -8600
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot edge
+wait 300
+cam at 55400 2300 -10000 59000 2050 -8000
+wait 6000
+shot corner
+wait 300
+cam at 58640 2230 -10350 58900 2150 -8800
+wait 6000
+shot wall
+wait 300
+# clip 1: a gust over two strips of rye, from 8 m over the plot's south end, along the strips
+cam at 59700 2950 -11400 59700 2150 -8600
+foliage wait-gust 4000 -9500
+rec gust-over
+wait 14000
+stop
+wait 500
+# clip 2: the next gust at the wall of rye, the eye's height
+cam at 58640 2230 -10350 58900 2150 -8800
+foliage wait-gust 4000 -9500
+rec gust-wall
+wait 12000
+stop
+wait 500

@@ -64,7 +64,7 @@ TONES = ('', 'PALE', 'GREEN')
 WEED_ATLAS = 1024
 WEED_KINDS = ('thistle', 'cockle', 'cornflower', 'mayweed')
 FOLIAGE = dict(wind=1.4, flutter=.6, translucency=.45, anchor='field')    # the wave shows by the light (alive.md, step B)
-OPEN_ROW, OPEN_EDGE, OPEN_TOP = (.1, .82), (.4, .9), .85    # openness of a vertex, root and top: the crown's shade of the field
+OPEN_ROW, OPEN_EDGE, OPEN_TOP = (.1, .68), (.4, .74), .7    # openness of a vertex, root and top: the crown's shade of the field
 NORMAL_UP = .7              # share of straight up in a vertex normal: the field is lit as one surface
 NORMAL_EDGE = .4            # of the rows and tufts at a strip's edge: the wall of rye is lit as a wall
 ROUGH = .9

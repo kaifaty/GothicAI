@@ -53,8 +53,8 @@ const uint  FoliageAnchorField    = 2u;
 const float FoliageFieldSteady    = 0.6;
 const float FoliageFieldSwing     = 0.4;
 const float FoliageFieldBreeze    = 0.45;  // of the gust's light the waves have in the breeze between gusts
-const float FoliageFieldNormalTan = 0.36;  // the normal goes over against the wind by this tangent on a crest in a gust
-const float FoliageFieldSheen     = 0.22;  // and the openness of the vertex (crown_light.glsl) rises by this
+const float FoliageFieldNormalTan = 0.5;   // the normal goes over against the wind by this tangent on a crest in a gust
+const float FoliageFieldSheen     = 0.32;  // and the openness of the vertex (crown_light.glsl) rises by this
 
 float foliagePackedWind   (uint bits) { return float( bits       & 0xFFu)*(FoliageMaxScale/255.0); }
 float foliagePackedFlutter(uint bits) { return float((bits >> 8) & 0xFFu)*(FoliageMaxScale/255.0); }
