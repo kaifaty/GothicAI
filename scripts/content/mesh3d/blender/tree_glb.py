@@ -10,6 +10,8 @@ COLOR_0 — four normalised bytes, no gamma (reports/engine/2026-11-16-modern-tr
     B  weight of the leaf's flutter: 0 at the stem, 1 at the card's free edge; 0 on wood
     A  openness of the crown: 1 outside, 0 in its depth; 1 on the trunk
 
+The hierarchy experiment can also store an unnormalized unsigned short _CARD_ID on the source crown.
+
 A card is listed once and its part is `two_sided`: the material's record of materials.json says
 `"two_sided": "same"`, the engine draws both sides and lights them by the same normal
 (reports/engine/2026-11-16-modern-trees/two-sided.md). In the mode of pairs a part is one-sided and a card is
@@ -42,12 +44,15 @@ def write(path: Path, parts: list[dict], name: str | None = None, extras: dict |
     uint8, index (t, 3). Returns the triangle count per material."""
     chunks, views, accessors, primitives, materials, offset = [], [], [], [], [], 0
 
-    def push(array: np.ndarray, target: int | None, kind: str, component: int, **more) -> int:
+    def push(array: np.ndarray, target: int | None, kind: str, component: int,
+             *, stride: int | None = None, **more) -> int:
         nonlocal offset
         data = array.tobytes()
         view = dict(buffer=0, byteOffset=offset, byteLength=len(data))
         if target is not None:
             view['target'] = target
+        if stride is not None:
+            view['byteStride'] = stride
         views.append(view)
         data += b'\0' * (-len(data) % 4)
         chunks.append(data)
@@ -59,8 +64,8 @@ def write(path: Path, parts: list[dict], name: str | None = None, extras: dict |
     for part in parts:
         position = to_gltf(part['position'])
         normal = to_gltf(part['normal'])
-        normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-9)
-        normal = normal.astype(np.float32)
+        if not part.get('preserve_normals'):
+            normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-9)
         colour = np.ascontiguousarray(part['colour'], np.uint8)
         index = np.asarray(part['index'])
         if len(position) > 65535:
@@ -71,13 +76,18 @@ def write(path: Path, parts: list[dict], name: str | None = None, extras: dict |
             NORMAL=push(normal, 34962, 'VEC3', FLOAT),
             TEXCOORD_0=push(np.ascontiguousarray(part['uv'], np.float32), 34962, 'VEC2', FLOAT),
             COLOR_0=push(colour, 34962, 'VEC4', UBYTE, normalized=True))
+        if 'card_id' in part:
+            # glTF requires four-byte alignment between vertices even for scalar shorts.
+            ids = np.zeros((len(position), 2), dtype='<u2')
+            ids[:, 0] = part['card_id']
+            attributes['_CARD_ID'] = push(ids, 34962, 'SCALAR', USHORT, stride=4)
         primitives.append(dict(attributes=attributes, material=len(materials),
                                indices=push(index.astype(np.uint16).reshape(-1), 34963, 'SCALAR', USHORT)))
         material = dict(name=part['name'], doubleSided=bool(part.get('two_sided')), extras=dict(group=part.get('group', 'WOOD')),
                         pbrMetallicRoughness=dict(metallicFactor=0.0, roughnessFactor=1.0))
         if part.get('cutout'):
             material |= dict(alphaMode='MASK', alphaCutoff=.5)
-        materials.append(material)
+        materials.append(part.get('material', material))
         count[part['name']] = int(len(index))
     stem = name or path.stem
     mesh = dict(name=stem, primitives=primitives)
@@ -121,11 +131,14 @@ def read(path: Path) -> list[dict]:
     for prim in document['meshes'][0]['primitives']:
         at = prim['attributes']
         colour = document['accessors'][at['COLOR_0']] if 'COLOR_0' in at else None
-        out.append(dict(
+        part = dict(
             name=document['materials'][prim['material']]['name'],
             material=document['materials'][prim['material']],
             position=from_gltf(accessor(at['POSITION'])), normal=from_gltf(accessor(at['NORMAL'])),
             uv=accessor(at['TEXCOORD_0']), index=accessor(prim['indices']).reshape(-1, 3).astype(np.int64),
             colour=accessor(at['COLOR_0']) if colour else None,
-            colour_format=(colour['componentType'], colour['type'], bool(colour.get('normalized'))) if colour else None))
+            colour_format=(colour['componentType'], colour['type'], bool(colour.get('normalized'))) if colour else None)
+        if '_CARD_ID' in at:
+            part['card_id'] = accessor(at['_CARD_ID']).reshape(-1)
+        out.append(part)
     return out
