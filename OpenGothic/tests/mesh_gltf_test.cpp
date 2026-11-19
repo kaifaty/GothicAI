@@ -1777,17 +1777,17 @@ void clusterHierarchyCases(const Fixture& fixture) {
               render.sub.front().rtLength<render.sub.front().iboLength && render.sub.front().rtLength>0,
               "graphics must register every meshlet while rays reference only level zero");
       }
-    require(render.shape!=nullptr && render.hullVertices.size()==grid.positions.size(),
-            "clustered visuals must retain the original collision mesh");
+    require(render.shape!=nullptr && !render.hullVertices.empty(),"clustered visuals must retain collision geometry");
+    return render.hullVertices;
     };
   index("");
-  load(true,0,0);
+  const auto clusteredHull = load(true,0,0);
   constexpr std::string_view name = "CLUSTER_MESH";
   const auto nameAt = std::search(bytes.begin(),bytes.end(),name.begin(),name.end());
   require(nameAt!=bytes.end(),"GLB fixture must contain its node name");
   *nameAt = 'D';
   gothicglb::writeFile(glb,bytes.data(),bytes.size());
-  load(false,0,0);
+  require(load(false,0,0)==clusteredHull,"the clustered and ordinary visuals must use identical hull geometry");
   *nameAt = 'C';
   gothicglb::writeFile(glb,bytes.data(),bytes.size());
 
@@ -1795,8 +1795,11 @@ void clusterHierarchyCases(const Fixture& fixture) {
   const std::string levels = R"(,"levels":[{"glb":"test/cluster-level.glb","px":80})";
   index(levels+"]");
   load(false,1,0);
+  const auto atlas = dir/"atlas.dds";
+  alphaDdsFile(atlas,false,true,MeshLevels::ImpostorAtlasSize,MeshLevels::ImpostorMipCount);
   index(levels+","+impostorLevel()+"]");
   load(false,1,49.f);
+  std::filesystem::remove(atlas);
   fixture.index();
   }
 
