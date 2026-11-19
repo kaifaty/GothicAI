@@ -2,6 +2,7 @@
 #include "physics/placedcensuscache.h"
 #include "graphics/bounds.h"
 #include "graphics/mesh/protomesh.h"
+#include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "resources.h"
 #include "commandline.h"
