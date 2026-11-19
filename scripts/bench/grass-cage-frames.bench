@@ -1,4 +1,5 @@
 # Capture the same view with each probe cage LOD bias, then repeat the baseline.
+# Give the probe grid six seconds to settle after each switch.
 seed 73013
 cheat god
 overlay off
@@ -16,19 +17,19 @@ face wp NW_TAVERNE_TROLLAREA_05
 streaming wait
 grass wait
 grass cage 0
-wait real 5000
+wait real 6000
 shot meadow-1-n0
 wait real 200
 grass cage 1
-wait real 4000
+wait real 6000
 shot meadow-1-n1
 wait real 200
 grass cage 2
-wait real 4000
+wait real 6000
 shot meadow-1-n2
 wait real 200
 grass cage 0
-wait real 4000
+wait real 6000
 shot meadow-1-n0-repeat
 wait real 200
 
@@ -36,19 +37,19 @@ goto NW_TAVERNE_TROLLAREA_04
 cam at 38907 4994 -1252 42532 2685 438
 grass wait
 grass cage 0
-wait real 4000
+wait real 6000
 shot far-n0
 wait real 200
 grass cage 1
-wait real 4000
+wait real 6000
 shot far-n1
 wait real 200
 grass cage 2
-wait real 4000
+wait real 6000
 shot far-n2
 wait real 200
 grass cage 0
-wait real 4000
+wait real 6000
 shot far-n0-repeat
 wait real 200
 
@@ -57,19 +58,19 @@ goto pos 41701 3320 795
 face 0
 grass wait
 grass cage 0
-wait real 5000
+wait real 6000
 shot game-verge-across-n0
 wait real 200
 grass cage 1
-wait real 4000
+wait real 6000
 shot game-verge-across-n1
 wait real 200
 grass cage 2
-wait real 4000
+wait real 6000
 shot game-verge-across-n2
 wait real 200
 grass cage 0
-wait real 4000
+wait real 6000
 shot game-verge-across-n0-repeat
 wait real 200
 
@@ -77,19 +78,19 @@ goto pos 40003 3790 -1503
 cam at 40503 3581 -902 41503 3480 -902
 grass wait
 grass cage 0
-wait real 4000
+wait real 6000
 shot stone-n0
 wait real 200
 grass cage 1
-wait real 4000
+wait real 6000
 shot stone-n1
 wait real 200
 grass cage 2
-wait real 4000
+wait real 6000
 shot stone-n2
 wait real 200
 grass cage 0
-wait real 4000
+wait real 6000
 shot stone-n0-repeat
 grass stats
 wait real 200
@@ -100,18 +101,18 @@ clear 3000
 cam at 41452 3421 -168 40003 3790 -1503
 grass wait
 grass cage 0
-wait real 5000
+wait real 6000
 shot meadow-dense-n0
 wait real 200
 grass cage 1
-wait real 4000
+wait real 6000
 shot meadow-dense-n1
 wait real 200
 grass cage 2
-wait real 4000
+wait real 6000
 shot meadow-dense-n2
 wait real 200
 grass cage 0
-wait real 4000
+wait real 6000
 shot meadow-dense-n0-repeat
 wait real 200
