@@ -2031,21 +2031,32 @@ void arrowEffects(Gothic& gothic) {
     return done();
     };
 
-  // the ground by Harad, found from above
-  auto ground=npc->position()+Tempest::Vec3(0,0,200);
-  auto land=world->physic()->ray(ground+Tempest::Vec3(0,300,0),ground-Tempest::Vec3(0,700,0));
-  require(land.hasCol,"the ground by Harad must be found");
-  ground.y=land.v.y;
+  // the ground by Harad, found from above, where an arrow sticks: stone and metal throw it back
+  Tempest::Vec3 ground;
+  bool found=false;
+  for(float r=150;r<=1500 && !found;r+=150)
+    for(int a=0;a<12 && !found;++a) {
+      const float an=float(a)*float(M_PI)/6.f;
+      const auto p=npc->position()+Tempest::Vec3(std::cos(an)*r,0,std::sin(an)*r);
+      const auto land=world->physic()->ray(p+Tempest::Vec3(0,300,0),p-Tempest::Vec3(0,700,0));
+      if(!land.hasCol || land.mat==asset::MaterialGroup::STONE || land.mat==asset::MaterialGroup::METAL ||
+         land.mat==asset::MaterialGroup::UNDEFINED || land.mat==asset::MaterialGroup::NONE || land.n.y<.7f)
+        continue;
+      ground=land.v;
+      found=true;
+      std::printf("Arrow effects: ground of material %d %.0f cm from Harad\n",int(land.mat),double(r));
+      }
+  require(found,"ground an arrow sticks in must be found by Harad");
   // shot: the effect at KEY_INVEST_2 on the arrow's mesh
   const auto stuckBefore=world->stuckArrowCount();
   auto& fire=shoot(fireArrow,ground+Tempest::Vec3(0,120,0),Tempest::Vec3(0,-1,0));
   require(emitting(fire.itemView()) && fire.itemView().effectKey()==shot && onMesh(fire.itemView()),
           "a shot ITRW_ADDON_FIREARROW must fly with its live effect at KEY_INVEST_2");
   // the plain arrow and the switch: no effect
-  auto& plain=shoot(arrow,ground+Tempest::Vec3(0,120,60),Tempest::Vec3(0,-1,0));
+  auto& plain=shoot(arrow,ground+Tempest::Vec3(0,120,5),Tempest::Vec3(0,-1,0));
   require(!plain.itemView().isEmpty() && !plain.itemView().hasEffect(),"a shot ITRW_ARROW must have no effect");
   Settings::setI("GAME","itemEffects",0);
-  auto& off=shoot(fireArrow,ground+Tempest::Vec3(0,120,-60),Tempest::Vec3(0,-1,0));
+  auto& off=shoot(fireArrow,ground+Tempest::Vec3(0,120,-5),Tempest::Vec3(0,-1,0));
   require(!off.itemView().isEmpty() && !off.itemView().hasEffect(),"with [GAME] itemEffects 0 a shot arrow must have no effect");
   Settings::setI("GAME","itemEffects",1);
   // stuck in the ground: the effect at KEY_INVEST_3 on the stuck arrow
