@@ -25,7 +25,7 @@ class ProtoMesh {
     using Vertex = Resources::VertexA;
 
     // collision=false: a mesh that is only drawn (strands of a head): no hull, no physic shape, no hit points
-    ProtoMesh(PackedMesh&&  pm, std::string_view fname, bool collision = true);
+    ProtoMesh(PackedMesh&&  pm, std::string_view fname, bool collision = true, const PackedMesh* visual = nullptr);
     ProtoMesh(PackedMesh&&  pm, const std::vector<asset::MorphAnimation>& aniList, std::string_view fname);
     ProtoMesh(const asset::ModelHierarchy& hierarchy, const asset::ModelMesh& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname, bool explicitAlphaTest = false);
     ProtoMesh(const asset::ModelHierarchy& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname);

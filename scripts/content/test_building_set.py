@@ -1,4 +1,5 @@
 import json
+import struct
 import zlib
 
 import numpy as np
@@ -248,6 +249,11 @@ def test_enable_replaces_only_materials_and_meshes(tmp_path, monkeypatch):
     monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
     staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
     staged_prop(tmp_path, 'barrel-1')
+    glb = b'glb barrel-1'
+    payload = bytes(36)
+    clod = struct.pack('<4s11I', b'GCLD', 2, 1, 1, len(glb), zlib.crc32(glb), zlib.crc32(payload),
+                       1, 0, 0, 0, 0) + payload
+    (tmp_path / 'content-staging/barrel-1/meshes/barrel-1/model.clod').write_bytes(clod)
     building_set.compose('city-1', ['roofs-1', 'barrel-1'])
     live = tmp_path / 'content'
     (live / 'bakeoff').mkdir(parents=True)
@@ -257,9 +263,16 @@ def test_enable_replaces_only_materials_and_meshes(tmp_path, monkeypatch):
     assert record['set'] == 'city-1' and record['materials'] == 3 and record['meshes'] == 1
     assert record['parts']['roofs-1'] == ['ROOF_01.TGA']
     assert not (live / 'materials/old.dds').exists() and (live / 'bakeoff').is_dir()
-    assert (live / 'meshes/barrel-1/model.glb').read_bytes() == b'glb barrel-1'
+    assert (live / 'meshes/barrel-1/model.glb').read_bytes() == glb
+    assert (live / 'meshes/barrel-1/model.clod').read_bytes() == clod
     assert json.loads((live / 'enabled.json').read_text())['set'] == 'city-1'
     assert not (live / '.enable').exists()
+    staged_glb = tmp_path / 'content-staging/city-1/meshes/barrel-1/model.glb'
+    staged_glb.write_bytes(b'glb barrel-2')
+    staged_glb.with_suffix('.fracture').write_text(fracture(b'glb barrel-2'))
+    with pytest.raises(ValueError, match=r'no fresh \.clod for NW_HARBOUR_BARREL_01; run content-convert cook-mesh-lod'):
+        building_set.enable('city-1')
+    assert (live / 'meshes/barrel-1/model.clod').read_bytes() == clod
     building_set.enable('roofs-1')                       # a set without meshes takes the old ones away
     assert not (live / 'meshes').exists() and (live / 'materials/roofs-1-roof-01/albedo.dds').is_file()
     with pytest.raises(ValueError, match='no materials'):

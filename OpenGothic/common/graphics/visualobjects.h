@@ -194,6 +194,7 @@ class VisualObjects final {
       uint16_t            cmdId     = uint16_t(-1);
       uint16_t            impostorShadowCmd = uint16_t(-1);
       uint32_t            clusterId = 0;
+      uint32_t            clusterCount = 1;
       uint64_t            timeShift = 0;
 
       Material::AlphaFunc alpha = Material::Solid;
@@ -209,6 +210,7 @@ class VisualObjects final {
       uint8_t             levelSub       = NoLevels; // its submesh of a mesh with levels of detail (meshlevels.h)
       MeshLevels::Selection level;                // ...the stage selected for this instance, 0 the mesh itself
       uint8_t             shadowLevel    = 0;
+      bool                clusterLod     = false;
       bool                isGhost       = false;
       bool                visible       = true;
       Resources::TextureCategory textureCategory = Resources::TextureCategory::Dynamic;
@@ -274,7 +276,7 @@ class VisualObjects final {
     void     unscheduleTexture(Object& object);
 
     uint32_t clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId,
-                       uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels);
+                       uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels, uint32_t instanceId = uint32_t(-1));
     uint32_t clusterId(const DrawBuckets::Bucket& bucket, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
 
     void     startMMAnim(size_t i, std::string_view animName, float intensity, uint64_t timeUntil, bool freeOnly);

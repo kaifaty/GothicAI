@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy", "pillow", "scipy"]
 # ///
-"""Compare exact terrain-coverage PNGs from matched cluster LOD bench recordings."""
+"""Compare coverage PNGs from matched terrain or own-mesh cluster LOD recordings."""
 
 import argparse
 import csv
@@ -15,13 +15,15 @@ from PIL import Image
 from scipy.ndimage import binary_erosion, binary_fill_holes
 
 
-def read_recording(directory):
+def read_recording(directory, geometry):
     events = [json.loads(line) for line in (directory.parent / "events.jsonl").read_text().splitlines()]
     segment = [event for event in events if event["seg"] == directory.name]
     poses = [event for event in segment if event["kind"] == "cluster_lod_mask"]
     ends = [event["frames"] for event in segment if event["kind"] == "rec_stop"]
     if not poses or ends != [len(poses)] or [event["frame"] for event in poses] != list(range(len(poses))):
         raise ValueError(f"{directory}: missing, duplicate or incomplete mask frames")
+    if any(event.get("geometry", "terrain") != geometry for event in poses):
+        raise ValueError(f"{directory}: expected a {geometry} coverage recording")
     if len(list(directory.glob("*.png"))) != len(poses):
         raise ValueError(f"{directory}: PNG count disagrees with events")
     return poses
@@ -36,9 +38,9 @@ def read_coverage(path):
     return gray == 255
 
 
-def compare(reference, candidate, edge, output):
-    before = read_recording(reference)
-    after = read_recording(candidate)
+def compare(reference, candidate, edge, output, geometry="terrain"):
+    before = read_recording(reference, geometry)
+    after = read_recording(candidate, geometry)
     if len(before) != len(after):
         raise ValueError(f"recordings have different lengths: {len(before)} and {len(after)}")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -67,7 +69,7 @@ def compare(reference, candidate, edge, output):
                 silhouette = binary_erosion(silhouette, iterations=edge, border_value=1)
             interior = int(silhouette.sum())
             if not interior:
-                raise ValueError(f"frame {index}: reference has an empty terrain silhouette")
+                raise ValueError(f"frame {index}: reference has an empty {geometry} silhouette")
             base_gaps = silhouette & ~base
             cut_gaps = silhouette & ~cut
             base_count = int(base_gaps.sum())
@@ -98,11 +100,13 @@ def main():
     parser.add_argument("candidate", type=Path, help="candidate mask recording folder")
     parser.add_argument("output", type=Path, help="per-frame CSV output path")
     parser.add_argument("--edge-px", type=int, default=1, help="ignore this band along the L0 outer contour")
+    parser.add_argument("--geometry", choices=("terrain", "meshes"), default="terrain",
+                        help="coverage to compare (meshes captures only own static replacements)")
     args = parser.parse_args()
     if args.edge_px < 0:
         parser.error("--edge-px must be nonnegative")
     try:
-        return compare(args.reference, args.candidate, args.edge_px, args.output)
+        return compare(args.reference, args.candidate, args.edge_px, args.output, args.geometry)
     except (ValueError, OSError, KeyError) as error:
         parser.exit(2, f"{error}\n")
 

@@ -12,10 +12,10 @@
 #include "graphics/material.h"
 #include "graphics/bounds.h"
 #include "graphics/mesh/texeldensity.h"
+#include "graphics/mesh/submesh/packedmesh.h"
 
 #include "resources.h"
 
-class PackedMesh;
 class LandscapeRange;
 namespace MeshLevels { struct Selection; }
 
@@ -139,6 +139,8 @@ class StaticMesh {
     // the sphere of each meshlet in the mesh's space (centre, radius), levels included: the shadow pages take an
     // object's meshlets by them (graphics/meshletspheres.h); empty for the landscape and meshes without them
     std::vector<Tempest::Vec4>      meshletSpheres;
+    std::vector<PackedMesh::ClusterLevel> clusterLevels;
+    bool                            ownMesh = false; // a static replacement from meshes.json
 
   private:
     void initSubMeshes(const PackedMesh& mesh);

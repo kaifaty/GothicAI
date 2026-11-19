@@ -42,6 +42,7 @@
 #include <numeric>
 #include <optional>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -525,41 +526,70 @@ std::vector<uint32_t> visibilityCut(wcb::HierarchyView hierarchy, const ClusterL
 // without a window. A permissive frustum and an empty HiZ isolate the cut.
 class GpuVisibilityCut {
   public:
-    GpuVisibilityCut(Tempest::Device& device, wcb::HierarchyView hierarchy) : device(device) {
+    struct Instance {
+      std::array<ClusterLod::Point,4> matrix; // four columns of the shader's affine matrix
+      float fatness=0;
+      uint32_t animPtr=0, deformPtr=0, deformCount=0;
+      };
+    static_assert(sizeof(Instance)==64);
+
+    GpuVisibilityCut(Tempest::Device& device, std::span<const ClusterLod::Cluster> meshlets,
+                     std::span<const ClusterLod::Group> groups, std::span<const Instance> instances = {})
+      : device(device), meshletCount(uint32_t(meshlets.size())), instanced(!instances.empty()) {
       constexpr const char* names[] = {"visibility_pass_ordered.comp.sprv", "visibility_pass_hiz_ordered.comp.sprv",
                                        "visibility_pass_hiz_cr_ordered.comp.sprv"};
       for(size_t i=0;i<pipelines.size();++i) {
         const auto code=GothicShader::get(names[i]);
         pipelines[i]=device.pipeline(device.shader(code.data,code.len));
+        require(pipelines[i].sizeofBuffer(5, 2)==2*sizeof(DrawClusters::Cluster),"visibility shader cluster stride");
         require(pipelines[i].sizeofBuffer(9, 1)==sizeof(PackedMesh::ClusterLevel),"visibility shader level record stride");
         }
 
-      std::vector<DrawClusters::Cluster> clusters(hierarchy.clusters.size());
+      std::vector<DrawClusters::Cluster> clusters(meshlets.size()*std::max(size_t(1),instances.size()));
       std::vector<uint32_t> order(clusters.size()), levelIndex(clusters.size());
       std::vector<PackedMesh::ClusterLevel> levels;
-      levels.reserve(clusters.size());
+      levels.reserve(meshlets.size());
       std::iota(order.begin(),order.end(),0u);
-      std::iota(levelIndex.begin(),levelIndex.end(),1u);
       const auto sphere=[](const ClusterLod::Sphere& s) {
         return Tempest::Vec4{s.center[0],s.center[1],s.center[2],s.radius};
         };
-      for(size_t i=0;i<clusters.size();++i) {
-        const auto& cluster=hierarchy.clusters[i];
-        const auto& parent=hierarchy.groups[cluster.parentGroup];
-        const auto own=cluster.level==0 ? ClusterLod::Group{} : hierarchy.groups[cluster.refinedGroup];
+      for(const auto& cluster:meshlets) {
+        const auto& parent=groups[cluster.parentGroup];
+        const auto own=cluster.level==0 ? ClusterLod::Group{} : groups[cluster.refinedGroup];
         levels.push_back({sphere(own.bounds),sphere(parent.bounds),own.errorCm,parent.errorCm,cluster.level,1});
+        }
+      for(size_t i=0;i<clusters.size();++i) {
         clusters[i].r=1.f;
-        clusters[i].firstMeshlet=uint32_t(i);
+        clusters[i].firstMeshlet=uint32_t(i%meshlets.size());
         clusters[i].meshletCount=1;
-        clusters[i].instanceId=0xFFFFFFFFu;
+        clusters[i].instanceId=instanceId(uint32_t(i));
+        levelIndex[i]=clusters[i].firstMeshlet+1u;
+        }
+      if(instanced) {
+        // A discrete tree in the same dispatch keeps its own shadow range and command.
+        order.push_back(uint32_t(clusters.size()));
+        levelIndex.push_back(0);
+        auto& tree=clusters.emplace_back();
+        tree.r=1.f;
+        tree.firstMeshlet=meshletCount;
+        tree.meshletCount=1;
+        tree.shadowFirstMeshlet=meshletCount+1;
+        tree.shadowMeshletCount=1;
+        tree.shadowCommandId=1;
         }
 
-      const SceneGlobals::UboGlobal globals{};
+      // A zero view-project matrix makes the instance's box take the near-plane fallback.
+      // The 8x8 HiZ makes its full-screen box large enough for the occluder pipeline.
+      SceneGlobals::UboGlobal globals{};
       const uint32_t blank[36]{};
       scene=device.ssbo(&globals,sizeof(globals));
+      globals.viewFlags=SceneGlobals::VF_SHADOW;
+      shadowScene=device.ssbo(&globals,sizeof(globals));
       dummy=device.ssbo(blank,sizeof(blank));
-      hiZ=device.texture(Tempest::Pixmap(1,1,Tempest::TextureFormat::RGBA8),false);
-      indirect=device.ssbo(Tempest::Uninitialized,sizeof(Indirect));
+      if(instanced)
+        instanceBuf=device.ssbo(instances.data(),instances.size_bytes());
+      hiZ=device.texture(Tempest::Pixmap(8,8,Tempest::TextureFormat::RGBA8),false);
+      indirect=device.ssbo(Tempest::Uninitialized,2*sizeof(Indirect));
       clusterBuf=device.ssbo(clusters);
       orderBuf=device.ssbo(order);
       levelIndices=device.ssbo(levelIndex);
@@ -583,14 +613,17 @@ class GpuVisibilityCut {
                        {view.camera[0],view.camera[1],view.camera[2],view.farDepth},
                        {view.forward[0],view.forward[1],view.forward[2],view.farGuard}};
       for(size_t pass=0;pass<pipelines.size();++pass) {
-        Indirect draw{};
-        indirect.update(&draw,0,sizeof(draw));
+        const bool shadow=pass==0;
+        const bool separateShadow=instanced && shadow;
+        Indirect draws[2]{};
+        draws[1].writeOffset=uint32_t(expected.size());
+        indirect.update(draws,0,sizeof(draws));
         auto command=device.commandBuffer();
         {
           auto encoder=command.startEncoding(device);
-          encoder.setBinding(0,scene);
+          encoder.setBinding(0,shadow ? shadowScene : scene);
           encoder.setBinding(1,payload);
-          encoder.setBinding(2,dummy);
+          encoder.setBinding(2,instanced ? instanceBuf : dummy);
           encoder.setBinding(3,dummy);
           encoder.setBinding(4,indirect);
           encoder.setBinding(5,clusterBuf);
@@ -603,20 +636,29 @@ class GpuVisibilityCut {
           encoder.dispatchThreads(1);
         }
         device.submit(command).wait();
-        device.readBytes(indirect,&draw,sizeof(draw));
+        device.readBytes(indirect,draws,sizeof(draws));
         constexpr const char* names[] = {"shadow", "main", "HiZ"};
-        const auto label=std::string("GPU ")+names[pass]+" visibility at "+std::to_string(thresholdPx)+" px";
-        require(draw.instanceCount==expected.size(),label+": expected "+std::to_string(expected.size())+
-                " clusters, got "+std::to_string(draw.instanceCount));
-        if(expected.empty())
+        const auto label=std::string("GPU ")+names[pass]+(instanced ? " instanced" : "")+
+                         " visibility at "+std::to_string(thresholdPx)+" px";
+        const size_t visualCount=expected.size()+(instanced && !shadow ? 1u : 0u);
+        require(draws[0].instanceCount==visualCount && draws[1].instanceCount==(separateShadow ? 1u : 0u),
+                label+": wrong meshlet count in the visual or separate shadow command");
+        std::vector<Payload> visible(expected.size()+(instanced ? 1u : 0u));
+        if(visible.empty())
           continue;
-        std::vector<Payload> visible(draw.instanceCount);
         device.readBytes(payload,visible.data(),visible.size()*sizeof(Payload));
-        require(std::ranges::equal(visible,expected,{},&Payload::meshlet),label+": cluster IDs differ from selectCut");
+        require(std::ranges::equal(std::span(visible).first(expected.size()),expected,[&](const Payload& value, uint32_t index) {
+          return value.instance==instanceId(index) && value.meshlet==index%meshletCount;
+          }),label+": instance or cluster IDs differ from selectCut");
+        if(instanced)
+          require(visible.back().instance==0 && visible.back().meshlet==meshletCount+(separateShadow ? 1u : 0u),
+                  label+": the tree did not use the meshlet range for its view");
         }
       }
 
   private:
+    uint32_t instanceId(uint32_t index) const { return instanced ? index/meshletCount : 0xFFFFFFFFu; }
+
     struct Indirect {
       uint32_t vertexCount,instanceCount,firstVertex,firstInstance,writeOffset;
       };
@@ -625,8 +667,10 @@ class GpuVisibilityCut {
       };
     Tempest::Device& device;
     std::array<Tempest::ComputePipeline,3> pipelines;
-    Tempest::StorageBuffer scene,dummy,indirect,clusterBuf,orderBuf,levelIndices,records,payload;
+    Tempest::StorageBuffer scene,shadowScene,dummy,instanceBuf,indirect,clusterBuf,orderBuf,levelIndices,records,payload;
     Tempest::Texture2d hiZ;
+    uint32_t meshletCount=0;
+    bool instanced=false;
     uint32_t count=0;
   };
 
@@ -646,7 +690,7 @@ size_t checkVisibilityCuts(const CookedChunk& chunk, const fs::path& path, Tempe
   size_t samples=0;
   std::optional<GpuVisibilityCut> gpu;
   if(device!=nullptr)
-    gpu.emplace(*device,hierarchy);
+    gpu.emplace(*device,hierarchy.clusters,hierarchy.groups);
   const auto compare=[&](const ClusterLod::View& view, float thresholdPx) {
     const auto actual=visibilityCut(hierarchy,view,thresholdPx);
     const auto expected=ClusterLod::selectCut(graph,view,thresholdPx);
@@ -686,6 +730,63 @@ size_t checkVisibilityCuts(const CookedChunk& chunk, const fs::path& path, Tempe
     compare(distant,distantThreshold);
     }
   return samples;
+  }
+
+void checkInstancedVisibilityCuts(Tempest::Device& device) {
+  constexpr float infinity=std::numeric_limits<float>::infinity();
+  const ClusterLod::Sphere bounds={{400.f,80.f,300.f},30.f};
+  ClusterLod::Graph graph;
+  graph.groups={{bounds,2.f},{bounds,infinity}};
+  graph.clusters={{bounds,0,0,ClusterLod::NoGroup,0,0,0,3,1},
+                  {bounds,0,0,ClusterLod::NoGroup,0,0,0,3,1},
+                  {bounds,1,0,0,1,0,0,3,1}};
+  const GpuVisibilityCut::Instance instances[]={
+    {{{{0.f,0.f,-3.f},{0.f,2.f,0.f},{1.f,0.f,0.f},{800.f,50.f,4000.f}}}},
+    {{{{-1.5f,0.f,0.f},{0.f,1.f,0.f},{0.f,0.f,-0.75f},{-300.f,180.f,9000.f}}}},
+    };
+  // These matrices are a rotation times a diagonal scale. The largest scale
+  // is known for each, so the CPU reference need not mirror the shader's bound.
+  const float scales[]={3.f,1.5f};
+  std::array<ClusterLod::Graph,std::size(instances)> worldGraphs={graph,graph};
+  for(size_t i=0;i<worldGraphs.size();++i) {
+    auto matrix=Tempest::Matrix4x4::mkIdentity();
+    for(size_t c=0;c<4;++c)
+      for(size_t r=0;r<3;++r)
+        matrix[c][r]=instances[i].matrix[c][r];
+    for(auto& group:worldGraphs[i].groups) {
+      auto& center=group.bounds.center;
+      matrix.project(center[0],center[1],center[2]);
+      group.bounds.radius*=scales[i];
+      group.errorCm*=scales[i];
+      }
+    }
+
+  GpuVisibilityCut gpu(device,graph.clusters,graph.groups,instances);
+  const auto expectedCut=[&](const ClusterLod::View& view, float thresholdPx) {
+    std::vector<uint32_t> selected;
+    for(size_t i=0;i<worldGraphs.size();++i) {
+      const uint32_t first=uint32_t(i*graph.clusters.size());
+      for(auto cluster:ClusterLod::selectCut(worldGraphs[i],view,thresholdPx))
+        selected.push_back(first+cluster);
+      }
+    return selected;
+    };
+  ClusterLod::View view={{},1440.f,1.496606f};
+  for(float threshold:{0.f,1.f,1.75f,8.f,infinity})
+    gpu.compare(view,threshold,expectedCut(view,threshold));
+  require(expectedCut(view,1.75f)==std::vector<uint32_t>{0,1,5},
+          "the two instances must select different levels at the same threshold");
+
+  view.forward={0.f,0.f,1.f};
+  view.farGuard=2.f;
+  const auto& second=worldGraphs[1].groups.front().bounds;
+  view.farDepth=second.center[2]+second.radius+view.farGuard-1.f;
+  require(expectedCut(view,1.f)==std::vector<uint32_t>{0,1,3,4},
+          "the far clip guard must refine the second instance in world space");
+  gpu.compare(view,1.f,expectedCut(view,1.f));
+  view.farDepth+=2.f;
+  gpu.compare(view,1.f,expectedCut(view,1.f));
+  std::puts("GPU instanced visibility cut: 7 comparisons per pipeline (main, HiZ and shadow) on two instances and a tree with a separate shadow range and command");
   }
 
 void hierarchyRoundTrip(const fs::path& root) {
@@ -1070,6 +1171,7 @@ int main(int argc, char** argv) {
     if(argc==2) {
       api.emplace();
       device.emplace(*api);
+      checkInstancedVisibilityCuts(*device);
       }
     size_t samples=0, gpuCells=0;
     for(const auto& file:readWorldChunkManifest(world).chunks) {

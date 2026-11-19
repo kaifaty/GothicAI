@@ -372,5 +372,11 @@ const StaticMesh* MeshObjects::Node::mesh() const {
   }
 
 std::pair<uint32_t, uint32_t> MeshObjects::Node::meshSlice() const {
-  return cpu!=nullptr ? std::make_pair(cpu->offset,cpu->length) : it->meshSlice();
+  if(cpu==nullptr)
+    return it->meshSlice();
+  if(cpu->mesh!=nullptr && !cpu->mesh->clusterLevels.empty()) {
+    const auto [offset,length] = cpu->mesh->rtSlice(cpu->offset,cpu->length);
+    return {uint32_t(offset),uint32_t(length)};
+    }
+  return {cpu->offset,cpu->length};
   }

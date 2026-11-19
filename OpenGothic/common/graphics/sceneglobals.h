@@ -60,6 +60,7 @@ class SceneGlobals final {
     void setMipBias(float bias);
     void setTaaFrame(bool taa, bool lampTaa, uint32_t frame);
     void setLandscapeMask(bool enabled) { landscapeMask = enabled; }
+    bool isLandscapeMask() const { return landscapeMask; }
     void setTreeOcclusionProbe() { uboGlobalCpu.viewFlags |= VF_TREE_OCCLUSION_PROBE; }
     // motion vectors of objects: on/off and the camera's part (identity and this frame's camera on a cut)
     void setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);

@@ -755,6 +755,7 @@ class Resources final {
       bool loaded = false;
       size_t sourceSize = 0;
       uint32_t sourceCrc32 = 0;
+      bool hasLevels = false;
       // "levels" of the record (graphics/meshlevels.h): coarser GLBs and the pixels under which each is drawn
       std::vector<std::pair<std::filesystem::path,float>> levels;
       MeshImpostor impostor;

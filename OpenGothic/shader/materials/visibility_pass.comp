@@ -26,6 +26,7 @@ layout(push_constant, std430) uniform UboPush {
   uint      firstMeshlet;
   int       meshletCount;
   float     znear;
+  uint      ownMeshMask;
   layout(offset = 16) float lodPx;
   float     lodProjection;
   float     lodHeight;
@@ -202,6 +203,12 @@ void runCluster(const uint clusterId) {
   Cluster cluster = clusters[clusterId];
   if(cluster.sphere.w<=0.f || cluster.meshletCount<=0)
     return; // disabled or deleted
+
+  if(push.ownMeshMask != 0u) {
+    const uint bucketId = cluster.bucketId_commandId >> 16;
+    if(cluster.instanceId == 0xFFFFFFFF || (bucket[bucketId].flags & BK_OWN_MESH) == 0u)
+      return;
+  }
 
   if(!frustrumTest(cluster.sphere))
     return;
