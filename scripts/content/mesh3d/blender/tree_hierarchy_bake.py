@@ -8,6 +8,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from collections import defaultdict
 from contextlib import nullcontext
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
@@ -514,7 +515,7 @@ def card_screen_span(card, camera, screen_ppm):
 
 
 def rebake_parent(task):
-    node_id, stored, screen_ppm, camera = task
+    node_id, stored, screen_ppm, camera, samples = task
     nodes, foliage, texture = _worker_input
     node = nodes[node_id - 1]
     budget = len(stored['position']) // 4
@@ -545,9 +546,9 @@ def rebake_parent(task):
             if camera is not None:
                 screen_span = np.maximum(screen_span, card_screen_span(card, camera, screen_ppm))
             width, height = np.ceil(1.5 * screen_span).astype(int)
-            sampled, _ = measure.raster([source], plane, origin, 2 * np.array((width, height)) / extent,
-                                        (2 * height, 2 * width))
-            tile = sampled.reshape(height, 2, width, 2, 8).mean(axis=(1, 3))
+            sampled, _ = measure.raster([source], plane, origin, samples * np.array((width, height)) / extent,
+                                        (samples * height, samples * width))
+            tile = sampled.reshape(height, samples, width, samples, 8).mean(axis=(1, 3))
             alpha = tile[..., 3]
             covered = alpha > 0
             if not covered.any():
@@ -624,19 +625,22 @@ def write_eye_atlas(output, source, page, kind, codec):
                 side //= 2
 
 
-def rebake_variant(output, foliage, nodes, parents, px_per_m, source_material, *, camera=None, jobs=1):
-    """Reprint selected cards next to the unmodified boughs page in a square atlas."""
+def rebake_cards(foliage, nodes, parents, px_per_m, *, camera=None, jobs=1, samples=2):
     arguments = (nodes, foliage, foliage['rgba'])
     workers = (multiprocessing.get_context('fork').Pool(jobs, prepare_worker, arguments)
                if jobs > 1 else nullcontext())
     frame = eye_camera_frame(camera) if camera is not None else None
-    tasks = [(node_id, parents[node_id], ppm, frame) for node_id, ppm in sorted(px_per_m.items())]
+    tasks = [(node_id, parents[node_id], ppm, frame, samples) for node_id, ppm in sorted(px_per_m.items())]
     with workers as pool:
         if pool is not None:
-            fits = dict(pool.imap(rebake_parent, tasks, chunksize=4))
-        else:
-            prepare_worker(*arguments)
-            fits = dict(map(rebake_parent, tasks))
+            return dict(pool.imap(rebake_parent, tasks, chunksize=4))
+        prepare_worker(*arguments)
+        return dict(map(rebake_parent, tasks))
+
+
+def rebake_variant(output, foliage, nodes, parents, px_per_m, source_material, *, camera=None, jobs=1):
+    """Reprint selected cards next to the unmodified boughs page in a square atlas."""
+    fits = rebake_cards(foliage, nodes, parents, px_per_m, camera=camera, jobs=jobs)
 
     side = foliage['rgba'].shape[0]
     rgba = np.zeros((side, side, 4), np.float32)
@@ -675,3 +679,250 @@ def rebake_variant(output, foliage, nodes, parents, px_per_m, source_material, *
             part[key] = np.concatenate([card[key] for card in cards])
         mapped[node_id] = part
     return dict(foliage, **textures, uv=foliage['uv'] * .5), mapped, size
+
+
+BOUGH_PAD = 8  # One texel of gutter remains in mip 3.
+BOUGH_MIPS = 4
+
+
+def _bough_alpha_samples(alpha, x, y, width, height, factor):
+    """Measure filtered alpha over the card's actual UV rectangle, excluding its gutters."""
+    coordinates = []
+    for offset, extent in ((x, width), (y, height)):
+        count = max(16, math.ceil(4 * extent / factor))
+        coordinates.append((offset + BOUGH_PAD + (np.arange(count) + .5) * extent / count) / factor - .5)
+    u, v = coordinates
+    ix, iy = u.astype(np.intp), v.astype(np.intp)
+    fx, fy = (u - ix)[None, :], (v - iy)[:, None]
+    lower = alpha[iy[:, None], ix] * (1 - fx) + alpha[iy[:, None], ix + 1] * fx
+    upper = alpha[iy[:, None] + 1, ix] * (1 - fx) + alpha[iy[:, None] + 1, ix + 1] * fx
+    return lower * (1 - fy) + upper * fy
+
+
+def _bough_cutoff(samples, target):
+    """Find the nearest filtered coverage when a constant alpha plateau straddles the target."""
+    samples = samples.ravel()
+    rank = round((1 - target) * samples.size)
+    if rank <= 0:
+        return samples.min() - 1 / 255
+    if rank >= samples.size:
+        return samples.max() + 1 / 255
+    lower, upper = np.partition(samples, [rank - 1, rank])[[rank - 1, rank]]
+    if lower == upper:
+        dropped = np.count_nonzero(samples < upper)
+        lost = np.count_nonzero(samples <= upper)
+        if rank - dropped > lost - rank:
+            return (upper + samples[samples > upper].min(initial=1 + 1 / 255)) / 2
+        lower = samples[samples < upper].max(initial=-1 / 255)
+    # Keep truly empty parts of a tile on the transparent side of the cutoff.
+    return max((lower + upper) / 2, 1 / 255)
+
+
+def _bough_alpha_palette(blocks, *, reserve_extremes=False):
+    hi, lo = blocks.max(axis=1), blocks.min(axis=1)
+    palette = np.stack([hi, lo] + [((7 - i) * hi + i * lo) // 7 for i in range(1, 7)], axis=1)
+    delta = np.abs(blocks[:, :, None] - palette[:, None, :])
+    selectors = delta.argmin(axis=2)
+    if reserve_extremes:
+        # BC3's alternate mode stores 0 and 255 explicitly. In a block crossing
+        # tile edges it can quantize the filtered centre far more finely.
+        interior = (blocks > 0) & (blocks < 255)
+        mid_lo = np.where(interior, blocks, 255).min(axis=1)
+        mid_hi = np.where(interior, blocks, 0).max(axis=1)
+        mid_lo = np.minimum(mid_lo, mid_hi)
+        alt = [mid_lo, mid_hi] + [((5 - i) * mid_lo + i * mid_hi) // 5 for i in range(1, 5)]
+        alt = np.stack(alt + [np.zeros_like(lo), np.full_like(hi, 255)], axis=1)
+        alt_delta = np.abs(blocks[:, :, None] - alt[:, None, :])
+        use_alt = (alt_delta.min(axis=2) ** 2).sum(axis=1) < (delta.min(axis=2) ** 2).sum(axis=1)
+        palette[use_alt] = alt[use_alt]
+        selectors[use_alt] = alt_delta[use_alt].argmin(axis=2)
+    return palette, selectors
+
+
+def _bough_dxt_alpha(alpha, codec):
+    """Evaluate the standard BC3 alpha endpoints and selectors without encoding RGB."""
+    pixels = np.rint(alpha * 255).astype(np.uint8)
+    blocks = codec.blocks(pixels[..., None])[:, :, 0].astype(np.int16)
+    decoded = np.empty_like(blocks, dtype=np.uint8)
+    for start in range(0, len(blocks), 8192):
+        block = blocks[start:start + 8192]
+        palette, selectors = _bough_alpha_palette(block)
+        decoded[start:start + len(block)] = np.take_along_axis(palette, selectors, axis=1)
+    h, w = alpha.shape
+    return decoded.reshape(h // 4, w // 4, 4, 4).transpose(0, 2, 1, 3).reshape(h, w) / 255
+
+
+def _bough_color_bc3(blocks, codec):
+    palette, selectors = _bough_alpha_palette(blocks[..., 3].astype(np.int16), reserve_extremes=True)
+    packed = np.sum(selectors.astype(np.uint64) << (3 * np.arange(16, dtype=np.uint64)), axis=1)
+    encoded = np.empty((len(blocks), 16), np.uint8)
+    encoded[:, :2] = palette[:, :2]
+    encoded[:, 2:8] = packed.astype('<u8').view(np.uint8).reshape(-1, 8)[:, :6]
+    encoded[:, 8:] = codec.bc1(blocks)
+    return encoded
+
+
+def _write_bough_mip(file, pixels, codec, *, cutout=False):
+    """Store one BC3 level, then decode it to compare the same texels the game receives."""
+    side = len(pixels)
+    blocks = codec.blocks(pixels)
+    chunks = (blocks[start:start + 8192] for start in range(0, len(blocks), 8192))
+    encoded = b''.join((_bough_color_bc3(block, codec) if cutout else codec.bc3(block)).tobytes()
+                       for block in chunks)
+    file.write(encoded)
+    with Image.open(BytesIO(_bough_dds_header(side, 1) + encoded)) as image:
+        return np.array(image.convert('RGBA'))
+
+
+def _bough_dds_header(side, levels):
+    header = [124, 0xA1007, side, side, side * side, 0, levels] + [0] * 11
+    header += [32, 4, int.from_bytes(b'DXT5', 'little'), 0, 0, 0, 0, 0, 0x401008, 0, 0, 0, 0]
+    return b'DDS ' + struct.pack('<31I', *header)
+
+
+def write_bough_atlas(output, side, placements, *, page=0):
+    """Write aligned alpha-coverage-preserving parent tiles and their mip diagnostics."""
+    spec = spec_from_file_location('tree_atlas_dds', Path(__file__).parents[2] / 'test-material.py')
+    codec = module_from_spec(spec)
+    spec.loader.exec_module(codec)
+    source = np.zeros((side, side, 7), np.float32)
+    tiles = []
+    for card, x, y, outer_width, outer_height in placements:
+        rgba = card['rgba']
+        height, width = rgba.shape[:2]
+        alpha = rgba[..., 3:]
+        tile = np.concatenate((rgba[..., :3] * alpha, alpha, card['tangent_normal'] * alpha), axis=2)
+        padding = ((BOUGH_PAD, outer_height - height - BOUGH_PAD),
+                   (BOUGH_PAD, outer_width - width - BOUGH_PAD), (0, 0))
+        source[y:y + outer_height, x:x + outer_width] = np.pad(tile, padding, mode='edge')
+        tiles.append((x, y, width, height, outer_width, outer_height, float(alpha.mean())))
+
+    textures, diagnostics = [], []
+    output.mkdir(parents=True, exist_ok=True)
+    with (output / f'hierarchy-color-{page:03d}.dds').open('wb') as color_file, (
+            output / f'hierarchy-normal-{page:03d}.dds').open('wb') as normal_file:
+        for file in (color_file, normal_file):
+            file.write(_bough_dds_header(side, BOUGH_MIPS))
+        for level in range(BOUGH_MIPS):
+            factor = 2 ** level
+            alpha = source[..., 3].copy()
+            raw_dxt = _bough_dxt_alpha(alpha, codec)
+            albedo = np.dstack((source[..., :3] / np.maximum(alpha[..., None], 1e-8), alpha))
+            normals = source[..., 4:7].copy()
+            row = dict.fromkeys(('children', 'raw', 'raw_cutoff', 'raw_dxt_cutoff',
+                                 'corrected_cutoff', 'dxt_cutoff'), 0.)
+            for x, y, width, height, outer_width, outer_height, target in tiles:
+                area = width * height
+                sample_args = (x, y, width, height, factor)
+                raw = _bough_alpha_samples(alpha, *sample_args)
+                raw_compressed = _bough_alpha_samples(raw_dxt, *sample_args)
+                row['children'] += area * target
+                row['raw'] += area * raw.mean()
+                row['raw_cutoff'] += area * (raw >= .5).mean()
+                row['raw_dxt_cutoff'] += area * (raw_compressed >= .5).mean()
+                # Since filtering commutes with an affine transform, shifting the filtered
+                # percentile to 0.5 restores thin projected area without changing RGB.
+                region = np.s_[y // factor:(y + outer_height) // factor, x // factor:(x + outer_width) // factor]
+                cutoff = _bough_cutoff(raw, target)
+                gain = .5 / max(cutoff, 1 - cutoff)
+                albedo[region][..., 3] = .5 + (alpha[region] - cutoff) * gain
+                covered = alpha[region] > 0
+                dilate(albedo[region][..., :3], covered)
+                dilate(normals[region], covered)
+
+            normals /= np.maximum(np.linalg.norm(normals, axis=2, keepdims=True), 1e-8)
+            normal_pixels = np.full((*alpha.shape, 4), 255, np.uint8)
+            normal_pixels[..., [3, 1]] = np.rint(np.clip(normals[..., :2] * .5 + .5, 0., 1.) * 255).astype(np.uint8)
+            rgba = linear_rgba(_write_bough_mip(color_file, rgba_bytes(albedo), codec, cutout=True))
+            xy = _write_bough_mip(normal_file, normal_pixels, codec)[..., [3, 1]].astype(np.float32) * (2 / 255) - 1
+            normal = np.dstack((xy, np.sqrt(np.maximum(0, 1 - np.sum(xy ** 2, axis=-1)))))
+            for x, y, width, height, _, _, _ in tiles:
+                area = width * height
+                sample_args = (x, y, width, height, factor)
+                row['corrected_cutoff'] += area * (_bough_alpha_samples(albedo[..., 3], *sample_args) >= .5).mean()
+                row['dxt_cutoff'] += area * (_bough_alpha_samples(rgba[..., 3], *sample_args) >= .5).mean()
+            area = sum(width * height for _, _, width, height, _, _, _ in tiles)
+            diagnostics.append({name: value / area for name, value in row.items()})
+            textures.append(dict(rgba=rgba, tangent_normal=normal, coverage=True, alpha_test=True, cutout=True))
+            if level + 1 < BOUGH_MIPS:
+                source = codec.downsample(source)
+    return diagnostics, textures
+
+
+BOUGH_SIDE = 2048
+
+
+def bough_layout(fits, side):
+    """Place aligned tiles on a skyline, keeping all the cards of a node on one page."""
+    def dimensions(card):
+        h, w = card['rgba'].shape[:2]
+        return (w + BOUGH_PAD - 1) // BOUGH_PAD + 2, (h + BOUGH_PAD - 1) // BOUGH_PAD + 2
+
+    units = side // BOUGH_PAD
+    sizes = {ident: [dimensions(card) for card in cards] for ident, cards in fits.items()}
+    order = sorted(sizes, key=lambda ident: (-max(h for _, h in sizes[ident]),
+                                             -sum(w * h for w, h in sizes[ident]), ident))
+
+    def place(skyline, ident):
+        skyline = skyline.copy()
+        tiles = []
+        for i in sorted(range(len(sizes[ident])), key=lambda i: sizes[ident][i][::-1], reverse=True):
+            w, h = sizes[ident][i]
+            if w > units or h > units:
+                raise ValueError(f'Node {ident}: a card exceeds {side} texels with mip gutters')
+            windows = np.lib.stride_tricks.sliding_window_view(skyline, w)
+            tops = windows.max(axis=1)
+            y = int(tops.min())
+            if y + h > units:
+                return None
+            exposed = np.flatnonzero(tops == y)
+            x = int(exposed[np.argmax(windows[exposed].sum(axis=1))])
+            skyline[x:x + w] = y + h
+            tiles.append((ident, i, x * BOUGH_PAD, y * BOUGH_PAD, w * BOUGH_PAD, h * BOUGH_PAD))
+        return skyline, tiles
+
+    pages = []
+    for ident in order:
+        for index, (skyline, placements) in enumerate(pages):
+            placed = place(skyline, ident)
+            if placed is not None:
+                pages[index] = placed[0], placements + placed[1]
+                break
+        else:
+            placed = place(np.zeros(units, np.int32), ident)
+            if placed is None:
+                raise ValueError(f'Node {ident}: all cards must fit on one atlas page')
+            pages.append(placed)
+    return [placements for _, placements in pages]
+
+
+def pack_bough(output, fits, parents):
+    """Keep the card geometry and wind bytes, replacing only tile UVs and openness."""
+    layout = bough_layout(fits, BOUGH_SIDE)
+    pages, textures, diagnostics = [], [], []
+    mapped = {}
+    area = 0
+    for page, tiles in enumerate(layout):
+        uv = defaultdict(dict)
+        placements = []
+        for ident, i, x, y, width, height in tiles:
+            card = fits[ident][i]
+            h, w = card['rgba'].shape[:2]
+            uv[ident][i] = (np.array((x + BOUGH_PAD, y + BOUGH_PAD)) + card['uv'] * (w, h)) / BOUGH_SIDE
+            placements.append((card, x, y, width, height))
+            area += width * height
+        metrics, mips = write_bough_atlas(output, BOUGH_SIDE, placements, page=page)
+        textures.append(dict(mips[0], rgba_mips=tuple(mip['rgba'] for mip in mips),
+                             normal_mips=tuple(mip['tangent_normal'] for mip in mips)))
+        diagnostics.append(metrics)
+        files = dict(rgba=f'hierarchy-color-{page:03d}.dds', attributes=f'hierarchy-normal-{page:03d}.dds')
+        pages.append(dict(**files, width=BOUGH_SIDE, height=BOUGH_SIDE,
+                          bytes=sum((output / name).stat().st_size for name in files.values())))
+        for ident, coords in uv.items():
+            cards = fits[ident]
+            mapped[ident] = dict(parents[ident], page=page,
+                                 uv=np.concatenate([coords[i] for i in range(len(cards))]).astype(np.float32),
+                                 colour=np.concatenate([card['colour'] for card in cards]))
+    atlas = dict(pages=pages, pad_px=BOUGH_PAD, tiles=sum(map(len, fits.values())),
+                 bytes=sum(page['bytes'] for page in pages), raw_bytes=len(pages) * BOUGH_SIDE ** 2 * 8)
+    return mapped, atlas, textures, diagnostics, area

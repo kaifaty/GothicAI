@@ -117,7 +117,7 @@ def test_bough_lod_measures_a_small_fir(tmp_path, monkeypatch):
     assert curve['current_turnover'] == [0, 1, 1, 0]
 
 
-def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path):
+def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path, monkeypatch):
     roles = [('hang', 1, 1), ('hang', 1, 1), ('end', 1, 2), ('tip', 1, 2),
              ('roof', 2, 0), ('side', 2, 0), ('sleeve', 0, 0), ('sleeve', 0, 0),
              ('leader', 0, 0), ('leader', 0, 0)]
@@ -193,7 +193,8 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path):
                     assert node.high_px < child.low_px
                     assert node.high_px / node.diameter < child.low_px / child.diameter
     exported = tmp_path / 'hierarchy.glb'
-    sizes = fir_hierarchy.export(exported, parts, nodes, roots, parents, [])
+    source_info = dict(height_m=1., source=hashlib.sha256(source.read_bytes()).hexdigest())
+    sizes = fir_hierarchy.export(exported, parts, nodes, roots, parents, [], metadata=source_info)
     assert sizes['geometry_bytes'] == len(parents) * (4 * 36 + 2 * 6)
     actual = tree_glb.read(exported)
     assert 'card_id' not in actual[0]
@@ -204,6 +205,32 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path):
             assert expected[field].tobytes() == stored[field].tobytes()
 
     records = json.loads(exported.with_suffix('.json').read_text())['nodes']
+    scaled, scaled_roots, stored_parents, _ = tree_hierarchy_probe.read_eye_hierarchy(
+        tmp_path, source, parts[1], threshold_scale=4)
+    assert list(roots) == scaled_roots
+    assert tree_hierarchy_probe.cut(scaled, roots, height, 1.) == tree_hierarchy_probe.cut(nodes, roots, height, 1., k=4)
+    for original, node in zip(nodes, scaled, strict=True):
+        for bound in ('low_px', 'threshold_px', 'high_px'):
+            assert getattr(node, bound) == 4 * getattr(original, bound)
+        for ident in node.children:
+            child = scaled[ident - 1]
+            if child.children:
+                assert node.high_px < child.low_px
+
+    bake = tree_hierarchy_probe.bake
+    monkeypatch.setattr(bake, 'BOUGH_SIDE', 128)
+    tile = np.ones((12, 16, 4), np.float32)
+    normal = np.broadcast_to(np.float32([0., 0., 1.]), (*tile.shape[:2], 3))
+    fits = {ident: [dict(parent, rgba=tile, tangent_normal=normal)] for ident, parent in stored_parents.items()}
+    mapped, atlas, _, _, _ = bake.pack_bough(tmp_path, fits, stored_parents)
+    assert atlas['tiles'] == len(parents)
+    assert set(mapped) == set(parents)
+    tiles = {(p['page'], *p['uv'][0]) for p in mapped.values()}
+    assert len(tiles) == len(parents)
+    for ident, parent in mapped.items():
+        assert parent['position'].tobytes() == stored_parents[ident]['position'].tobytes()
+        assert parent['colour'][:, :3].tobytes() == stored_parents[ident]['colour'][:, :3].tobytes()
+
     for ident, parent in parents.items():
         record = records[ident - 1]
         ranges = record['geometry']
@@ -215,6 +242,26 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path):
         np.testing.assert_array_equal(part['index'][start:start + 2] - first, parent['index'])
         low, high = record['cull_box']
         assert np.all(low < parent['position']) and np.all(high > parent['position'])
+
+    # Reprint the fake fir's two hanging leaves with a narrow cutout needle.
+    y, x = np.indices((128, 128))
+    needle = (np.abs(x - y) < 4) & (x >= 16) & (x < 112)
+    texture = np.broadcast_to(np.float32([.3, .4, .6, 1.]), (*needle.shape, 4)).copy()
+    texture[..., 3] = needle
+    children = dict(fir_hierarchy.leaf_part(parts[1], nodes, by_kind['hang'].leaves),
+                    rgba=texture, cutout=True)
+    low = children['position'][:, :2].min(axis=0)
+    span = np.ptp(children['position'][:, :2], axis=0)
+    rays, _ = tree_hierarchy_probe.raster.raster([children], np.eye(3), low, (256, 128) / span, (128, 256))
+    alpha = rays[..., 3].reshape(64, 2, 128, 2).mean(axis=(1, 3))
+    tile = dict(rgba=np.dstack((np.broadcast_to([.3, .4, .6], (*alpha.shape, 3)), alpha)),
+                tangent_normal=np.broadcast_to([0., 0., 1.], (*alpha.shape, 3)))
+    coverage, _ = bake.write_bough_atlas(tmp_path, 256, [(tile, 0, 0, 144, 80)])
+    assert len(coverage) == 4
+    assert coverage[-1]['raw_dxt_cutoff'] < .01  # The old print drops this needle in the coarse mip.
+    for row in coverage:
+        assert row['children'] == pytest.approx(rays[..., 3].mean())
+        assert row['dxt_cutoff'] == pytest.approx(row['children'], abs=.02)
 
 
 @pytest.fixture(scope='module')
