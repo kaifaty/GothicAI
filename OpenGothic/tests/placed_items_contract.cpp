@@ -2220,6 +2220,7 @@ void arrowEffects(Gothic& gothic) {
     gothic.setGame(std::make_unique<GameSession>(in));
   }
   world=gothic.world();
+  session=gothic.gameSession();
   auto* loaded=activityNpc(*world,"VLK_412_HARAD");
   require(loaded!=nullptr && loaded->instanceSymbol()==sym && world->stuckArrowCount()==worldPins &&
           loaded->stuckArrowCount()==bodyPins,"the stuck arrows must load back");
