@@ -49,8 +49,10 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     auto& pyramid = usesImage2d(treeHistory.pyramid, TextureFormat::R32F, w, h, true);
     buildHiZ(cmd, &pyramid);
     commands.classifyHistory(cmd, textureCast<const Texture2d&>(pyramid), quantization, true, false);
-    commands.compactHistory(cmd, false);
     }
+  commands.finishBoughVisibility(cmd, fId, !reset);
+  if(!reset)
+    commands.compactHistory(cmd, false);
 
   if(request) {
     auto& reference = usesZBuffer(treeHistory.referenceDepth, zBufferFormat, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));

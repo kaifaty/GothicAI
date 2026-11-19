@@ -13,6 +13,7 @@
 #include "graphics/mesh/submesh/animmesh.h"
 #include "frameprofile.h"
 #include "graphics/meshlevels.h"
+#include "graphics/treeboughasset.h"
 #include "graphics/hizoccluders.h"
 #include <ostream>
 #include "loadprobe.h"
@@ -327,6 +328,8 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   d.deformPtr = obj.objDeform.offsetId<uint32_t>() - obj.deformFirst*8u;
   d.deformCount = obj.deformCount==0 ? 0 : obj.deformFirst+obj.deformCount;
   obj.objInstance.set(&d, 0, sizeof(d));
+  if(TreeBough::cpuEnabled())
+    drawCmd.setBoughTransform(obj.clusterId,transform);
 
   if(obj.clusterLod) {
     // The same conservative scale as clusterLodScale in cluster_lod.glsl.
@@ -491,6 +494,12 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
         break;
         }
 
+  if(type==DrawCommands::Static && mesh.treeBough && !obj.clusterLod) {
+    const auto& source = mesh.sub[mesh.treeBough->sourceSub];
+    if(source.iboOffset==iboOff && source.iboLength==iboLen)
+      drawCmd.addBough(mesh,obj.clusterId,obj.cmdId,obj.impostorShadowCmd,uint32_t(firstMeshlet),uint32_t(meshletCount));
+    }
+
   if(type==DrawCommands::Morph) {
     obj.objMorphAnim = instanceMem.alloc(sizeof(MorphDesc)*Resources::MAX_MORPH_LAYERS);
     obj.animPtr      = obj.objMorphAnim.offsetId<MorphDesc>();
@@ -626,6 +635,7 @@ void VisualObjects::free(size_t id) {
   drawCmd.addClusters(obj.cmdId, -meshletCount);
   if(obj.impostorShadowCmd!=uint16_t(-1))
     setImpostorShadow(obj, false);
+  drawCmd.removeBough(obj.clusterId);
   clustersMem.free(obj.clusterId, obj.clusterCount);
   if(Shaders::options().doRtScene) {
     // the slot goes at the next frame; a reused id is marked again by its new object
@@ -1029,9 +1039,11 @@ void VisualObjects::preFrameUpdateLevels() {
       shadowLevel = level.glb;
       if(!obj.isGhost && FoliageTree::isTree(obj.bucketId->mat.foliage)) {
         const float shadowHeight = MeshLevels::screenHeight(worldHeight, distance, py, 1080);
-        const bool wasSeparate = obj.shadowLevel!=obj.level.glb;
+        const bool boughCrown = obj.type==DrawCommands::Static && mesh->treeBough && obj.levelSub==mesh->treeBough->sourceSub;
+        const uint8_t shadowNear = boughCrown && shadowLevels ? 0 : level.glb;
+        const bool wasSeparate = obj.shadowLevel!=(boughCrown && shadowLevels ? 0 : obj.level.glb);
         shadowLevel = fullShadows ? 0 : MeshLevels::pickShadow(mesh->levels.size(), obj.shadowLevel, wasSeparate,
-                                                             shadowHeight, level.glb, shadowLevels);
+                                                             shadowHeight, shadowNear, shadowLevels);
         }
       if(level.impostor() && obj.levelSub==0 && obj.visible && drawStatic) {
         const Vec3 x(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2));

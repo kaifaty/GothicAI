@@ -12,6 +12,7 @@
 #include "graphics/eyeshader.h"
 #include "graphics/foliagetree.h"
 #include "graphics/hizoccluders.h"
+#include "graphics/treeboughasset.h"
 
 using namespace Tempest;
 
@@ -43,15 +44,28 @@ DrawBuckets::Id::~Id() {
 DrawBuckets::DrawBuckets():textureDesc(Resources::MaxFramesInFlight) {
   }
 
-DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh) {
+const Tempest::StorageBuffer& DrawBuckets::Bucket::iboBuffer() const {
+  if(boughPage!=nullptr)
+    return boughPage->ibo;
+  return staticMesh!=nullptr ? staticMesh->ibo8Buffer() : animMesh->ibo8;
+  }
+
+const Tempest::StorageBuffer& DrawBuckets::Bucket::vboBuffer() const {
+  if(boughPage!=nullptr)
+    return boughPage->vbo;
+  return staticMesh!=nullptr ? staticMesh->vboBuffer() : animMesh->vbo;
+  }
+
+DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh, const TreeBough::Page* page) {
   for(size_t i=0; i<bucketsCpu.size(); ++i) {
     auto& b = bucketsCpu[i];
-    if(b.staticMesh==&mesh && b.mat==mat)
+    if(b.staticMesh==&mesh && b.boughPage==page && b.mat==mat)
       return Id(this, i);
     }
 
   Bucket bx;
   bx.staticMesh = &mesh;
+  bx.boughPage  = page;
   bx.mat        = mat;
 
   bucketsDurtyBit = true;
@@ -154,8 +168,8 @@ void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
       orm.push_back(i.mat.orm!=nullptr ? i.mat.orm : &Resources::fallbackTexture());
       }
     if(i.staticMesh!=nullptr) {
-      ibo    .push_back(&i.staticMesh->ibo8Buffer());
-      vbo    .push_back(&i.staticMesh->vboBuffer());
+      ibo    .push_back(&i.iboBuffer());
+      vbo    .push_back(&i.vboBuffer());
       morphId.push_back(i.staticMesh->morph.index);
       morph  .push_back(i.staticMesh->morph.samples);
       } else if(i.animMesh!=nullptr) {
@@ -273,7 +287,8 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       bx.bbox[1]    = Vec4(drawn[1].x,drawn[1].y,drawn[1].z,0.f);
       // what the shadow pages draw (DrawCommands::drawVsm) takes its object's meshlets by their spheres
       // The hierarchy has already registered one world sphere per meshlet with DrawClusters.
-      if(i.staticMesh->clusterLevels.empty() && (i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest))
+      if(i.boughPage==nullptr && i.staticMesh->clusterLevels.empty() &&
+         (i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest))
         bx.meshletSpheres = spheres.place(*i.staticMesh);
       if(i.staticMesh->morph.anim!=nullptr)
         bx.flags |= BK_MORPH;
@@ -442,7 +457,7 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       bx.flags |= BK_EYE;
     if(i.mat.alpha==Material::Water)
       bx.flags |= BK_WATER;
-    if(i.staticMesh!=nullptr && (i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest) &&
+    if(i.staticMesh!=nullptr && i.boughPage==nullptr && (i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest) &&
        (bx.flags & (BK_MORPH|BK_STRAND|BK_GRASS|BK_VERGE|BK_TRACK))==0 && FoliageTree::isTree(i.mat.foliage)) {
       const auto bounds = i.staticMesh->treeHiZBounds();
       bx.treeHiZFirst = uint32_t(treeBounds.size());

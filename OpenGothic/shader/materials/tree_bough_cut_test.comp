@@ -1,0 +1,49 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+
+#include "tree_bough_cut.glsl"
+
+layout(local_size_x = 1) in;
+layout(binding = 0, std430) readonly buffer Nodes { BoughNode nodes[]; };
+layout(binding = 1, std430) readonly buffer Views { BoughProjection views[]; };
+layout(binding = 2, std430) readonly buffer Roots { uint roots[]; };
+layout(binding = 3, std430) writeonly buffer Cuts { uvec4 cuts[]; };
+
+uint first, count;
+uint history = 0u; // The fixture has fewer than 32 nodes.
+
+BoughNode boughGetNode(uint i) {
+  return nodes[i];
+  }
+
+bool boughWasCoarse(uint i) {
+  return (history & (1u << i)) != 0u;
+  }
+
+void boughSetCoarse(uint i, bool coarse) {
+  const uint bit = 1u << i;
+  history = coarse ? (history | bit) : (history & ~bit);
+  }
+
+void boughEmit(uint i, uint transition, float weight) {
+  cuts[first + 1u + count++] = uvec4(i, transition, floatBitsToUint(weight), 0u);
+  }
+
+void main() {
+  const uint stride = uint(nodes.length()) + 1u;
+  for(uint sampleId = 0; sampleId < uint(views.length()); ++sampleId) {
+    first = sampleId * stride;
+    count = 0u;
+    const uint before = history;
+    bool compact = false;
+    for(uint root = 0; root < uint(roots.length()); ++root) {
+      if(boughWalk(roots[root], views[sampleId], false))
+        compact = true;
+      }
+    const bool probeChangedHistory = history != before;
+    for(uint root = 0; root < uint(roots.length()); ++root)
+      boughWalk(roots[root], views[sampleId], true);
+    cuts[first] = uvec4(count, history, uint(compact), uint(probeChangedHistory));
+    }
+  }

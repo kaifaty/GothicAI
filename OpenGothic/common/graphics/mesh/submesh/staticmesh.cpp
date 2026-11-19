@@ -213,6 +213,7 @@ StaticMesh& StaticMesh::operator=(StaticMesh&& other) {
   drawn=other.drawn;
   levels=std::move(other.levels);
   impostor=std::move(other.impostor);
+  treeBough=std::move(other.treeBough);
   meshletSpheres=std::move(other.meshletSpheres);
   clusterLevels=std::move(other.clusterLevels);
   ownMesh=other.ownMesh;

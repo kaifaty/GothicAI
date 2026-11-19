@@ -3,6 +3,7 @@
 #include <Tempest/RenderPipeline>
 #include <Tempest/StorageBuffer>
 #include <iosfwd>
+#include <memory>
 #include <vector>
 
 #include "sceneglobals.h"
@@ -10,6 +11,7 @@
 class VisualObjects;
 class DrawBuckets;
 class DrawClusters;
+class TreeBoughRender;
 
 class DrawCommands {
   public:
@@ -69,6 +71,10 @@ class DrawCommands {
     void     commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     uint16_t commandId(const Material& m, Type type, uint32_t bucketId, bool shadowOnly = false);
     void     addClusters(uint16_t cmdId, uint32_t meshletCount);
+    void     addBough(const StaticMesh& mesh, uint32_t cluster, uint16_t main, uint16_t impostor,
+                      uint32_t first, uint32_t count);
+    void     removeBough(uint32_t cluster);
+    void     setBoughTransform(uint32_t cluster, const Tempest::Matrix4x4& transform);
 
     void     visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass, bool history = false);
     void     visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
@@ -85,6 +91,7 @@ class DrawCommands {
                          float depthRoundoff, bool late, bool reset);
     void compactHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool early);
     void finishHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& winners, uint8_t fId);
+    void finishBoughVisibility(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool late);
     const Tempest::StorageBuffer& historyStatus() const { return history.status; }
     uint32_t historyClusterCount() const;
 
@@ -193,4 +200,8 @@ class DrawCommands {
     Tempest::StorageBuffer   statsSum;
     Tempest::StorageBuffer   statsRead[Resources::MaxFramesInFlight];
     bool                     statsWritten[Resources::MaxFramesInFlight] = {};
+    std::unique_ptr<TreeBoughRender> boughs;
+    bool                     boughExpanded = false;
+    uint32_t                 boughHistoryToken = 0;
+    friend class TreeBoughRender;
   };

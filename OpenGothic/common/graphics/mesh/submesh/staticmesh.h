@@ -13,6 +13,7 @@
 #include "graphics/bounds.h"
 #include "graphics/mesh/texeldensity.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/treeboughasset.h"
 
 #include "resources.h"
 
@@ -146,6 +147,7 @@ class StaticMesh {
     Bounds                          drawn;
     std::vector<Level>              levels;
     Impostor                        impostor;
+    std::unique_ptr<TreeBough::Asset> treeBough;
     float                           strandWidth = 0; // PackedMesh::strandWidth
     // the sphere of each meshlet in the mesh's space (centre, radius), levels included: the shadow pages take an
     // object's meshlets by them (graphics/meshletspheres.h); empty for the landscape and meshes without them

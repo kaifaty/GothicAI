@@ -915,6 +915,8 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
     mesh.ownMesh = replaced;
     if(source!=nullptr && !mesh.levels.empty() && source->impostor.px>0.f && MeshLevels::impostorsEnabled())
       implLoadMeshImpostor(key,source->impostor,mesh);
+    if(source!=nullptr && !source->hierarchy.empty() && mesh.clusterLevels.empty() && TreeBough::enabled())
+      TreeBough::attach(mesh,source->hierarchy);
     return ret;
     }
 
