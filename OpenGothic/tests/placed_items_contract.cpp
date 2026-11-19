@@ -2484,12 +2484,22 @@ void arrowEffects(Gothic& gothic) {
 
   // in Harad: the effect goes with the bone
   const auto inBody=npc->stuckArrowCount();
-  // at his trunk's zone: through his box's centre an arrow may pass between an arm and the trunk, then the zones do
-  // not tell where it entered and the tip is put at that centre
+  // along a line into one of his zones: through his box's centre an arrow may pass between an arm and the trunk, then
+  // the zones do not tell where it entered and the tip is put at that centre
   const auto center=npc->collosionCenter();
-  Tempest::Vec3 trunk;
-  require(npc->hitZoneCenter(HitZones::Body,trunk),"Harad must have a trunk zone");
-  auto& atHarad=shoot(fireArrow,trunk+Tempest::Vec3(-80,0,0),Tempest::Vec3(1,0,0));
+  Tempest::Vec3 aim=center;
+  bool inZone=false;
+  for(float dy:{0.f,20.f,35.f,-15.f,10.f,50.f})
+    for(float dz:{0.f,8.f,-8.f}) {
+      float t=0;
+      const auto from=center+Tempest::Vec3(-80,dy,dz);
+      if(inZone || npc->rayHitZone(from,from+Tempest::Vec3(160,0,0),t)==HitZones::None)
+        continue;
+      aim=center+Tempest::Vec3(0,dy,dz);
+      inZone=true;
+      }
+  require(inZone,"a line into Harad's zones must be found");
+  auto& atHarad=shoot(fireArrow,aim+Tempest::Vec3(-80,0,0),Tempest::Vec3(1,0,0));
   require(tickUntil([&] { return npc->stuckArrowCount()>inBody; },4,240),"the fire arrow must stick in Harad");
   const auto& pinned=NpcDefinitionContract::stuckArrow(*npc,npc->stuckArrowCount()-1);
   Npc::ArrowPinProbe pin;
