@@ -320,7 +320,8 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
     # Every new bound passes on its boundary and fails just outside it.
     limits = {"min_activity_same_mob": 10 / 14, "min_activity_same_wp": 17 / 18,
               "min_activity_mob_time_ratio": 12 / 14, "max_activity_mob_time_ratio": 12 / 14,
-              "max_activity_arrival_p95": total["arrival_p95"], "max_activity_stuck": 1}
+              "max_activity_arrival_p95": total["arrival_p95"], "max_activity_arrival_max": 5,
+              "max_activity_stuck": 1}
     assert all(check["pass"] for check in npc_day_parity.evaluate(result, limits))
     outside = {name: limit + (0.01 if name.startswith("min_") else -0.01) for name, limit in limits.items()}
     assert all(not check["pass"] for check in npc_day_parity.evaluate(result, outside))
@@ -338,7 +339,8 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
     assert "ZS_SMITH" in report and "ZS_READ" in report and "`SMITH#0`" in report and "25–40" in report
     assert "5 minutes" in report and "**FAIL**" in report
     assert npc_day_parity.main([str(a), str(b), "--activity-states", "ZS_READ", "--out", str(out),
-                               "--json", str(data), "--max-activity-stuck", "0"]) == 0
+                               "--json", str(data), "--max-activity-stuck", "0",
+                               "--max-activity-arrival-max", "-5"]) == 0
     assert json.loads(data.read_text())["result"]["activity"]["total"] == activity["by_state"]["ZS_READ"]
     assert "ZS_SMITH" in out.read_text()
     assert npc_day_parity.main([str(a), str(a), "--tolerances", str(ACTIVITY), "--out", str(out)]) == 0

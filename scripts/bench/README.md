@@ -1979,6 +1979,13 @@ same-seed state, position, inventory or event guards. Keep the strict profile fo
 work where changing the number of shared random draws shifts the whole journal. Final activity
 thresholds require the lead's acceptance.
 
+The activity profile requires **zero stuck NPCs** and bounds both arrival p95 and the
+**maximum signed arrival delay** at 5 game minutes (one journal step).
+`--max-activity-arrival-max` checks the maximum B−A delay over all segments in the selected
+activity summary. It catches a single late arrival even when p95 and the same-MOB share pass;
+missing arrivals fail the stuck-NPC check instead. The 15-minute archive mutation exercises
+this case without a new game run.
+
 Activity metrics use matched nonhero samples where **A's `ta` is not `-`**, grouped by **A's `zs`**:
 
 | Metric | Definition |

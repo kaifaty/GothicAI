@@ -62,6 +62,7 @@ CHECKS = {
     "min_activity_mob_time_ratio": ("min", "activity: B/A occupied MOB samples"),
     "max_activity_mob_time_ratio": ("max", "activity: B/A occupied MOB samples"),
     "max_activity_arrival_p95": ("max", "activity: arrival delay p95, game min"),
+    "max_activity_arrival_max": ("max", "activity: maximum arrival delay, game min"),
     "max_activity_stuck": ("max", "activity: NPCs missing every MOB sample in a routine segment"),
 }
 
@@ -467,6 +468,7 @@ def check_values(result, inventory_evidence=()):
         "min_activity_mob_time_ratio": activity["mob_time_ratio"],
         "max_activity_mob_time_ratio": activity["mob_time_ratio"],
         "max_activity_arrival_p95": activity["arrival_p95"],
+        "max_activity_arrival_max": activity["arrival_max"],
         "max_activity_stuck": activity["stuck_npcs"],
     }
 
