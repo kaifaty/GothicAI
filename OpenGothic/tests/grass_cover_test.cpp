@@ -157,7 +157,7 @@ void shaderParity() {
       compare(Grass::patchNoise(p.x,p.y)==Shader::grassPatch(p), "patchNoise");
       compare(border==Shader::grassCoverBorder(p,dist,reach), "coverBorder");
       compare(Grass::coverBare(p.x,p.y)==Shader::grassCoverBare(p), "coverBare");
-      compare(Grass::coverLevel(p.x,p.y,border)==Shader::grassCoverLevel(p,border,0), "coverLevel");
+      compare(Grass::coverLevel(p.x,p.y,border)==Shader::grassCoverLevel(p,border,Shader::grassCoverBare(p),false), "coverLevel");
       // The legacy CPU spot truncates the distance, bend and final 1/256 share. GLSL keeps them as floats.
       compare(std::abs(float(Grass::patchBare(p.x,p.y))-Shader::grassBare(p)*256.f)<=2.1f, "patchBare");
       }
