@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include "graphics/visualfx.h"
+#include "world/arrowdepth.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/objects/interactive.h"
@@ -181,9 +182,14 @@ void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
   impactOwner = hit.bone;
   impactKnown = true;
   auto matrix = obj->matrix();
+  // the visible arrow only: its tip past the hit point (world/arrowdepth)
+  const float tip = ArrowDepth::tipLength(view.protoMesh());
   if(auto* npc = wrld->npcForRagdoll(hit.ragdoll)) {
     npc->addCorpseArrowImpulse(*this);
-    if(npc->stickArrow(stuckView(),hit.bone,matrix,visualName)) {
+    auto inBody = matrix;
+    ArrowDepth::sink(inBody,hit.point,ArrowDepth::Body,tip);
+    // the bone by the hit, not by the moved mesh's origin
+    if(npc->stickArrow(stuckView(),hit.bone,inBody,visualName,&hit.point)) {
       char buf[160];
       const auto who = Bench::who(npc);
       std::snprintf(buf,sizeof(buf),"arrow stuck corpse %.*s bone %zu",int(who.size()),who.data(),hit.bone);
@@ -197,11 +203,15 @@ void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
   const auto sightPoint = hit.point+sightNormal*3.f;
   const auto surface = hit.vob!=nullptr && hit.vob->isDoor() ? "door" :
                        (std::abs(hit.normal.y)<.7f ? "wall" : "ground");
+  // without a tip's length the arrow stays as before, turned as well
+  if(tip>0.f)
+    ArrowDepth::faceSurface(matrix,hit.incoming,-sightNormal);
+  ArrowDepth::sink(matrix,hit.point,ArrowDepth::world(hit.material),tip);
   if(wrld->stickArrow(stuckView(),matrix,visualName,hit.movable,origin(),&sightPoint,surface)) {
     char buf[256];
-    std::snprintf(buf,sizeof(buf),"arrow stuck world: at %.9g %.9g %.9g normal %.9g %.9g %.9g material %u",
+    std::snprintf(buf,sizeof(buf),"arrow stuck world: at %.9g %.9g %.9g normal %.9g %.9g %.9g material %u tip %.9g",
                   double(hit.point.x),double(hit.point.y),double(hit.point.z),
-                  double(hit.normal.x),double(hit.normal.y),double(hit.normal.z),unsigned(hit.material));
+                  double(hit.normal.x),double(hit.normal.y),double(hit.normal.z),unsigned(hit.material),double(tip));
     Bench::note(buf);
     }
   }
@@ -303,6 +313,8 @@ bool Bullet::onCollide(Npc& npc) {
   vfx.setPhysicsDisable();
   wrld->runEffect(std::move(vfx));
 
+  // where the tip goes: 12 cm past the entry into the hit zone, at the body's centre when that is unknown
+  float depth = ArrowDepth::Body;
   if(stopsAtWorldHit() && !impactKnown) {
     // Damage and the existing physical reaction consumed the legacy impact
     // metadata above. Resolve this additional frame only for the visual pin.
@@ -317,6 +329,7 @@ bool Bullet::onCollide(Npc& npc) {
       }
     else {
       impactAt = npc.collosionCenter();
+      depth    = 0;
       }
     impactKnown = true;
     }
@@ -327,7 +340,8 @@ bool Bullet::onCollide(Npc& npc) {
     matrix.set(3,0,point.x);
     matrix.set(3,1,point.y);
     matrix.set(3,2,point.z);
-    if(npc.stickArrow(stuckView(),impactOwner,matrix,visualName)) {
+    ArrowDepth::sink(matrix,point,depth,ArrowDepth::tipLength(view.protoMesh()));
+    if(npc.stickArrow(stuckView(),impactOwner,matrix,visualName,&point)) {
       Npc::ArrowPinProbe pin;
       npc.stuckArrowProbe(npc.stuckArrowCount()-1,pin);
       char buf[160];

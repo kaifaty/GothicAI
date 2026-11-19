@@ -496,7 +496,7 @@ void Npc::prepareLivingBody() {
   }
 
 bool Npc::stickArrow(ItemView&& arrow, size_t bone, const Matrix4x4& worldMatrix,
-                     std::string_view visualName) {
+                     std::string_view visualName, const Vec3* boneAt) {
   // A corpse hit is selected after the native step, before the usual pose export.
   // Bind against that same current pose so the first sync cannot move the pin twice.
   if(ragdoll)
@@ -504,7 +504,7 @@ bool Npc::stickArrow(ItemView&& arrow, size_t bone, const Matrix4x4& worldMatrix
   if(bone>=visual.pose().boneCount()) {
     const auto& transform = visual.transform();
     const float scale = Vec3(transform.at(0,0),transform.at(0,1),transform.at(0,2)).length();
-    const Vec3 at(worldMatrix.at(3,0),worldMatrix.at(3,1),worldMatrix.at(3,2));
+    const Vec3 at = boneAt!=nullptr ? *boneAt : Vec3(worldMatrix.at(3,0),worldMatrix.at(3,1),worldMatrix.at(3,2));
     bone = visual.hitZoneShape().closestBone(visual.pose().transform(),visual.pose().boneCount(),scale,at);
     }
   return visual.stickArrow(std::move(arrow),bone,worldMatrix,visualName);

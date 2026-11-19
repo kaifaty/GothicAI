@@ -714,8 +714,9 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     using ArrowPinProbe = MdlVisual::ArrowPinProbe;
     size_t stuckArrowCount() const { return visual.stuckArrowCount(); }
     bool stuckArrowProbe(size_t index, ArrowPinProbe& out) const { return visual.stuckArrowProbe(index,out); }
+    // an unknown bone is the one closest to `boneAt`, else to the matrix's origin
     bool stickArrow(ItemView&& arrow, size_t bone, const Tempest::Matrix4x4& worldMatrix,
-                    std::string_view visualName={});
+                    std::string_view visualName={}, const Tempest::Vec3* boneAt=nullptr);
     void addCorpseArrowImpulse(const Bullet& bullet);
     const RagdollSave::QuestReturn& ragdollQuestReturnState() const { return ragdollQuestReturn; }
     uint32_t ragdollQuestReturnCount() const { return ragdollQuestReturns; }

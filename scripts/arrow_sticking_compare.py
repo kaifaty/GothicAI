@@ -21,6 +21,24 @@ def travel(points):
     return max((math.dist(points[0], point) for point in points), default=0)
 
 
+# How deep a stuck arrow's tip goes past the hit by the surface's material group (common/world/arrowdepth.cpp,
+# reports/physics/2026-11-19-arrow-pin-depth): METAL 1 and STONE 2 — 2 cm, WOOD 3 — 8 cm, the rest 15 cm.
+def world_depth(material):
+    return {1: 2., 2: 2., 3: 8.}.get(material, 15.)
+
+
+def pin_depth(matrix, tip_length, point):
+    """The tip (the mesh's origin + X·(−tip_length)): its depth past the hit along the flight (−X), its distance off it."""
+    x = matrix[0:3]
+    scale = math.hypot(*x)
+    assert scale > 1e-6, 'arrow matrix has no X axis'
+    flight = [-v/scale for v in x]
+    tip = [o-v*tip_length for o, v in zip(matrix[12:15], x)]
+    offset = [t-p for t, p in zip(tip, point)]
+    depth = sum(o*f for o, f in zip(offset, flight))
+    return depth, math.dist(offset, [f*depth for f in flight])
+
+
 def costs(rows):
     values = [r['physics_ms'] for r in rows]
     assert values and all(math.isfinite(v) and v >= 0 for v in values)
@@ -110,13 +128,27 @@ def validate(run):
     assert physical_draw_delta > .05, 'pins followed ordinary query animation instead of physical rendering'
     world_notes = [s for s in note('world') if s.startswith('arrow stuck world: at ')]
     assert len(world_notes) == 1, 'missing real world collision metadata'
-    match = re.match(r'arrow stuck world: at (\S+) (\S+) (\S+) normal (\S+) (\S+) (\S+) material (\d+)', world_notes[0])
+    match = re.match(r'arrow stuck world: at (\S+) (\S+) (\S+) normal (\S+) (\S+) (\S+) material (\d+)(?: tip (\S+))?', world_notes[0])
     assert match, 'world hit lacks point/normal/material'
+    assert match[8] is not None, 'world hit note lacks the tip length: a log of the engine before the arrow pin depth'
     point = [float(match[i]) for i in (1, 2, 3)]
+    normal = [float(match[i]) for i in (4, 5, 6)]
+    material, tip_length = int(match[7]), float(match[8])
+    assert tip_length > 0, ('arrow mesh has no tip length', tip_length)
     world_before = cases[names.index('world')]['world_pins_before']
     actual = next(r['world_pins'][world_before]['world'] for r in rows['world'] if len(r['world_pins']) > world_before)
-    hit_error = math.dist(actual[12:15], point)
-    assert hit_error < 2, ('world draw was not pinned at actual hit point', hit_error)
+    tip_depth, tip_off = pin_depth(actual, tip_length, point)
+    expected_depth = world_depth(material)
+    assert abs(tip_depth-expected_depth) <= 1 and tip_off < 1, \
+        ('world arrow tip not at its material depth past the hit', material, tip_depth, expected_depth, tip_off)
+    # The flight is the pinned matrix's own −X: check it against the ground, whose outside is up. The `world` case
+    # shoots at the ground (`sticking world`); any other surface has no outside known here and fails.
+    assert abs(normal[1]) >= .7, ('world arrow hit no ground, its outside is unknown', normal)
+    up = [v if normal[1] > 0 else -v for v in normal]
+    side = lambda p: sum((a-b)*n for a, b, n in zip(p, point, up))
+    tip = [o-v*tip_length for o, v in zip(actual[12:15], actual[0:3])]
+    assert side(tip) < 0 < side(actual[12:15]), ('world arrow tip not in the ground, its mesh origin not above it',
+                                                 side(tip), side(actual[12:15]))
     toggle = cases[names.index('toggle_off')]
     assert toggle['npc_pins_before'] == 3 and toggle['world_pins_before'] >= 1, 'toggle did not cover both owner types'
     assert not rows['toggle_off'][-1]['feature'] and rows['toggle_off'][-1]['all_npc_pin_count'] == 0
@@ -125,7 +157,7 @@ def validate(run):
     assert removed[0]['bodies_before']-removed[0]['bodies_after'] == 24 and removed[0]['world_pins_before'] == removed[0]['world_pins_after'] == 0
     return {'pass': True, 'cases': result, 'actual_draw_max_matrix_error': maximum_error,
             'attachment_max_local_change': maximum_local_change, 'world_max_matrix_drift': maximum_world_drift,
-            'world_hit_position_error_cm': hit_error, 'motion_root_travel_cm': moved,
+            'world_tip_depth_cm': tip_depth, 'world_tip_expected_cm': expected_depth, 'world_tip_off_line_cm': tip_off, 'motion_root_travel_cm': moved,
             'motion_turn_deg': turned, 'motion_arrow_travel_cm': arrow_travel,
             'physical_render_vs_query_arrow_delta_cm': physical_draw_delta,
             'physics_step': {mode: costs([r for r in frames if r['feature'] == (mode == 'on')]) for mode in ('off', 'on')},

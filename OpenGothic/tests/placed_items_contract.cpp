@@ -42,6 +42,7 @@
 #include "gameservices.h"
 #include "graphics/visualfx.h"
 #include "world/bullet.h"
+#include "game/physicssave.h"
 
 #include <rapidjson/document.h>
 
@@ -2297,15 +2298,13 @@ void arrowEffects(Gothic& gothic) {
     };
 
   // the ground by Harad, found from above: stone throws an arrow back, other ground (not metal) takes it
-  const auto findGround=[&](bool stone,Tempest::Vec3& out) {
-    for(float r=150;r<=1500;r+=150)
+  const auto findSurface=[&](const std::function<bool(asset::MaterialGroup)>& take,Tempest::Vec3& out) {
+    for(float r=150;r<=3000;r+=150)
       for(int a=0;a<12;++a) {
         const float an=float(a)*float(M_PI)/6.f;
         const auto p=npc->position()+Tempest::Vec3(std::cos(an)*r,0,std::sin(an)*r);
         const auto land=world->physic()->ray(p+Tempest::Vec3(0,300,0),p-Tempest::Vec3(0,700,0));
-        const bool isStone=land.mat==asset::MaterialGroup::STONE;
-        if(!land.hasCol || land.n.y<.7f || isStone!=stone || land.mat==asset::MaterialGroup::METAL ||
-           land.mat==asset::MaterialGroup::UNDEFINED || land.mat==asset::MaterialGroup::NONE)
+        if(!land.hasCol || land.n.y<.7f || !take(land.mat))
           continue;
         out=land.v;
         std::printf("Arrow effects: ground of material %d %.0f cm from Harad\n",int(land.mat),double(r));
@@ -2313,8 +2312,82 @@ void arrowEffects(Gothic& gothic) {
         }
     return false;
     };
+  const auto findGround=[&](bool stone,Tempest::Vec3& out) {
+    return findSurface([stone](asset::MaterialGroup m) {
+      return (m==asset::MaterialGroup::STONE)==stone && m!=asset::MaterialGroup::METAL &&
+             m!=asset::MaterialGroup::UNDEFINED && m!=asset::MaterialGroup::NONE;
+      },out);
+    };
+  // How deep a stuck arrow's tip is (reports/physics/2026-11-19-arrow-pin-depth): its mesh lies along X, the tip at
+  // its box's −X, −X is the flight. The tip's depth past the entry along the flight, its distance off that line,
+  // the mesh's origin before the entry, a point of the mesh's X along the flight.
+  struct Depth { float tip=0,length=0,off=0,origin=0; Tempest::Vec3 axis; };
+  const auto depthOf=[](const Tempest::Matrix4x4& m,const ProtoMesh* mesh,const Tempest::Vec3& entry) {
+    Depth d;
+    const Tempest::Vec3 x(m.at(0,0),m.at(0,1),m.at(0,2)),at(m.at(3,0),m.at(3,1),m.at(3,2));
+    d.length=mesh!=nullptr ? -mesh->bbox()[0].x : 0.f;
+    d.axis=Tempest::Vec3::normalize(-x);
+    const auto tip=at-x*d.length;
+    d.tip=Tempest::Vec3::dotProduct(tip-entry,d.axis);
+    d.off=(tip-entry-d.axis*d.tip).length();
+    d.origin=Tempest::Vec3::dotProduct(entry-at,d.axis);
+    return d;
+    };
+  const auto meshPoint=[](const Tempest::Matrix4x4& m,float x) {
+    return Tempest::Vec3(m.at(3,0)+m.at(0,0)*x,m.at(3,1)+m.at(0,1)*x,m.at(3,2)+m.at(0,2)*x);
+    };
+  constexpr float tow=-52.f; // the fire arrow's tow on its mesh's X (SPELLFX_FIREARROW)
+  // one arrow into the world: shot, ticked until it sticks; its pin, its mesh's depth and where it entered
+  const auto pinWorld=[&](size_t id,const Tempest::Vec3& from,const Tempest::Vec3& dir,Tempest::Matrix4x4& m,
+                          const char* what) {
+    const auto before=world->stuckArrowCount();
+    auto& b=shoot(id,from,dir);
+    for(size_t i=0;i<3000 && world->stuckArrowCount()==before && !b.isFinished();++i)
+      session->tick(4);
+    require(world->stuckArrowCount()==before+1 && world->stuckArrowTransform(before,m),what);
+    const auto d=depthOf(m,world->stuckArrowView(before)->protoMesh(),b.impactPoint());
+    std::printf("Arrow depth: %s, mesh tip %.1f cm, tip %.2f cm past the hit, %.2f cm off its line, origin %.2f cm "
+                "before it\n",what,double(d.length),double(d.tip),double(d.off),double(d.origin));
+    // along the flight it came in, not only along the pinned matrix's own −X
+    const auto flight=Tempest::Vec3::normalize(b.direction());
+    require(d.length>10.f && d.off<1.f && std::abs(d.origin-(d.length-d.tip))<.05f &&
+            Tempest::Vec3::dotProduct(d.axis,flight)>.9999f,what);
+    return std::make_pair(d,b.impactPoint());
+    };
   Tempest::Vec3 ground;
   require(findGround(false,ground),"ground an arrow sticks in must be found by Harad");
+
+  // in the earth the tip 15 cm past the hit, the mesh's origin its length less 15 before it; a bolt by its own mesh;
+  // the fire arrow's tow above the ground. In wood 8 cm, the tow outside.
+  {
+    Tempest::Vec3 earth,wood;
+    require(findSurface([](asset::MaterialGroup m) { return m==asset::MaterialGroup::EARTH; },earth),
+            "earth an arrow sticks in must be found by Harad");
+    const auto bolt=script.findSymbolIndex("ITRW_BOLT");
+    require(bolt!=size_t(-1),"arrow depth needs ITRW_BOLT");
+    Tempest::Matrix4x4 m;
+    const auto inEarth=pinWorld(arrow,earth+Tempest::Vec3(0,120,0),Tempest::Vec3(.3f,-1,0),m,
+                                "ITRW_ARROW in the earth");
+    require(std::abs(inEarth.first.tip-15.f)<=1.f && std::abs(inEarth.first.origin-(inEarth.first.length-15.f))<=1.f,
+            "an arrow in the earth must have its tip 15 cm past the hit, its mesh's origin its length less 15 before");
+    const auto boltDepth=pinWorld(bolt,earth+Tempest::Vec3(10,120,10),Tempest::Vec3(0,-1,0),m,
+                                "ITRW_BOLT in the earth");
+    require(std::abs(boltDepth.first.length-inEarth.first.length)>1.f && std::abs(boltDepth.first.tip-15.f)<=1.f,
+            "a bolt must be pinned by the length of its own mesh");
+    const auto fireDepth=pinWorld(fireArrow,earth+Tempest::Vec3(-10,120,-10),Tempest::Vec3(0,-1,0),m,
+                                "ITRW_ADDON_FIREARROW in the earth");
+    const auto towAt=meshPoint(m,tow);
+    std::printf("Arrow depth: the fire arrow's tow %.2f cm over the earth\n",double(towAt.y-fireDepth.second.y));
+    require(std::abs(fireDepth.first.tip-15.f)<=1.f && towAt.y>=fireDepth.second.y,"the fire arrow's tow in the earth must not be under it");
+    require(findSurface([](asset::MaterialGroup m) { return m==asset::MaterialGroup::WOOD; },wood),
+            "wood an arrow sticks in must be found by Harad");
+    const auto inWood=pinWorld(fireArrow,wood+Tempest::Vec3(0,120,0),Tempest::Vec3(0,-1,0),m,
+                                "ITRW_ADDON_FIREARROW in wood");
+    const auto towOut=Tempest::Vec3::dotProduct(meshPoint(m,tow)-inWood.second,inWood.first.axis);
+    require(std::abs(inWood.first.tip-8.f)<=1.f && towOut<0.f,"an arrow in wood must have its tip 8 cm past the hit, the tow outside");
+    // the matrix it was pinned with is drawn on: no tick moves a world arrow
+    session->tick(16);
+  }
   // shot: the effect at KEY_INVEST_2 on the arrow's mesh
   const auto stuckBefore=world->stuckArrowCount();
   auto& fire=shoot(fireArrow,ground+Tempest::Vec3(0,120,0),Tempest::Vec3(0,-1,0));
@@ -2375,16 +2448,89 @@ void arrowEffects(Gothic& gothic) {
             emitting(glancing.itemView());
     }
   require(glanced,"a fire arrow glancing off stone must fly on at KEY_INVEST_3");
+  // Stopped on stone (its fourth glance, DynamicWorld::moveBullet): the tip 2 cm in it, the arrow turned into the
+  // stone. Shot straight down onto flat stone it glances in place; a glance at the very start of a step leaves the
+  // arrow hanging where it is (the flight as on main), so the next shot is tried.
+  {
+    bool stopped=false;
+    for(float r=150;r<=3000 && !stopped;r+=150)
+      for(int a=0;a<12 && !stopped;++a) {
+        const float an=float(a)*float(M_PI)/6.f;
+        const auto p=npc->position()+Tempest::Vec3(std::cos(an)*r,0,std::sin(an)*r);
+        const auto land=world->physic()->ray(p+Tempest::Vec3(0,300,0),p-Tempest::Vec3(0,700,0));
+        if(!land.hasCol || land.mat!=asset::MaterialGroup::STONE || land.n.y<.98f)
+          continue;
+        const auto before=world->stuckArrowCount();
+        auto& b=shoot(arrow,land.v+Tempest::Vec3(0,120,0),Tempest::Vec3(0,-1,0));
+        auto last=b.position();
+        for(size_t i=0,still=0;i<3000 && still<50 && !b.isFinished();++i) {
+          session->tick(4);
+          still=(b.position()-last).length()<1.e-4f ? still+1 : 0;
+          last=b.position();
+          }
+        Tempest::Matrix4x4 m;
+        if(!b.isFinished() || world->stuckArrowCount()!=before+1 || !world->stuckArrowTransform(before,m))
+          continue;
+        const auto entry=b.impactPoint();
+        const auto d=depthOf(m,world->stuckArrowView(before)->protoMesh(),entry);
+        const auto under=world->physic()->ray(entry-d.axis*20.f,entry+d.axis*5.f);
+        std::printf("Arrow depth: stopped on material %d %.0f cm from where it was shot, tip %.2f cm past the hit, %.2f cm "
+                    "off its line, flight %.2f %.2f %.2f\n",int(under.mat),double((entry-land.v).length()),double(d.tip),
+                    double(d.off),double(d.axis.x),double(d.axis.y),double(d.axis.z));
+        if(!under.hasCol || under.mat!=asset::MaterialGroup::STONE)
+          continue;
+        // shot straight down, it came into the stone straight down: so it stands
+        require(std::abs(d.tip-2.f)<=1.f && d.off<1.f && d.axis.y<-.9999f,
+                "an arrow stopped on stone must have its tip 2 cm in it");
+        stopped=true;
+        }
+    require(stopped,"an arrow must stop on flat stone by Harad");
+  }
 
   // in Harad: the effect goes with the bone
   const auto inBody=npc->stuckArrowCount();
+  // along a line into one of his zones: through his box's centre an arrow may pass between an arm and the trunk, then
+  // the zones do not tell where it entered and the tip is put at that centre. His pose where he stands now: far from
+  // the hero it is not solved every tick, and he was moved here
+  npc->updateTransform();
   const auto center=npc->collosionCenter();
-  shoot(fireArrow,center+Tempest::Vec3(-80,0,0),Tempest::Vec3(1,0,0));
-  require(tickUntil([&] { return npc->stuckArrowCount()>inBody; },16,60),"the fire arrow must stick in Harad");
+  Tempest::Vec3 aim=center;
+  bool inZone=false;
+  for(float dy:{0.f,20.f,35.f,-15.f,10.f,50.f})
+    for(float dz:{0.f,8.f,-8.f}) {
+      float t=0;
+      const auto from=center+Tempest::Vec3(-80,dy,dz);
+      if(inZone || npc->rayHitZone(from,from+Tempest::Vec3(160,0,0),t)==HitZones::None)
+        continue;
+      aim=center+Tempest::Vec3(0,dy,dz);
+      inZone=true;
+      }
+  require(inZone,"a line into Harad's zones must be found");
+  auto& atHarad=shoot(fireArrow,aim+Tempest::Vec3(-80,0,0),Tempest::Vec3(1,0,0));
+  require(tickUntil([&] { return npc->stuckArrowCount()>inBody; },4,240),"the fire arrow must stick in Harad");
   const auto& pinned=NpcDefinitionContract::stuckArrow(*npc,npc->stuckArrowCount()-1);
   Npc::ArrowPinProbe pin;
   require(npc->stuckArrowProbe(npc->stuckArrowCount()-1,pin) && emitting(pinned) && pinned.effectKey()==hit &&
           onMesh(pinned),"the fire arrow stuck in Harad must have its effect at KEY_INVEST_3 on its mesh");
+  // the tip 12 cm past the entry into the hit zone, the tow outside
+  {
+    // where the shot's line enters his zones now, asked apart from the pin: the entry, the bone
+    float t=0;
+    size_t zoneBone=size_t(-1);
+    const auto from=aim+Tempest::Vec3(-80,0,0);
+    require(npc->rayHitZone(from,from+Tempest::Vec3(160,0,0),t,&zoneBone)!=HitZones::None,
+            "the shot's line must still enter Harad's zones");
+    const auto entry=from+Tempest::Vec3(t,0,0);
+    const auto d=depthOf(pin.world,pinned.protoMesh(),entry);
+    const auto flight=Tempest::Vec3::normalize(atHarad.direction());
+    const auto towOut=Tempest::Vec3::dotProduct(meshPoint(pin.world,tow)-entry,d.axis);
+    std::printf("Arrow depth: in Harad's bone %zu the tip %.2f cm past the entry %.0f cm from his centre, %.2f cm off its "
+                "line, the tow %.2f cm before it\n",pin.bone,double(d.tip),double((entry-center).length()),double(d.off),
+                double(-towOut));
+    require((atHarad.impactPoint()-entry).length()<1.f && pin.bone==zoneBone && std::abs(d.tip-12.f)<=1.f && d.off<1.f &&
+            Tempest::Vec3::dotProduct(d.axis,flight)>.9999f && towOut<0.f,
+            "an arrow in a body must have its tip 12 cm past the entry, the tow outside");
+  }
   // the pose, the arrow and its effect synced where Harad stands now, then he moves
   npc->updateTransform();
   Tempest::Vec3 at,after;
@@ -2407,6 +2553,17 @@ void arrowEffects(Gothic& gothic) {
   // saved: the stuck arrows in main's layout (world/world.cpp saveStuckArrows, schema 2); loaded: no effects
   const auto worldPins=world->stuckArrowCount(),bodyPins=npc->stuckArrowCount();
   const auto sym=npc->instanceSymbol();
+  // where they are: loaded, they stay there, not sunk again
+  std::vector<Tempest::Matrix4x4> savedWorld(worldPins),savedLocal(bodyPins);
+  std::vector<size_t> savedBone(bodyPins);
+  for(size_t i=0;i<worldPins;++i)
+    require(world->stuckArrowTransform(i,savedWorld[i]),"a stuck arrow must have its matrix");
+  for(size_t i=0;i<bodyPins;++i) {
+    Npc::ArrowPinProbe p;
+    require(npc->stuckArrowProbe(i,p),"an arrow in a body must have its matrix");
+    savedLocal[i]=p.local;
+    savedBone[i]=p.bone;
+    }
   std::vector<uint8_t> bytes;
   {
     Tempest::MemWriter writer(bytes);
@@ -2441,6 +2598,8 @@ void arrowEffects(Gothic& gothic) {
       Tempest::Vec3 sight;
       in.read(traceId,appeared,culprit,surface,sight);
       require(!visual.empty() && traceId>0 && traceId<nextId,"a saved stuck arrow must read in main's layout");
+      // an arrow in no movable: its matrix in the world, as main writes it
+      require(attached || PhysicsSave::sameTransform(local,savedWorld[i]),"a saved stuck arrow must carry its drawn matrix");
       }
   }
   gothic.clearGame().reset();
@@ -2460,10 +2619,23 @@ void arrowEffects(Gothic& gothic) {
   for(size_t i=0;i<loaded->stuckArrowCount();++i)
     require(!NpcDefinitionContract::stuckArrow(*loaded,i).isEmpty() && !NpcDefinitionContract::stuckArrow(*loaded,i).hasEffect(),
             "a loaded arrow in a body must have no effect");
-  // an arrow in a body written by main (APR1 version 1) loads, without effect
-  require(NpcDefinitionContract::loadMainArrow(*loaded,*world,0) && loaded->stuckArrowCount()==1 &&
-          !NpcDefinitionContract::stuckArrow(*loaded,0).isEmpty() && !NpcDefinitionContract::stuckArrow(*loaded,0).hasEffect(),
-          "an arrow in a body saved by main must load without effect");
+  for(size_t i=0;i<worldPins;++i) {
+    Tempest::Matrix4x4 m;
+    require(world->stuckArrowTransform(i,m) && PhysicsSave::sameTransform(m,savedWorld[i]),"a loaded stuck arrow must be where it was saved");
+    }
+  for(size_t i=0;i<bodyPins;++i) {
+    Npc::ArrowPinProbe p;
+    require(loaded->stuckArrowProbe(i,p) && p.bone==savedBone[i] && PhysicsSave::sameTransform(p.local,savedLocal[i]),
+            "a loaded arrow in a body must keep its bone and its offset from it");
+    }
+  // an arrow in a body written by main (APR1 version 1) loads, without effect, at the offset it was written with
+  {
+    Npc::ArrowPinProbe p;
+    require(NpcDefinitionContract::loadMainArrow(*loaded,*world,0) && loaded->stuckArrowCount()==1 &&
+            !NpcDefinitionContract::stuckArrow(*loaded,0).isEmpty() && !NpcDefinitionContract::stuckArrow(*loaded,0).hasEffect() &&
+            loaded->stuckArrowProbe(0,p) && p.bone==savedBone[0] && PhysicsSave::sameTransform(p.local,savedLocal[0]),
+            "an arrow in a body saved by main must load without effect on its bone at its offset");
+  }
 
   // stuck in something that moves: the effect goes with the arrow
   {
