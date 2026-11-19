@@ -31,8 +31,12 @@ bool itemEffectsCommand(const std::vector<std::string>& a,World& w,Npc& pl) {
     say("item put: expected item put <instance> <dist> <angle> [height]");
     return true;
     }
+  // an instance of C_ITEM only: the VM throws on another class (an npc's name)
   const size_t id = w.script().findSymbolIndex(a[2]);
-  if(id==size_t(-1)) {
+  auto* symbol = w.script().findSymbol(id);
+  for(size_t i=0; i<16 && symbol!=nullptr && symbol->type()!=daedalus::DaedalusDataType::CLASS; ++i)
+    symbol = w.script().findSymbol(size_t(symbol->parent()));
+  if(id==size_t(-1) || symbol==nullptr || symbol->name()!="C_ITEM") {
     say("item put: no item " + a[2]);
     return true;
     }

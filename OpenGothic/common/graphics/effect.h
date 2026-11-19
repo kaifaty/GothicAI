@@ -29,9 +29,12 @@ class Effect final {
     Effect&  operator = (Effect&&) = default;
     bool     is(const VisualFx& vfx) const;
     const VisualFx* handle() const { return root; }
-    // the mesh its particles are born on (setMesh), and where it is now (its last matrix)
+    // the mesh its particles are born on (setMesh), where it is now (its last matrix), where its particles are emitted
+    // from and whether they are
     const MeshObjects::Mesh* emitterMesh() const { return meshEmitter; }
     Tempest::Vec3   position() const { return {pos.at(3,0),pos.at(3,1),pos.at(3,2)}; }
+    bool            emitterPosition(Tempest::Vec3& out) const { return pfx.position(out); }
+    bool            isEmitting() const { return pfx.isActive(); }
 
     void     tick(uint64_t dt);
 

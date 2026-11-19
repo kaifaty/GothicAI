@@ -28,8 +28,6 @@ class ObjVisual : public StreamedVisual {
     void setVisual(const ItemRecord& item, World& world, bool staticDraw);
     // an item lying in the world: its view (graphics/itemview), its mesh with its effect, streamed with its chunk
     void setWorldItem(const ItemRecord& item, World& world, const Tempest::Matrix4x4& matrix);
-    // its view, nullptr: not an item lying in the world
-    const ItemView* worldItem() const { return type==M_Mesh && mesh.worldItem ? &mesh.item : nullptr; }
     void setVisual(const asset::VirtualObject& visual, World& world, bool staticDraw, bool enablePhysics = true);
     void setObjMatrix(const Tempest::Matrix4x4& obj);
     // MeshObjects::Mesh::setTextureOwner of its view: how far it may move before a call can change its demand
@@ -102,5 +100,6 @@ class ObjVisual : public StreamedVisual {
     bool isViewMissing() const override;
     size_t viewNodesCount() const override;
     friend struct MeshGltfTest;
+    friend struct NpcDefinitionContract;
   };
 

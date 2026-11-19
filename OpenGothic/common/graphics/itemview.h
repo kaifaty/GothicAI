@@ -43,9 +43,11 @@ class ItemView final {
 
     bool                     isEmpty() const { return mesh.isEmpty(); }
     bool                     hasEffect() const { return effect.handle()!=nullptr; }
+    // its particles are being born (the effect active)
+    bool                     isEmitting() const { return hasEffect() && effect.isEmitting(); }
     // the mesh the effect's particles are born on (its own one), nullptr: no effect
     const MeshObjects::Mesh* effectMesh() const { return hasEffect() ? effect.emitterMesh() : nullptr; }
-    // where the effect is now; false: no effect
+    // where the effect's emitter is now; false: no effect
     bool                     effectPosition(Tempest::Vec3& out) const;
     MeshObjects::Mesh&       view()       { return mesh; }
     const MeshObjects::Mesh& view() const { return mesh; }

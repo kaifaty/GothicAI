@@ -2,6 +2,7 @@
 
 #include <Tempest/Log>
 
+#include <cctype>
 #include <cstdlib>
 #include <mutex>
 #include <string>
@@ -34,16 +35,20 @@ const VisualFx* effectOf(std::string_view name) {
   if(name.empty() || !ItemView::enabled())
     return nullptr;
   auto& l = live();
+  // the VM finds a symbol whatever its case: so does the list of the unknown ones
+  std::string key(name);
+  for(auto& c:key)
+    c = char(std::toupper(uint8_t(c)));
   {
     std::lock_guard<std::mutex> guard(l.sync);
-    if(l.unknown.find(std::string(name))!=l.unknown.end())
+    if(l.unknown.find(key)!=l.unknown.end())
       return nullptr;
   }
   // an unknown name is one line in the log: VisualFxDefinitions writes it, the second lookup does not happen
   auto* fx = GameServices::inst().loadVisualFx(name);
   if(fx==nullptr) {
     std::lock_guard<std::mutex> guard(l.sync);
-    l.unknown.emplace(name);
+    l.unknown.emplace(std::move(key));
     }
   return fx;
   }
@@ -129,10 +134,7 @@ ItemView::Census ItemView::census(const World& owner) {
   }
 
 bool ItemView::effectPosition(Tempest::Vec3& out) const {
-  if(!hasEffect())
-    return false;
-  out = effect.position();
-  return true;
+  return hasEffect() && effect.emitterPosition(out);
   }
 
 void ItemView::setObjMatrix(const Tempest::Matrix4x4& m) {
@@ -165,7 +167,8 @@ void ItemView::restore(WorldView& view) {
   }
 
 void ItemView::startEffect() {
-  if(fx==nullptr || world==nullptr || mesh.isEmpty())
+  // the switch is read again: a view made with it on and restored after it was turned off stays without one
+  if(fx==nullptr || world==nullptr || mesh.isEmpty() || !enabled())
     return;
   // as MdlVisual::setNpcEffect: active, looped, the particles born on the item's own mesh
   effect = Effect(*fx,*world,Tempest::Vec3(pos.at(3,0),pos.at(3,1),pos.at(3,2)),SpellFxKey::Count);

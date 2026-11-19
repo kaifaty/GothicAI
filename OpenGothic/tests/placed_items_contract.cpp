@@ -77,7 +77,13 @@ struct NpcDefinitionContract {
   static const auto& items(GameScript& script) { return script.itemDefinitions; }
   static const auto& routines(GameScript& script) { return script.routineDefinitions; }
   static auto& random(GameScript& script) { return script.randGen; }
-  static const MdlVisual& visual(const Npc& npc) { return npc.visual; }
+  // the views of items (graphics/itemview): the sword and the bow on a body, a lying item's
+  static const ItemView& sword(const Npc& npc) { return npc.visual.sword.view; }
+  static const ItemView& bow(const Npc& npc) { return npc.visual.bow.view; }
+  static const ItemView* lying(const Item& item) {
+    const auto& v=item.visual;
+    return v.type==ObjVisual::M_Mesh && v.mesh.worldItem ? &v.mesh.item : nullptr;
+    }
   static StreamedVisual& visual(Item& item) { return item.visual; }
   };
 
@@ -1703,7 +1709,7 @@ void itemEffects(World& world) {
   const auto potion=symbol("ITPO_HEALTH_01"),gold=symbol("ITMI_GOLD"),claw=symbol("ITMW_BELIARWEAPON_1H_01"),
              firebow=symbol("ITRW_ADDON_FIREBOW");
   const int switchBefore=Settings::getI("GAME","itemEffects");
-  Settings::setI("GAME","itemEffects",1);
+  require(switchBefore==1,"[GAME] itemEffects must be 1 by default, as in Gothic");
   auto* npc=activityNpc(world,"VLK_412_HARAD");
   require(npc!=nullptr,"item effects need Harad of NEWWORLD");
   npc->setInteraction(nullptr,true);
@@ -1712,6 +1718,11 @@ void itemEffects(World& world) {
   const auto meshAt=[](const ItemView& v) {
     const auto m=v.view().node(0).position();
     return Tempest::Vec3(m.at(3,0),m.at(3,1),m.at(3,2));
+    };
+  const auto viewOf=[](const Item* item) { return item!=nullptr ? NpcDefinitionContract::lying(*item) : nullptr; };
+  // born: the emitter is active and has the item's mesh to take its points from
+  const auto emitting=[](const ItemView& v) {
+    return v.isEmitting() && v.effectMesh()==&v.view() && v.view().toMeshEmitter()!=nullptr;
     };
   const auto lay=[&](size_t id) {
     auto m=Tempest::Matrix4x4::mkIdentity();
@@ -1722,12 +1733,12 @@ void itemEffects(World& world) {
   const auto alive=ItemView::census(world).alive;
   auto* lying=lay(potion);
   auto* plain=lay(gold);
-  require(lying!=nullptr && plain!=nullptr && lying->view()!=nullptr && plain->view()!=nullptr,"items put in the world must have views");
-  const auto& potionView=*lying->view();
-  require(lying->handle().effect=="SPELLFX_HEALTHPOTION" && !potionView.isEmpty() && potionView.hasEffect() &&
-          potionView.effectMesh()==&potionView.view() && ItemView::census(world).alive==alive+1,
+  require(viewOf(lying)!=nullptr && viewOf(plain)!=nullptr,"items put in the world must have views");
+  const auto& potionView=*viewOf(lying);
+  require(lying->handle().effect=="SPELLFX_HEALTHPOTION" && !potionView.isEmpty() && emitting(potionView) &&
+          ItemView::census(world).alive==alive+1,
           "ITPO_HEALTH_01 put in the world must have its live effect on its own mesh");
-  require(plain->handle().effect.empty() && !plain->view()->isEmpty() && !plain->view()->hasEffect(),
+  require(plain->handle().effect.empty() && !viewOf(plain)->isEmpty() && !viewOf(plain)->hasEffect(),
           "an item without C_ITEM.effect must have no effect");
   auto fallen=lying->transform();
   fallen.translate(0,-40,25);
@@ -1738,18 +1749,17 @@ void itemEffects(World& world) {
           "a lying item moved by the physics must take its effect along");
   // the chunk streamed out: the mesh goes, its effect with it
   NpcDefinitionContract::visual(*lying).releaseView();
-  require(lying->view()->isEmpty() && !lying->view()->hasEffect() && ItemView::census(world).alive==alive,
+  require(potionView.isEmpty() && !potionView.hasEffect() && ItemView::census(world).alive==alive,
           "a lying item's released view must have no effect");
   world.removeItem(*lying);
   world.removeItem(*plain);
 
   // Beliar's claw: in the hand once drawn, the effect where the hand is, also after the npc moved
-  const auto& body=NpcDefinitionContract::visual(*npc);
-  const auto& sword=body.swordView();
+  const auto& sword=NpcDefinitionContract::sword(*npc);
   npc->setToFightMode(claw);
   npc->updateTransform();
   require(npc->weaponState()==WeaponState::W1H && npc->inventory().itemCount(claw)==1,"Harad must draw Beliar's claw");
-  require(sword.hasEffect() && sword.effectMesh()==&sword.view() && sword.effectPosition(at) && near(at,meshAt(sword),.01f) &&
+  require(emitting(sword) && sword.effectPosition(at) && near(at,meshAt(sword),.01f) &&
           near(at,npc->mapBone("ZS_RIGHTHAND"),15.f),"Beliar's claw drawn must have its effect in the hand");
   const auto hand=npc->mapBone("ZS_RIGHTHAND");
   npc->setPosition(npc->position()+Tempest::Vec3(300,0,0));
@@ -1764,17 +1774,17 @@ void itemEffects(World& world) {
   // on the belt it keeps the effect, taken off into the inventory it has none
   npc->closeWeapon(true);
   npc->updateTransform();
-  require(npc->weaponState()==WeaponState::NoWeapon && sword.hasEffect() && sword.effectPosition(at) &&
+  require(npc->weaponState()==WeaponState::NoWeapon && emitting(sword) && sword.effectPosition(at) &&
           near(at,npc->mapBone("ZS_SWORD"),15.f),"Beliar's claw put away must keep its effect on the belt");
   npc->unequipItem(claw);
   require(npc->inventory().itemCount(claw)==1 && sword.isEmpty() && !sword.hasEffect(),
           "Beliar's claw taken off into the inventory must have no effect");
   // the fire bow on the back
-  const auto& bow=body.bowView();
+  const auto& bow=NpcDefinitionContract::bow(*npc);
   npc->addItem(firebow,1);
   npc->useItem(firebow,Item::NSLOT,true);
   npc->updateTransform();
-  require(bow.hasEffect() && bow.effectMesh()==&bow.view() && bow.effectPosition(at) && near(at,meshAt(bow),.01f) &&
+  require(emitting(bow) && bow.effectPosition(at) && near(at,meshAt(bow),.01f) &&
           near(at,npc->mapBone("ZS_BOW"),15.f),"ITRW_ADDON_FIREBOW on the back must have its effect");
   // switched off: no new view has an effect
   Settings::setI("GAME","itemEffects",0);
@@ -1784,7 +1794,7 @@ void itemEffects(World& world) {
   npc->updateTransform();
   auto* off=lay(potion);
   require(!bow.isEmpty() && !bow.hasEffect() && !sword.isEmpty() && !sword.hasEffect() && off!=nullptr &&
-          !off->view()->isEmpty() && !off->view()->hasEffect() && ItemView::census(world).alive==alive,
+          viewOf(off)!=nullptr && !viewOf(off)->isEmpty() && !viewOf(off)->hasEffect() && ItemView::census(world).alive==alive,
           "with [GAME] itemEffects 0 no item may have an effect");
   world.removeItem(*off);
   npc->closeWeapon(true);
