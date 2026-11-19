@@ -25,15 +25,20 @@ import numpy as np
 CARDS = dict(
     rye_a=dict(kind='rye', size=(1.5, 1.625), stalks=120),
     rye_b=dict(kind='rye', size=(1.5, 1.625), stalks=120),
+    tuft_a=dict(kind='rye', size=(.5, 1.625), stalks=11),
+    tuft_b=dict(kind='rye', size=(.5, 1.625), stalks=15),
     rye_c=dict(kind='rye', size=(1.5, 1.625), stalks=105),
-    rye_thin=dict(kind='rye', size=(1.5, 1.625), stalks=48),
+    tuft_c=dict(kind='rye', size=(.5, 1.625), stalks=7),
+    tuft_d=dict(kind='rye', size=(.5, 1.625), stalks=12),
+    ears_a=dict(kind='ears', size=(.75, .40625), stalks=30),
+    ears_b=dict(kind='ears', size=(.75, .40625), stalks=22),
     stubble_a=dict(kind='stubble', size=(1.5, .34375), stalks=120),
     stubble_b=dict(kind='stubble', size=(1.5, .34375), stalks=85),
     sheaf=dict(kind='sheaf', size=(.5625, 1.3125), stalks=64),
 )
 MARGIN = .012
 BACK, FRONT = .5, 1.08      # brightness of the stalk furthest from the camera and of the nearest
-FLOOR, CURVE = .5, 1.3      # a stalk's brightness at its root, and how it rises with the height share
+FLOOR, CURVE = .36, 1.3     # a stalk's brightness at its root, and how it rises with the height share
 
 
 def linear(code: str) -> np.ndarray:
@@ -41,8 +46,8 @@ def linear(code: str) -> np.ndarray:
     return np.where(c <= .04045, c / 12.92, ((c + .055) / 1.055) ** 2.4)
 
 
-STEM_LOW, STEM_HIGH = linear('#8f8160'), linear('#b0935a')
-EAR, EAR_DARK, AWN = linear('#a66a30'), linear('#784b22'), linear('#b98f52')
+STEM_LOW, STEM_HIGH = linear('#857655'), linear('#a5864f')
+EAR, EAR_DARK, AWN = linear('#9c5f2a'), linear('#6e431e'), linear('#ad8248')
 LEAF = linear('#97804c')
 STUBBLE, STUBBLE_ROOT = linear('#a79a72'), linear('#6f6347')
 BAND = linear('#7f6a3e')
@@ -96,13 +101,13 @@ def shade(z, top, depth):
     return (FLOOR + (1 - FLOOR) * np.clip(z / top, 0, 1) ** CURVE) * (FRONT - (FRONT - BACK) * depth)
 
 
-def rye_stalk(sheet, rng, x, top, depth, heading=None, stem=None, nod=None):
+def rye_stalk(sheet, rng, x, top, depth, heading=None, stem=None, nod=None, leaves=True, root=0.):
     """A stalk whose ear's bend is at `top` metres: stem, neck, ear, awns, leaves."""
     y = .08 * (depth - .5)
     stem = top - rng.uniform(.02, .06) if stem is None else stem
     side = rng.choice((-1., 1.), p=(.35, .65))
     heading = math.radians(rng.normal(0, 2.5)) if heading is None else heading
-    line, angle = curve((x, 0.), heading, (stem * .55, stem * .45), (math.radians(rng.normal(0, 2)),
+    line, angle = curve((x, root), heading, ((stem - root) * .55, (stem - root) * .45), (math.radians(rng.normal(0, 2)),
                                                                       side * math.radians(rng.uniform(1, 6))), steps=5)
     tone = shade(line[:, 1], top, depth)[:, None]
     share = np.clip(line[:, 1] / top, 0, 1)[:, None]
@@ -127,7 +132,7 @@ def rye_stalk(sheet, rng, x, top, depth, heading=None, stem=None, nod=None):
             tip = ear[k] + way * rng.uniform(.05, .085)
             sheet.ribbon((ear[k], (ear[k] + tip) / 2, tip), (.003, .0024, .0012), np.tile(AWN * light, (3, 1)),
                          y - .002)
-    for _ in range(rng.integers(0, 3)):
+    for _ in range(rng.integers(0, 3) if leaves else 0):
         at = rng.uniform(.25, .8)
         root = line[int(at * (len(line) - 1))]
         way = rng.choice((-1., 1.))
@@ -145,6 +150,17 @@ def rye(sheet, rng, width, height, count):
         low = rng.random() < .1                          # a shorter stalk here and there
         top = level - (rng.uniform(.12, .3) if low else abs(rng.normal(0, .035)))
         rye_stalk(sheet, rng, x, top, depth[index])
+
+
+def ears(sheet, rng, width, height, count):
+    """The top of a row alone: the last of the stems, the necks and the ears, for a card laid over the field's top."""
+    depth = rng.permutation(count) / max(count - 1, 1)
+    level = height - MARGIN - .17
+    for index in np.argsort(-depth):
+        x = (width - .14) * ((index + rng.random()) / count - .5)
+        top = level - abs(rng.normal(0, .03))
+        # lit as the top of a stalk of 1.4 m: no root's shade in this picture
+        rye_stalk(sheet, rng, x, top + 1.2, depth[index] * .6, leaves=False, root=1.2 - .012)
 
 
 def stubble(sheet, rng, width, height, count):
@@ -241,7 +257,7 @@ def main():
     links.new(emission.outputs['Emission'], output.inputs['Surface'])
 
     frames = {}
-    builders = dict(rye=rye, stubble=stubble, sheaf=sheaf)
+    builders = dict(rye=rye, stubble=stubble, sheaf=sheaf, ears=ears)
     for number, (name, card) in enumerate(CARDS.items()):
         width, height = card['size']
         sheet = Sheet()
@@ -249,7 +265,7 @@ def main():
         mesh = sheet.mesh(name)
         mesh.materials.append(material)
         placed = bpy.data.objects.new(name, mesh)
-        placed.location = (number * 4., 0, 0)
+        placed.location = (number * 4., 0, -1.2 if card['kind'] == 'ears' else 0)
         scene.collection.objects.link(placed)
         frames[name] = (number * 4., width, height)
 
