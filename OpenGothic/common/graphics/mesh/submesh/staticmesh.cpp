@@ -213,6 +213,7 @@ StaticMesh& StaticMesh::operator=(StaticMesh&& other) {
   impostor=std::move(other.impostor);
   meshletSpheres=std::move(other.meshletSpheres);
   clusterLevels=std::move(other.clusterLevels);
+  ownMesh=other.ownMesh;
   pageRange=std::move(other.pageRange);
   return *this;
   }

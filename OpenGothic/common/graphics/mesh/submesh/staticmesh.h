@@ -140,6 +140,7 @@ class StaticMesh {
     // object's meshlets by them (graphics/meshletspheres.h); empty for the landscape and meshes without them
     std::vector<Tempest::Vec4>      meshletSpheres;
     std::vector<PackedMesh::ClusterLevel> clusterLevels;
+    bool                            ownMesh = false; // a static replacement from meshes.json
 
   private:
     void initSubMeshes(const PackedMesh& mesh);

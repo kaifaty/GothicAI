@@ -909,6 +909,7 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
       }
     auto ret = std::make_unique<ProtoMesh>(std::move(packed),name,true,visual ? &*visual : nullptr);
     auto& mesh = ret->attach[0];
+    mesh.ownMesh = replaced;
     if(source!=nullptr && !mesh.levels.empty() && source->impostor.px>0.f && MeshLevels::impostorsEnabled())
       implLoadMeshImpostor(key,source->impostor,mesh);
     return ret;

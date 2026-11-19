@@ -1,5 +1,9 @@
 #include "gothicglb.h"
 #include "graphics/mesh/clusterlod.h"
+#include "gltfmesh.h"
+#include "meshclusterlod.h"
+#include "stressmeshes.h"
+#include "utils/fileext.h"
 #include "worldchunkcook.h"
 #include "worldchunksruntime.h"
 
@@ -7,6 +11,7 @@
 #include <array>
 #include <bit>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <iomanip>
 #include <iostream>
@@ -18,6 +23,10 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+
+#include <miniz.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 
 namespace {
 
@@ -446,4 +455,341 @@ void runClusterLodCensus(const std::filesystem::path& world, const std::filesyst
   else {
     gothicglb::writeFile(output,report.data(),report.size());
     }
+  }
+
+namespace {
+
+namespace fs = std::filesystem;
+
+struct OwnMesh {
+  std::string name;
+  fs::path relative;
+  bool discrete = false;
+  };
+
+rapidjson::Document readIndex(const fs::path& path) {
+  const auto bytes = gothicglb::readFile(path);
+  rapidjson::Document doc;
+  doc.Parse<rapidjson::kParseValidateEncodingFlag>(reinterpret_cast<const char*>(bytes.data()),bytes.size());
+  if(doc.HasParseError() || !doc.IsObject())
+    throw std::runtime_error("invalid index "+path.string());
+  return doc;
+  }
+
+std::vector<OwnMesh> ownMeshes(const fs::path& root) {
+  const auto index = root/"meshes"/"meshes.json";
+  const auto doc = readIndex(index);
+  std::vector<OwnMesh> meshes;
+  for(const auto& member:doc.GetObject()) {
+    const auto& value = member.value;
+    if(!value.IsObject() || !value.HasMember("glb") || !value["glb"].IsString())
+      throw std::runtime_error("invalid GLB record "+std::string(member.name.GetString())+" in "+index.string());
+    const std::string name(value["glb"].GetString(),value["glb"].GetStringLength());
+    const fs::path path(name);
+    if(path.is_absolute() || path.has_root_name() || name.find('\0')!=std::string::npos || !FileExt::hasExt(name,"GLB") ||
+       std::find(path.begin(),path.end(),"..")!=path.end())
+      throw std::runtime_error("invalid GLB path "+name+" in "+index.string());
+    meshes.push_back({member.name.GetString(),path,value.HasMember("levels") || value.HasMember("impostor")});
+    }
+  return meshes;
+  }
+
+enum MaterialLock : uint8_t { TwoSided = 1, Deforming = 2 };
+
+std::string materialKey(std::string name) {
+  for(char& c:name)
+    c = char(std::toupper(static_cast<unsigned char>(c)));
+  return name;
+  }
+
+std::map<std::string,uint8_t> ownMaterialLocks(const fs::path& root) {
+  const auto index = root/"materials"/"materials.json";
+  if(!fs::is_regular_file(index))
+    return {};
+  const auto doc = readIndex(index);
+  std::map<std::string,uint8_t> flags;
+  for(const auto& member:doc.GetObject()) {
+    const auto& value = member.value;
+    if(!value.IsObject())
+      continue;
+    uint8_t mask = 0;
+    if(value.HasMember("two_sided") && value["two_sided"].IsString()) {
+      const std::string_view twoSided(value["two_sided"].GetString());
+      if(twoSided=="same" || twoSided=="flip")
+        mask |= TwoSided;
+      }
+    if((value.HasMember("foliage") && value["foliage"].IsObject()) ||
+       (value.HasMember("strand") && value["strand"].IsTrue()))
+      mask |= Deforming;
+    flags[materialKey(member.name.GetString())] = mask;
+    }
+  return flags;
+  }
+
+struct OwnMeshInput {
+  explicit OwnMeshInput(const fs::path& path, const std::map<std::string,uint8_t>& materialLocks) {
+    mesh = loadGltfMesh(path,&bytes);
+    colors = loadGltfMeshColors(bytes,mesh);
+    for(const auto& sub:mesh.sub_meshes) {
+      const auto it = materialLocks.find(materialKey(sub.mat.texture));
+      lockFlags.push_back(it==materialLocks.end() ? 0 : it->second);
+      }
+    }
+
+  asset::StaticMesh    mesh;
+  GltfMeshColors       colors;
+  std::vector<uint8_t> bytes, lockFlags;
+  };
+
+struct MeshCounts {
+  Counts                             graph;
+  size_t                             locked = 0, alphaTest = 0, twoSided = 0, deforming = 0, discrete = 0;
+  size_t                             assets = 0;
+  std::array<std::vector<double>,2>   distances;
+
+  void add(const MeshCounts& other) {
+    graph.add(other.graph);
+    for(size_t i=0; i<distances.size(); ++i)
+      distances[i].insert(distances[i].end(),other.distances[i].begin(),other.distances[i].end());
+    locked += other.locked;
+    alphaTest += other.alphaTest;
+    twoSided += other.twoSided;
+    deforming += other.deforming;
+    discrete += other.discrete;
+    assets += other.assets;
+    }
+  };
+
+MeshCounts meshCounts(const OwnMeshInput& input, const ClusterLod::Graph& graph, double buildMs, bool discrete) {
+  MeshCounts out;
+  out.assets = 1;
+  out.discrete = discrete;
+  out.graph.buildMs = buildMs;
+  out.graph.bytes = graph.byteSize();
+  for(size_t i=0; i<input.mesh.sub_meshes.size(); ++i) {
+    const auto& sub = input.mesh.sub_meshes[i];
+    const auto flags = input.lockFlags[i];
+    out.alphaTest += MeshClusterLod::alphaTest(sub.mat) ? sub.triangles.size() : 0;
+    out.twoSided  += (flags & TwoSided)!=0 ? sub.triangles.size() : 0;
+    out.deforming += (flags & Deforming)!=0 ? sub.triangles.size() : 0;
+    out.locked    += MeshClusterLod::locked(sub.mat,flags!=0) ? sub.triangles.size() : 0;
+    }
+  const double pixels = 0.5*ViewportHeight*verticalProjection();
+  std::vector<bool> seen(graph.groups.size());
+  for(const auto& cluster:graph.clusters) {
+    if(cluster.level>=out.graph.levels.size())
+      out.graph.levels.resize(cluster.level+1);
+    auto& level = out.graph.levels[cluster.level];
+    level.triangles += cluster.triangleCount;
+    ++level.clusters;
+    if(std::isinf(graph.groups[cluster.parentGroup].errorCm))
+      out.graph.top += cluster.triangleCount;
+    if(cluster.level>=1 && cluster.level<=2 && !seen[cluster.refinedGroup]) {
+      seen[cluster.refinedGroup] = true;
+      const auto& group = graph.groups[cluster.refinedGroup];
+      const double nearCm = pixels*group.errorCm;
+      out.distances[cluster.level-1].push_back(nearCm<=1. ? 0. : (group.bounds.radius+nearCm)/100.);
+      }
+    }
+  return out;
+  }
+
+void meshRow(std::ostream& out, std::string_view root, std::string_view name, MeshCounts& counts, size_t levels) {
+  const auto& g = counts.graph;
+  const double top = g.levels.empty() ? 0. : double(g.top)/double(g.levels.front().triangles);
+  out << root << '\t' << name << '\t' << counts.assets << '\t' << counts.discrete << '\t'
+      << g.levels.size() << '\t' << g.top << '\t' << std::fixed << std::setprecision(6) << top << '\t'
+      << counts.locked << '\t' << counts.alphaTest << '\t' << counts.twoSided << '\t' << counts.deforming << '\t'
+      << std::setprecision(3) << g.buildMs << '\t' << g.bytes;
+  for(auto& values:counts.distances) {
+    out << '\t' << values.size();
+    if(values.empty()) {
+      out << "\tNA\tNA";
+      continue;
+      }
+    std::sort(values.begin(),values.end());
+    const double median = (values[(values.size()-1)/2]+values[values.size()/2])*0.5;
+    out << '\t' << median << '\t' << values[values.size()-values.size()/10-1];
+    }
+  for(size_t i=0; i<levels; ++i)
+    out << '\t' << (i<g.levels.size() ? g.levels[i].triangles : 0);
+  out << '\n';
+  }
+
+std::string utf8Json(std::string_view source) {
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  writer.String(source.data(),rapidjson::SizeType(source.size()));
+  return buffer.GetString();
+  }
+
+std::string writeDenseMesh(const OwnMesh& entry, const OwnMeshInput& input, const fs::path& target, int level) {
+  if(!input.colors.empty())
+    return "stress split does not interpolate COLOR_0";
+  std::optional<asset::StaticMesh> dense = input.mesh;
+  for(int i=0; i<level; ++i) {
+    std::string reason;
+    dense = StressBase::Meshes::subdivide(*dense,&reason);
+    if(!dense)
+      return reason;
+    }
+  size_t wedges = 0;
+  for(const auto& sub:dense->sub_meshes)
+    wedges += sub.wedges.size();
+  if(wedges>65535) // The static glTF reader loads one position per wedge of each material.
+    return std::to_string(wedges)+" wedges exceed 65535 glTF positions";
+
+  // The converter has already flattened node transforms and mirrored X. Write in glTF
+  // coordinates again and keep the material convention consumed by the game's reader.
+  gothicglb::GlbBuilder glb;
+  std::string materials = "[", primitives = "[";
+  for(size_t i=0; i<dense->sub_meshes.size(); ++i) {
+    const auto& sub = dense->sub_meshes[i];
+    std::vector<float> pos, normal, uv;
+    for(const auto& wedge:sub.wedges) {
+      const auto& p = dense->positions[wedge.index];
+      const auto& n = wedge.normal;
+      if(n.x==0 && n.y==0 && n.z==0)
+        return "the split produced a zero normal";
+      pos.insert(pos.end(),{-p.x*0.01f,p.y*0.01f,p.z*0.01f});
+      normal.insert(normal.end(),{-n.x,n.y,n.z});
+      uv.insert(uv.end(),{wedge.texture.x,wedge.texture.y});
+      }
+    std::vector<uint16_t> indices;
+    for(const auto& t:sub.triangles)
+      indices.insert(indices.end(),std::begin(t.wedges),std::end(t.wedges));
+    const auto aPos = glb.accessor(pos,5126,"VEC3",3,false,34962);
+    const auto aNrm = glb.accessor(normal,5126,"VEC3",3,false,34962);
+    const auto aUv = glb.accessor(uv,5126,"VEC2",2,false,34962);
+    const auto aIdx = glb.accessor(indices,5123,"SCALAR",1,false,34963);
+    if(i>0) {
+      materials += ",";
+      primitives += ",";
+      }
+    const auto& mat = sub.mat;
+    const char* mode = MeshClusterLod::alphaTest(mat) ? "MASK" :
+                       mat.alpha_func==asset::AlphaFunction::BLEND ? "BLEND" : "OPAQUE";
+    constexpr const char* groups[] = {"UNDEF","METAL","STONE","WOOD","EARTH","WATER","SNOW"};
+    materials += "{\"name\":"+utf8Json(mat.name)+",\"alphaMode\":\""+mode+"\",\"extras\":{\"group\":\""+
+                 groups[uint8_t(mat.group)]+"\"}}";
+    primitives += "{\"attributes\":{\"POSITION\":"+std::to_string(aPos)+",\"NORMAL\":"+std::to_string(aNrm)+
+                  ",\"TEXCOORD_0\":"+std::to_string(aUv)+"},\"indices\":"+std::to_string(aIdx)+
+                  ",\"material\":"+std::to_string(i)+"}";
+    }
+  const std::string json =
+    "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],"
+    "\"nodes\":[{\"name\":"+utf8Json(entry.name)+",\"mesh\":0}],\"meshes\":[{\"primitives\":"+primitives+
+    "]}],\"materials\":"+materials+"],\"accessors\":"+glb.accessorsJson()+",\"bufferViews\":"+glb.viewsJson()+
+    ",\"buffers\":[{\"byteLength\":"+std::to_string(glb.bin.size())+"}]}";
+  const auto bytes = glb.finish(json);
+  gothicglb::writeFile(target,bytes.data(),bytes.size());
+  return {};
+  }
+
+}
+
+void runOwnMeshClusterLod(const std::vector<std::filesystem::path>& roots, const std::filesystem::path& output, bool cook) {
+  struct Set {
+    fs::path root;
+    std::vector<std::pair<std::string,MeshCounts>> rows;
+    MeshCounts total;
+    };
+  std::vector<Set> sets;
+  MeshCounts all;
+  for(const auto& root:roots) {
+    Set set;
+    set.root = root;
+    const auto materialLocks = ownMaterialLocks(root);
+    size_t written = 0, skipped = 0;
+    for(const auto& entry:ownMeshes(root)) {
+      if(cook && entry.discrete) {
+        ++skipped;
+        continue;
+        }
+      const auto path = root/"meshes"/entry.relative;
+      try {
+        const OwnMeshInput input(path,materialLocks);
+        if(cook && std::ranges::any_of(input.lockFlags,[](uint8_t flags) { return (flags & Deforming)!=0; })) {
+          ++skipped;
+          continue;
+          }
+        const auto started = std::chrono::steady_clock::now();
+        const auto graph = MeshClusterLod::build(input.mesh,input.colors,input.lockFlags);
+        const double ms = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
+        if(cook) {
+          const auto crc = uint32_t(mz_crc32(0,input.bytes.data(),input.bytes.size()));
+          MeshClusterLod::write(path,input.bytes.size(),crc,graph);
+          ++written;
+          } else {
+          auto counts = meshCounts(input,graph,ms,entry.discrete);
+          set.total.add(counts);
+          set.rows.emplace_back(entry.name,std::move(counts));
+          }
+        }
+      catch(const std::exception& error) {
+        throw std::runtime_error(path.string()+": "+error.what());
+        }
+      }
+    if(cook) {
+      std::cout << root.string() << ": " << written << " mesh LOD graphs cooked, " << skipped
+                << " records with discrete levels, impostors or deforming materials skipped\n";
+      } else {
+      all.add(set.total);
+      sets.push_back(std::move(set));
+      }
+    }
+  if(cook)
+    return;
+
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  out << "content\tmesh\tasset_count\tdiscrete_count\tlevels\ttop_triangles\ttop_fraction\t"
+         "locked_triangles\talpha_test_triangles\ttwo_sided_triangles\tdeforming_triangles\tbuild_ms\tgraph_bytes\t"
+         "L1_transitions\tL1_p50_m\tL1_p90_m\tL2_transitions\tL2_p50_m\tL2_p90_m";
+  const auto levels = all.graph.levels.size();
+  for(size_t i=0; i<levels; ++i)
+    out << "\tL" << i << "_triangles";
+  out << '\n';
+  for(auto& set:sets) {
+    const auto root = set.root.string();
+    for(auto& [name,counts]:set.rows)
+      meshRow(out,root,name,counts,levels);
+    meshRow(out,root,"TOTAL",set.total,levels);
+    }
+  meshRow(out,"*","TOTAL",all,levels);
+  const auto report = out.str();
+  if(output.empty()) {
+    std::cout << report;
+    if(!std::cout)
+      throw std::runtime_error("cannot write mesh LOD census to stdout");
+    } else {
+    gothicglb::writeFile(output,report.data(),report.size());
+    }
+  }
+
+void stressOwnMeshContent(const std::filesystem::path& root, const std::filesystem::path& output, int level) {
+  const auto meshes = ownMeshes(root);
+  const auto source = fs::canonical(root);
+  const auto destination = fs::weakly_canonical(output);
+  const auto relative = destination.lexically_relative(source);
+  if((!relative.empty() && *relative.begin()!="..") || (fs::exists(destination) && !fs::is_empty(destination)))
+    throw std::runtime_error("stress output must be an empty directory outside the content set: "+destination.string());
+  fs::create_directories(destination);
+  fs::copy(source,destination,fs::copy_options::recursive);
+  const auto locks = ownMaterialLocks(source);
+  size_t split = 0;
+  std::set<fs::path> processed;
+  for(const auto& entry:meshes) {
+    if(level==0 || entry.discrete || !processed.insert(entry.relative.lexically_normal()).second)
+      continue;
+    const auto path = source/"meshes"/entry.relative;
+    const OwnMeshInput input(path,locks);
+    const auto reason = writeDenseMesh(entry,input,destination/"meshes"/entry.relative,level);
+    if(reason.empty())
+      ++split;
+    else
+      std::cout << "mesh left at source density: "<<entry.name<<": "<<reason<<'\n';
+    }
+  std::cout << destination.string() << ": " << split << " of " << meshes.size() << " meshes subdivided ("
+            << (1u<<(2*level)) << " triangles per source triangle)\n";
   }
