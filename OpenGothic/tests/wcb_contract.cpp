@@ -12,6 +12,7 @@
 #include "gothicglb.h"
 #include "graphics/drawclusters.h"
 #include "graphics/sceneglobals.h"
+#include "graphics/foliagewind.h"
 #include "resources.h"
 #include "shader.h"
 #include "worldchunkcook.h"
@@ -810,8 +811,8 @@ void checkGpuHistoryDepth(Tempest::Device& device) {
                                          shader("main_obj_g_at_orm_slot.frag.sprv"));
   const auto copyDepth = device.pipeline(shader("ssao_depth.comp.sprv"));
 
-  // A perspective quad with hashed alpha: test holes, interpolated depths and
-  // the exact same packed payload layout the two tree history passes consume.
+  // A perspective crown card with wind and hashed alpha: test holes, interpolated
+  // depths and the exact packed payload the two tree history passes consume.
   constexpr Resources::Vertex vertices[] = {
     {{-0.85f,-0.85f,0.29f},{0.f,0.f,1.f},{0.f,0.f},0xffffffffu},
     {{ 0.85f,-0.85f,0.54f},{0.f,0.f,1.f},{1.f,0.f},0xffffffffu},
@@ -826,14 +827,22 @@ void checkGpuHistoryDepth(Tempest::Device& device) {
   const uint32_t task[] = {0u,0u,0u,owner};
   uint32_t bucket[36] = {};
   bucket[12] = std::bit_cast<uint32_t>(1.f); // alphaWeight
-  bucket[14] = 0x200u; // BK_HASHED_ALPHA
+  bucket[14] = 0x200u | 0x8000u | 0x1000000u; // BK_HASHED_ALPHA | BK_FOLIAGE | BK_CANOPY
   bucket[15] = std::bit_cast<uint32_t>(1.f); // uvScale
+  FoliageWind::Params foliage;
+  foliage.on = true;
+  foliage.anchor = FoliageWind::AnchorTree;
+  bucket[30] = FoliageWind::pack(foliage, FoliageWind::Both);
+  bucket[31] = std::bit_cast<uint32_t>(1.f); // foliageReach
   SceneGlobals::UboGlobal globals{};
   globals.viewProject = Matrix4x4::mkIdentity();
   globals.viewProject[2][3] = 0.17f;
   globals.viewProject[3][0] = 0.005f;
   globals.viewFlags = SceneGlobals::VF_TAA;
   globals.taaFrame = 7u;
+  globals.foliageWind = Vec4(0.6f,0.8f,0.7f,1.f);
+  globals.foliagePhase = Vec4(0.13f,0.27f,0.31f,0.44f);
+  globals.foliageSwing = Vec4(0.37f,0.04f,0.65f,0.f);
   globals.screenRes = {int(side),int(side)};
   const auto scene = device.ssbo(&globals,sizeof(globals));
   const auto instances = device.ssbo(&instance,sizeof(instance));
