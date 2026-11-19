@@ -7,6 +7,7 @@
 #include "graphics/foliagefront.h"
 #include "graphics/grass/grassdiag.h"
 #include "graphics/grass/grassfield.h"
+#include "graphics/grass/grasspack.h"
 #include "graphics/grass/grassparams.h"
 #include "graphics/grass/grassplace.h"
 #include "graphics/grass/grasswaste.h"
@@ -275,6 +276,61 @@ void drawOrder(bool disabled) {
     } else {
     std::rotate(expected.begin(), expected.begin()+2, expected.end());
     require(draws==expected, "grass draws must be near first, preserving batch order and span offsets");
+    }
+  }
+
+void packSpans() {
+  for(const uint32_t pack:Grass::PackSizes) {
+    std::vector<uint32_t> table = {17, 29};
+    Grass::PackSpans spans(table, pack);
+    spans.reset();
+    spans.add(1, pack);
+    spans.add(pack+1, 1); // contiguous with the first range
+    const uint32_t next = pack+3;
+    spans.add(next, pack); // one blade skipped in the cell buffer
+    require(spans.finish()==3, "only a discontinuity in the blade buffer starts a new packed span");
+
+    std::vector<uint32_t> expected = {17, 29};
+    if(pack==1) {
+      expected.insert(expected.end(), {2, 1, 3, next-2});
+      expected.resize(2+16*2, UINT32_MAX);
+      } else {
+      // The last instance of the first span has one blade. The next instance starts at the next span's first blade.
+      expected.insert(expected.end(), {2, 1, pack+2, 3, next-2*pack, next+pack});
+      expected.resize(2+16*3, UINT32_MAX);
+      }
+    require(table==expected, "grass span boundaries and physical blade ends must match the shader's table");
+    }
+  }
+
+void packIndices() {
+  const std::vector<uint16_t> legacy = {
+    0,1,2, 1,3,2, 2,3,4, 3,5,4, 4,5,6, 5,7,6, 6,7,8,
+    0,1,2, 1,3,2, 2,3,4, 3,5,4, 4,5,6,
+    0,1,2, 1,3,2, 2,3,4,
+    0,1,2,
+    };
+  require(Grass::packIndices(1)==legacy, "single-blade indices must keep the original topology and order");
+  for(const uint32_t pack:Grass::PackSizes) {
+    const auto indices = Grass::packIndices(pack);
+    require(indices.size()==legacy.size()*pack, "the index buffer must have one strip per blade in each pack");
+    size_t base = 0;
+    for(uint8_t links=Grass::MaxSegments; links>0; --links) {
+      const size_t vertices = 2u*links+1;
+      const size_t count    = (2u*links-1)*3;
+      const size_t start    = Grass::packIndexOffset(links, pack);
+      require(start==base*pack,
+              "packed strips must follow the same link order as the original index buffer");
+      for(uint32_t copy=0; copy<pack; ++copy) {
+        const size_t offset = copy*vertices;
+        const auto   first  = indices.begin()+start+copy*count;
+        require(offset+vertices-1<=UINT16_MAX &&
+                std::equal(first, first+count, legacy.begin()+base, [&](uint16_t index, uint16_t original) {
+                  return index==original+offset;
+                  }), "each copy must keep the blade topology with its own uint16 vertex indices");
+        }
+      base += count;
+      }
     }
   }
 
@@ -848,6 +904,8 @@ int main() {
     tufts();
     require(unsetenv("OPENGOTHIC_GRASS_ORDER")==0, "cannot clear grass order switch");
     drawOrder(false);
+    packSpans();
+    packIndices();
     placementRepeats();
     placementGround();
     placementEdge();

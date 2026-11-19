@@ -33,7 +33,6 @@ constexpr float KeepBeyond  = CellCm; // a cell out of the ring is kept this far
 
 constexpr size_t  UploadBytes  = 512*1024; // a frame; one cell at least
 constexpr float   SquareCm     = float(Grass::SquareSize/Grass::Unit);
-constexpr size_t  SpanCount    = size_t(Grass::CellSquares*Grass::CellSquares); // of a draw in the table; GrassSpans of grass.vert
 constexpr float   RootsBeyond  = 100.f;    // cm: a root lies no nearer to the camera than its cell less this
 constexpr size_t  MaxJobs      = 6;
 constexpr uint32_t WasteEvery  = 30;       // frames between two counts of Grass::Waste
@@ -54,19 +53,12 @@ struct Push final {
   uint32_t segments     = 0;
   Vec4     shape;                  // the width at the root and per step, cm; the ring's full and fade, 0 the scene's
   float    swardK       = 0.f;     // repeats of the sward's map in a cm, by the world's x and z; 0 without own layers
+  uint32_t pack         = 1;
   };
 
 int32_t floorDiv(int32_t a, int32_t b) {
   const int32_t q = a/b;
   return (a%b!=0 && ((a<0)!=(b<0))) ? q-1 : q;
-  }
-
-size_t indexOffset(uint8_t segments) {
-  // the buffer holds the blades of 4, 3, 2 and 1 links one after another
-  size_t at = 0;
-  for(uint8_t s=Grass::MaxSegments; s>segments; --s)
-    at += size_t(2*s-1)*3;
-  return at;
   }
 
 }
@@ -79,18 +71,7 @@ GrassField::GrassField(SceneGlobals& scene, std::vector<ChunkId> ids)
   for(auto& i:ids)
     world.insert(key(i.x,i.z));
 
-  std::vector<uint16_t> index;
-  for(uint8_t s=Grass::MaxSegments; s>=1; --s) {
-    for(uint16_t k=0; k+1<s; ++k) {
-      const uint16_t v = uint16_t(2*k);
-      const uint16_t quad[] = {v, uint16_t(v+1), uint16_t(v+2), uint16_t(v+1), uint16_t(v+3), uint16_t(v+2)};
-      index.insert(index.end(), std::begin(quad), std::end(quad));
-      }
-    const uint16_t v = uint16_t(2*(s-1));
-    const uint16_t tip[] = {v, uint16_t(v+1), uint16_t(v+2)};
-    index.insert(index.end(), std::begin(tip), std::end(tip));
-    }
-  ibo = Resources::ibo(index.data(), index.size());
+  packBuffers.front() = Resources::device().ibo(Grass::packIndices(1));
 
   // six more maps a ground: with bindless textures alone (DrawBuckets::commit)
   layers = Shaders::options().doBindless;
@@ -620,6 +601,7 @@ void GrassField::update() {
 
 void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwner) {
   Stats st;
+  st.pack = Grass::packSize();
   st.waiting = last.waiting;
   // the count of the blades submitted for nothing walks every drawn blade: one frame of WasteEvery, kept between
   const bool waste = Grass::wasteOn() && (wasteFrame++ % WasteEvery)==0;
@@ -640,9 +622,8 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
   // A cell is drawn by its squares (reports/engine/2026-11-17-grass-cost): each is tested against the view and has
   // the ranks of its own nearest point, so the blades out of the view and those that by their distance have gone
   // into the ground are not submitted with the rest of the cell. The squares of a ground and a kind go in one draw:
-  // its instances are the squares' blades one after another, and a table of the frame tells the vertex shader which
-  // blade of the cell's buffer an instance is (grass.vert). The links of a blade are the cell's, as before the
-  // squares, so the look is the same to a blade
+  // its blades are packed in the order of the squares, and the span table maps them to the cell buffer (grass.vert).
+  // The links of a blade are the cell's, as before the squares.
   struct Draw final {
     const Cell* cell  = nullptr;
     uint16_t    slot  = 0;
@@ -650,10 +631,12 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
     uint8_t     links = 0;
     uint32_t    count = 0;
     uint32_t    table = 0;
+    uint32_t    instances = 0;
     };
   std::vector<Draw> draws;
   draws.reserve(128);
   spanCpu.clear();
+  Grass::PackSpans spans(spanCpu, st.pack);
   for(auto& i:cells) {
     auto& c = i.second;
     if(!c.live || c.count==0)
@@ -675,12 +658,11 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
     int32_t tested = -1;
     bool    inView = true;
     Draw    dr;
-    size_t  spans  = 0;
-    uint32_t end   = 0; // the buffer's blade after the last span's
     auto flush = [&]() {
       if(dr.count==0)
         return;
-      spanCpu.resize(size_t(dr.table)+2*SpanCount, 0xFFFFFFFFu);
+      dr.instances = spans.finish();
+      st.instances += dr.instances;
       st.drawn     += dr.count;
       st.fine      += dr.fine ? dr.count : 0;
       st.triangles += size_t(dr.count)*size_t(2*dr.links-1);
@@ -738,20 +720,10 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
         dr.fine  = fine;
         dr.links = links;
         dr.table = uint32_t(spanCpu.size());
-        spans    = 0;
-        end      = 0;
+        spans.reset();
         }
-      if(spans>0 && end==b.first) {
-        // goes on from the span before it
-        spanCpu[spanCpu.size()-2] += count;
-        } else {
-        // a span: the instance after its last, and what to add to an instance for its blade in the buffer
-        spanCpu.push_back(dr.count+count);
-        spanCpu.push_back(b.first-dr.count);
-        ++spans;
-        }
+      spans.add(b.first, count);
       dr.count += count;
-      end       = b.first+count;
       }
     flush();
     }
@@ -761,6 +733,10 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
     Grass::orderDraws(draws);
 
     auto&        device = Resources::device();
+    const auto   packAt = std::find(Grass::PackSizes.begin(), Grass::PackSizes.end(), st.pack);
+    auto&        ibo    = packBuffers[size_t(packAt-Grass::PackSizes.begin())];
+    if(ibo.isEmpty())
+      ibo = device.ibo(Grass::packIndices(st.pack));
     auto&        buf    = spanGpu[fId];
     const size_t bytes  = spanCpu.size()*sizeof(uint32_t);
     if(buf.byteSize()<bytes) {
@@ -785,6 +761,7 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
       push.translucency = p.translucency;
       push.table        = dr.table;
       push.segments     = dr.links;
+      push.pack         = st.pack;
       push.shape        = dr.fine ? Vec4(FineWidth,FineWidthStep,FineFull,FineFade) : Vec4(0.f,0.f,0.f,0.f);
       const auto* sward = slotSward[dr.slot];
       push.swardK       = (sward!=nullptr && p.tile>0.f) ? 1.f/p.tile : 0.f;
@@ -798,7 +775,7 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
         slotBound = dr.slot;
         }
       cmd.setPushData(push);
-      cmd.draw(nullptr, ibo, indexOffset(dr.links), size_t(2*dr.links-1)*3, 0, dr.count);
+      cmd.draw(nullptr, ibo, Grass::packIndexOffset(dr.links, st.pack), Grass::packIndexCount(dr.links, st.pack), 0, dr.instances);
       ++st.draws;
       }
     }
