@@ -1,0 +1,54 @@
+# The pilot of the crops on Lobart's field (reports/content/2026-11-19-crop-fields): the strips of rye, stubble and
+# plough of a set built by scripts/content/crop_field_set.py. Frames for the eye, no time: run once per set on Ryzen,
+#   TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_CONTENT=<set> scripts/bench.sh crop-pilot <out>
+# The first two cameras are those of crop-fields.bench (the field as it is today): the pairs «было | стало».
+# @timeout 600
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+goto NW_FARM1_FIELD_01
+# view 1: from the field's edge, the eye's height
+cam at 11397 1535 -15229 10990 1274 -12919
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot lobart-eye
+wait 300
+# view 2: from 15 m over the field
+cam at 6690 2151 -12919 10990 1274 -12919
+wait 8000
+grass wait
+wait 2000
+shot lobart-over
+wait 300
+# view 3: along the strips
+cam at 9789 1470 -13193 11259 1500 -14397
+wait 6000
+shot along
+wait 300
+# view 4: across the strips
+cam at 11358 1381 -12539 10387 1432 -14200
+wait 6000
+shot across
+wait 300
+# view 5: inside the rye
+cam at 10271 1439 -13394 11431 1463 -14344
+wait 6000
+shot inside
+wait 300
+# view 6: the border of the rye from 1.1 m
+cam at 9754 1413 -13552 10682 1455 -14312
+wait 6000
+shot border
+wait 300
+# a gust crosses the field, seen from the border of the rye: the recording starts 4 s before the gust is here
+foliage wait-gust 4000 -13552
+rec crop-gust
+wait 16000
+stop
