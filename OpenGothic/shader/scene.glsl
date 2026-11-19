@@ -128,7 +128,20 @@ struct Cluster {
   uint  firstMeshlet;
   int   meshletCount;
   uint  instanceId;
+  uint  shadowFirstMeshlet;
+  int   shadowMeshletCount;
+  uint  shadowCommandId;
+  uint  padding;
   };
+
+Cluster shadowCluster(Cluster cluster) {
+  if(cluster.shadowMeshletCount>0) {
+    cluster.firstMeshlet = cluster.shadowFirstMeshlet;
+    cluster.meshletCount = cluster.shadowMeshletCount;
+    cluster.bucketId_commandId = (cluster.bucketId_commandId & 0xFFFF0000u) | cluster.shadowCommandId;
+    }
+  return cluster;
+  }
 
 const uint VF_HIZ = 0x1; // the occluder pass (V_HiZ): it draws into the main view's depth ahead of the G-buffer
 const uint VF_TAA = 0x2; // TAA resolves the frame (also with MetalFX temporal)

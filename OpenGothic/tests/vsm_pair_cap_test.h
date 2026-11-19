@@ -22,7 +22,15 @@ void vsmPairCapRecords(Tempest::Device& device) {
   // the bins of vsm_common.glsl: a lamp 5 m from the camera, then the centre ring of mips 0, 1 and 2
   constexpr uint32_t Slots = 64, Draws = 2, Old = 999, Skip = 0xFFFFFFFFu, Lamp = 1, Sun0 = 16, Sun1 = 32, Sun2 = 48;
   constexpr uint32_t ObjectMeshlet = 10, SpheresAt = 2; // the object's first meshlet, its mesh's first sphere
-  struct Cluster { float sphere[4]; uint32_t bucketId_commandId, firstMeshlet; int32_t meshletCount; uint32_t instanceId; };
+  struct Cluster {
+    float sphere[4];
+    uint32_t bucketId_commandId, firstMeshlet;
+    int32_t meshletCount;
+    uint32_t instanceId;
+    uint32_t shadowFirstMeshlet = 0;
+    int32_t shadowMeshletCount = 0;
+    uint32_t shadowCommandId = 0, padding = 0;
+    };
   struct Cmd     { uint32_t vertexCount, instanceCount, firstVertex, firstInstance, writeOffset; };
   struct Light   { float pos[3], range, color[3], cookie, sourceSize, nearLimit, padding[2]; }; // LightSource, scene.glsl
   struct Header  { // VsmHeader of vsm_common.glsl
@@ -289,6 +297,19 @@ void vsmPairCapRecords(Tempest::Device& device) {
           "an object's entry takes the meshlets whose spheres touch it");
   require(pairsOf(all, 1, 0).size()==1 && pairsOf(all, 1, 1).size()==1 && pairsOf(all, 1, 2).size()==1 &&
           pairsOf(all, 1, 3).empty(), "a cluster without spheres goes whole into each entry");
+
+  {
+  Cluster shadowClusters[2] = {clusters[0], clusters[1]};
+  shadowClusters[0].shadowFirstMeshlet = ObjectMeshlet+2;
+  shadowClusters[0].shadowMeshletCount = 5;
+  clusterBuf.update(shadowClusters, 0, sizeof(shadowClusters));
+  const Frame shadow = run(false, Slots, {}, 0, zero, older);
+  require(shadow.header.clusterPairs==23 && shadow.header.meshletCount==14 && shadow.header.pairSpill==0 &&
+          pairsOf(shadow, 0, 0)==ids({5, 6}) && pairsOf(shadow, 0, 1)==ids({2, 5, 6}) &&
+          pairsOf(shadow, 0, 2)==ids({2, 5, 6}) && pairsOf(shadow, 0, 3)==ids({2, 5, 6}),
+          ("sun and lamp entries must cull and pack only the selected shadow meshlets"+demand(shadow)).c_str());
+  clusterBuf.update(clusters, 0, sizeof(clusters));
+  }
 
   // a cap of 16: the lamp's 6 and mip 0's 5 go in, mip 1's 6 would make 17: it and all after it are left out, mip 2's 5
   // too, though they would fit
