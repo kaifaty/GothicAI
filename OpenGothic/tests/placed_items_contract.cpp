@@ -42,6 +42,7 @@
 #include "gameservices.h"
 #include "graphics/visualfx.h"
 #include "world/bullet.h"
+#include "game/physicssave.h"
 
 #include <rapidjson/document.h>
 
@@ -2347,7 +2348,10 @@ void arrowEffects(Gothic& gothic) {
     const auto d=depthOf(m,world->stuckArrowView(before)->protoMesh(),b.impactPoint());
     std::printf("Arrow depth: %s, mesh tip %.1f cm, tip %.2f cm past the hit, %.2f cm off its line, origin %.2f cm "
                 "before it\n",what,double(d.length),double(d.tip),double(d.off),double(d.origin));
-    require(d.length>10.f && d.off<1.f && std::abs(d.origin-(d.length-d.tip))<.05f,what);
+    // along the flight it came in, not only along the pinned matrix's own −X
+    const auto flight=Tempest::Vec3::normalize(b.direction());
+    require(d.length>10.f && d.off<1.f && std::abs(d.origin-(d.length-d.tip))<.05f &&
+            Tempest::Vec3::dotProduct(d.axis,flight)>.9999f,what);
     return std::make_pair(d,b.impactPoint());
     };
   Tempest::Vec3 ground;
@@ -2475,7 +2479,8 @@ void arrowEffects(Gothic& gothic) {
                     double(d.off),double(d.axis.x),double(d.axis.y),double(d.axis.z));
         if(!under.hasCol || under.mat!=asset::MaterialGroup::STONE)
           continue;
-        require(std::abs(d.tip-2.f)<=1.f && d.off<1.f && Tempest::Vec3::dotProduct(d.axis,under.n)<0.f,
+        // shot straight down, it came into the stone straight down: so it stands
+        require(std::abs(d.tip-2.f)<=1.f && d.off<1.f && d.axis.y<-.9999f,
                 "an arrow stopped on stone must have its tip 2 cm in it");
         stopped=true;
         }
@@ -2509,13 +2514,21 @@ void arrowEffects(Gothic& gothic) {
           onMesh(pinned),"the fire arrow stuck in Harad must have its effect at KEY_INVEST_3 on its mesh");
   // the tip 12 cm past the entry into the hit zone, the tow outside
   {
-    const auto entry=atHarad.impactPoint();
+    // where the shot's line enters his zones now, asked apart from the pin: the entry, the bone
+    float t=0;
+    size_t zoneBone=size_t(-1);
+    const auto from=aim+Tempest::Vec3(-80,0,0);
+    require(npc->rayHitZone(from,from+Tempest::Vec3(160,0,0),t,&zoneBone)!=HitZones::None,
+            "the shot's line must still enter Harad's zones");
+    const auto entry=from+Tempest::Vec3(t,0,0);
     const auto d=depthOf(pin.world,pinned.protoMesh(),entry);
+    const auto flight=Tempest::Vec3::normalize(atHarad.direction());
     const auto towOut=Tempest::Vec3::dotProduct(meshPoint(pin.world,tow)-entry,d.axis);
     std::printf("Arrow depth: in Harad's bone %zu the tip %.2f cm past the entry %.0f cm from his centre, %.2f cm off its "
                 "line, the tow %.2f cm before it\n",pin.bone,double(d.tip),double((entry-center).length()),double(d.off),
                 double(-towOut));
-    require((entry-center).length()>5.f && std::abs(d.tip-12.f)<=1.f && d.off<1.f && towOut<0.f,
+    require((atHarad.impactPoint()-entry).length()<1.f && pin.bone==zoneBone && std::abs(d.tip-12.f)<=1.f && d.off<1.f &&
+            Tempest::Vec3::dotProduct(d.axis,flight)>.9999f && towOut<0.f,
             "an arrow in a body must have its tip 12 cm past the entry, the tow outside");
   }
   // the pose, the arrow and its effect synced where Harad stands now, then he moves
@@ -2542,20 +2555,15 @@ void arrowEffects(Gothic& gothic) {
   const auto sym=npc->instanceSymbol();
   // where they are: loaded, they stay there, not sunk again
   std::vector<Tempest::Matrix4x4> savedWorld(worldPins),savedLocal(bodyPins);
+  std::vector<size_t> savedBone(bodyPins);
   for(size_t i=0;i<worldPins;++i)
     require(world->stuckArrowTransform(i,savedWorld[i]),"a stuck arrow must have its matrix");
   for(size_t i=0;i<bodyPins;++i) {
     Npc::ArrowPinProbe p;
     require(npc->stuckArrowProbe(i,p),"an arrow in a body must have its matrix");
     savedLocal[i]=p.local;
+    savedBone[i]=p.bone;
     }
-  const auto sameMatrix=[](const Tempest::Matrix4x4& a,const Tempest::Matrix4x4& b) {
-    for(int c=0;c<4;++c)
-      for(int r=0;r<4;++r)
-        if(std::abs(a.at(c,r)-b.at(c,r))>1.e-3f)
-          return false;
-    return true;
-    };
   std::vector<uint8_t> bytes;
   {
     Tempest::MemWriter writer(bytes);
@@ -2590,6 +2598,8 @@ void arrowEffects(Gothic& gothic) {
       Tempest::Vec3 sight;
       in.read(traceId,appeared,culprit,surface,sight);
       require(!visual.empty() && traceId>0 && traceId<nextId,"a saved stuck arrow must read in main's layout");
+      // an arrow in no movable: its matrix in the world, as main writes it
+      require(attached || PhysicsSave::sameTransform(local,savedWorld[i]),"a saved stuck arrow must carry its drawn matrix");
       }
   }
   gothic.clearGame().reset();
@@ -2611,20 +2621,20 @@ void arrowEffects(Gothic& gothic) {
             "a loaded arrow in a body must have no effect");
   for(size_t i=0;i<worldPins;++i) {
     Tempest::Matrix4x4 m;
-    require(world->stuckArrowTransform(i,m) && sameMatrix(m,savedWorld[i]),"a loaded stuck arrow must be where it was saved");
+    require(world->stuckArrowTransform(i,m) && PhysicsSave::sameTransform(m,savedWorld[i]),"a loaded stuck arrow must be where it was saved");
     }
   for(size_t i=0;i<bodyPins;++i) {
     Npc::ArrowPinProbe p;
-    require(loaded->stuckArrowProbe(i,p) && sameMatrix(p.local,savedLocal[i]),
-            "a loaded arrow in a body must keep its offset from the bone");
+    require(loaded->stuckArrowProbe(i,p) && p.bone==savedBone[i] && PhysicsSave::sameTransform(p.local,savedLocal[i]),
+            "a loaded arrow in a body must keep its bone and its offset from it");
     }
   // an arrow in a body written by main (APR1 version 1) loads, without effect, at the offset it was written with
   {
     Npc::ArrowPinProbe p;
     require(NpcDefinitionContract::loadMainArrow(*loaded,*world,0) && loaded->stuckArrowCount()==1 &&
             !NpcDefinitionContract::stuckArrow(*loaded,0).isEmpty() && !NpcDefinitionContract::stuckArrow(*loaded,0).hasEffect() &&
-            loaded->stuckArrowProbe(0,p) && sameMatrix(p.local,savedLocal[0]),
-            "an arrow in a body saved by main must load without effect at its offset");
+            loaded->stuckArrowProbe(0,p) && p.bone==savedBone[0] && PhysicsSave::sameTransform(p.local,savedLocal[0]),
+            "an arrow in a body saved by main must load without effect on its bone at its offset");
   }
 
   // stuck in something that moves: the effect goes with the arrow

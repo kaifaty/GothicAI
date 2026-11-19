@@ -132,6 +132,7 @@ def validate(run):
     assert match, 'world hit lacks point/normal/material'
     assert match[8] is not None, 'world hit note lacks the tip length: a log of the engine before the arrow pin depth'
     point = [float(match[i]) for i in (1, 2, 3)]
+    normal = [float(match[i]) for i in (4, 5, 6)]
     material, tip_length = int(match[7]), float(match[8])
     assert tip_length > 0, ('arrow mesh has no tip length', tip_length)
     world_before = cases[names.index('world')]['world_pins_before']
@@ -140,6 +141,14 @@ def validate(run):
     expected_depth = world_depth(material)
     assert abs(tip_depth-expected_depth) <= 1 and tip_off < 1, \
         ('world arrow tip not at its material depth past the hit', material, tip_depth, expected_depth, tip_off)
+    # The flight is the pinned matrix's own −X: check it against the ground, whose outside is up. The `world` case
+    # shoots at the ground (`sticking world`); any other surface has no outside known here and fails.
+    assert abs(normal[1]) >= .7, ('world arrow hit no ground, its outside is unknown', normal)
+    up = [v if normal[1] > 0 else -v for v in normal]
+    side = lambda p: sum((a-b)*n for a, b, n in zip(p, point, up))
+    tip = [o-v*tip_length for o, v in zip(actual[12:15], actual[0:3])]
+    assert side(tip) < 0 < side(actual[12:15]), ('world arrow tip not in the ground, its mesh origin not above it',
+                                                 side(tip), side(actual[12:15]))
     toggle = cases[names.index('toggle_off')]
     assert toggle['npc_pins_before'] == 3 and toggle['world_pins_before'] >= 1, 'toggle did not cover both owner types'
     assert not rows['toggle_off'][-1]['feature'] and rows['toggle_off'][-1]['all_npc_pin_count'] == 0

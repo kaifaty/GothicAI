@@ -188,7 +188,8 @@ void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
     npc->addCorpseArrowImpulse(*this);
     auto inBody = matrix;
     ArrowDepth::sink(inBody,hit.point,ArrowDepth::Body,tip);
-    if(npc->stickArrow(stuckView(),hit.bone,inBody,visualName)) {
+    // the bone by the hit, not by the moved mesh's origin
+    if(npc->stickArrow(stuckView(),hit.bone,inBody,visualName,&hit.point)) {
       char buf[160];
       const auto who = Bench::who(npc);
       std::snprintf(buf,sizeof(buf),"arrow stuck corpse %.*s bone %zu",int(who.size()),who.data(),hit.bone);
@@ -202,7 +203,9 @@ void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
   const auto sightPoint = hit.point+sightNormal*3.f;
   const auto surface = hit.vob!=nullptr && hit.vob->isDoor() ? "door" :
                        (std::abs(hit.normal.y)<.7f ? "wall" : "ground");
-  ArrowDepth::faceSurface(matrix,hit.incoming,-sightNormal);
+  // without a tip's length the arrow stays as before, turned as well
+  if(tip>0.f)
+    ArrowDepth::faceSurface(matrix,hit.incoming,-sightNormal);
   ArrowDepth::sink(matrix,hit.point,ArrowDepth::world(hit.material),tip);
   if(wrld->stickArrow(stuckView(),matrix,visualName,hit.movable,origin(),&sightPoint,surface)) {
     char buf[256];
@@ -338,7 +341,7 @@ bool Bullet::onCollide(Npc& npc) {
     matrix.set(3,1,point.y);
     matrix.set(3,2,point.z);
     ArrowDepth::sink(matrix,point,depth,ArrowDepth::tipLength(view.protoMesh()));
-    if(npc.stickArrow(stuckView(),impactOwner,matrix,visualName)) {
+    if(npc.stickArrow(stuckView(),impactOwner,matrix,visualName,&point)) {
       Npc::ArrowPinProbe pin;
       npc.stuckArrowProbe(npc.stuckArrowCount()-1,pin);
       char buf[160];
