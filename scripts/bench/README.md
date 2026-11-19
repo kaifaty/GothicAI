@@ -1973,6 +1973,55 @@ inventory differences at the end, the same split by run B's tier and by game hou
 diverge most. Tolerances come from `--tolerances` (JSON) or `--min-same-zs` and similar options
 (`--require-done false` turns a gate off); a failed check exits with 1. Twin monsters that spawn at the same point keep their order of the start array.
 
+Activity acceptance uses `npc-day-parity.tolerances-activity.json`, a **draft** calibrated against
+shared-stream seed 73106/73107 days ([E0 measurements and margins](../../reports/engine/2026-11-14-npc-data/e0-tolerance.md)).
+It keeps the four completeness checks from 6c and adds activity bounds; it does not inherit 6c's
+same-seed state, position, inventory or event guards. Keep the strict profile for exact controls,
+6c for active Simplified/auto movement comparisons, and the activity profile for event-executor
+work where changing the number of shared random draws shifts the whole journal. Final activity
+thresholds require the lead's acceptance.
+
+The activity profile requires **zero stuck NPCs** and bounds both arrival p95 and the
+**maximum signed arrival delay** at 5 game minutes (one journal step).
+`--max-activity-arrival-max` checks the maximum B−A delay over all segments in the selected
+activity summary. It catches a single late arrival even when p95 and the same-MOB share pass;
+missing arrivals fail the stuck-NPC check instead. The 15-minute archive mutation exercises
+this case without a new game run.
+
+Activity metrics use matched nonhero samples where **A's `ta` is not `-`**, grouped by **A's `zs`**:
+
+| Metric | Definition |
+|---|---|
+| Samples / same ZS / same WP | Sample count and shares with identical `zs` / `wp` in B (including `-` waypoint values) |
+| Same MOB | Among A's occupied samples (`mob != -`), share with the same MOB **scheme** in B |
+| Extra MOB | Among A's unoccupied samples, share where B occupies a MOB |
+| MOB time B/A | B occupied samples / A occupied samples, over the same reference-state samples |
+| Arrival p50 / p95 / max | Signed first occupied sample time in B minus A, in game minutes, within each continuous A-`ta` segment; independent of B's TA and MOB scheme |
+| Stuck | Unique NPCs with occupied samples in an A-TA segment and none in B's corresponding segment; the full list includes key, reference state, TA and segment times |
+
+TA-segment bounds come from A alone, including partial segments at the day edges. Arrival statistics
+include only segments with a MOB sample in both runs, grouped by A's ZS at its first occupied sample;
+missing arrivals are counted separately as stuck. Resolution is the journal step, **5 game minutes**,
+not exact engine arrival time. The Markdown and JSON reports contain the full state table, pooled
+totals, stuck segments and individual later arrivals. An undefined ratio/percentile is `null` in JSON,
+shown as `—` in Markdown, and fails an enabled numeric bound.
+
+`--activity-states ZS_READ_BOOKSTAND,ZS_SMITH_SHARP` limits activity **totals and checks** to those
+reference states; the state table and diagnostic lists always include all states. It does not filter
+the older metrics or completeness checks. Global percentiles and ratios can hide a rare NPC's
+regression; use the states relevant to the changed executor and inspect the named segment diagnostics.
+These metrics see schemes rather than individual objects and have no reservation-health counters;
+those require E1 engine changes.
+The draft thresholds are calibrated over all states; recheck their margins on the archived seed pair
+when changing `--activity-states`, since a subset has different denominators and noise rates.
+
+```sh
+python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
+  --activity-states ZS_READ_BOOKSTAND,ZS_SMITH_SHARP \
+  --tolerances scripts/bench/npc-day-parity.tolerances-activity.json \
+  --out /absolute/activity.md --json /absolute/activity.json
+```
+
 ## Engine side
 
 ### Placed world Items (physics stage 8, step 5)
