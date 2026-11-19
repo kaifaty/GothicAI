@@ -137,6 +137,8 @@ class VisualObjects final {
     void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     enum class BenchImpostors { Auto, Force, Off };
     static BenchImpostors benchImpostors;
+    enum class BenchShadowLevels { Auto, On, Off, Full };
+    static BenchShadowLevels benchShadowLevels;
     void drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int layer);
     void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -207,7 +209,8 @@ class VisualObjects final {
       uint16_t            treeFade       = 0;     // ...the fade its sphere is grown by now (preFrameUpdateTrees)
       uint8_t             levelSub       = NoLevels; // its submesh of a mesh with levels of detail (meshlevels.h)
       MeshLevels::Selection level;                // ...the stage selected for this instance, 0 the mesh itself
-      bool                clusterLod    = false;
+      uint8_t             shadowLevel    = 0;
+      bool                clusterLod     = false;
       bool                isGhost       = false;
       bool                visible       = true;
       Resources::TextureCategory textureCategory = Resources::TextureCategory::Dynamic;

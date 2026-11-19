@@ -541,6 +541,7 @@ class GpuVisibilityCut {
       for(size_t i=0;i<pipelines.size();++i) {
         const auto code=GothicShader::get(names[i]);
         pipelines[i]=device.pipeline(device.shader(code.data,code.len));
+        require(pipelines[i].sizeofBuffer(5, 2)==2*sizeof(DrawClusters::Cluster),"visibility shader cluster stride");
         require(pipelines[i].sizeofBuffer(9, 1)==sizeof(PackedMesh::ClusterLevel),"visibility shader level record stride");
         }
 
@@ -564,17 +565,31 @@ class GpuVisibilityCut {
         clusters[i].instanceId=instanceId(uint32_t(i));
         levelIndex[i]=clusters[i].firstMeshlet+1u;
         }
+      if(instanced) {
+        // A discrete tree in the same dispatch keeps its own shadow range and command.
+        order.push_back(uint32_t(clusters.size()));
+        levelIndex.push_back(0);
+        auto& tree=clusters.emplace_back();
+        tree.r=1.f;
+        tree.firstMeshlet=meshletCount;
+        tree.meshletCount=1;
+        tree.shadowFirstMeshlet=meshletCount+1;
+        tree.shadowMeshletCount=1;
+        tree.shadowCommandId=1;
+        }
 
       // A zero view-project matrix makes the instance's box take the near-plane fallback.
       // The 8x8 HiZ makes its full-screen box large enough for the occluder pipeline.
-      const SceneGlobals::UboGlobal globals{};
+      SceneGlobals::UboGlobal globals{};
       const uint32_t blank[36]{};
       scene=device.ssbo(&globals,sizeof(globals));
+      globals.viewFlags=SceneGlobals::VF_SHADOW;
+      shadowScene=device.ssbo(&globals,sizeof(globals));
       dummy=device.ssbo(blank,sizeof(blank));
       if(instanced)
         instanceBuf=device.ssbo(instances.data(),instances.size_bytes());
       hiZ=device.texture(Tempest::Pixmap(8,8,Tempest::TextureFormat::RGBA8),false);
-      indirect=device.ssbo(Tempest::Uninitialized,sizeof(Indirect));
+      indirect=device.ssbo(Tempest::Uninitialized,2*sizeof(Indirect));
       clusterBuf=device.ssbo(clusters);
       orderBuf=device.ssbo(order);
       levelIndices=device.ssbo(levelIndex);
@@ -598,12 +613,15 @@ class GpuVisibilityCut {
                        {view.camera[0],view.camera[1],view.camera[2],view.farDepth},
                        {view.forward[0],view.forward[1],view.forward[2],view.farGuard}};
       for(size_t pass=0;pass<pipelines.size();++pass) {
-        Indirect draw{};
-        indirect.update(&draw,0,sizeof(draw));
+        const bool shadow=pass==0;
+        const bool separateShadow=instanced && shadow;
+        Indirect draws[2]{};
+        draws[1].writeOffset=uint32_t(expected.size());
+        indirect.update(draws,0,sizeof(draws));
         auto command=device.commandBuffer();
         {
           auto encoder=command.startEncoding(device);
-          encoder.setBinding(0,scene);
+          encoder.setBinding(0,shadow ? shadowScene : scene);
           encoder.setBinding(1,payload);
           encoder.setBinding(2,instanced ? instanceBuf : dummy);
           encoder.setBinding(3,dummy);
@@ -618,19 +636,23 @@ class GpuVisibilityCut {
           encoder.dispatchThreads(1);
         }
         device.submit(command).wait();
-        device.readBytes(indirect,&draw,sizeof(draw));
+        device.readBytes(indirect,draws,sizeof(draws));
         constexpr const char* names[] = {"shadow", "main", "HiZ"};
         const auto label=std::string("GPU ")+names[pass]+(instanced ? " instanced" : "")+
                          " visibility at "+std::to_string(thresholdPx)+" px";
-        require(draw.instanceCount==expected.size(),label+": expected "+std::to_string(expected.size())+
-                " clusters, got "+std::to_string(draw.instanceCount));
-        if(expected.empty())
+        const size_t visualCount=expected.size()+(instanced && !shadow ? 1u : 0u);
+        require(draws[0].instanceCount==visualCount && draws[1].instanceCount==(separateShadow ? 1u : 0u),
+                label+": wrong meshlet count in the visual or separate shadow command");
+        std::vector<Payload> visible(expected.size()+(instanced ? 1u : 0u));
+        if(visible.empty())
           continue;
-        std::vector<Payload> visible(draw.instanceCount);
         device.readBytes(payload,visible.data(),visible.size()*sizeof(Payload));
-        require(std::ranges::equal(visible,expected,[&](const Payload& value, uint32_t index) {
+        require(std::ranges::equal(std::span(visible).first(expected.size()),expected,[&](const Payload& value, uint32_t index) {
           return value.instance==instanceId(index) && value.meshlet==index%meshletCount;
           }),label+": instance or cluster IDs differ from selectCut");
+        if(instanced)
+          require(visible.back().instance==0 && visible.back().meshlet==meshletCount+(separateShadow ? 1u : 0u),
+                  label+": the tree did not use the meshlet range for its view");
         }
       }
 
@@ -645,7 +667,7 @@ class GpuVisibilityCut {
       };
     Tempest::Device& device;
     std::array<Tempest::ComputePipeline,3> pipelines;
-    Tempest::StorageBuffer scene,dummy,instanceBuf,indirect,clusterBuf,orderBuf,levelIndices,records,payload;
+    Tempest::StorageBuffer scene,shadowScene,dummy,instanceBuf,indirect,clusterBuf,orderBuf,levelIndices,records,payload;
     Tempest::Texture2d hiZ;
     uint32_t meshletCount=0;
     bool instanced=false;
@@ -764,7 +786,7 @@ void checkInstancedVisibilityCuts(Tempest::Device& device) {
   gpu.compare(view,1.f,expectedCut(view,1.f));
   view.farDepth+=2.f;
   gpu.compare(view,1.f,expectedCut(view,1.f));
-  std::puts("GPU instanced visibility cut: 7 comparisons per pipeline (main, HiZ and shadow) on two instances");
+  std::puts("GPU instanced visibility cut: 7 comparisons per pipeline (main, HiZ and shadow) on two instances and a tree with a separate shadow range and command");
   }
 
 void hierarchyRoundTrip(const fs::path& root) {

@@ -236,7 +236,7 @@ void runCluster(const uint clusterId, const uint mip) {
 
   if(frustrumTest(cluster.sphere)) {
     if(gl_GlobalInvocationID.y==0)
-      atomicAdd(vsm.header.counterV, cluster.meshletCount);
+      atomicAdd(vsm.header.counterV, shadowCluster(cluster).meshletCount);
     } else {
     // return;
     }

@@ -200,7 +200,7 @@ bool frustrumTest(const vec4 sphere) {
   }
 
 void runCluster(const uint clusterId) {
-  const Cluster cluster = clusters[clusterId];
+  Cluster cluster = clusters[clusterId];
   if(cluster.sphere.w<=0.f || cluster.meshletCount<=0)
     return; // disabled or deleted
 
@@ -237,6 +237,11 @@ void runCluster(const uint clusterId) {
 #if defined(HIZ)
   if(!hiZTest(aabb, depthMin))
     return;
+#endif
+
+#if !defined(MAIN_VIEW)
+  if((scene.viewFlags & VF_SHADOW)!=0u)
+    cluster = shadowCluster(cluster);
 #endif
 
   const uint commandId  = cluster.bucketId_commandId & 0xFFFF;
