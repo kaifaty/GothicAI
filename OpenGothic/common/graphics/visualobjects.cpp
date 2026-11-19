@@ -288,7 +288,7 @@ const StaticMesh* VisualObjects::Item::mesh() const {
 std::pair<uint32_t, uint32_t> VisualObjects::Item::meshSlice() const {
   if(owner==nullptr)
     return std::pair<uint32_t, uint32_t>(0,0);
-  const auto& obj = owner->objects[id];
+  auto& obj = owner->objects[id];
   if(obj.clusterLod) {
     const auto [offset,length] = obj.bucketId->staticMesh->rtSlice(obj.iboOff,obj.iboLen);
     return {uint32_t(offset),uint32_t(length)};
