@@ -1391,7 +1391,7 @@ void MdlVisual::setAnimWhirl(Npc &npc, int dir) {
 void MdlVisual::interrupt() {
   skInst->interrupt();
   item.clear();
-  setStateItem(MeshObjects::Mesh(),"");
+  setStateItem(ItemView(),"");
   }
 
 Tempest::Vec3 MdlVisual::displayPosition() const {

@@ -24,6 +24,8 @@ class ObjVisual : public StreamedVisual {
     void save(Serialize& fout, const Interactive& mob) const;
     void load(Serialize& fin,  Interactive &mob);
 
+    // an item held (the burning torch in a hand): a bundle, else its view (graphics/itemview), its mesh with its effect
+    void setVisual(const ItemRecord& item, World& world, bool staticDraw);
     // an item lying in the world: its view (graphics/itemview), its mesh with its effect, streamed with its chunk
     void setWorldItem(const ItemRecord& item, World& world, const Tempest::Matrix4x4& matrix);
     // its view, nullptr: not an item lying in the world

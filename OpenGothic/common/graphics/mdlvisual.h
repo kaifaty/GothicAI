@@ -86,6 +86,8 @@ class MdlVisual final {
     void                           dropAmmo();
     bool                           hasAmmoShown() const { return !ammunition.view.isEmpty(); }
     void                           setSlotItem   (ItemView&& itm,  std::string_view bone);
+    const ItemView&                swordView() const { return sword.view; }
+    const ItemView&                bowView()   const { return bow.view; }
     void                           setStateItem  (ItemView&& itm,  std::string_view bone);
     void                           clearSlotItem (std::string_view bone);
     // the quiver on the right hip (graphics/mesh/quiver): Npc::updateQuiver decides what it shows

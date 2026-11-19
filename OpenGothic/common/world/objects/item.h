@@ -102,6 +102,8 @@ class Item : public Vob {
     bool                checkCondUse (const Npc& other,int32_t& atr,int32_t& nv) const;
     bool                checkCondRune(const Npc& other,int32_t& cPl,int32_t& cIt) const;
 
+    // its view lying in the world (graphics/itemview): the mesh with its effect; nullptr in an inventory
+    const ItemView*                      view() const { return visual.worldItem(); }
     const ItemRecord&                    handle() const { return *hitem; }
     ItemRecord&                          handle() { return *hitem; }
     const std::shared_ptr<ItemRecord>&    handlePtr()    { return hitem; }
@@ -114,6 +116,7 @@ class Item : public Vob {
   private:
     friend class WorldObjects;
     friend class GameScript;
+    friend struct NpcDefinitionContract;
     void                savePhysics(Serialize& fout) const;
     void                restorePhysics(const Tempest::Matrix4x4& matrix, const Tempest::Vec3& velocity,
                                        const Tempest::Vec3& angular, bool sleeping);

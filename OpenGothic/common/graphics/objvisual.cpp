@@ -296,6 +296,19 @@ void ObjVisual::setType(Type t) {
   type = t;
   }
 
+void ObjVisual::setVisual(const ItemRecord& hitem, World& world, bool staticDraw) {
+  cleanup();
+
+  if(FileExt::hasExt(hitem.visual,"ZEN")) {
+    setType(M_Bundle);
+    bundle = VobBundle(world,hitem.visual,(staticDraw ? Vob::Static : Vob::None));
+    } else {
+    setType(M_Mesh);
+    mesh.worldItem = true;
+    mesh.item = ItemView(world,hitem);
+    }
+  }
+
 void ObjVisual::setWorldItem(const ItemRecord& item, World& world, const Tempest::Matrix4x4& matrix) {
   cleanup();
   const auto* proto=Resources::loadMesh(item.visual);
