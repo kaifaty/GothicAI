@@ -58,9 +58,11 @@ STUBBLE_GAP = 38.
 EDGE = 90.                  # cm of a strip's edge that stands as single tufts, not as rows
 TUFTS_M2 = 7.               # tufts a square metre of that edge
 CLEAR = 130.                # cm round a work spot or an item where no rye stands
-STRIP_WIDTH = 650.          # cm: a field is cut into strips about this wide, three to five of them
+STRIP_WIDTH = 650.          # cm: a field is cut into strips about this wide, three of them at least
 STOOK_STEP = 700.           # cm between stooks along a stubble strip
-PLANT = 'NW_NATURE_PLANT_03.3DS'
+PLANT = ('NW_NATURE_PLANT_03.3DS', 'NW_NATURE_GREAT_WEED_XGROUP.3DS')    # the original's grain: clumps and groups of rows
+REACH = 8000.               # cm from the given point within which the field's triangles are looked for
+STRIPS_MAX = 12             # a big field (Onar's plots are 55 m across) is cut into more strips of the same width
 
 
 def sibling(name: str):
@@ -275,7 +277,7 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int = 
     triangles = mesh.positions * (-100., 100., 100.)                # the mesh mirrors x against the game's axes
     centre = triangles.mean(axis=1)
     acker = np.array(['ACKER' in n for n in names])
-    near = acker & (np.hypot(centre[:, 0] - field[0] * 100, centre[:, 2] - field[1] * 100) < 4500)
+    near = acker & (np.hypot(centre[:, 0] - field[0] * 100, centre[:, 2] - field[1] * 100) < REACH)
     # the field is the patch of tilled triangles joined by shared corners to the one nearest the given point
     index = np.flatnonzero(near)
     corners = np.rint(triangles[index].reshape(-1, 3) / 5).astype(np.int64)
@@ -304,7 +306,7 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int = 
     u_axis, v_axis = axes[0], axes[1]
     u_all, v_all = (points - middle) @ u_axis, (points - middle) @ v_axis
     v0, v1 = v_all.min(), v_all.max()
-    count = int(np.clip(round((v1 - v0) / STRIP_WIDTH), 3, len(STRIPS)))
+    count = int(np.clip(round((v1 - v0) / STRIP_WIDTH), 3, STRIPS_MAX))
     pattern = tuple(STRIPS[(number + k) % len(STRIPS)] for k in range(count))    # the next field starts a strip on
     width = (v1 - v0) / count
 
@@ -316,7 +318,7 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int = 
         if ground.at(x, z) is None:
             continue
         name = str(vob.get('vob_name') or '')
-        if vob.get('visual_name') == PLANT:
+        if vob.get('visual_name') in PLANT:
             remove.append(int(vob['id']))
         elif name.startswith('FP_') or vob.get('type') == 'oCItem':
             keep.append((x, z))
