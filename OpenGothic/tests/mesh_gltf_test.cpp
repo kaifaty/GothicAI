@@ -1752,15 +1752,15 @@ void clusterHierarchyCases(const Fixture& fixture) {
   writeBaseMesh(grid,"CLUSTER_MESH",glb);
   std::vector<uint8_t> bytes;
   const auto mesh = loadGltfMesh(glb,&bytes);
-  const auto crc32 = uint32_t(mz_crc32(0,bytes.data(),bytes.size()));
+  const auto sourceCrc32 = uint32_t(mz_crc32(0,bytes.data(),bytes.size()));
   const std::array<uint8_t,1> locked = {0};
   const auto graph = MeshClusterLod::build(mesh,{},locked);
   require(std::ranges::any_of(graph.clusters,[](const auto& c) { return c.level==1; }),
           "cluster fixture must provide a simplifiable surface");
-  MeshClusterLod::write(glb,bytes.size(),crc32,graph);
-  const auto restored = MeshClusterLod::read(glb,bytes.size(),crc32,mesh,locked);
+  MeshClusterLod::write(glb,bytes.size(),sourceCrc32,graph);
+  const auto restored = MeshClusterLod::read(glb,bytes.size(),sourceCrc32,mesh,locked);
   require(restored.has_value(),"own mesh graph must read back with the GLB key");
-  MeshClusterLod::write(dir/"reserialized.glb",bytes.size(),crc32,*restored);
+  MeshClusterLod::write(dir/"reserialized.glb",bytes.size(),sourceCrc32,*restored);
   require(gothicglb::readFile(dir/"cluster.clod")==gothicglb::readFile(dir/"reserialized.clod"),
           "graph round trip must preserve every packed field");
 
