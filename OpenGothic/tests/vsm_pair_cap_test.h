@@ -392,6 +392,10 @@ void vsmLayoutRecords(Tempest::Device& device) {
   auto lightBuf    = device.ssbo(&light, sizeof(light));
   auto instanceBuf = device.ssbo(instance.data(), instance.size()*sizeof(float));
   auto sphereBuf   = device.ssbo(spheres.data(), spheres.size()*sizeof(float));
+  const uint32_t noLod[1] = {};        // the cluster has no levels of the cluster hierarchy (cluster_lod.glsl)
+  const uint32_t lodRecord[12] = {};
+  auto lodIndices  = device.ssbo(noLod, sizeof(noLod));
+  auto lodRecords  = device.ssbo(lodRecord, sizeof(lodRecord));
 
   // a frame of renderer_vsm.cpp from the marks to the entries and, with a cap, the meshlets' pass under it. `words` is
   // the buffer of the header and the entries: its admitBits are the bins the frame before drew (vsm_clear.comp moves
@@ -447,7 +451,13 @@ void vsmLayoutRecords(Tempest::Device& device) {
     enc.dispatch(1);
 
     if(cap>0) {
-      struct Push { uint32_t meshletCount, candidateCap; } push = {1, cap};
+      struct Push {
+        uint32_t meshletCount, candidateCap, padding[2];
+        float lodPx, lodProjection, lodHeight;
+        uint32_t lodDebug;
+        float lodCamera[4], lodForwardAndGuard[4];
+        } push = {1, cap, {}, 0.f, 0.f, 0.f, 0, {}, {}};
+      static_assert(sizeof(Push)==64);
       enc.setBinding(0, sceneUbo);
       enc.setBinding(1, candidates);
       enc.setBinding(2, instanceBuf);
@@ -458,6 +468,8 @@ void vsmLayoutRecords(Tempest::Device& device) {
       enc.setBinding(7, pageHiZ);
       enc.setBinding(8, pages);
       enc.setBinding(9, dbg);
+      enc.setBinding(10, lodIndices);
+      enc.setBinding(11, lodRecords);
       enc.setPushData(&push, sizeof(push));
       enc.setPipeline(shaders.vsmVisibilityPass);
       enc.dispatchThreads(1, 17);
