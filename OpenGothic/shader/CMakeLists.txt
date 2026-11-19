@@ -157,6 +157,10 @@ add_shader(impostor.frag     materials/impostor.frag)
 add_shader(impostor_orm.frag materials/impostor.frag -DMATERIAL_MAPS)
 add_shader(impostor_hist.frag     materials/impostor.frag -DHISTORY_OWNER)
 add_shader(impostor_orm_hist.frag materials/impostor.frag -DMATERIAL_MAPS -DHISTORY_OWNER)
+add_shader(impostor_joint.frag          materials/impostor.frag -DTREE_BOUGH_JOINT)
+add_shader(impostor_joint_orm.frag      materials/impostor.frag -DTREE_BOUGH_JOINT -DMATERIAL_MAPS)
+add_shader(impostor_joint_hist.frag     materials/impostor.frag -DTREE_BOUGH_JOINT -DHISTORY_OWNER)
+add_shader(impostor_joint_orm_hist.frag materials/impostor.frag -DTREE_BOUGH_JOINT -DMATERIAL_MAPS -DHISTORY_OWNER)
 
 # mesh & vertex
 add_geom_shader(main_lnd       "-DMESH_TYPE=0" -DFLAT_NORMAL -DLANDSCAPE_GBUFFER)
@@ -272,6 +276,21 @@ add_history_frag_shaders(main_lnd_g_orm    -DFLAT_NORMAL -DGBUFFER -DMATERIAL_MA
 add_history_frag_shaders(main_lnd_g_at_orm -DFLAT_NORMAL -DGBUFFER -DATEST -DMATERIAL_MAPS)
 add_history_frag_shaders(main_obj_g_orm    -DGBUFFER -DGBUFFER_MOTION -DMATERIAL_MAPS)
 add_history_frag_shaders(main_obj_g_at_orm -DGBUFFER -DGBUFFER_MOTION -DATEST -DMATERIAL_MAPS)
+
+# The 3D side of the impostor joint uses the ordinary geometry with the dissolve mask.
+add_geom_shader(main_joint_g          "-DMESH_TYPE=1" -DGBUFFER_MOTION -DTREE_BOUGH_JOINT)
+add_geom_shader(main_joint_g_orm      "-DMESH_TYPE=1" -DGBUFFER_MOTION -DTREE_BOUGH_JOINT -DMATERIAL_MAPS)
+add_geom_shader(main_joint_g_hist     "-DMESH_TYPE=1" -DGBUFFER_MOTION -DTREE_BOUGH_JOINT -DHISTORY_PAYLOAD)
+add_geom_shader(main_joint_g_orm_hist "-DMESH_TYPE=1" -DGBUFFER_MOTION -DTREE_BOUGH_JOINT -DMATERIAL_MAPS -DHISTORY_PAYLOAD)
+
+add_frag_shader(main_joint_g        -DGBUFFER -DGBUFFER_MOTION -DTREE_BOUGH_JOINT)
+add_frag_shader(main_joint_g_at     -DGBUFFER -DGBUFFER_MOTION -DTREE_BOUGH_JOINT -DATEST)
+add_frag_shader(main_joint_g_orm    -DGBUFFER -DGBUFFER_MOTION -DTREE_BOUGH_JOINT -DMATERIAL_MAPS)
+add_frag_shader(main_joint_g_at_orm -DGBUFFER -DGBUFFER_MOTION -DTREE_BOUGH_JOINT -DATEST -DMATERIAL_MAPS)
+add_history_frag_shaders(main_joint_g        -DGBUFFER -DGBUFFER_MOTION -DTREE_BOUGH_JOINT)
+add_history_frag_shaders(main_joint_g_at     -DGBUFFER -DGBUFFER_MOTION -DTREE_BOUGH_JOINT -DATEST)
+add_history_frag_shaders(main_joint_g_orm    -DGBUFFER -DGBUFFER_MOTION -DTREE_BOUGH_JOINT -DMATERIAL_MAPS)
+add_history_frag_shaders(main_joint_g_at_orm -DGBUFFER -DGBUFFER_MOTION -DTREE_BOUGH_JOINT -DATEST -DMATERIAL_MAPS)
 
 # pfx geometry
 add_shader(main_pfx.vert       materials/pfx.vert   "-DMESH_TYPE=4" -DVT_COLOR)

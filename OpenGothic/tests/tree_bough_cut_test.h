@@ -68,6 +68,7 @@ void treeBoughRasterCases(Tempest::Device& device) {
       };
     const auto bough = pipeline("main_bough_g_slot.vert.sprv", "main_bough_g_slot.mesh.sprv", "main_bough_g_at_slot.frag.sprv");
     const auto legacy = pipeline("main_obj_g_slot.vert.sprv", "main_obj_g_slot.mesh.sprv", "main_obj_g_at_slot.frag.sprv");
+    const auto jointGeometry = pipeline("main_joint_g_slot.vert.sprv", "main_joint_g_slot.mesh.sprv", "main_joint_g_at_slot.frag.sprv");
     const auto render = [&](const RenderPipeline& pso, const StorageBuffer& ibo, uint32_t index,
                             const StorageBuffer& instanceData) {
       auto command = device.commandBuffer();
@@ -100,7 +101,7 @@ void treeBoughRasterCases(Tempest::Device& device) {
     const auto baseline = render(legacy,packedIbo,0,instances);
     require(std::memcmp(full.data(),baseline.data(),full.dataSize())==0,"steady bough differs from legacy card");
     const auto jointCrown = render(bough,compactIbo,0,jointInstances);
-    const auto jointWood = render(legacy,packedIbo,0,jointInstances);
+    const auto jointWood = render(jointGeometry,packedIbo,0,jointInstances);
     require(std::memcmp(jointCrown.data(),jointWood.data(),jointCrown.dataSize())==0,
             "compact and regular geometry disagree on impostor mask");
     const auto covered = [](const Pixmap& pixmap, size_t i) { return static_cast<const uint8_t*>(pixmap.data())[i*4]!=0; };

@@ -155,22 +155,9 @@ void Shaders::compileShaders() noexcept {
 
   bloodDecal       = bloodDecalShader(opts.doMaterialMaps);
   bloodDecalAlbedo = bloodDecalShader(false);
-  {
-    RenderState state;
-    state.setCullFaceMode(RenderState::CullMode::NoCull);
-    state.setZTestMode(RenderState::ZTestMode::LEqual);
-    state.setZWriteEnabled(true);
-    auto sh = GothicShader::get("impostor.vert.sprv");
-    auto vs = device.shader(sh.data, sh.len);
-    sh      = GothicShader::get(string_frm("impostor", materialMaps, ".frag.sprv"));
-    auto fs = device.shader(sh.data, sh.len);
-    impostor = device.pipeline(Triangles, state, vs, fs);
-    if(historySupported) {
-      sh = GothicShader::get(string_frm("impostor", materialMaps, "_hist.frag.sprv"));
-      fs = device.shader(sh.data, sh.len);
-      impostorHistoryGBuffer = device.pipeline(Triangles, state, vs, fs);
-      }
-    }
+  impostorPipeline(false, false);
+  if(historySupported)
+    impostorPipeline(true, false);
   if(opts.doMaterialMaps) {
     // Grass (graphics/grass/grassfield.h): the main pass' depth test; a blade is seen from both sides
     RenderState state;
@@ -520,8 +507,26 @@ bool Shaders::isGi2Supported() {
   return true;
   }
 
+const RenderPipeline& Shaders::impostorPipeline(bool history, bool joint) const {
+  auto& pipeline = impostor[history][joint];
+  if(pipeline.isEmpty()) {
+    RenderState state;
+    state.setCullFaceMode(RenderState::CullMode::NoCull);
+    state.setZTestMode(RenderState::ZTestMode::LEqual);
+    state.setZWriteEnabled(true);
+    auto& device = Resources::device();
+    auto sh = GothicShader::get("impostor.vert.sprv");
+    auto vs = device.shader(sh.data, sh.len);
+    sh = GothicShader::get(string_frm(joint ? "impostor_joint" : "impostor", opts.doMaterialMaps ? "_orm" : "",
+                                     history ? "_hist.frag.sprv" : ".frag.sprv"));
+    auto fs = device.shader(sh.data, sh.len);
+    pipeline = device.pipeline(Triangles, state, vs, fs);
+    }
+  return pipeline;
+  }
+
 const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommands::Type t, PipelineType pt, bool bl,
-                                                bool compactBough) const {
+                                                Bough bough) const {
   if(t==DrawCommands::Static) {
     // same shader
     t = DrawCommands::Movable;
@@ -538,7 +543,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
 
   const auto alpha   = (mat.isGhost ? Material::Ghost : mat.alpha);
   const bool trivial = (!mat.hasUvAnimation() && alpha==Material::Solid && t==DrawCommands::Landscape);
-  if(compactBough && (t!=DrawCommands::Movable || alpha!=Material::AlphaTest || (pt!=T_Main && pt!=T_HistoryGBuffer)))
+  if(bough==Bough::Cards && (t!=DrawCommands::Movable || alpha!=Material::AlphaTest || (pt!=T_Main && pt!=T_HistoryGBuffer)))
     return nullptr;
 
   // materials.json "two_sided": an object's mesh without culling in every pass, the same shaders. The world mesh,
@@ -547,7 +552,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
 
   for(auto& i:materials) {
     if(i.alpha==alpha && i.type==t && i.pipelineType==pt && i.bindless==bl && i.trivial==trivial &&
-       i.twoSided==twoSided && i.compactBough==compactBough)
+       i.twoSided==twoSided && i.bough==bough)
       return &i.pipeline;
     }
 
@@ -636,9 +641,12 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
       fsTok = "obj";
       break;
     }
-  if(compactBough) {
+  if(bough==Bough::Cards) {
     vsTok = "bough";
     fsTok = "bough";
+    } else if(bough==Bough::Joint) {
+    vsTok = "joint";
+    fsTok = "joint";
     }
 
   const char* typeVsM = nullptr;
@@ -726,7 +734,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
     default: break;
     }
   const bool  history = historyFragment[0]!='\0';
-  const char* historyGeometry = history && t!=DrawCommands::Pfx && !compactBough ? "_hist" : "";
+  const char* historyGeometry = history && t!=DrawCommands::Pfx && bough!=Bough::Cards ? "_hist" : "";
   const bool mapsMain = (pt==T_Main || history) && (alpha==Material::Solid || alpha==Material::AlphaTest);
   const bool mapsDepth = (pt==T_Depth || pt==T_Shadow) && alpha==Material::AlphaTest;
   const char* materialMaps = opts.doMaterialMaps && (mapsMain || mapsDepth) ? "_orm" : "";
@@ -739,7 +747,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   b.bindless     = bl;
   b.trivial      = trivial;
   b.twoSided     = twoSided;
-  b.compactBough = compactBough;
+  b.bough        = bough;
 
   auto& device = Resources::device();
   if(mat.isTesselated() && device.properties().tesselationShader && t==DrawCommands::Landscape && true) {

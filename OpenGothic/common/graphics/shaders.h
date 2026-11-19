@@ -74,9 +74,7 @@ class Shaders {
     // Blood on the GBuffer (physics stage 8, step 4c): albedo RGB, and roughness with material maps
     Tempest::RenderPipeline  bloodDecal, bloodDecalAlbedo; // with and without the ORM target
     Tempest::RenderPipeline  grass;                        // blades into the G-buffer; only with material maps
-    Tempest::RenderPipeline  impostor;
     Tempest::RenderPipeline  grassHistoryGBuffer;
-    Tempest::RenderPipeline  impostorHistoryGBuffer;
     Tempest::ComputePipeline grassContactMask;
     Tempest::RenderPipeline  sun;
     Tempest::ComputePipeline cloudsLut, fogOcclusion, fogOcclusionEmpty;
@@ -159,8 +157,10 @@ class Shaders {
     // Inventory
     Tempest::RenderPipeline  inventory;
 
+    enum class Bough : uint8_t { None, Cards, Joint };
     const Tempest::RenderPipeline* materialPipeline(const Material& desc, DrawCommands::Type t, PipelineType pt,
-                                                    bool bindless, bool compactBough = false) const;
+                                                    bool bindless, Bough bough = Bough::None) const;
+    const Tempest::RenderPipeline& impostorPipeline(bool history, bool joint) const;
 
   private:
     struct Entry {
@@ -171,8 +171,10 @@ class Shaders {
       bool                    bindless     = false;
       bool                    trivial      = false;
       bool                    twoSided     = false;
-      bool                    compactBough = false;
+      Bough                   bough        = Bough::None;
       };
+
+    mutable Tempest::RenderPipeline impostor[2][2];
 
     void                     setupOptions();
     void                     compileKeyShaders();

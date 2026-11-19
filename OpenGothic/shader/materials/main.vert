@@ -20,7 +20,7 @@
 layout(local_size_x = 64) in;
 layout(triangles, max_vertices = MaxVert, max_primitives = MaxPrim) out;
 #endif
-#if defined(MAT_MOTION) && MESH_TYPE==T_OBJ && !defined(TREE_BOUGH_CARDS)
+#if defined(TREE_BOUGH_JOINT)
 #include "tree_bough_dissolve.glsl"
 #endif
 
@@ -412,7 +412,11 @@ void main() {
   const uint materialRef = boughBucket(task);
 #elif defined(HISTORY_PAYLOAD)
   // Both history phases use this same vertex shader and carry the unchanged payload index.
+#if defined(TREE_BOUGH_JOINT)
   uint materialRef = payloadId;
+#else
+  const uint materialRef = payloadId;
+#endif
 #else
   uint materialRef     = task.z;
 #if defined(MAT_CLUSTER_LEVEL)
@@ -425,7 +429,7 @@ void main() {
 #endif
 #endif
 
-#if defined(MAT_MOTION) && MESH_TYPE==T_OBJ && !defined(TREE_BOUGH_CARDS)
+#if defined(TREE_BOUGH_JOINT)
   if((pullInstance(task.x).animPtr & BoughJointTag)!=0u)
     materialRef = payloadId | BoughJointTag;
 #endif

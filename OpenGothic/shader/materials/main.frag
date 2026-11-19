@@ -35,7 +35,7 @@ layout(location = 0) in flat uint bucketId;
 #if defined(MAT_VARYINGS)
 layout(location = 1) in Varyings  shInp;
 #endif
-#if defined(TREE_BOUGH_CARDS) || defined(MAT_MOTION)
+#if defined(TREE_BOUGH_CARDS) || defined(TREE_BOUGH_JOINT)
 #include "tree_bough_dissolve.glsl"
 #endif
 #if defined(TREE_BOUGH_CARDS)
@@ -1099,19 +1099,18 @@ void main() {
 #if defined(GBUFFER) && !defined(HISTORY_DEPTH)
   const bool treeProbe = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u;
 #endif
-#if defined(MAT_MOTION) && !defined(TREE_BOUGH_CARDS)
+#if defined(TREE_BOUGH_JOINT)
   const bool treeJoint = (materialRef & BoughJointTag)!=0u;
   const uint taskRef = materialRef & ~BoughJointTag;
-#else
-  const bool treeJoint = false;
-#  if defined(HISTORY_PAYLOAD) || (defined(GBUFFER) && defined(MAT_CLUSTER_LEVEL) && !defined(TREE_BOUGH_CARDS))
-  const uint taskRef = materialRef;
-#  endif
 #endif
 #if defined(TREE_BOUGH_CARDS)
   bucketId = materialRef;
 #elif defined(HISTORY_PAYLOAD)
+#if defined(TREE_BOUGH_JOINT)
   const uvec4 historyTask = payload[taskRef];
+#else
+  const uvec4 historyTask = payload[materialRef];
+#endif
   const uint historyOwner = historyTask.w & 0x00FFFFFFu;
   bucketId = historyTask.z;
   uint clusterLevel = historyTask.w >> 24u;
@@ -1123,8 +1122,13 @@ void main() {
 #endif
 #if defined(GBUFFER) && defined(MAT_CLUSTER_LEVEL) && !defined(HISTORY_PAYLOAD) && !defined(TREE_BOUGH_CARDS)
   uint probeCluster = 0u;
+#if defined(TREE_BOUGH_JOINT)
   if(treeProbe || treeJoint) {
     const uvec4 task = payload[taskRef];
+#else
+  if(treeProbe) {
+    const uvec4 task = payload[materialRef];
+#endif
     bucketId = task.z;
     const bool historyReference = (scene.viewFlags & VF_HIZ_HISTORY_REFERENCE)!=0u;
     probeCluster = historyReference ? ((task.w & 0x00FFFFFFu) - 1u) : task.w;
@@ -1222,7 +1226,7 @@ void main() {
     discard;
   if(!boughCovers(boughFadeIn.x, boughFadeIn.y, boughSample))
     discard;
-#elif defined(MAT_MOTION)
+#elif defined(TREE_BOUGH_JOINT)
   if(treeJoint) {
     const Instance instance = pullInstance(payload[taskRef].x);
     const uint fade = boughJointFade(instance.animPtr) ^ BoughFadeChild;
