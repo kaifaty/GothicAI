@@ -152,7 +152,7 @@ std::shared_ptr<LandscapeRange> LandscapePages::allocate(const PackedMesh& mesh)
   return range;
   }
 
-StaticMesh::StaticMesh(const PackedMesh& mesh) {
+StaticMesh::StaticMesh(const PackedMesh& mesh) :clusterLevels(mesh.clusterLevels) {
   const Vertex* vert=mesh.vertices.data();
   if(Resources::hasGraphicsDevice()) {
     LoadProbe::Vobs::Scope probe("mesh_gpu");
@@ -212,6 +212,7 @@ StaticMesh& StaticMesh::operator=(StaticMesh&& other) {
   levels=std::move(other.levels);
   impostor=std::move(other.impostor);
   meshletSpheres=std::move(other.meshletSpheres);
+  clusterLevels=std::move(other.clusterLevels);
   pageRange=std::move(other.pageRange);
   return *this;
   }
@@ -265,7 +266,7 @@ void StaticMesh::initSubMeshes(const PackedMesh& mesh) {
     sub[i].iboLength = mesh.subMeshes[i].iboLength;
     sub[i].texel     = mesh.subMeshes[i].texel;
     sub[i].rtOffset  = sub[i].iboOffset;
-    sub[i].rtLength  = sub[i].iboLength;
+    sub[i].rtLength  = clusterLevels.empty() ? sub[i].iboLength : mesh.subMeshes[i].clusterL0Length;
     }
   bbox.assign(mesh.bbox());
   drawn = bbox;

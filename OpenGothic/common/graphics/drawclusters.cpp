@@ -19,23 +19,27 @@ DrawClusters::~DrawClusters() {
   }
 
 uint32_t DrawClusters::alloc(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId,
-                             uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels) {
+                             uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels, uint32_t instanceId) {
   if(commandId==uint16_t(-1))
     return uint32_t(-1);
 
   const auto ret = implAlloc(meshletCount);
   assert(levels.empty() || levels.size()==meshletCount);
+  assert(cx!=nullptr || instanceId!=uint32_t(-1));
   if(!levels.empty())
     allocLevels(ret, levels);
   for(size_t i=0; i<meshletCount; ++i) {
     Cluster c;
-    c.pos          = cx[i].pos;
-    c.r            = cx[i].r;
+    // Instanced clusters get their world bounds when the instance matrix is set.
+    if(cx!=nullptr) {
+      c.pos = cx[i].pos;
+      c.r   = cx[i].r;
+      }
     c.bucketId     = bucketId;
     c.commandId    = commandId;
     c.firstMeshlet = uint32_t(firstMeshlet + i);
     c.meshletCount = 1;
-    c.instanceId   = uint32_t(-1);
+    c.instanceId   = instanceId;
 
     clusters[ret+i] = c;
     }

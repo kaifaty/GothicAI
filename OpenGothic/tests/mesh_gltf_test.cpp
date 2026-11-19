@@ -6,6 +6,7 @@
 #include "graphics/visualfx.h"
 #include "gltfmesh.h"
 #include "gltfmeshcolor.h"
+#include "meshclusterlod.h"
 #include "graphics/shaders.h"
 #include "graphics/meshlevels.h"
 #include "graphics/mesh/protomesh.h"
@@ -1725,6 +1726,80 @@ void levelCases(const Fixture& fixture) {
   fixture.index();
   }
 
+void clusterHierarchyCases(const Fixture& fixture) {
+  const auto dir = fixture.root/"meshes/test";
+  const auto glb = dir/"cluster.glb";
+  const auto index = [&](std::string_view fields) {
+    fixture.index(R"({"own_mesh":{"glb":"test/cluster.glb")"+std::string(fields)+"}}");
+    };
+  asset::StaticMesh grid;
+  auto& surface = grid.sub_meshes.emplace_back();
+  surface.mat.name = surface.mat.texture = "OWN_TEST_BARREL_WOOD.TGA";
+  surface.mat.group = asset::MaterialGroup::WOOD;
+  constexpr uint16_t side = 21;
+  for(uint16_t y=0; y<side; ++y)
+    for(uint16_t x=0; x<side; ++x) {
+      const auto vertex = uint16_t(grid.positions.size());
+      grid.positions.push_back({float(x)*10.f,float(y)*10.f,30.f});
+      surface.wedges.push_back({{0,0,1},{float(x)/side,float(y)/side},vertex});
+      if(x>0 && y>0) {
+        const auto left = uint16_t(vertex-1), below = uint16_t(vertex-side), corner = uint16_t(below-1);
+        surface.triangles.push_back({{corner,left,vertex}});
+        surface.triangles.push_back({{corner,vertex,below}});
+        }
+      }
+  grid.bbox = {grid.positions.front(),grid.positions.back()};
+  writeBaseMesh(grid,"CLUSTER_MESH",glb);
+  std::vector<uint8_t> bytes;
+  const auto mesh = loadGltfMesh(glb,&bytes);
+  const auto crc32 = uint32_t(mz_crc32(0,bytes.data(),bytes.size()));
+  const std::array<uint8_t,1> locked = {0};
+  const auto graph = MeshClusterLod::build(mesh,{},locked);
+  require(std::ranges::any_of(graph.clusters,[](const auto& c) { return c.level==1; }),
+          "cluster fixture must provide a simplifiable surface");
+  MeshClusterLod::write(glb,bytes.size(),crc32,graph);
+  const auto restored = MeshClusterLod::read(glb,bytes.size(),crc32,mesh,locked);
+  require(restored.has_value(),"own mesh graph must read back with the GLB key");
+  MeshClusterLod::write(dir/"reserialized.glb",bytes.size(),crc32,*restored);
+  require(gothicglb::readFile(dir/"cluster.clod")==gothicglb::readFile(dir/"reserialized.clod"),
+          "graph round trip must preserve every packed field");
+
+  const auto load = [&](bool clustered, size_t levels, float impostor) {
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1,"cluster fixture must load through Resources");
+    const auto& render = proto->attach.front();
+    require(render.clusterLevels.empty()==!clustered && render.levels.size()==levels && render.impostor.px==impostor,
+            "only rigid static replacements without discrete levels may use a current graph");
+    if(clustered) {
+      require(render.clusterLevels.size()==render.meshletSpheres.size() &&
+              render.sub.front().rtLength<render.sub.front().iboLength && render.sub.front().rtLength>0,
+              "graphics must register every meshlet while rays reference only level zero");
+      }
+    require(render.shape!=nullptr && render.hullVertices.size()==grid.positions.size(),
+            "clustered visuals must retain the original collision mesh");
+    };
+  index("");
+  load(true,0,0);
+  constexpr std::string_view name = "CLUSTER_MESH";
+  const auto nameAt = std::search(bytes.begin(),bytes.end(),name.begin(),name.end());
+  require(nameAt!=bytes.end(),"GLB fixture must contain its node name");
+  *nameAt = 'D';
+  gothicglb::writeFile(glb,bytes.data(),bytes.size());
+  load(false,0,0);
+  *nameAt = 'C';
+  gothicglb::writeFile(glb,bytes.data(),bytes.size());
+
+  glbFile(dir/"cluster-level.glb");
+  const std::string levels = R"(,"levels":[{"glb":"test/cluster-level.glb","px":80})";
+  index(levels+"]");
+  load(false,1,0);
+  index(levels+","+impostorLevel()+"]");
+  load(false,1,49.f);
+  fixture.index();
+  }
+
 void fractureFile(const std::filesystem::path& path, size_t version = 1, size_t sourceSize = 0, uint32_t sourceCrc32 = 0,
                   size_t pieceCount = 8) {
   // Eight independent solid tetrahedra exercise the real cache parser and
@@ -3259,6 +3334,7 @@ int main() {
     rejectionCases(fixture);
     indexCases(fixture);
     levelCases(fixture);
+    clusterHierarchyCases(fixture);
     fractureCache(fixture);
     modelCases(fixture);
     setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);

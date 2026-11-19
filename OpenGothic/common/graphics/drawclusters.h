@@ -29,7 +29,7 @@ class DrawClusters {
     void     markClusters(size_t id, size_t count = 1);
 
     uint32_t alloc(const PackedMesh::Cluster* cluster, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId,
-                   uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels = {});
+                   uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels, uint32_t instanceId);
     uint32_t alloc(const Bucket&  bucket,  size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
     void     free(uint32_t id, uint32_t numCluster);
 

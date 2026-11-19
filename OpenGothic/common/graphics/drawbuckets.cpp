@@ -269,7 +269,8 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       bx.bbox[0]    = Vec4(drawn[0].x,drawn[0].y,drawn[0].z,0.f);
       bx.bbox[1]    = Vec4(drawn[1].x,drawn[1].y,drawn[1].z,0.f);
       // what the shadow pages draw (DrawCommands::drawVsm) takes its object's meshlets by their spheres
-      if(i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest)
+      // The hierarchy has already registered one world sphere per meshlet with DrawClusters.
+      if(i.staticMesh->clusterLevels.empty() && (i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest))
         bx.meshletSpheres = spheres.place(*i.staticMesh);
       if(i.staticMesh->morph.anim!=nullptr)
         bx.flags |= BK_MORPH;

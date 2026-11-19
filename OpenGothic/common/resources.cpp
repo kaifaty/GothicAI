@@ -32,6 +32,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <type_traits>
@@ -54,6 +55,7 @@
 #include "contentcensus.h"
 #include "gltfmesh.h"
 #include "gltfmeshcolor.h"
+#include "meshclusterlod.h"
 #include "basemesh.h"
 #include "modeldata.h"
 #include "fontdata.h"
@@ -849,6 +851,7 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
       return nullptr;
 
     PackedMesh packed(zmsh,PackedMesh::PK_Visual,replaced,colors.empty() ? nullptr : &colors);
+    std::optional<PackedMesh> visual;
     const MeshOverride* source = nullptr;
     std::string key;
     if(replaced) {
@@ -856,13 +859,55 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
       for(auto& c:key)
         c = char(std::toupper(uint8_t(c)));
       const auto it = meshOverrides.find(key);
-      if(it!=meshOverrides.end() && !it->second.levels.empty() && MeshLevels::enabled()) {
+      if(it!=meshOverrides.end())
         source = &it->second;
-        for(auto& level:implLoadMeshLevels(key,*source,zmsh,!colors.empty()))
-          packed.addLevel(level.mesh,level.px,level.colors.empty() ? nullptr : &level.colors);
+      if(source!=nullptr && source->hasLevels) {
+        if(!source->levels.empty() && MeshLevels::enabled())
+          for(auto& level:implLoadMeshLevels(key,*source,zmsh,!colors.empty()))
+            packed.addLevel(level.mesh,level.px,level.colors.empty() ? nullptr : &level.colors);
+        }
+      else if(source!=nullptr) {
+        const auto enabled = [](const char* env, const char* setting) {
+          const char* value = std::getenv(env);
+          const std::string_view flag = value!=nullptr ? value : "";
+          const bool ini = !Settings::exists() || !Settings::has("INTERNAL",setting) ||
+                           Settings::getI("INTERNAL",setting)!=0;
+          return flag=="1" || flag=="levels" || (flag!="0" && ini);
+          };
+        if(enabled("OPENGOTHIC_CLUSTER_LOD","clusterLod") &&
+           enabled("OPENGOTHIC_CLUSTER_LOD_MESHES","clusterLodMeshes")) {
+          auto sidecar = source->file;
+          sidecar.replace_extension(".clod");
+          try {
+            if(std::filesystem::is_regular_file(sidecar)) {
+              std::vector<uint8_t> locked(zmsh.sub_meshes.size());
+              bool rigid = true;
+              for(size_t i=0; i<locked.size(); ++i) {
+                const auto& m = zmsh.sub_meshes[i].mat;
+                std::string material = m.texture;
+                for(auto& c:material)
+                  c = char(std::toupper(uint8_t(c)));
+                if(const auto found = materialMaps.find(material); found!=materialMaps.end()) {
+                  locked[i] = uint8_t(found->second.twoSided!=Material::TwoSided::Off);
+                  rigid &= !found->second.foliage.on && !found->second.strand;
+                  }
+                }
+              if(rigid)
+                if(auto graph = MeshClusterLod::read(source->file,source->sourceSize,source->sourceCrc32,zmsh,locked)) {
+                  if(std::ranges::any_of(graph->clusters, [](const auto& c) { return c.level!=0; })) {
+                    visual.emplace(zmsh,*graph);
+                    Log::i("[cluster-lod] mesh ",key,": ",uint64_t(graph->clusters.size())," clusters");
+                    }
+                  }
+                }
+            }
+          catch(const std::exception& error) {
+            Log::e("meshes: cluster hierarchy for \"",key,"\" is not used: ",error.what());
+            }
+          }
         }
       }
-    auto ret = std::make_unique<ProtoMesh>(std::move(packed),name);
+    auto ret = std::make_unique<ProtoMesh>(std::move(packed),name,true,visual ? &*visual : nullptr);
     auto& mesh = ret->attach[0];
     if(source!=nullptr && !mesh.levels.empty() && source->impostor.px>0.f && MeshLevels::impostorsEnabled())
       implLoadMeshImpostor(key,source->impostor,mesh);

@@ -15,6 +15,7 @@
 #include <stdexcept>
 
 #include "game/compatibility/phoenix.h"
+#include "graphics/mesh/clusterlod.h"
 #include "worldchunkbinary.h"
 #include "worldchunksruntime.h"
 
@@ -630,7 +631,7 @@ PackedMesh::PackedMesh(const WorldChunkMesh& source, std::span<const uint32_t> m
     for(const auto i:ids)
       if(hierarchy.clusters[i].level==0)
         append(i);
-    sub.landscapeL0Length = indices.size()-sub.iboOffset;
+    sub.clusterL0Length = indices.size()-sub.iboOffset;
     for(const auto i:ids)
       if(hierarchy.clusters[i].level!=0)
         append(i);
@@ -638,7 +639,7 @@ PackedMesh::PackedMesh(const WorldChunkMesh& source, std::span<const uint32_t> m
     if(sub.iboLength==0)
       continue;
     sub.material = source.mesh.materials[material];
-    sub.texel = TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),sub.iboOffset,sub.landscapeL0Length);
+    sub.texel = TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),sub.iboOffset,sub.clusterL0Length);
     subMeshes.push_back(std::move(sub));
     }
   computeBbox();
@@ -667,6 +668,75 @@ PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explici
       sub.alphaTest = sub.material.alpha_func!=asset::AlphaFunction::NONE;
       sub.alphaTestRequired = sub.alphaTest;
       }
+    }
+  }
+
+PackedMesh::PackedMesh(const asset::StaticMesh& mesh, const ClusterLod::Graph& graph) {
+  static_assert(MaxVert==ClusterLod::MaxVertices && MaxPrim==ClusterLod::MaxTriangles);
+  LoadProbe::Vobs::Scope probe("mesh_pack");
+  mBbox[0] = {mesh.bbox.min.x,mesh.bbox.min.y,mesh.bbox.min.z};
+  mBbox[1] = {mesh.bbox.max.x,mesh.bbox.max.y,mesh.bbox.max.z};
+
+  std::vector<asset::Vec3> positions;
+  std::vector<asset::MeshWedge> wedges;
+  std::vector<uint32_t> colors;
+  positions.reserve(graph.vertices.size());
+  wedges.reserve(graph.vertices.size());
+  colors.reserve(graph.vertices.size());
+  for(const auto& v:graph.vertices) {
+    positions.push_back({v.position[0],v.position[1],v.position[2]});
+    wedges.push_back({{v.normal[0],v.normal[1],v.normal[2]},{v.uv[0],v.uv[1]},0});
+    colors.push_back(v.color);
+    }
+
+  std::vector<std::vector<const ClusterLod::Cluster*>> byMaterial(mesh.sub_meshes.size());
+  for(const auto& c:graph.clusters)
+    byMaterial[c.material].push_back(&c);
+  const auto sphere = [](const ClusterLod::Sphere& s) {
+    return Vec4(s.center[0],s.center[1],s.center[2],s.radius);
+    };
+  const auto append = [&](const ClusterLod::Cluster& c) {
+    Meshlet meshlet;
+    meshlet.vertSz = uint8_t(c.vertexCount);
+    meshlet.indSz  = uint8_t(c.triangleCount*3);
+    for(uint8_t i=0; i<meshlet.vertSz; ++i) {
+      const auto vertex = graph.vertexIndices[c.vertexOffset+i];
+      meshlet.vert[i] = {vertex,vertex};
+      }
+    std::copy_n(graph.indices.data()+c.indexOffset,meshlet.indSz,meshlet.indexes);
+    meshlet.flush(vertices,verticesA,indices,indices8,nullptr,positions,wedges,nullptr,nullptr,&colors);
+    meshletBounds.push_back({{c.bounds.center[0],c.bounds.center[1],c.bounds.center[2]},c.bounds.radius});
+
+    ClusterLevel level;
+    level.level = c.level;
+    level.flags = 1;
+    if(c.level!=0) {
+      const auto& own = graph.groups[c.refinedGroup];
+      level.bounds = sphere(own.bounds);
+      level.errorCm = own.errorCm;
+      }
+    const auto& parent = graph.groups[c.parentGroup];
+    level.parentBounds = sphere(parent.bounds);
+    level.parentErrorCm = parent.errorCm;
+    clusterLevels.push_back(level);
+    };
+
+  subMeshes.resize(mesh.sub_meshes.size());
+  for(size_t i=0; i<subMeshes.size(); ++i) {
+    auto& sub = subMeshes[i];
+    sub.material = mesh.sub_meshes[i].mat;
+    sub.alphaTest = sub.material.alpha_func!=asset::AlphaFunction::NONE;
+    sub.alphaTestRequired = sub.alphaTest;
+    sub.iboOffset = indices.size();
+    for(const auto* c:byMaterial[i])
+      if(c->level==0)
+        append(*c);
+    sub.clusterL0Length = indices.size()-sub.iboOffset;
+    for(const auto* c:byMaterial[i])
+      if(c->level!=0)
+        append(*c);
+    sub.iboLength = indices.size()-sub.iboOffset;
+    sub.texel = TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),sub.iboOffset,sub.clusterL0Length);
     }
   }
 

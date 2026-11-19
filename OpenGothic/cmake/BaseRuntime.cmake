@@ -11,7 +11,7 @@ set_property(SOURCE "${BASE_ROOT}/common/worldchunksruntime.cpp"
 target_sources(gothic-base-runtime PRIVATE "${BASE_ROOT}/common/worldchunkmanifest.cpp"
   "${BASE_ROOT}/common/worldchunkbinary.cpp" "${BASE_ROOT}/common/worldchunkindex.cpp" "${BASE_ROOT}/common/worldchunkcook.cpp"
   "${BASE_ROOT}/common/worldchunkassemble.cpp" "${BASE_ROOT}/common/worldchunkcookedsource.cpp"
-  "${BASE_ROOT}/common/worldchunkcatalogue.cpp")
+  "${BASE_ROOT}/common/worldchunkcatalogue.cpp" "${BASE_ROOT}/common/meshclusterlod.cpp")
 include(${CMAKE_CURRENT_LIST_DIR}/WorldCloth.cmake)
 if(MSVC)
   # musicnative.c (runtime) and basemusic.c/musicnativeimport.c (import) read dmusic's private structs

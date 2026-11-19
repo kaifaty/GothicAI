@@ -127,11 +127,11 @@ void VisualObjects::Item::setVisible(bool visible) {
   if(obj.visible==visible || obj.isEmpty())
     return;
   obj.visible = visible;
-  const auto meshlets = obj.iboLen/PackedMesh::MaxInd;
-  const auto count = obj.type==DrawCommands::Landscape ? meshlets : 1u;
-  for(uint32_t i=0;i<count;++i)
-    owner->clustersMem[obj.clusterId+i].meshletCount = visible ? (obj.type==DrawCommands::Landscape ? 1u : owner->drawnMeshlets(obj).second) : 0u;
-  owner->clustersMem.markClusters(obj.clusterId,count);
+  const bool perMeshlet = obj.type==DrawCommands::Landscape || obj.clusterLod;
+  const uint32_t meshletCount = visible ? (perMeshlet ? 1u : owner->drawnMeshlets(obj).second) : 0u;
+  for(uint32_t i=0;i<obj.clusterCount;++i)
+    owner->clustersMem[obj.clusterId+i].meshletCount = meshletCount;
+  owner->clustersMem.markClusters(obj.clusterId,obj.clusterCount);
   owner->updateRtAs(id);
   }
 
@@ -288,7 +288,11 @@ const StaticMesh* VisualObjects::Item::mesh() const {
 std::pair<uint32_t, uint32_t> VisualObjects::Item::meshSlice() const {
   if(owner==nullptr)
     return std::pair<uint32_t, uint32_t>(0,0);
-  auto& obj = owner->objects[id];
+  const auto& obj = owner->objects[id];
+  if(obj.clusterLod) {
+    const auto [offset,length] = obj.bucketId->staticMesh->rtSlice(obj.iboOff,obj.iboLen);
+    return {uint32_t(offset),uint32_t(length)};
+    }
   return std::make_pair(obj.iboOff, obj.iboLen);
   }
 
@@ -311,8 +315,9 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   if(obj.type==DrawCommands::Landscape)
     return;
 
+  const auto& transform = pos==nullptr ? obj.pos : *pos;
   InstanceDesc d;
-  d.setPosition(pos==nullptr ? obj.pos : *pos);
+  d.setPosition(transform);
   d.animPtr = obj.animPtr;
   // strands have no fatness: the slot holds how much wider a strand is drawn (vertex_process.glsl, BK_STRAND)
   d.fatness = obj.strandMeshlets>0 ? obj.strandWider : obj.fatness*0.5f;
@@ -321,6 +326,35 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   d.deformPtr = obj.objDeform.offsetId<uint32_t>() - obj.deformFirst*8u;
   d.deformCount = obj.deformCount==0 ? 0 : obj.deformFirst+obj.deformCount;
   obj.objInstance.set(&d, 0, sizeof(d));
+
+  if(obj.clusterLod) {
+    // The same conservative scale as clusterLodScale in cluster_lod.glsl.
+    const Vec3 x(transform[0][0],transform[0][1],transform[0][2]);
+    const Vec3 y(transform[1][0],transform[1][1],transform[1][2]);
+    const Vec3 z(transform[2][0],transform[2][1],transform[2][2]);
+    const float xy = std::abs(Vec3::dotProduct(x,y));
+    const float yz = std::abs(Vec3::dotProduct(y,z));
+    const float zx = std::abs(Vec3::dotProduct(z,x));
+    const float scale = std::sqrt(std::max({Vec3::dotProduct(x,x)+xy+zx,
+                                           Vec3::dotProduct(y,y)+yz+xy,
+                                           Vec3::dotProduct(z,z)+zx+yz}));
+    const auto& spheres = obj.bucketId->staticMesh->meshletSpheres;
+    const auto first = obj.iboOff/PackedMesh::MaxInd;
+    for(uint32_t i=0; i<obj.clusterCount; ++i) {
+      const auto& sphere = spheres[first+i];
+      Vec4 point(sphere.x,sphere.y,sphere.z,1.f);
+      transform.project(point);
+      const Vec3 center(point.x,point.y,point.z);
+      const float radius = (sphere.w+std::abs(d.fatness))*scale;
+      auto& cluster = clustersMem[obj.clusterId+i];
+      if(cluster.pos!=center || cluster.r!=radius) {
+        cluster.pos = center;
+        cluster.r   = radius;
+        clustersMem.markClusters(obj.clusterId+i);
+        }
+      }
+    return;
+    }
 
   auto cId  = obj.clusterId;
   auto npos = Vec3(obj.pos[3][0], obj.pos[3][1], obj.pos[3][2]);
@@ -398,12 +432,27 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   obj.iboLen    = uint32_t(iboLen);
   obj.bucketId  = bucketsMem.alloc(mat, mesh);
   obj.cmdId     = drawCmd.commandId(mat, obj.type, obj.bucketId.toInt());
-  obj.clusterId = clusterId(*obj.bucketId, iboOff/PackedMesh::MaxInd, iboLen/PackedMesh::MaxInd, obj.bucketId.toInt(), obj.cmdId);
   obj.alpha     = mat.alpha;
   obj.timeShift = -scene.tickCount;
 
   if(obj.isEmpty())
     return Item(); // null command
+
+  obj.objInstance = instanceMem.alloc(sizeof(InstanceDesc));
+  const auto instanceId = obj.objInstance.offsetId<InstanceDesc>();
+  const auto firstMeshlet = iboOff/PackedMesh::MaxInd;
+  const auto meshletCount = iboLen/PackedMesh::MaxInd;
+  if(meshletCount>0 && !mesh.clusterLevels.empty()) {
+    assert(firstMeshlet+meshletCount<=mesh.clusterLevels.size());
+    assert(mesh.clusterLevels.size()==mesh.meshletSpheres.size());
+    obj.clusterLod = true;
+    obj.clusterCount = uint32_t(meshletCount);
+    const auto levels = std::span(mesh.clusterLevels).subspan(firstMeshlet,meshletCount);
+    obj.clusterId = clusterId(nullptr, firstMeshlet, meshletCount, obj.bucketId.toInt(), obj.cmdId, levels, instanceId);
+    } else {
+    obj.clusterId = clusterId(*obj.bucketId, firstMeshlet, meshletCount, obj.bucketId.toInt(), obj.cmdId);
+    clustersMem[obj.clusterId].instanceId = instanceId;
+    }
 
   obj.textureCategory=staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic;
   // The submesh's density, measured when the mesh was loaded; a slice that matches none keeps the whole chain.
@@ -416,8 +465,6 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
       break;
       }
   { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
-  obj.objInstance = instanceMem.alloc(sizeof(InstanceDesc));
-  clustersMem[obj.clusterId].instanceId = obj.objInstance.offsetId<InstanceDesc>();
   if(mat.strand) {
     obj.strandMeshlets = uint32_t(iboLen/PackedMesh::MaxInd);
     obj.strandWider    = 1;
@@ -519,7 +566,8 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   obj.iboLen    = uint32_t(iboLen);
   obj.bucketId  = bucketsMem.alloc(mat, mesh);
   obj.cmdId     = drawCmd.commandId(mat, type, obj.bucketId.toInt());
-  obj.clusterId = clusterId(cluster, mesh.firstMeshlet()+iboOff/PackedMesh::MaxInd, iboLen/PackedMesh::MaxInd,
+  obj.clusterCount = uint32_t(iboLen/PackedMesh::MaxInd);
+  obj.clusterId = clusterId(cluster, mesh.firstMeshlet()+iboOff/PackedMesh::MaxInd, obj.clusterCount,
                            obj.bucketId.toInt(), obj.cmdId, levels);
   obj.alpha     = mat.alpha;
   obj.timeShift = -scene.tickCount;
@@ -569,12 +617,11 @@ void VisualObjects::free(size_t id) {
   timing.finish();
 
   const uint32_t meshletCount = (obj.iboLen/PackedMesh::MaxInd);
-  const uint32_t numCluster = (obj.type==DrawCommands::Landscape ? meshletCount : 1);
 
   drawCmd.addClusters(obj.cmdId, -meshletCount);
   if(obj.impostorShadowCmd!=uint16_t(-1))
     setImpostorShadow(obj, false);
-  clustersMem.free(obj.clusterId, numCluster);
+  clustersMem.free(obj.clusterId, obj.clusterCount);
   if(Shaders::options().doRtScene) {
     // the slot goes at the next frame; a reused id is marked again by its new object
     std::lock_guard<std::mutex> guard(rtSync);
@@ -625,11 +672,11 @@ void VisualObjects::setInstanceHistory(bool enabled) {
   }
 
 uint32_t VisualObjects::clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId,
-                                  uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels) {
+                                  uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels, uint32_t instanceId) {
   if(commandId==uint16_t(-1))
     return uint32_t(-1);
 
-  const auto ret = clustersMem.alloc(cx, firstMeshlet, meshletCount, bucketId, commandId, levels);
+  const auto ret = clustersMem.alloc(cx, firstMeshlet, meshletCount, bucketId, commandId, levels, instanceId);
   drawCmd.addClusters(commandId, uint32_t(meshletCount));
   return uint32_t(ret);
   }
@@ -831,12 +878,11 @@ void VisualObjects::setAsGhost(size_t id, bool g) {
   if(!g && obj.type==DrawCommands::Static && obj.levelSub!=NoLevels && obj.bucketId->staticMesh->impostor.px>0.f)
     setImpostorShadow(obj, true);
 
-  const uint32_t numCluster = (obj.type==DrawCommands::Landscape ? meshletCount : 1);
-  for(size_t i=0; i<numCluster; ++i) {
+  for(size_t i=0; i<obj.clusterCount; ++i) {
     clustersMem[obj.clusterId + i].commandId = obj.cmdId;
     clustersMem[obj.clusterId + i].bucketId  = obj.bucketId.toInt();
-    clustersMem.markClusters(obj.clusterId + i);
     }
+  clustersMem.markClusters(obj.clusterId,obj.clusterCount);
   updateRtAs(id); // a ghost leaves the ray scene
   }
 

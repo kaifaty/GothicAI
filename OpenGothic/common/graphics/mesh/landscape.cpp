@@ -49,7 +49,7 @@ void Landscape::init(const PackedMesh& packed, bool wholeWorld, const Vec3* text
     if(!b.mesh.isEmpty())
       levelRecords += levels.size();
 
-    const auto rtLength = hierarchy ? sub.landscapeL0Length : sub.iboLength;
+    const auto rtLength = hierarchy ? sub.clusterL0Length : sub.iboLength;
     if(inRays && !b.mesh.isEmpty() && rtLength>0) {
       if(RtScene::isMergedLandscape(material,RtScene::Landscape)) {
         const size_t k = material.alpha==Material::Solid ? 0 : 1;
