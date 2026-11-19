@@ -1196,7 +1196,7 @@ void activityDefinitions(const fs::path& dir) {
         anvil.approach==ActivityDefinitions::Approach::NearestWaypoint && anvil.scheme=="BSANVIL" &&
         anvil.busyBodyState==32784 && anvil.useState==1 && anvil.leaveState==-1 && anvil.loopResult==0,
         "the anvil record holds the parameters its script passes");
-  check(library.activities.at("ZS_SMITH_FIRE").scheme=="BSFIRE","the same template captures another object");
+  check(library.activities.at("ZS_ROAST_SCAVENGER").scheme=="BARBQ","the same template captures another object");
   check(library.uncaptured.at("ZS_TEST").starts_with("missing_phase: ZS_TEST_LOOP"),"a state without Loop keeps its reason");
   check(library.uncaptured.at("ZS_SMITH_SWAPPED").starts_with("template_mismatch: ZS_SMITH_SWAPPED with ") &&
         library.uncaptured.at("ZS_SMITH_SWAPPED").find("call 2 VM AI_SETWALKMODE(self,1), template NPC_GETLOOKATTARGET")!=std::string::npos,
