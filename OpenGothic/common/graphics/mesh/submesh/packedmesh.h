@@ -14,6 +14,7 @@
 
 class Bounds;
 struct WorldChunkMesh;
+namespace ClusterLod { struct Graph; }
 
 class PackedMesh {
   public:
@@ -41,7 +42,7 @@ class PackedMesh {
       bool             alphaTest = true;
       bool             alphaTestRequired = false;
       TexelDensity     texel;  // its triangles' lowest UV density and bounds, for the texture's mip level
-      size_t           landscapeL0Length = 0; // prefix of a cluster hierarchy's index slice used by rays
+      size_t           clusterL0Length = 0; // prefix of a cluster hierarchy's index slice used by rays
       };
 
     struct Cluster final {
@@ -84,6 +85,7 @@ class PackedMesh {
     // is not of the sub-mesh's size, the vertices are drawn with ones
     PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest = false,
                const std::vector<std::vector<uint32_t>>* colors = nullptr);
+    PackedMesh(const asset::StaticMesh& mesh, const ClusterLod::Graph& graph);
     PackedMesh(const asset::WorldMesh& mesh, PkgType type);
     // Triangle IDs address the unchanged source polygon arrays. Materials and
     // vertex/feature IDs remain global to mesh, including unused materials.

@@ -165,6 +165,8 @@ def cmd_cover(a: argparse.Namespace) -> int:
 # grassPaintFarBand of shader/grass/grass_common.glsl (`grass parts 512`, with the blades hidden 640): the hue of
 # each band's paint, its half width and the least saturation, degrees. By the hue, not by the channels: the paint in
 # shade takes some sky in its other channels, and sunlit straw passes a test of channels for the yellow
+# The yellow of 100+ m is not counted reliably: in the haze it fades to the hue and saturation of sunlit straw, and
+# a limit that keeps straw out (0.88) loses most of it
 FAR_BANDS = {"0-10 m": (300, 22, 0.7), "10-24 m": (0, 14, 0.75), "24-48 m": (241, 10, 0.75), "48-64 m": (120, 20, 0.75),
              "64-100 m": (180, 14, 0.75), "100+ m": (60, 8, 0.88)}
 

@@ -1,0 +1,68 @@
+# Big fields from above (reports/engine/2026-11-18-grass-volume, «Большие поля»): the far look of the grass where
+# 48-150 m of a field fills the frame, a free camera 14 m over the ground at a field's edge looking 90 m across it.
+# Frames and counts, no time: run once per ring on Ryzen at 2560x1440 with OPENGOTHIC_GRASS_WASTE=1 and the set,
+# with and without OPENGOTHIC_GRASS_RING=<from>,<to>. Each view: `grass stats`, a shot as it is, the ground painted
+# by the bands between the blades (`grass parts 512`) and without them (640).
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+# view 1: Sekob's field from 14 m over its edge
+goto NW_FARM3_PATH_04
+cam at 44181 4060 -17628 47984 2814 -25785
+clear 3000
+wait 15000
+grass wait
+wait 2000
+grass stats
+shot view-1
+wait 300
+grass parts 512
+wait 1000
+shot view-1-bands
+wait 300
+grass parts 640
+wait 1000
+shot view-1-bands-all
+wait 300
+grass parts 0
+# view 2: Onar's fields from the slope above them
+goto NW_BIGFARM_FARM4_PATH_07
+cam at 64807 5560 -10675 55841 1768 -11459
+wait 15000
+grass wait
+wait 2000
+grass stats
+shot view-2
+wait 300
+grass parts 512
+wait 1000
+shot view-2-bands
+wait 300
+grass parts 640
+wait 1000
+shot view-2-bands-all
+wait 300
+grass parts 0
+# view 3: Lobart's pasture from 14 m over the path
+goto NW_FARM1_PATH_CITY_SHEEP_02
+cam at 9584 2880 -20701 11914 1358 -12007
+wait 15000
+grass wait
+wait 2000
+grass stats
+shot view-3
+wait 300
+grass parts 512
+wait 1000
+shot view-3-bands
+wait 300
+grass parts 640
+wait 1000
+shot view-3-bands-all
+wait 300
+grass parts 0

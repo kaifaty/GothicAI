@@ -1,0 +1,74 @@
+# The same harbour-market square for the dense set (1 px, default take)
+# and the working content (8 px, OPENGOTHIC_BENCH_TAKE=off).
+world-check NEWWORLD.ZEN
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+cam lift off
+# The square has authored market-stall roofs, crates and barrels.
+goto pos 10186 -1674 4998
+cam at 10800 850 5310 9900 375 4670
+streaming wait
+wait 500
+cluster-lod base
+on: rec fly-base
+on: cam fly 12680 2100 6220 9900 375 5200 6000
+on: wait 6000
+on: stop
+
+cam at 10800 850 5310 9900 375 4670
+streaming wait
+wait 500
+cluster-lod mask meshes
+rec mask-base
+cam fly 12680 2100 6220 9900 375 5200 6000
+wait 6000
+stop
+cluster-lod mask off
+
+cluster-lod normal
+on: cam at 10800 850 5310 9900 375 4670
+on: streaming wait
+on: wait 500
+on: rec fly-cut
+on: cam fly 12680 2100 6220 9900 375 5200 6000
+on: wait 6000
+on: stop
+
+cam at 10800 850 5310 9900 375 4670
+streaming wait
+wait 500
+cluster-lod mask meshes
+rec mask-cut
+cam fly 12680 2100 6220 9900 375 5200 6000
+wait 6000
+stop
+cluster-lod mask off
+
+on: cluster-lod levels
+on: cam at 10800 850 5310 9900 375 4670
+on: streaming wait
+on: wait 500
+on: rec fly-levels
+on: cam fly 12680 2100 6220 9900 375 5200 6000
+on: wait 6000
+on: stop
+
+# Count submitted triangles at the same pose in the ordinary frame.
+cam at 12680 2100 6220 9900 375 5200
+streaming wait
+cluster-lod base
+cadence normal
+wait 1000
+perf sample perf-cluster-lod-meshes/far-base
+wait 2000
+perf stop
+cluster-lod normal
+wait 1000
+perf sample perf-cluster-lod-meshes/far-cut
+wait 2000
+perf stop
+cadence wait

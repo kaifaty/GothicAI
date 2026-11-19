@@ -752,8 +752,9 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     monsterCharacterRenderProof(ctx,w,*watched,"followed");
     }
   else if(c=="cluster-lod") {
-    if(a.size()==3 && a[1]=="mask" && (a[2]=="on" || a[2]=="off")) {
-      Renderer::benchClusterLodMask = a[2]=="on";
+    if(a.size()==3 && a[1]=="mask" && (a[2]=="on" || a[2]=="off" || a[2]=="meshes")) {
+      Renderer::benchClusterLodMask = a[2]!="off";
+      ClusterLodRender::setBenchOwnMeshMask(a[2]=="meshes");
       } else if(a.size()==3 && a[1]=="source" && (a[2]=="on" || a[2]=="off")) {
       // Streaming picks its geometry at world load. The environment override
       // keeps precedence, as it does for ordinary launches.
@@ -761,7 +762,7 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
       } else if(a.size()==2 && (a[1]=="base" || a[1]=="normal" || a[1]=="levels")) {
       ClusterLodRender::setBenchView(a[1]);
       } else {
-      arenaAbort("cluster-lod expects base, normal, levels, mask on/off or source on/off");
+      arenaAbort("cluster-lod expects base, normal, levels, mask on/off/meshes or source on/off");
       }
     }
   else if(c=="cam") {
@@ -1130,7 +1131,8 @@ void capture(const CameraContext& ctx,Pixmap& frame, float uiScale) {
       }
     event("cluster_lod_mask", "\"camera_cm\":"+ragdollVector(ctx.camera.camPos)+
           ",\"view_projection\":"+ragdollMatrix(Gothic::inst().camera()->viewProj())+
-          ",\"residency\":"+jsonStr(residency)+",\"pending\":"+std::to_string(pending));
+          ",\"residency\":"+jsonStr(residency)+",\"pending\":"+std::to_string(pending)+
+          ",\"geometry\":"+jsonStr(ClusterLodRender::benchOwnMeshMask() ? "meshes" : "terrain"));
     ++ctx.camera.recFrame;
     return;
     }

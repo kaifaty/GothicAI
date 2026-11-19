@@ -23,6 +23,7 @@ namespace {
 
 enum class LodView { Default, Base, Normal, Levels };
 LodView benchLodView = LodView::Default;
+bool ownMeshMask = false;
 
 struct LodPush {
   float    thresholdPx = 0;
@@ -74,6 +75,14 @@ void ClusterLodRender::setBenchView(std::string_view mode) {
     benchLodView = LodView::Levels;
   else
     benchLodView = LodView::Default;
+  }
+
+void ClusterLodRender::setBenchOwnMeshMask(bool enabled) {
+  ownMeshMask = enabled;
+  }
+
+bool ClusterLodRender::benchOwnMeshMask() {
+  return ownMeshMask;
   }
 
 // OPENGOTHIC_VSM_PAIRS=<n>: another cap of the VSM meshlet-page pairs, for a study (the demand of a scene without the
@@ -404,12 +413,14 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
     struct Push {
       uint32_t firstMeshlet, meshletCount;
       float znear;
+      uint32_t ownMeshMask;
       alignas(16) LodPush lod;
       } push = {};
     static_assert(offsetof(Push,lod)==16 && sizeof(Push)==64);
     push.firstMeshlet = 0;
     push.meshletCount = uint32_t(clusters.size());
     push.znear        = scene.znear;
+    push.ownMeshMask  = uint32_t(scene.isLandscapeMask() && ownMeshMask);
     push.lod          = clusterLodView(clusters, scene);
 
     // bench `deterministic on`: one invocation appends the visible clusters in their canonical order (orderedClusters),
@@ -644,6 +655,7 @@ void DrawCommands::drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
 
   auto  viewId = SceneGlobals::V_HiZ;
   auto& view   = views[viewId];
+  const auto hidden = scene.isLandscapeMask() && ownMeshMask ? ~(1u << Static) : hiddenTypes;
 
   for(size_t i=0; i<ord.size(); ++i) {
     auto& cx = *ord[i];
@@ -655,7 +667,7 @@ void DrawCommands::drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
       continue;
     if(cx.pHiZ==nullptr)
       continue;
-    if((hiddenTypes>>cx.type) & 1u)
+    if((hidden>>cx.type) & 1u)
       continue;
 
     auto id  = size_t(std::distance(this->cmd.data(), &cx));
@@ -682,6 +694,7 @@ void DrawCommands::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Sce
     });
 
   auto& view = views[viewId];
+  const auto hidden = scene.isLandscapeMask() && ownMeshMask ? ~((1u << Static) | (1u << Movable)) : hiddenTypes;
   for(auto i=b; i!=e; ++i) {
     auto& cx = **i;
     if(cx.alpha!=func)
@@ -689,7 +702,7 @@ void DrawCommands::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Sce
 
     if(cx.maxPayload==0)
       continue;
-    if((hiddenTypes>>cx.type) & 1u)
+    if((hidden>>cx.type) & 1u)
       continue;
 
     const RenderPipeline* pso = nullptr;

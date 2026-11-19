@@ -14,7 +14,7 @@ class DrawClusters {
 
     using Bucket = DrawBuckets::Bucket;
 
-    struct Cluster final {
+    struct alignas(16) Cluster final {
       Tempest::Vec3 pos;
       float         r            = 0;
       uint16_t      commandId    = 0;
@@ -22,14 +22,19 @@ class DrawClusters {
       uint32_t      firstMeshlet = 0;
       uint32_t      meshletCount = 0;
       uint32_t      instanceId   = 0;
+      uint32_t      shadowFirstMeshlet = 0;
+      uint32_t      shadowMeshletCount = 0; // zero keeps the visual range and command
+      uint32_t      shadowCommandId    = 0;
+      uint32_t      padding            = 0;
       };
+    static_assert(sizeof(Cluster)==48);
 
     Cluster& operator[](size_t i) { return clusters[i]; }
     size_t   size() const { return clusters.size(); }
     void     markClusters(size_t id, size_t count = 1);
 
     uint32_t alloc(const PackedMesh::Cluster* cluster, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId,
-                   uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels = {});
+                   uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels, uint32_t instanceId);
     uint32_t alloc(const Bucket&  bucket,  size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
     void     free(uint32_t id, uint32_t numCluster);
 

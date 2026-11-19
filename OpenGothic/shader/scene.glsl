@@ -128,7 +128,20 @@ struct Cluster {
   uint  firstMeshlet;
   int   meshletCount;
   uint  instanceId;
+  uint  shadowFirstMeshlet;
+  int   shadowMeshletCount;
+  uint  shadowCommandId;
+  uint  padding;
   };
+
+Cluster shadowCluster(Cluster cluster) {
+  if(cluster.shadowMeshletCount>0) {
+    cluster.firstMeshlet = cluster.shadowFirstMeshlet;
+    cluster.meshletCount = cluster.shadowMeshletCount;
+    cluster.bucketId_commandId = (cluster.bucketId_commandId & 0xFFFF0000u) | cluster.shadowCommandId;
+    }
+  return cluster;
+  }
 
 const uint VF_HIZ = 0x1; // the occluder pass (V_HiZ): it draws into the main view's depth ahead of the G-buffer
 const uint VF_TAA = 0x2; // TAA resolves the frame (also with MetalFX temporal)
@@ -166,6 +179,7 @@ const uint BK_TWO_SIDED = 0x200000; // an object's mesh drawn from both sides: t
 const uint BK_TWO_SIDED_FLIP = 0x400000; // the side away from the winding is lit by the normal turned to the eye (main.frag)
 const uint BK_CROWN = 0x800000; // a tree's crown: the openness of the vertex darkens it into the depth (lighting/crown_light.glsl)
 const uint BK_CANOPY = 0x1000000; // a tree's alpha-tested leaves: no occluder under VF_HIZ_NO_CANOPY (graphics/hizoccluders.h)
+const uint BK_OWN_MESH = 0x2000000; // coverage capture uses the indexed static replacements
 
 // Strands in a shadow view: the first part of the list casts the shadow for all of it (the meshlets are dealt out
 // evenly, groommesh.cpp), each strand as wide as that part is small (strandShadowRibbon, vertex_process.glsl).

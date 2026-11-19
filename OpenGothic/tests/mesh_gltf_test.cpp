@@ -6,6 +6,7 @@
 #include "graphics/visualfx.h"
 #include "gltfmesh.h"
 #include "gltfmeshcolor.h"
+#include "meshclusterlod.h"
 #include "graphics/shaders.h"
 #include "graphics/meshlevels.h"
 #include "graphics/mesh/protomesh.h"
@@ -1445,13 +1446,23 @@ std::string impostorLevel(int px = 49) {
          std::to_string(px)+"}";
   }
 
-// The two switches are read once, so their settings and environment cases need fresh processes.
+// The switches are read once, so their settings and environment cases need fresh processes.
 int levelSwitchChild(std::string_view mode) {
   Fixture fixture;
   const auto root=fixture.root.string();
   const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str(),"-rt","0"};
   CommandLine commandLine(5,args);
   std::unique_ptr<Settings> settings;
+  if(mode.starts_with("shadow-")) {
+    textFile(fixture.root/"system.ini", "");
+    textFile(fixture.root/"user.ini", mode=="shadow-ini" ? "[INTERNAL]\nshadowLevels=0\n" : "");
+    settings = std::make_unique<Settings>();
+    settings->load((fixture.root/"system.ini").u16string(), (fixture.root/"user.ini").u16string());
+    const bool enabled = MeshLevels::shadowLevelsEnabled();
+    require(enabled==(mode=="shadow-default") && MeshLevels::pickShadow(4, 0, false, 700.f, 0, enabled)==(enabled ? 3 : 0),
+            "the shadow switch must affect only the shadow level: "+std::string(mode));
+    return 0;
+    }
   const bool impostorOnly = mode.starts_with("impostor-");
   if(mode.ends_with("-ini") || mode=="ini") {
     textFile(fixture.root/"system.ini","");
@@ -1491,6 +1502,7 @@ void levelSwitchCase(std::string_view mode) {
   for(char** e=environ; *e!=nullptr; ++e) {
     const std::string_view v(*e);
     if(!v.starts_with("OPENGOTHIC_MESH_LEVELS=") && !v.starts_with("OPENGOTHIC_IMPOSTORS=") &&
+       !v.starts_with("OPENGOTHIC_SHADOW_LEVELS=") &&
        !v.starts_with("GOTHIC_MESH_LEVELS_CHILD="))
       env.emplace_back(v);
     }
@@ -1499,6 +1511,8 @@ void levelSwitchCase(std::string_view mode) {
     env.push_back("OPENGOTHIC_MESH_LEVELS=0");
   if(mode=="impostor-env")
     env.push_back("OPENGOTHIC_IMPOSTORS=0");
+  if(mode=="shadow-env")
+    env.push_back("OPENGOTHIC_SHADOW_LEVELS=0");
   std::vector<char*> envp;
   for(auto& v:env)
     envp.push_back(v.data());
@@ -1526,6 +1540,22 @@ void levelCases(const Fixture& fixture) {
   levelSwitchCase("ini");
   levelSwitchCase("impostor-env");
   levelSwitchCase("impostor-ini");
+  levelSwitchCase("shadow-default");
+  levelSwitchCase("shadow-env");
+  levelSwitchCase("shadow-ini");
+
+  const auto spruceShadow = [](uint8_t previous, float height) {
+    return MeshLevels::pickShadow(4, previous, previous!=0, height, 0, true);
+    };
+  const auto separate = spruceShadow(0, 799.9f);
+  require(spruceShadow(0, 800.f)==0 && separate==3 && spruceShadow(separate, 800.f)==3 &&
+          spruceShadow(separate, 879.9f)==3 && spruceShadow(separate, 880.f)==0 && spruceShadow(0, 879.9f)==0,
+          "the near shadow must leave the visual GLB below 800 pixels and return at 880 pixels");
+  require(MeshLevels::pickShadow(4, 1, false, 850.f, 0, true)==0 && MeshLevels::pickShadow(4, 0, false, 800.f, 1, true)==1 &&
+          MeshLevels::pickShadow(4, 0, false, 390.f, 0, true)==4 &&
+          MeshLevels::pickShadow(4, 4, true, 420.f, 1, true)==4 && MeshLevels::pickShadow(4, 4, true, 450.f, 1, true)==3 &&
+          MeshLevels::pickShadow(2, 0, false, 390.f, 0, true)==2 && MeshLevels::pickShadow(4, 3, true, 850.f, 0, false)==0,
+          "shadow LOD must match the near visual GLB and use its own thresholds and hysteresis farther away");
 
   // Spruce A, 18 m, at 1920x1080 and 67.5 degrees: 400, 200, 100 and 50 px at 36, 73, 145 and 291 m
   const float px[] = {400,200,100,50};
@@ -1722,6 +1752,101 @@ void levelCases(const Fixture& fixture) {
   alone("a level that does not load");
   std::filesystem::remove(root/"lod1.glb");
   std::filesystem::remove(root/"lod2.glb");
+  fixture.index();
+  }
+
+void clusterHierarchyCases(const Fixture& fixture) {
+  const auto dir = fixture.root/"meshes/test";
+  const auto glb = dir/"cluster.glb";
+  const auto index = [&](std::string_view fields) {
+    fixture.index(R"({"own_mesh":{"glb":"test/cluster.glb")"+std::string(fields)+"}}");
+    };
+  asset::StaticMesh grid;
+  auto& surface = grid.sub_meshes.emplace_back();
+  surface.mat.name = surface.mat.texture = "OWN_TEST_BARREL_WOOD.TGA";
+  surface.mat.group = asset::MaterialGroup::WOOD;
+  constexpr uint16_t side = 21;
+  for(uint16_t y=0; y<side; ++y)
+    for(uint16_t x=0; x<side; ++x) {
+      const auto vertex = uint16_t(grid.positions.size());
+      grid.positions.push_back({float(x)*10.f,float(y)*10.f,30.f});
+      surface.wedges.push_back({{0,0,1},{float(x)/side,float(y)/side},vertex});
+      if(x>0 && y>0) {
+        const auto left = uint16_t(vertex-1), below = uint16_t(vertex-side), corner = uint16_t(below-1);
+        surface.triangles.push_back({{corner,left,vertex}});
+        surface.triangles.push_back({{corner,vertex,below}});
+        }
+      }
+  grid.bbox = {grid.positions.front(),grid.positions.back()};
+  writeBaseMesh(grid,"CLUSTER_MESH",glb);
+  std::vector<uint8_t> bytes;
+  const auto mesh = loadGltfMesh(glb,&bytes);
+  const auto sourceCrc32 = uint32_t(mz_crc32(0,bytes.data(),bytes.size()));
+  const std::array<uint8_t,1> locked = {0};
+  const auto graph = MeshClusterLod::build(mesh,{},locked);
+  require(std::ranges::any_of(graph.clusters,[](const auto& c) { return c.level==1; }),
+          "cluster fixture must provide a simplifiable surface");
+  MeshClusterLod::write(glb,bytes.size(),sourceCrc32,graph);
+  const auto restored = MeshClusterLod::read(glb,bytes.size(),sourceCrc32,mesh,locked);
+  require(restored.has_value(),"own mesh graph must read back with the GLB key");
+  MeshClusterLod::write(dir/"reserialized.glb",bytes.size(),sourceCrc32,*restored);
+  require(gothicglb::readFile(dir/"cluster.clod")==gothicglb::readFile(dir/"reserialized.clod"),
+          "graph round trip must preserve every packed field");
+  const auto graphBytes = gothicglb::readFile(dir/"cluster.clod");
+  const auto staleGlb = dir/"stale.glb";
+  for(const size_t offset:{4u,8u,12u}) { // Format, GLB loader and cluster builder versions.
+    auto stale = graphBytes;
+    stale.at(offset) ^= 1u;
+    gothicglb::writeFile(dir/"stale.clod",stale.data(),stale.size());
+    require(!MeshClusterLod::read(staleGlb,bytes.size(),sourceCrc32,mesh,locked),
+            "a different format, loader or builder version must invalidate the graph");
+    }
+
+  const auto load = [&](bool clustered, size_t levels, float impostor) {
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1,"cluster fixture must load through Resources");
+    const auto& render = proto->attach.front();
+    require(render.clusterLevels.empty()==!clustered && render.levels.size()==levels && render.impostor.px==impostor,
+            "only rigid static replacements without discrete levels may use a current graph");
+    if(clustered) {
+      require(render.clusterLevels.size()==render.meshletSpheres.size() &&
+              render.sub.front().rtLength<render.sub.front().iboLength && render.sub.front().rtLength>0,
+              "graphics must register every meshlet while rays reference only level zero");
+      }
+    require(render.shape!=nullptr && !render.hullVertices.empty(),"clustered visuals must retain collision geometry");
+    return render.hullVertices;
+    };
+  index("");
+  const auto clusteredHull = load(true,0,0);
+  constexpr std::string_view name = "CLUSTER_MESH";
+  const auto nameAt = std::search(bytes.begin(),bytes.end(),name.begin(),name.end());
+  require(nameAt!=bytes.end(),"GLB fixture must contain its node name");
+  *nameAt = 'D';
+  gothicglb::writeFile(glb,bytes.data(),bytes.size());
+  {
+    size_t rejected = 0;
+    Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+      if(mode==Tempest::Log::Error && std::string_view(text).find("cluster hierarchy for \"OWN_MESH\"")!=std::string_view::npos)
+        ++rejected;
+      });
+    struct LogReset { ~LogReset() { Tempest::Log::setOutputCallback({}); } } reset;
+    require(load(false,0,0)==clusteredHull,"the clustered and ordinary visuals must use identical hull geometry");
+    require(rejected==1,"a stale graph must log one rejection naming its visual");
+  }
+  *nameAt = 'C';
+  gothicglb::writeFile(glb,bytes.data(),bytes.size());
+
+  glbFile(dir/"cluster-level.glb");
+  const std::string levels = R"(,"levels":[{"glb":"test/cluster-level.glb","px":80})";
+  index(levels+"]");
+  load(false,1,0);
+  const auto atlas = dir/"atlas.dds";
+  alphaDdsFile(atlas,false,true,MeshLevels::ImpostorAtlasSize,MeshLevels::ImpostorMipCount);
+  index(levels+","+impostorLevel()+"]");
+  load(false,1,49.f);
+  std::filesystem::remove(atlas);
   fixture.index();
   }
 
@@ -3259,6 +3384,7 @@ int main() {
     rejectionCases(fixture);
     indexCases(fixture);
     levelCases(fixture);
+    clusterHierarchyCases(fixture);
     fractureCache(fixture);
     modelCases(fixture);
     setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);

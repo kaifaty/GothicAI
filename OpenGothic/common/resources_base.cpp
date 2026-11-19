@@ -630,6 +630,7 @@ void Resources::indexMeshOverrides() {
       wayHeightFileStamp(meshFile)
       };
     if(entry.value.HasMember("levels")) {
+      mesh.hasLevels = true;
       std::string error;
       const auto& levels = entry.value["levels"];
       mesh.levels = meshLevelFiles(levels,root,error);

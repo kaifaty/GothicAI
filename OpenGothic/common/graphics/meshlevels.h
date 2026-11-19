@@ -17,8 +17,8 @@
 //   "levels": [{"glb": "<path>", "px": 400}, {"glb": "<path>", "px": 200},
 //              {"glb": "<path>", "px": 100}, {"glb": "<path>", "px": 50}]
 // px falling. The levels are packed after the mesh into its own buffers (PackedMesh::addLevel): a level is a slice of
-// meshlets of each submesh, so an object draws one by its cluster's range, and every pass that reads the cluster —
-// the main view, the occluders, the shadows — draws that level. The level is picked on the processor once a frame by
+// meshlets of each submesh. The main view and occluders use the cluster's visual range. Trees can choose a separate
+// shadow range. The levels are picked on the processor once a frame by
 // the main view (VisualObjects::preFrameUpdateLevels), with no blend: the switch is hard. An optional impostor
 // follows the last GLB. Only the main view draws its card. The ray scene takes the coarsest GLB at any distance;
 // collision, hit zones and fracture take the mesh itself.
@@ -72,6 +72,19 @@ inline bool impostorsEnabled() {
   return on;
   }
 
+inline bool shadowLevelsEnabled() {
+  static const bool on = [] {
+    const char* env = std::getenv("OPENGOTHIC_SHADOW_LEVELS");
+    const bool  set = env!=nullptr && *env!='\0';
+    const bool  ini = !::Settings::exists() || ::Settings::getI("INTERNAL","shadowLevels")!=0;
+    const bool  v   = parse(set ? std::string_view(env) : std::string_view(), ini);
+    Tempest::Log::i("render: tree shadow levels = ", v ? "1" : "0",
+                    set ? " by OPENGOTHIC_SHADOW_LEVELS" : " by [INTERNAL] shadowLevels");
+    return v;
+    }();
+  return on;
+  }
+
 // The pixels of the main view an object `height` high is `distance` from the camera, in the same units; projY: the
 // projection's [1][1], screenH: the view's height in pixels. As the size of a motion in the fade of a tree's wind
 // (FoliageTree::fadeScale)
@@ -88,6 +101,17 @@ inline uint8_t pick(const float* px, size_t count, uint8_t current, float height
   while(level>0 && height>=px[level-1]*Hysteresis)
     --level;
   return uint8_t(level);
+  }
+
+// Leave the visual GLB below 800 pixels at 1080p and return to it at 880. Farther out, sun and lamps share
+// the coarser scale based on the main view's field of view. Neither shadow path takes the impostor card.
+inline uint8_t pickShadow(size_t count, uint8_t current, bool wasSeparate, float heightAt1080, uint8_t visualGlb, bool enabled) {
+  constexpr float closeUpPx = 800.f;
+  constexpr float px[MaxLevels] = {2400.f, 1400.f, closeUpPx, 400.f};
+  const float visualThreshold = wasSeparate ? closeUpPx*Hysteresis : closeUpPx;
+  if(!enabled || heightAt1080>=visualThreshold)
+    return visualGlb;
+  return pick(px, std::min(count, MaxLevels), current, heightAt1080);
   }
 
 }
