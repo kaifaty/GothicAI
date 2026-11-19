@@ -78,6 +78,9 @@ class Measurement final : public NpcActivityProbe {
       stats->end();
       phases.pop_back();
       }
+    void phaseRecord() override {
+      stats->record();
+      }
     void random(const Npc* npc, uint32_t bound, uint32_t result, bool script) override {
       const auto source=stats->source(script,npc!=nullptr);
       stats->random(script,npc!=nullptr);

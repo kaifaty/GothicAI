@@ -998,6 +998,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     friend struct NpcLogicalState;
     friend struct MeshGltfTest;
     friend class NpcLogicalStateContract;
+    friend struct NpcDefinitionContract;
     void      traceCombatGate(std::string_view reason);
     void      traceCombatAttempt(Anim requested, bool accepted, const std::string& before, std::string_view hook);
     std::string combatPoseIdentity() const;

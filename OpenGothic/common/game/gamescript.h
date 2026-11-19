@@ -25,6 +25,8 @@
 #include "game/routinedefinitionruntime.h"
 #include "game/npcdefinitionruntime.h"
 #include "game/placementdefinitionruntime.h"
+#include "game/activitydefinitionruntime.h"
+#include "world/npcactivityprobe.h"
 #include "asset/worldtypes.h"
 
 class GameSession;
@@ -215,6 +217,7 @@ class GameScript final : public GameRules {
 
   private:
     friend struct NpcDefinitionContract;
+    bool invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe);
     void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
     bool startHotkeyPotion(Npc& pl, bool mana);
@@ -290,7 +293,8 @@ class GameScript final : public GameRules {
     bool searchScheme(std::string_view sc, std::string_view listName);
     static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                        RoutineDefinitionRuntime::Definitions& routines,
-                                       NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements);
+                                       NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,
+                                       ActivityDefinitionRuntime::Definitions& activities);
     int initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* function);
     bool game_initgerman     ();
     bool game_initenglish    ();
@@ -522,6 +526,7 @@ class GameScript final : public GameRules {
     RoutineDefinitionRuntime::Definitions                       routineDefinitions;
     NpcDefinitionRuntime::Definitions                           npcDefinitions;
     PlacementDefinitionRuntime::Definitions                     placementDefinitions;
+    ActivityDefinitionRuntime::Definitions                      activityDefinitions;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};

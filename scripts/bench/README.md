@@ -1917,6 +1917,8 @@ States that start and end within one world tick are not seen by the event poll.
 The original journal fields and event thresholds are unchanged. `trace=` implies `probe`.
 The instruction metric includes helpers and reentrant script work during the engine phase; it is
 not wall time. `engine` counts entries through `invokeState`, while `nested` excludes that entry.
+`records` counts the entries that ran from an activity record (D4.1) instead of the script; such a phase has no
+script entry, so its deferred perception helper counts as nested.
 Family counts classify called symbols; per-state nested costs additionally attribute helpers to
 the executing phase. Summing families equals `calls`; summing `random_sources` equals `random`.
 Human routine membership and row counts come from the selected base's `routines.json`.

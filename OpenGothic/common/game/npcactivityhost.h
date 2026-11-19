@@ -1,0 +1,47 @@
+#pragma once
+
+#include "asset/activitydefinitions.h"
+
+#include <functional>
+#include <string>
+#include <string_view>
+
+class Npc;
+class World;
+
+// Engine calls of a routine activity, shared by the script externals of the same name and by
+// the record path (D4.1), so both paths give the engine the same calls.
+namespace NpcEngineCalls {
+void        setWalkMode(Npc& npc, int32_t modeBits);                                   // AI_SetWalkMode
+std::string nearestWaypoint(World& world, const Npc& npc);                             // Npc_GetNearestWP
+int32_t     distanceToWaypoint(World& world, const Npc& npc, std::string_view name);   // Npc_GetDistToWP
+void        gotoWaypoint(World& world, Npc& npc, std::string_view name);               // AI_GotoWP
+}
+
+// The engine of a routine activity executed from its record: SELF is the NPC. The perception
+// helper stays a script function; the Gothic layer runs it through `helper`.
+class NpcActivityHost final : public ActivityDefinitions::Host {
+  public:
+    using Helper = std::function<void(std::string_view)>;
+    NpcActivityHost(World& world, Npc& npc, Helper helper);
+
+    void        deferred(std::string_view helper) override;
+    const void* lookAtTarget() override;
+    bool        isValidNpc(const void* npc) override;
+    void        stopLookAt() override;
+    void        removeWeapon() override;
+    void        setWalkMode(int32_t mode) override;
+    std::string waypoint() override;
+    std::string nearestWaypoint() override;
+    bool        stringsEqual(std::string_view a, std::string_view b) override;
+    int32_t     distanceToWaypoint(std::string_view waypoint) override;
+    void        gotoWaypoint(std::string_view waypoint) override;
+    bool        isMobAvailable(std::string_view scheme) override;
+    int32_t     bodyState() override;
+    void        useMob(std::string_view scheme, int32_t state) override;
+
+  private:
+    World& world;
+    Npc&   npc;
+    Helper helper;
+  };
