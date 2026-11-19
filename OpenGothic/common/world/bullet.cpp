@@ -34,7 +34,9 @@ Bullet::Bullet(World& owner, const Item& itm, const Vec3& pos)
       }
     } else {
     material = uint8_t(itm.handle().material);
-    setView(owner.addView(itm.handle()));
+    // the item's view with its effect, as the arrow in the hand: shot, Gothic's SetLevel(2)
+    setView(ItemView(owner,itm.handle()));
+    view.setLevel(2);
     }
 
   setPosition(pos);
@@ -64,7 +66,7 @@ void Bullet::setTargetRange(float t) {
   obj->setTargetRange(t);
   }
 
-void Bullet::setView(MeshObjects::Mesh &&m) {
+void Bullet::setView(ItemView&& m) {
   view = std::move(m);
   updateMatrix();
   }
@@ -162,7 +164,18 @@ void Bullet::onSpellWorldHit(const DynamicWorld::BulletWorldHit& hit) {
   onCollide(hit.material);
   }
 
+ItemView&& Bullet::stuckView() {
+  view.fadeEffectIn(StuckEffectMs);
+  return std::move(view);
+  }
+
+void Bullet::hitLevel() {
+  if(view.level()<3)
+    view.setLevel(3);
+  }
+
 void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
+  hitLevel();
   Bench::ownMeshArrowHit(hit.movable!=nullptr ? hit.movable->zenId : uint32_t(-1),hit.point,hit.normal);
   impactAt = hit.point;
   impactOwner = hit.bone;
@@ -170,7 +183,7 @@ void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
   auto matrix = obj->matrix();
   if(auto* npc = wrld->npcForRagdoll(hit.ragdoll)) {
     npc->addCorpseArrowImpulse(*this);
-    if(npc->stickArrow(std::move(view),hit.bone,matrix,visualName)) {
+    if(npc->stickArrow(stuckView(),hit.bone,matrix,visualName)) {
       char buf[160];
       const auto who = Bench::who(npc);
       std::snprintf(buf,sizeof(buf),"arrow stuck corpse %.*s bone %zu",int(who.size()),who.data(),hit.bone);
@@ -184,7 +197,7 @@ void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
   const auto sightPoint = hit.point+sightNormal*3.f;
   const auto surface = hit.vob!=nullptr && hit.vob->isDoor() ? "door" :
                        (std::abs(hit.normal.y)<.7f ? "wall" : "ground");
-  if(wrld->stickArrow(std::move(view),matrix,visualName,hit.movable,origin(),&sightPoint,surface)) {
+  if(wrld->stickArrow(stuckView(),matrix,visualName,hit.movable,origin(),&sightPoint,surface)) {
     char buf[256];
     std::snprintf(buf,sizeof(buf),"arrow stuck world: at %.9g %.9g %.9g normal %.9g %.9g %.9g material %u",
                   double(hit.point.x),double(hit.point.y),double(hit.point.z),
@@ -207,6 +220,7 @@ void Bullet::onCollide(asset::MaterialGroup matId) {
                   int(by.size()),by.data());
     Bench::note(buf);
     }
+  hitLevel();
   if(matId != asset::MaterialGroup::NONE) {
     if(material < ItemMaterial::MAT_COUNT) {
       auto s = wrld->addLandHitEffect(ItemMaterial(material),matId,obj->matrix());
@@ -282,6 +296,7 @@ bool Bullet::onCollide(Npc& npc) {
     impactKnown  = false;
     return false;
     }
+  hitLevel();
   applySpellPhysics(&npc);
   vfx.setKey(*wrld,SpellFxKey::Collide);
   vfx.setLooped(false);
@@ -312,7 +327,7 @@ bool Bullet::onCollide(Npc& npc) {
     matrix.set(3,0,point.x);
     matrix.set(3,1,point.y);
     matrix.set(3,2,point.z);
-    if(npc.stickArrow(std::move(view),impactOwner,matrix,visualName)) {
+    if(npc.stickArrow(stuckView(),impactOwner,matrix,visualName)) {
       Npc::ArrowPinProbe pin;
       npc.stuckArrowProbe(npc.stuckArrowCount()-1,pin);
       char buf[160];

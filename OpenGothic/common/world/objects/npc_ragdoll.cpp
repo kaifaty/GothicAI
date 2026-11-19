@@ -495,7 +495,7 @@ void Npc::prepareLivingBody() {
     arrowImpacts.clear();
   }
 
-bool Npc::stickArrow(MeshObjects::Mesh&& arrow, size_t bone, const Matrix4x4& worldMatrix,
+bool Npc::stickArrow(ItemView&& arrow, size_t bone, const Matrix4x4& worldMatrix,
                      std::string_view visualName) {
   // A corpse hit is selected after the native step, before the usual pose export.
   // Bind against that same current pose so the first sync cannot move the pin twice.

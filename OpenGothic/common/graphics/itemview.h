@@ -26,6 +26,8 @@ class ItemView final {
     // the item's mesh and, with [GAME] itemEffects, its effect; shown=false: the item is known, nothing is made
     // until restore() (a view the world streams in and out)
     ItemView(World& world, const ItemRecord& item, bool shown = true);
+    // a mesh that never has an effect: a stuck arrow loaded from a save (saves keep no effects)
+    explicit ItemView(MeshObjects::Mesh&& mesh);
     ItemView(ItemView&& other) noexcept;
     ItemView& operator=(ItemView&& other) noexcept;
     ItemView(const ItemView&) = delete;
@@ -55,9 +57,19 @@ class ItemView final {
     const ProtoMesh*         protoMesh() const { return proto; }
     size_t                   nodesCount() const { return mesh.nodesCount(); }
 
+    // the effect at level n, Gothic's oCVisualFX::SetLevel: its KEY_INVEST_n (an arrow: 2 shot, 3 hit); kept for restore()
+    void                     setLevel(int32_t level);
+    int32_t                  level() const { return keyLevel; }
+    // the key the effect plays now, nullptr: its base or no effect
+    const VisualFx::Key*     effectKey() const { return hasEffect() ? effect.currentKey() : nullptr; }
+    // the effect goes ms of the world's time from now (World::tickCount), the mesh stays; tick() drops it then and
+    // restore() does not bring it back. A stuck arrow's: Gothic's arrow fades in 20 s
+    void                     fadeEffectIn(uint64_t ms);
+
     // the mesh and its effect move together
     void                     setObjMatrix(const Tempest::Matrix4x4& m);
     float                    setTextureOwner(const Tempest::Vec3& position, bool spatial);
+    // and drops the effect once its fade is due (fadeEffectIn)
     void                     tick(uint64_t dt);
 
     // the mesh and its effect go, the item stays known; restore() makes both again where the view was last put
@@ -76,6 +88,8 @@ class ItemView final {
     const ProtoMesh*         proto    = nullptr;
     int32_t                  material = 0;
     const VisualFx*          fx       = nullptr;
+    int32_t                  keyLevel = 0;
+    uint64_t                 fadeAt   = 0;
     Tempest::Matrix4x4       pos      = Tempest::Matrix4x4::mkIdentity();
     MeshObjects::Mesh        mesh;
     Effect                   effect;

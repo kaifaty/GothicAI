@@ -493,7 +493,7 @@ Npc* World::npcForRagdoll(const Ragdoll* body) {
   return nullptr;
   }
 
-bool World::stickArrow(MeshObjects::Mesh&& arrow, const Tempest::Matrix4x4& worldMatrix,
+bool World::stickArrow(ItemView&& arrow, const Tempest::Matrix4x4& worldMatrix,
                       std::string_view visual, std::shared_ptr<const DynamicWorld::MovableVobPose> movable,
                       const Npc* culprit, const Tempest::Vec3* sightPoint, std::string_view surface) {
   if(arrow.isEmpty() || !Settings::physicsFlags().arrowSticking || (movable!=nullptr && movable->broken))
@@ -532,7 +532,7 @@ bool World::stickArrow(MeshObjects::Mesh&& arrow, const Tempest::Matrix4x4& worl
 bool World::stuckArrowTransform(size_t index, Tempest::Matrix4x4& out) const {
   if(index>=stuckArrows.size() || stuckArrows[index].mesh.isEmpty())
     return false;
-  out = stuckArrows[index].mesh.node(0).position();
+  out = stuckArrows[index].mesh.view().node(0).position();
   return true;
   }
 
@@ -911,8 +911,10 @@ void World::loadBodyTraces(Serialize& fin) {
     Tempest::Log::i("body traces: ",legacy," bodies of an older save; age unknown, lifetime from now");
   }
 
-void World::updateStuckArrows() {
+void World::updateStuckArrows(uint64_t dt) {
   for(auto i=stuckArrows.begin();i!=stuckArrows.end();) {
+    // the arrow's effect fades, the arrow stays (graphics/itemview)
+    i->mesh.tick(dt);
     if(!i->attached) {
       ++i;
       continue;
@@ -993,7 +995,8 @@ void World::loadStuckArrows(Serialize& fin) {
          pin.traceId==0 || pin.traceId==UINT64_MAX || pin.culprit.size()>512 || pin.surface.size()>64 ||
          !std::isfinite(pin.sightPoint.x) || !std::isfinite(pin.sightPoint.y) || !std::isfinite(pin.sightPoint.z))
         continue;
-      pin.mesh = addView(pin.visual);
+      // a loaded arrow has no effect: the save keeps none
+      pin.mesh = ItemView(addView(pin.visual));
       if(pin.mesh.isEmpty())
         continue;
       pin.mesh.setObjMatrix(pin.local);
@@ -1233,7 +1236,7 @@ void World::tick(uint64_t dt) {
   if(const auto* pl=player())
     wdynamic->setFragmentObserver(pl->position());
   { FrameProfile::Scope timing(FrameProfile::Zone::Physics); wdynamic->tick(dt); }
-  updateStuckArrows();
+  updateStuckArrows(dt);
   { FrameProfile::Scope timing(FrameProfile::Zone::Sync); wobj.syncRagdolls(); }
   sweepBodies();
   FrameProfile::Scope timing(FrameProfile::Zone::WorldMisc);

@@ -66,6 +66,10 @@ ItemView::ItemView(World& owner, const ItemRecord& item, bool shown)
   startEffect();
   }
 
+ItemView::ItemView(MeshObjects::Mesh&& m)
+  :ItemView(m.protoMesh(),0,std::move(m)) {
+  }
+
 ItemView::ItemView(const ProtoMesh* p, int32_t mat, MeshObjects::Mesh&& m)
   :proto(p), material(mat), mesh(std::move(m)) {
   }
@@ -91,6 +95,8 @@ void ItemView::moveFrom(ItemView& other) {
   proto    = other.proto;
   material = other.material;
   fx       = other.fx;
+  keyLevel = other.keyLevel;
+  fadeAt   = other.fadeAt;
   pos      = other.pos;
   mesh     = std::move(other.mesh);
   if(!other.hasEffect()) {
@@ -148,7 +154,29 @@ float ItemView::setTextureOwner(const Tempest::Vec3& position, bool spatial) {
   return mesh.setTextureOwner(position,spatial);
   }
 
+void ItemView::setLevel(int32_t lvl) {
+  keyLevel = lvl;
+  if(!hasEffect())
+    return;
+  // a new key makes the effect's particles and light again: on the same mesh, where the view is
+  effect.setKey(*world,SpellFxKey::Invest,lvl);
+  effect.setMesh(&mesh);
+  effect.setObjMatrix(pos);
+  }
+
+void ItemView::fadeEffectIn(uint64_t ms) {
+  if(fx==nullptr || world==nullptr)
+    return;
+  fadeAt = world->tickCount()+ms;
+  }
+
 void ItemView::tick(uint64_t dt) {
+  if(fadeAt!=0 && world!=nullptr && world->tickCount()>=fadeAt) {
+    // gone for good: restore() makes the mesh alone
+    stopEffect();
+    fx     = nullptr;
+    fadeAt = 0;
+    }
   if(hasEffect())
     effect.tick(dt);
   }
@@ -175,6 +203,8 @@ void ItemView::startEffect() {
   effect.setPhysicsDisable();
   effect.setActive(true);
   effect.setLooped(true);
+  if(keyLevel>0)
+    effect.setKey(*world,SpellFxKey::Invest,keyLevel);
   effect.setMesh(&mesh);
   effect.setObjMatrix(pos);
   auto& l = live();

@@ -38,7 +38,7 @@ bool readArrowName(Serialize& fin, std::string& value) {
 
 }
 
-bool MdlVisual::stickArrow(MeshObjects::Mesh&& arrow, size_t bone, const Matrix4x4& worldMatrix,
+bool MdlVisual::stickArrow(ItemView&& arrow, size_t bone, const Matrix4x4& worldMatrix,
                            std::string_view visualName) {
   if(arrow.isEmpty() || skeleton==nullptr || bone>=skeleton->nodes.size() || bone>=skInst->boneCount() ||
      !validRenderFrame(worldMatrix))
@@ -123,7 +123,8 @@ bool MdlVisual::loadStuckArrows(Serialize& fin, World& world) {
         for(int r=0; r<3; ++r)
           if(std::abs(pin.local.at(c,r))>100000000.f)
             return false;
-      pin.view=world.addView(pin.visual);
+      // a loaded arrow has no effect: the save keeps none
+      pin.view=ItemView(world.addView(pin.visual));
       addTextureOwner(pin.view);
       if(pin.view.isEmpty())
         return false;
@@ -149,7 +150,7 @@ bool MdlVisual::stuckArrowProbe(size_t index, ArrowPinProbe& out) const {
     return false;
   out.bone=pin.bone;
   out.local=pin.local;
-  out.world=pin.view.node(0).position();
+  out.world=pin.view.view().node(0).position();
   return true;
   }
 

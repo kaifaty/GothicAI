@@ -35,6 +35,8 @@ class Effect final {
     Tempest::Vec3   position() const { return {pos.at(3,0),pos.at(3,1),pos.at(3,2)}; }
     bool            emitterPosition(Tempest::Vec3& out) const { return pfx.position(out); }
     bool            isEmitting() const { return pfx.isActive(); }
+    // the key it plays now (setKey), nullptr: its base
+    const VisualFx::Key* currentKey() const { return key; }
 
     void     tick(uint64_t dt);
 

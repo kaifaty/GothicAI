@@ -31,9 +31,12 @@ bool itemEffectsCommand(const std::vector<std::string>& a,World& w,Npc& pl) {
     say("item put: expected item put <instance> <dist> <angle> [height]");
     return true;
     }
-  // an instance of C_ITEM only: the VM throws on another class (an npc's name)
+  // an instance of C_ITEM only (as the VM enumerates them: a const instance, of C_ITEM or of a prototype of it): the
+  // VM throws on another class (an npc's name), the class C_ITEM itself, a prototype or a variable
   const size_t id = w.script().findSymbolIndex(a[2]);
   auto* symbol = w.script().findSymbol(id);
+  if(symbol!=nullptr && (symbol->type()!=daedalus::DaedalusDataType::INSTANCE || !symbol->is_const()))
+    symbol = nullptr;
   for(size_t i=0; i<16 && symbol!=nullptr && symbol->type()!=daedalus::DaedalusDataType::CLASS; ++i)
     symbol = w.script().findSymbol(size_t(symbol->parent()));
   if(id==size_t(-1) || symbol==nullptr || symbol->name()!="C_ITEM") {

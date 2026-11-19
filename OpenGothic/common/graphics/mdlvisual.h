@@ -150,7 +150,7 @@ class MdlVisual final {
       size_t             bone=size_t(-1);
       Tempest::Matrix4x4 local, world;
       };
-    bool                           stickArrow(MeshObjects::Mesh&& arrow, size_t bone,
+    bool                           stickArrow(ItemView&& arrow, size_t bone,
                                               const Tempest::Matrix4x4& worldMatrix, std::string_view visualName={});
     void                           saveStuckArrows(Serialize& fout) const;
     bool                           loadStuckArrows(Serialize& fin, World& world);
@@ -320,7 +320,7 @@ class MdlVisual final {
       };
 
     struct ArrowPin {
-      MeshObjects::Mesh  view;
+      ItemView           view; // with the arrow's effect while it fades (graphics/itemview)
       std::string        visual;
       size_t             bone=size_t(-1);
       Tempest::Matrix4x4 local;

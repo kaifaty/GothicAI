@@ -7,6 +7,7 @@
 #include "game/damagetypes.h"
 #include "graphics/meshobjects.h"
 #include "graphics/effect.h"
+#include "graphics/itemview.h"
 #include "graphics/mesh/hitzones.h"
 
 class World;
@@ -34,8 +35,10 @@ class Bullet final : public DynamicWorld::BulletCallback {
     auto     direction() const -> Tempest::Vec3;
     void     setTargetRange(float tgRange);
 
-    void     setView      (MeshObjects::Mesh&&   m);
+    void     setView      (ItemView&& m);
     void     setView      (Effect&& p);
+    // an arrow's or a bolt's mesh with its item's effect (graphics/itemview): level 2 shot, 3 since it first hit
+    const ItemView& itemView() const { return view; }
 
     bool     isSpell() const;
     int32_t  spellId() const;
@@ -97,14 +100,20 @@ class Bullet final : public DynamicWorld::BulletCallback {
     // not meet that npc again (compared, never dereferenced)
     const Npc*                passedDodger = nullptr;
 
-    MeshObjects::Mesh         view;
+    ItemView                  view;
     std::string               visualName;
     Effect                    vfx;
 
     uint8_t                   material=0;
     Flg                       flg=NoFlags;
 
+    // a stuck arrow keeps its effect that long, Gothic's arrow fading out (oCAIArrow timeLeft 1 -> 0)
+    static constexpr uint64_t StuckEffectMs = 20000;
+    // the view handed to the one it sticks in, its effect fading
+    ItemView&& stuckView();
     void updateMatrix();
+    // Gothic's oCAIArrow: the item's effect goes to level 3 at the first hit of the world or a body
+    void hitLevel();
     void applySpellPhysics(Npc* target);
   };
 
