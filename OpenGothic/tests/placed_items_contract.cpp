@@ -763,6 +763,30 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
   auto records=NpcDefinitionRuntime::resolve(library,vm);
   const auto helpers=NpcHelperDefinitions::read(base,program.sha256);
   require(helpers.helpers.size()==6,"all six helper forms must be captured in this program");
+  constexpr uint32_t contractSeed=0x12345679u;
+  if(library.npcs.contains("NPC_NO_ID")) {
+    const auto* previous=vm.find_symbol_by_name("DRAW_BEFORE_AMBIENT");
+    require(previous!=nullptr,"the random-order fixture must have its preceding helper");
+    const auto firstInstruction=vm.instruction_at(previous->address());
+    require(firstInstruction.op==daedalus::DaedalusOpcode::PUSHI && firstInstruction.immediate>0,
+            "the preceding helper must declare a positive random bound");
+    const auto bound=uint32_t(firstInstruction.immediate);
+    std::mt19937 stream(contractSeed);
+    if(isolated) {
+      std::seed_seq sequence{contractSeed,0x415u,0x5C21D7u};
+      stream.seed(sequence);
+      }
+    const auto first=uint32_t(stream()),second=uint32_t(stream());
+    const auto& ambient=std::get<NpcHelperDefinitions::AmbientInventory>(helpers.helpers.at("B_CREATEAMBIENTINV"));
+    const auto& table=ambient.guilds.at(2);
+    const auto normalRoll=second%uint32_t(ambient.randomBound),reorderedRoll=first%uint32_t(ambient.randomBound);
+    require(first%bound!=second%bound,
+            "the random-order fixture seed must produce different AIVAR[1] values when the helper moves");
+    require(table.rolls.at(normalRoll)!=table.rolls.at(reorderedRoll),
+            "the random-order fixture seed must select different ambient items when the helper moves");
+    std::printf("Random-order fixture (%s): AIVAR[1] %u/%u, ambient rolls %u/%u; both outcomes differ\n",
+                isolated ? "NPC" : "shared",first%bound,second%bound,normalRoll,reorderedRoll);
+    }
   const auto& gameRecords=NpcDefinitionContract::definitions(script).npcs;
   require(!gameRecords.empty(),"the game must load NPC definitions when records are enabled");
   require(gameRecords.size()==records.npcs.size(),"the game must load all captured NPC definitions");
@@ -813,7 +837,7 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
   auto create=[&](uint32_t symbol,NpcProcessPolicy policy) {
     auto* storage=static_cast<Npc*>(::operator new(sizeof(Npc)));
     if(isolated) {
-      std::seed_seq sequence{0x12345678u,0x415u,0x5C21D7u};
+      std::seed_seq sequence{contractSeed,0x415u,0x5C21D7u};
       NpcDefinitionContract::isolatedRandom(script)[storage].seed(sequence);
       }
     try { return std::unique_ptr<Npc>(::new (static_cast<void*>(storage)) Npc(world,symbol,world.startPoint().name,policy)); }
@@ -918,7 +942,7 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
         else NpcDefinitionContract::definitions(script).npcs.clear();
         recordsActive=helpersOnly;
         helperRecords(false);
-        script.setSeed(0x12345678);
+        script.setSeed(contractSeed);
         vm.global_item()->set_instance(oldItem);
         expected=create(symbol->index(),policy);
         referenceHelperCalls+=helperCalls;
@@ -960,7 +984,7 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
         recordsActive=true;
         helperRecords(true);
         restoreHelperLocals(localBaseline);
-        script.setSeed(0x12345678);
+        script.setSeed(contractSeed);
         vm.global_item()->set_instance(oldItem);
         routineInstructions=0; constructorInstructions=0; onEquipCalls=0; helperCalls=0; onEquipDepth=0;
         actual=create(symbol->index(),policy);

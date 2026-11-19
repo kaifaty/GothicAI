@@ -96,14 +96,15 @@ inline void write(const std::filesystem::path& path, const Json& value) {
   output.write(buffer.GetString(),std::streamsize(buffer.GetSize())); output.put('\n');
   require(bool(output),"cannot write "+path.string());
   }
-inline void difference(const Json& expected, const Json& actual, const std::string& path, int& errors) {
+inline void difference(const Json& expected, const Json& actual, const std::string& path, int& errors,
+                       bool checkMemberCount = false) {
   if(expected==actual) return;
   if(expected.IsObject() && actual.IsObject()) {
-    if(expected.MemberCount()!=actual.MemberCount()) { ++errors; std::cerr<<path<<": field count differs\n"; }
+    if(checkMemberCount && expected.MemberCount()!=actual.MemberCount()) { ++errors; std::cerr<<path<<": field count differs\n"; }
     for(auto it=expected.MemberBegin();it!=expected.MemberEnd();++it) {
       const auto found=actual.FindMember(it->name);
       if(found==actual.MemberEnd()) { ++errors; std::cerr<<path<<'.'<<it->name.GetString()<<": missing field\n"; }
-      else difference(it->value,found->value,path+"."+it->name.GetString(),errors);
+      else difference(it->value,found->value,path+"."+it->name.GetString(),errors,checkMemberCount);
       }
     for(auto it=actual.MemberBegin();it!=actual.MemberEnd();++it)
       if(!expected.HasMember(it->name)) { ++errors; std::cerr<<path<<'.'<<it->name.GetString()<<": unexpected field\n"; }
@@ -111,7 +112,7 @@ inline void difference(const Json& expected, const Json& actual, const std::stri
   else if(expected.IsArray() && actual.IsArray()) {
     if(expected.Size()!=actual.Size()) { ++errors; std::cerr<<path<<": count differs\n"; }
     for(rapidjson::SizeType i=0;i<std::min(expected.Size(),actual.Size());++i)
-      difference(expected[i],actual[i],path+"["+std::to_string(i)+"]",errors);
+      difference(expected[i],actual[i],path+"["+std::to_string(i)+"]",errors,checkMemberCount);
     }
   else { ++errors; std::cerr<<path<<": value differs from fresh VM\n"; }
   }

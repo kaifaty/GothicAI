@@ -515,7 +515,7 @@ int NpcSnapshot::verifyActivities(const Program& program,const fs::path& file,co
   int errors=0;
   for(auto it=expected.MemberBegin();it!=expected.MemberEnd();++it) {
     require(json.HasMember(it->name),file.string()+": missing "+it->name.GetString());
-    difference(it->value,json[it->name],file.string()+"."+it->name.GetString(),errors);
+    difference(it->value,json[it->name],file.string()+"."+it->name.GetString(),errors,true);
     }
   require(json.HasMember("records") && json["records"].IsArray(),file.string()+": expected records array");
   const auto& records=json["records"];
@@ -523,7 +523,7 @@ int NpcSnapshot::verifyActivities(const Program& program,const fs::path& file,co
   require(records.Size()==states.size(),file.string()+": activity record count differs");
   for(size_t i=0;i<states.size();++i)
     difference(recordJson(states[i],Recognizer(program,states[i]).capture(),allocator),records[rapidjson::SizeType(i)],
-               "activity."+states[i],errors);
+               "activity."+states[i],errors,true);
   return errors;
   }
 

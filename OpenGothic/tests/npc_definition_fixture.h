@@ -304,7 +304,7 @@ inline Helpers helpers(Fixture& f,uint32_t npcClass,uint32_t self,uint32_t rando
     }
   f.op(Op::RSR);
   h.precedingRandom=f.fn("DRAW_BEFORE_AMBIENT"); f.begin(h.precedingRandom);
-  f.op(Op::PUSHI,7u); f.op(Op::BE,random); member(self,"C_NPC.AIVAR",1); f.op(Op::MOVI); f.op(Op::RSR);
+  f.op(Op::PUSHI,1000u); f.op(Op::BE,random); member(self,"C_NPC.AIVAR",1); f.op(Op::MOVI); f.op(Op::RSR);
   return h;
   }
 
