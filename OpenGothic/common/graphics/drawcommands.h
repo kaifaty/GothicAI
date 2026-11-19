@@ -33,7 +33,7 @@ class DrawCommands {
     static uint32_t hiddenTypes; // debug (test bench): a bit per Type that is not drawn
     static bool     hidePfxObjects; // debug (test bench), `view hide pfx` only: the particles of PfxObjects too
 
-    enum class HistoryDraw : uint8_t { Off, Reference, Early, EarlyVerify, Filtered };
+    enum class HistoryDraw : uint8_t { Off, Unfiltered, Early, EarlyVerify, Filtered };
     static bool treeHistoryEnabled();
 
     struct DrawCmd {

@@ -795,7 +795,9 @@ void checkGpuHistoryDepth(Tempest::Device& device) {
   using namespace Tempest;
   constexpr uint32_t side = 64;
   constexpr uint32_t owner = 23;
-  const auto shader = [&](const char* name) {
+  constexpr uint32_t backdropOwner = 11;
+  constexpr uint32_t probeTag = 0x80000000u;
+  const auto shader = [&](const std::string& name) {
     const auto code = GothicShader::get(name);
     return device.shader(code.data,code.len);
     };
@@ -803,16 +805,13 @@ void checkGpuHistoryDepth(Tempest::Device& device) {
   RenderState state;
   state.setCullFaceMode(RenderState::CullMode::NoCull);
   state.setZTestMode(RenderState::ZTestMode::LEqual);
-  const auto geometry = shader("main_obj_g_orm_hist_slot.vert.sprv");
-  const auto depthOnly = device.pipeline(Topology::Triangles,state,geometry,shader("main_obj_g_at_orm_hist_depth_slot.frag.sprv"));
-  const auto depthProbe = device.pipeline(Topology::Triangles,state,geometry,shader("main_obj_g_at_orm_hist_depth_verify_slot.frag.sprv"));
-  const auto gbuffer = device.pipeline(Topology::Triangles,state,geometry,shader("main_obj_g_at_orm_hist_slot.frag.sprv"));
-  const auto baseline = device.pipeline(Topology::Triangles,state,shader("main_obj_g_orm_slot.vert.sprv"),
-                                         shader("main_obj_g_at_orm_slot.frag.sprv"));
+  const auto pipeline = [&](const std::string& v, const std::string& f) {
+    return device.pipeline(Topology::Triangles,state,shader(v+"_slot.vert.sprv"),shader(f+"_slot.frag.sprv"));
+    };
   const auto copyDepth = device.pipeline(shader("ssao_depth.comp.sprv"));
 
-  // A perspective crown card with wind and hashed alpha: test holes, interpolated
-  // depths and the exact packed payload the two tree history passes consume.
+  // This geometry has nonconstant projected depth. The object transform, tree
+  // wind, perspective and camera offset also exercise the actual shader path.
   constexpr Resources::Vertex vertices[] = {
     {{-0.85f,-0.85f,0.29f},{0.f,0.f,1.f},{0.f,0.f},0xffffffffu},
     {{ 0.85f,-0.85f,0.54f},{0.f,0.f,1.f},{1.f,0.f},0xffffffffu},
@@ -823,17 +822,10 @@ void checkGpuHistoryDepth(Tempest::Device& device) {
   indices[0] = 1u << 8u | 2u << 16u;
   indices[1] = 2u << 8u | 3u << 16u;
   indices[PackedMesh::MaxPrim - 1] = 2u << 16u | 4u << 24u;
-  const GpuVisibilityCut::Instance instance = {{{{1.f,0.03f,0.f},{0.f,1.f,0.f},{0.f,0.f,1.f},{0.02f,0.f,0.f}}}};
-  const uint32_t task[] = {0u,0u,0u,owner};
-  uint32_t bucket[36] = {};
-  bucket[12] = std::bit_cast<uint32_t>(1.f); // alphaWeight
-  bucket[14] = 0x200u | 0x8000u | 0x1000000u; // BK_HASHED_ALPHA | BK_FOLIAGE | BK_CANOPY
-  bucket[15] = std::bit_cast<uint32_t>(1.f); // uvScale
-  FoliageWind::Params foliage;
-  foliage.on = true;
-  foliage.anchor = FoliageWind::AnchorTree;
-  bucket[30] = FoliageWind::pack(foliage, FoliageWind::Both);
-  bucket[31] = std::bit_cast<uint32_t>(1.f); // foliageReach
+  const GpuVisibilityCut::Instance instance[] = {
+    {{{{1.f,0.03f,0.f},{0.f,1.f,0.f},{0.f,0.f,1.f},{0.02f,0.f,0.f}}}},
+    {{{{1.f,0.03f,0.f},{0.f,1.f,0.f},{0.f,0.f,1.f},{0.02f,0.f,0.2f}}}},
+    };
   SceneGlobals::UboGlobal globals{};
   globals.viewProject = Matrix4x4::mkIdentity();
   globals.viewProject[2][3] = 0.17f;
@@ -845,9 +837,11 @@ void checkGpuHistoryDepth(Tempest::Device& device) {
   globals.foliageSwing = Vec4(0.37f,0.04f,0.65f,0.f);
   globals.screenRes = {int(side),int(side)};
   const auto scene = device.ssbo(&globals,sizeof(globals));
-  const auto instances = device.ssbo(&instance,sizeof(instance));
-  const auto payload = device.ssbo(task,sizeof(task));
-  const auto buckets = device.ssbo(bucket,sizeof(bucket));
+  globals.viewFlags |= SceneGlobals::VF_HIZ | SceneGlobals::VF_HIZ_NO_CANOPY;
+  const auto occluderScene = device.ssbo(&globals,sizeof(globals));
+  globals.viewFlags = SceneGlobals::VF_TAA | SceneGlobals::VF_TREE_OCCLUSION_PROBE;
+  const auto probeScene = device.ssbo(&globals,sizeof(globals));
+  const auto instances = device.ssbo(instance,sizeof(instance));
   const auto ibo = device.ssbo(indices,sizeof(indices));
   const auto vbo = device.ssbo(vertices,sizeof(vertices));
 
@@ -864,81 +858,163 @@ void checkGpuHistoryDepth(Tempest::Device& device) {
   auto depth = device.zbuffer(TextureFormat::Depth32F,side,side);
   auto diffuse = device.attachment(TextureFormat::RGBA8,side,side);
   auto normal = device.attachment(TextureFormat::R32U,side,side);
+  auto referenceOwners = device.attachment(TextureFormat::R32U,side,side);
   auto orm = device.attachment(TextureFormat::RGBA8,side,side);
   auto motion = device.attachment(TextureFormat::RG16F,side,side);
-  auto earlyOwner = device.attachment(TextureFormat::R32U,side,side);
-  auto finalOwner = device.attachment(TextureFormat::R32U,side,side);
-  std::array<StorageImage,4> depths;
+  auto earlyOwners = device.attachment(TextureFormat::R32U,side,side);
+  auto finalOwners = device.attachment(TextureFormat::R32U,side,side);
+  std::array<StorageImage,5> depths;
   for(auto& copy : depths)
     copy = device.image2d(TextureFormat::R32F,side,side);
 
-  auto command = device.commandBuffer();
-  {
-    auto encoder = command.startEncoding(device);
-    const auto sampler = Sampler::nearest(ClampMode::ClampToEdge);
-    const uint32_t push[] = {0u,1u};
-    const auto draw = [&](const RenderPipeline& pipeline, StorageImage& copy) {
-      encoder.setBinding(0,scene);
-      encoder.setBinding(1,payload);
-      encoder.setBinding(2,instances);
-      encoder.setBinding(3,buckets);
-      encoder.setBinding(4,ibo);
-      encoder.setBinding(5,vbo);
-      encoder.setBinding(6,texture);
-      encoder.setBinding(7,sampler);
-      encoder.setBinding(15,texture);
-      encoder.setBinding(16,texture);
-      encoder.setBinding(21,instances);
-      encoder.setBinding(23,texture);
-      encoder.setBinding(24,texture);
-      encoder.setBinding(25,texture);
-      encoder.setPushData(push);
-      encoder.setPipeline(pipeline);
-      encoder.draw(nullptr,0,PackedMesh::MaxInd);
-      encoder.setFramebuffer({});
-      encoder.setBinding(0,depth,sampler);
-      encoder.setBinding(1,copy);
-      encoder.setPipeline(copyDepth);
-      encoder.dispatchThreads(side,side);
-      };
-
-    encoder.setFramebuffer({{diffuse,Vec4(),Preserve},{normal,Vec4(),Preserve},{orm,Vec4(),Preserve},
-                            {motion,Vec4(),Preserve}}, {depth,1.f,Preserve});
-    draw(baseline,depths[3]);
-    encoder.setFramebuffer({}, {depth,1.f,Preserve});
-    draw(depthOnly,depths[0]);
-    encoder.setFramebuffer({{earlyOwner,Vec4(),Preserve}}, {depth,1.f,Preserve});
-    draw(depthProbe,depths[1]);
-    encoder.setFramebuffer({{diffuse,Vec4(),Preserve},{normal,Vec4(),Preserve},{orm,Vec4(),Preserve},
-                            {motion,Vec4(),Preserve},{finalOwner,Vec4(),Preserve}},
-                           {depth,Preserve,Preserve});
-    draw(gbuffer,depths[2]);
-    }
-  device.submit(command).wait();
-
-  const auto equal = [](const Pixmap& a, const Pixmap& b) {
-    return a.dataSize() == b.dataSize() && std::memcmp(a.data(),b.data(),a.dataSize()) == 0;
+  const auto backdropLegacy = pipeline("main_obj_g_orm","main_obj_g_orm");
+  const auto backdropHistory = pipeline("main_obj_g_orm_hist","main_obj_g_orm_hist");
+  struct Fixture {
+    const char* label;
+    const char* geometry;
+    const char* material;
+    const char* occluder;
+    bool landscape;
+    bool canopy;
     };
-  const auto finalDepth = device.readPixels(depths[2]);
-  require(equal(finalDepth,device.readPixels(depths[0])) && equal(finalDepth,device.readPixels(depths[1])) &&
-          equal(finalDepth,device.readPixels(depths[3])),
-          "GPU history depth, GBuffer and 3a disagree on cutout coverage or depth values");
-  const auto owners = device.readPixels(finalOwner);
-  require(equal(owners,device.readPixels(earlyOwner)),
-          "GPU history depth and GBuffer disagree on cutout owners");
+  const Fixture fixtures[] = {
+    {"landscape", "main_lnd_orm", "main_lnd_g_s_orm", "main_lnd_d", true, false},
+    {"solid mesh", "main_obj_g_orm", "main_obj_g_orm", "main_obj_d", false, false},
+    {"alpha-tested crown", "main_obj_g_orm", "main_obj_g_at_orm", "main_obj_d", false, true},
+    };
 
-  size_t interiorWinners = 0;
-  for(uint32_t y = 16; y < 48; ++y) {
-    for(uint32_t x = 16; x < 48; ++x) {
-      uint32_t found = 0;
-      const auto* data = static_cast<const uint8_t*>(owners.data());
-      std::memcpy(&found,data + (y * side + x) * sizeof(found),sizeof(found));
-      require(found == 0u || found == owner,"GPU history writes the packed cluster owner");
-      interiorWinners += size_t(found == owner);
+  for(const auto& f : fixtures) {
+    const auto occluder = pipeline(f.occluder,f.occluder);
+    const auto baseline = pipeline(f.geometry,f.material);
+    const std::string geometry = std::string(f.geometry)+"_hist";
+    const auto depthOnly = pipeline(geometry,std::string(f.material)+"_hist_depth");
+    const auto depthProbe = pipeline(geometry,std::string(f.material)+"_hist_depth_verify");
+    const auto gbuffer = pipeline(geometry,std::string(f.material)+"_hist");
+    const uint32_t instanceId = f.landscape ? 0xffffffffu : 0u;
+    const uint32_t legacyTask[] = {instanceId,0u,0u,owner-1u, 1u,0u,1u,backdropOwner-1u};
+    const uint32_t historyTask[] = {instanceId,0u,0u,owner, 1u,0u,1u,backdropOwner};
+    const auto legacyPayload = device.ssbo(legacyTask,sizeof(legacyTask));
+    const auto historyPayload = device.ssbo(historyTask,sizeof(historyTask));
+
+    uint32_t bucket[2][36] = {};
+    for(auto& b : bucket) {
+      b[12] = std::bit_cast<uint32_t>(1.f); // alphaWeight
+      b[15] = std::bit_cast<uint32_t>(1.f); // uvScale
       }
+    if(f.canopy) {
+      bucket[0][14] = 0x200u | 0x8000u | 0x1000000u; // BK_HASHED_ALPHA | BK_FOLIAGE | BK_CANOPY
+      FoliageWind::Params foliage;
+      foliage.on = true;
+      foliage.anchor = FoliageWind::AnchorTree;
+      bucket[0][30] = FoliageWind::pack(foliage,FoliageWind::Both);
+      bucket[0][31] = std::bit_cast<uint32_t>(1.f); // foliageReach
+      }
+    const auto buckets = device.ssbo(bucket,sizeof(bucket));
+
+    auto command = device.commandBuffer();
+    {
+      auto encoder = command.startEncoding(device);
+      const auto sampler = Sampler::nearest(ClampMode::ClampToEdge);
+      const auto draw = [&](const RenderPipeline& pso, const StorageBuffer& ubo, const StorageBuffer& payload, uint32_t index = 0) {
+        const uint32_t push[] = {index,1u};
+        encoder.setBinding(0,ubo);
+        encoder.setBinding(1,payload);
+        encoder.setBinding(2,instances);
+        encoder.setBinding(3,buckets);
+        encoder.setBinding(4,ibo);
+        encoder.setBinding(5,vbo);
+        encoder.setBinding(6,texture);
+        encoder.setBinding(7,sampler);
+        encoder.setBinding(15,texture);
+        encoder.setBinding(16,texture);
+        encoder.setBinding(21,instances);
+        encoder.setBinding(23,texture);
+        encoder.setBinding(24,texture);
+        encoder.setBinding(25,texture);
+        encoder.setPushData(push);
+        encoder.setPipeline(pso);
+        encoder.draw(nullptr,0,PackedMesh::MaxInd);
+        };
+      const auto snapshot = [&](size_t index) {
+        encoder.setFramebuffer({});
+        encoder.setBinding(0,depth,sampler);
+        encoder.setBinding(1,depths[index]);
+        encoder.setPipeline(copyDepth);
+        encoder.dispatchThreads(side,side);
+        };
+      const auto prepass = [&] {
+        encoder.setFramebuffer({}, {depth,1.f,Preserve});
+        // Crowns are absent from the standard occluders. A solid mesh behind
+        // the crown gives this fixture real prepass depth under its alpha holes.
+        draw(occluder,occluderScene,legacyPayload,f.canopy ? 1u : 0u);
+        };
+
+      prepass();
+      snapshot(0);
+      encoder.setFramebuffer({{diffuse,Vec4(),Preserve},{referenceOwners,Vec4(),Preserve},{orm,Vec4(),Preserve},
+                              {motion,Vec4(),Preserve}}, {depth,Preserve,Preserve});
+      if(f.canopy)
+        draw(backdropLegacy,probeScene,legacyPayload,1u);
+      draw(baseline,probeScene,legacyPayload);
+      snapshot(1);
+
+      prepass();
+      encoder.setFramebuffer({{earlyOwners,Vec4(),Preserve}}, {depth,Preserve,Preserve});
+      draw(depthProbe,scene,historyPayload);
+      snapshot(2);
+
+      prepass();
+      encoder.setFramebuffer({}, {depth,Preserve,Preserve});
+      draw(depthOnly,scene,historyPayload);
+      snapshot(3);
+      encoder.setFramebuffer({{diffuse,Vec4(),Preserve},{normal,Vec4(),Preserve},{orm,Vec4(),Preserve},
+                              {motion,Vec4(),Preserve},{finalOwners,Vec4(),Preserve}}, {depth,Preserve,Preserve});
+      if(f.canopy)
+        draw(backdropHistory,scene,historyPayload,1u);
+      draw(gbuffer,scene,historyPayload);
+      snapshot(4);
+      }
+    device.submit(command).wait();
+
+    const auto referenceDepth = device.readPixels(depths[1]);
+    const auto baselineIds = device.readPixels(referenceOwners);
+    const auto earlyIds = device.readPixels(earlyOwners);
+    const auto finalIds = device.readPixels(finalOwners);
+    const auto prepassDepth = device.readPixels(depths[0]);
+    const auto depthWord = [](const Pixmap& image, uint32_t index) {
+      uint32_t value;
+      const auto* data = static_cast<const uint8_t*>(image.data());
+      std::memcpy(&value,data + index * sizeof(value),sizeof(value));
+      return value;
+      };
+    for(size_t pass : {2u,3u,4u}) {
+      const auto sample = device.readPixels(depths[pass]);
+      require(referenceDepth.dataSize()==sample.dataSize() &&
+              std::memcmp(referenceDepth.data(),sample.data(),sample.dataSize())==0,
+              std::string("GPU history ")+f.label+": 3a depth differs from pass "+std::to_string(pass));
+      }
+
+    uint32_t winners = 0, holes = 0;
+    for(uint32_t at = 0; at < side * side; ++at) {
+      const auto probe = depthWord(baselineIds,at);
+      const auto expected = probe == 0u ? 0u : (probe^probeTag)+1u;
+      const auto found = depthWord(finalIds,at);
+      const auto early = depthWord(earlyIds,at);
+      require(expected==found && early==(found==owner ? owner : 0u),
+              std::string("GPU history ")+f.label+": owner differs at pixel "+std::to_string(at));
+      const uint32_t x = at % side, y = at / side;
+      if(x>=16u && x<48u && y>=16u && y<48u) {
+        const auto z = std::bit_cast<float>(depthWord(prepassDepth,at));
+        require(z<1.f,std::string("GPU history ")+f.label+": missing occluder depth inside fixture");
+        winners += uint32_t(found==owner);
+        holes += uint32_t(found==backdropOwner);
+        }
+      }
+    require(f.canopy ? winners>0 && holes>0 && winners+holes==32u*32u : winners==32u*32u,
+            std::string("GPU history ")+f.label+": unexpected coverage inside fixture");
+    std::printf("GPU history depth (%s): bitwise depth and owner agreement, %u wins and %u backdrop pixels inside fixture\n",
+                f.label,winners,holes);
     }
-  require(interiorWinners > 0 && interiorWinners < 32u * 32u,"GPU history fixture has covered pixels and alpha holes");
-  std::printf("GPU history depth: bitwise coverage and owner agreement, %zu covered interior pixels\n",interiorWinners);
   }
 
 size_t checkVisibilityCuts(const CookedChunk& chunk, const fs::path& path, Tempest::Device* device=nullptr) {

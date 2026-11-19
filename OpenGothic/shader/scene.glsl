@@ -153,6 +153,7 @@ const uint VF_CROWN_MASK = 0x80; // a crown shows its openness as a colour inste
 const uint VF_TREE_OCCLUSION_PROBE = 0x200; // a bench-only G-buffer records the winning cluster per pixel
 const uint VF_HIZ_PRECISE = 0x400;
 const uint VF_HIZ_VERIFY = 0x800;
+const uint VF_HIZ_HISTORY_REFERENCE = 0x1000; // the 3a probe reads the unfiltered history payload
 const uint VF_HIZ_NO_CANOPY = 0x100; // the occluder pass leaves the crowns of trees out, BK_CANOPY (graphics/hizoccluders.h)
 const uint VF_HAIR_DEBUG = 0x4; // hair pixels show the strand's direction as a colour instead of light (OPENGOTHIC_HAIR_DEBUG=1)
 

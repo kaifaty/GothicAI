@@ -43,6 +43,7 @@ class SceneGlobals final {
       VF_TREE_OCCLUSION_PROBE = 0x200,
       VF_HIZ_PRECISE = 0x400,
       VF_HIZ_VERIFY  = 0x800,
+      VF_HIZ_HISTORY_REFERENCE = 0x1000,
       };
 
     static bool isShadowView(VisCamera v);
@@ -82,6 +83,7 @@ class SceneGlobals final {
     void setTime(uint64_t time);
     void commitUbo(uint8_t fId);
     void prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer> &cmd, uint8_t frameId);
+    Tempest::StorageBuffer treeHistoryReferenceUbo() const;
 
     void setResolution(uint32_t w, uint32_t h);
     void setHiZ(const Tempest::Texture2d& hiZ);
@@ -241,6 +243,7 @@ class SceneGlobals final {
     Tempest::Matrix4x4                jitter;
     bool                              jitterEnabled = false;
 
+    UboGlobal                         makeViewUbo(VisCamera v) const;
     Tempest::Matrix4x4                jittered(const Tempest::Matrix4x4& proj) const;
   };
 

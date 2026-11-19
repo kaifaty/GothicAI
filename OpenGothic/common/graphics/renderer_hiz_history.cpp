@@ -55,15 +55,23 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
   if(request) {
     auto& reference = usesZBuffer(treeHistory.referenceDepth, zBufferFormat, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
     auto& owners = usesAttachment(treeHistory.referenceOwners, TextureFormat::R32U, zbuffer.size());
-    // Both draws use the same original list and resources this frame. The reference's
-    // depth starts at the ordinary occluder pass, independent of all history writes.
+    auto& scene = view.sceneGlobals();
+    auto& globals = scene.uboGlobal[SceneGlobals::V_Main];
+    auto probe = scene.treeHistoryReferenceUbo();
+    // Replay the ordinary occluders and pMain on the unfiltered list. The 3a probe
+    // records owners in the normal target, so pMain keeps its usual attachments.
     std::swap(reference, zbuffer);
     drawHiZ(cmd, view);
-    drawGBuffer(cmd, fId, view, Draw::Reference, &owners);
+    std::swap(owners, gbufNormal);
+    std::swap(probe, globals);
+    drawGBuffer(cmd, fId, view);
+    std::swap(probe, globals);
+    std::swap(owners, gbufNormal);
     std::swap(reference, zbuffer);
+    Resources::recycle(std::move(probe));
     }
 
-  drawGBuffer(cmd, fId, view, reset ? Draw::Reference : Draw::Filtered, &treeHistory.winners);
+  drawGBuffer(cmd, fId, view, reset ? Draw::Unfiltered : Draw::Filtered, &treeHistory.winners);
   const auto& winners = textureCast<const Texture2d&>(treeHistory.winners);
   commands.finishHistory(cmd, winners, fId);
   treeHistory.valid = true;

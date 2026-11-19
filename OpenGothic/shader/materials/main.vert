@@ -37,9 +37,15 @@ layout(push_constant, std430) uniform Push {
 #endif
 #endif
 
+// These passes share the main depth buffer. Keep their position invariant
+// across specializations with and without material and motion varyings.
+#if defined(GBUFFER_MOTION) || defined(LANDSCAPE_GBUFFER) || defined(HIZ_OCCLUDER) || defined(HISTORY_PAYLOAD)
+#define INVARIANT_MAIN_POSITION
+#endif
+
 #if defined(GL_VERTEX_SHADER)
 out gl_PerVertex {
-#if defined(HISTORY_PAYLOAD)
+#if defined(INVARIANT_MAIN_POSITION)
   invariant vec4 gl_Position;
 #else
   vec4  gl_Position;
@@ -50,7 +56,7 @@ out gl_PerVertex {
   };
 #else
 out gl_MeshPerVertexEXT {
-#if defined(HISTORY_PAYLOAD)
+#if defined(INVARIANT_MAIN_POSITION)
   invariant vec4 gl_Position;
 #else
   vec4  gl_Position;

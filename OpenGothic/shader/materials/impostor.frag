@@ -186,7 +186,9 @@ void main() {
   outDiffuse = vec4(albedo, float(hints)/255.0);
   outNormal = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u ? instance.info.x+1u : encodeNormal(normal);
 #if defined(HISTORY_OWNER)
-  outHistoryOwner = 0u;
+  // Keep the instance ID for parity with the 3a probe, outside the sampled
+  // cluster ID range. Impostors never seed the history.
+  outHistoryOwner = 0x80000000u | (instance.info.x+1u);
 #endif
   // The camera's motion is reconstructed from G-buffer depth. Distant static objects have zero residual motion.
   outMotion = vec2(0);

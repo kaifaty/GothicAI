@@ -1082,7 +1082,8 @@ void main() {
   if(treeProbe) {
     const uvec4 task = payload[materialRef];
     bucketId = task.z;
-    probeCluster = task.w;
+    const bool historyReference = (scene.viewFlags & VF_HIZ_HISTORY_REFERENCE)!=0u;
+    probeCluster = historyReference ? ((task.w & 0x00FFFFFFu) - 1u) : task.w;
     clusterLevel = 0u;
     }
 #endif

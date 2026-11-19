@@ -147,17 +147,17 @@ add_shader(impostor_hist.frag     materials/impostor.frag -DHISTORY_OWNER)
 add_shader(impostor_orm_hist.frag materials/impostor.frag -DMATERIAL_MAPS -DHISTORY_OWNER)
 
 # mesh & vertex
-add_geom_shader(main_lnd       "-DMESH_TYPE=0" -DFLAT_NORMAL)
+add_geom_shader(main_lnd       "-DMESH_TYPE=0" -DFLAT_NORMAL -DLANDSCAPE_GBUFFER)
 add_geom_shader(main_lnd_f     "-DMESH_TYPE=0" -DFLAT_NORMAL -DFORWARD)
-add_geom_shader(main_lnd_d     "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY)
-add_geom_shader(main_lnd_d_at  "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DATEST)
+add_geom_shader(main_lnd_d     "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DHIZ_OCCLUDER)
+add_geom_shader(main_lnd_d_at  "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DHIZ_OCCLUDER -DATEST)
 add_geom_shader(main_lnd_v     "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DVIRTUAL_SHADOW)
 add_geom_shader(main_lnd_v_at  "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST)
 
 add_geom_shader(main_obj       "-DMESH_TYPE=1")
 add_geom_shader(main_obj_f     "-DMESH_TYPE=1" -DFORWARD)
-add_geom_shader(main_obj_d     "-DMESH_TYPE=1" -DDEPTH_ONLY)
-add_geom_shader(main_obj_d_at  "-DMESH_TYPE=1" -DDEPTH_ONLY -DATEST)
+add_geom_shader(main_obj_d     "-DMESH_TYPE=1" -DDEPTH_ONLY -DHIZ_OCCLUDER)
+add_geom_shader(main_obj_d_at  "-DMESH_TYPE=1" -DDEPTH_ONLY -DHIZ_OCCLUDER -DATEST)
 add_geom_shader(main_obj_v     "-DMESH_TYPE=1" -DDEPTH_ONLY -DVIRTUAL_SHADOW)
 add_geom_shader(main_obj_v_at  "-DMESH_TYPE=1" -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST)
 
@@ -183,12 +183,12 @@ add_geom_shader(main_mph_g     "-DMESH_TYPE=3" -DGBUFFER_MOTION)
 
 # The legacy variants remain in use when there is no material table. Position
 # varyings for the cotangent frame are needed only on the material-map path.
-add_geom_shader(main_lnd_orm      "-DMESH_TYPE=0" -DFLAT_NORMAL -DMATERIAL_MAPS)
+add_geom_shader(main_lnd_orm      "-DMESH_TYPE=0" -DFLAT_NORMAL -DMATERIAL_MAPS -DLANDSCAPE_GBUFFER)
 add_geom_shader(main_obj_g_orm    "-DMESH_TYPE=1" -DMATERIAL_MAPS -DGBUFFER_MOTION)
 add_geom_shader(main_ani_g_orm    "-DMESH_TYPE=2" -DMATERIAL_MAPS -DGBUFFER_MOTION)
 add_geom_shader(main_mph_g_orm    "-DMESH_TYPE=3" -DMATERIAL_MAPS -DGBUFFER_MOTION)
-add_geom_shader(main_lnd_d_at_orm "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
-add_geom_shader(main_obj_d_at_orm "-DMESH_TYPE=1" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
+add_geom_shader(main_lnd_d_at_orm "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DHIZ_OCCLUDER -DATEST -DMATERIAL_MAPS)
+add_geom_shader(main_obj_d_at_orm "-DMESH_TYPE=1" -DDEPTH_ONLY -DHIZ_OCCLUDER -DATEST -DMATERIAL_MAPS)
 add_geom_shader(main_ani_d_at_orm "-DMESH_TYPE=2" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 add_geom_shader(main_mph_d_at_orm "-DMESH_TYPE=3" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 

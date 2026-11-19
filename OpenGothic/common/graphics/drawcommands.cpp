@@ -767,7 +767,7 @@ void DrawCommands::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Sce
           case HistoryDraw::Off:         pso = cx.pMain; break;
           case HistoryDraw::Early:       pso = cx.pHistoryDepth; break;
           case HistoryDraw::EarlyVerify: pso = cx.pHistoryVerify; break;
-          case HistoryDraw::Reference:
+          case HistoryDraw::Unfiltered:
           case HistoryDraw::Filtered:    pso = cx.pHistoryGBuffer; break;
           }
         break;

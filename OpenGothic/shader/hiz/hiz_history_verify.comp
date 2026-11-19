@@ -35,7 +35,11 @@ void main() {
   uvec4 n = uvec4(0);
 
   if(all(lessThan(pos, size))) {
-    const uint refId = texelFetch(referenceOwners, pos, 0).r;
+    const uint probeOwner = texelFetch(referenceOwners, pos, 0).r;
+    // The 3a probe tags zero-based cluster IDs and leaves impostor IDs untagged.
+    // History uses one-based cluster IDs and tags impostors to exclude them from seeds.
+    const uint refId = (probeOwner & 0x80000000u)!=0u ? (probeOwner & 0x7FFFFFFFu) + 1u :
+                       probeOwner!=0u ? probeOwner | 0x80000000u : 0u;
     const uint earlyId = texelFetch(earlyOwners, pos, 0).r;
     const uint fastId = texelFetch(enabledOwners, pos, 0).r;
     const float ref = texelFetch(referenceDepth, pos, 0).r;
