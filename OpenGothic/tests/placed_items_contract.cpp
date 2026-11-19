@@ -2090,6 +2090,8 @@ void arrowEffects(Gothic& gothic) {
   Npc::ArrowPinProbe pin;
   require(npc->stuckArrowProbe(npc->stuckArrowCount()-1,pin) && emitting(pinned) && pinned.effectKey()==hit &&
           onMesh(pinned),"the fire arrow stuck in Harad must have its effect at KEY_INVEST_3 on its mesh");
+  // the pose, the arrow and its effect synced where Harad stands now, then he moves
+  npc->updateTransform();
   Tempest::Vec3 at,after;
   pinned.effectPosition(at);
   const auto bone=NpcDefinitionContract::boneAt(*npc,pin.bone);
