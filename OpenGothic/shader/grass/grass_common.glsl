@@ -33,6 +33,16 @@ const uint GrassPartCells       = 8192u;
 const uint GrassPartTrack       = 16384u; // a road with `track` as with its `verge` alone
 const uint GrassPartOffscreen   = 32768u; // the blades' whole vertex stage, then off the screen (grass.vert)
 
+// Ground breakdown. These bits use SceneDesc::viewFlags; tone uses the second word.
+const uint GrassPartGroundPaint     = 1u << 25;
+const uint GrassPartGroundBorder    = 1u << 26;
+const uint GrassPartGroundBare      = 1u << 27;
+const uint GrassPartGroundBetween   = 1u << 28;
+const uint GrassPartGroundFarSward  = 1u << 29;
+const uint GrassPartGroundMaps      = 1u << 30;
+const uint GrassPartGroundDetail    = 1u << 31;
+const uint GrassPartGroundTone      = 1u;
+
 uint grassPartsOff(float ringW) { return uint(max(ringW - 1.0, 0.0)*0.5 + 0.25); }
 
 // The paint of the ground: bands of the distance from the camera along the ground, 2, 3.5, 5 and 10 m, each an

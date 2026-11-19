@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include "graphics/grass/grassdiag.h"
+#include "graphics/grass/grassgrounddiag.h"
 #include "graphics/grass/grassfield.h"
 #include "graphics/grass/grasswaste.h"
 #include "graphics/worldview.h"
@@ -51,12 +52,17 @@ std::string grassFields(const GrassField* field) {
 // The grass round the camera (reports/engine/2026-11-14-grass-system) is built over several frames on its own
 // thread. `grass wait [timeout ms]` holds the scenario until the ring of the camera's place is whole (real time:
 // the command is taken again every 30 ms); `grass stats` writes the counts of the last frame. Both write an event.
-// `grass parts <mask>` switches parts of the look off or paints the cover (Grass::Part); 0 gives the look back
+// `grass parts <mask>` switches parts of the look off or paints the cover (Grass::Part).
+// `grass ground <mask>` holds the rest of the ground breakdown; 0 clears the corresponding mask.
 bool grassCommand(const std::vector<std::string>& a,World& w) {
-  if(a.size()<2 || a[0]!="grass" || (a[1]!="wait" && a[1]!="stats" && a[1]!="parts"))
+  if(a.size()<2 || a[0]!="grass" || (a[1]!="wait" && a[1]!="stats" && a[1]!="parts" && a[1]!="ground"))
     return false;
   if(a[1]=="parts") {
     Grass::benchPartsOff() = (a.size()>2 ? uint32_t(std::strtoul(a[2].c_str(),nullptr,10)) : 0u) & Grass::PartAll;
+    return true;
+    }
+  if(a[1]=="ground") {
+    Grass::benchGroundPartsOff() = (a.size()>2 ? uint32_t(std::strtoul(a[2].c_str(),nullptr,10)) : 0u) & Grass::PartGroundTone;
     return true;
     }
   const GrassField* field = w.view()!=nullptr ? w.view()->grassField() : nullptr;

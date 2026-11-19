@@ -544,7 +544,11 @@ def build_report(directory):
     for place, repeats in grouped.items():
         view_samples = {}
         repeat_reports = []
-        expected_views = {"view-1", "view-5"} if place == "grass-track" else {"view-1", "view-2", "view-3", "view-4"}
+        expected_views = {
+            "grass-track": {"view-1", "view-5"},
+            "grass-ground": {"view-3", "view-4", "view-5"},
+            "grass-ground-fields": {"view-1", "view-4"},
+        }.get(place, {"view-1", "view-2", "view-3", "view-4"})
         for repeat, views in repeats.items():
             if place != "streaming-flythrough" and not expected_views <= views.keys():
                 missing = ", ".join(sorted(expected_views - views.keys()))
