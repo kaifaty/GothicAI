@@ -889,6 +889,9 @@ void checkGpuHistoryDepth(Tempest::Device& device) {
       encoder.setBinding(15,texture);
       encoder.setBinding(16,texture);
       encoder.setBinding(21,instances);
+      encoder.setBinding(23,texture);
+      encoder.setBinding(24,texture);
+      encoder.setBinding(25,texture);
       encoder.setPushData(push);
       encoder.setPipeline(pipeline);
       encoder.draw(nullptr,0,PackedMesh::MaxInd);
