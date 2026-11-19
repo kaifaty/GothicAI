@@ -550,7 +550,7 @@ def markdown(result, checks, label_a, label_b):
         lines.append("")
     activity = result["activity"]
     lines += ["## Routine activities (reference TA is not `-`)", "",
-              "Samples are grouped by A's ZS. Extra MOB is B occupied / A unoccupied samples, divided by A unoccupied samples.",
+              "Samples are grouped by A's ZS. Extra MOB is the share of A's unoccupied samples where B occupies a MOB.",
               "Arrival is the first occupied sample within each continuous A-TA segment, regardless of B's TA or MOB scheme;",
               "the segment is grouped by A's ZS at its first occupied sample. Delay is signed B minus A.",
               f"Arrival resolution is the journal step: A {fmt(activity['period_min_a'])}, B {fmt(activity['period_min_b'])} game minutes "

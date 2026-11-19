@@ -15,6 +15,7 @@ import npc_day_parity  # noqa: E402
 SCRIPT = Path(__file__).parents[1] / "npc_day_parity.py"
 STRICT = Path(__file__).parents[1] / "bench" / "npc-day-parity.tolerances.json"
 SIX_C = Path(__file__).parents[1] / "bench" / "npc-day-parity.tolerances-6c.json"
+ACTIVITY = Path(__file__).parents[2] / "scripts/bench/npc-day-parity.tolerances-activity.json"
 DONE = {"seed": 7, "isolate": True, "minutes": 90, "period_min": 30, "end_reason": "done"}
 HEADER = ("t_min,at_min,key,symbol,alive,hp,hp_max,ta,zs,zs_ms,x,y,z,wp,wp_dist,queue,head,body,"
           "inv_hash,inv_items,mob,tier,policy,hero").split(",")
@@ -340,6 +341,8 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
                                "--json", str(data), "--max-activity-stuck", "0"]) == 0
     assert json.loads(data.read_text())["result"]["activity"]["total"] == activity["by_state"]["ZS_READ"]
     assert "ZS_SMITH" in out.read_text()
+    assert npc_day_parity.main([str(a), str(a), "--tolerances", str(ACTIVITY), "--out", str(out)]) == 0
+    assert npc_day_parity.main([str(a), str(b), "--tolerances", str(ACTIVITY), "--out", str(out)]) == 1
 
 
 def test_activity_segments_repeat_after_no_routine_and_empty_metrics_fail(tmp_path):
