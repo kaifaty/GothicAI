@@ -253,24 +253,28 @@ def hierarchy_merges(foliage, tree, census):
     return merges, ends
 
 
-def hierarchy_curve(merges, ends, census, levels, heights):
-    """Compare weighted costs, actual submissions and original-card turnover at each sample."""
-    heights = np.asarray(heights)
-    full_cost = (census['cards'], census['full'])
+def _merge_curve(merges, heights, full_cost):
     effective = np.tile(full_cost, (len(heights), 1)).astype(float)
     submitted = np.tile(full_cost, (len(heights), 1))
     churn = np.zeros(len(heights))
     impostor = np.zeros(len(heights))
-    for merge in (*merges, *ends):
+    for merge in merges:
         t = np.clip((merge.high - heights) / (merge.high - merge.low), 0., 1.)
         t = t * t * (3. - 2. * t)
         delta = np.subtract(merge.after, merge.before)
         effective += t[:, None] * delta
         submitted += (t[:, None] > 0) * merge.after - (t[:, None] == 1) * merge.before
-        churn += np.abs(np.diff(t, prepend=t[0])) * merge.leaves / census['cards']
+        churn += np.abs(np.diff(t, prepend=t[0])) * merge.leaves / full_cost[0]
         if merge.after == (0, 0):
             impostor += t * merge.leaves
-    impostor /= census['cards']
+    return effective, submitted, churn, impostor / full_cost[0]
+
+
+def hierarchy_curve(merges, ends, census, levels, heights):
+    """Compare weighted costs, actual submissions and original-card turnover at each sample."""
+    heights = np.asarray(heights)
+    full_cost = (census['cards'], census['full'])
+    effective, submitted, churn, impostor = _merge_curve((*merges, *ends), heights, full_cost)
     effective += impostor[:, None] * (1, 2 - census['wood'])
     submitted += (impostor[:, None] > 0) * (1, 2)
     submitted -= np.isclose(impostor[:, None], 1., atol=1e-12, rtol=0.) * (0, census['wood'])
@@ -282,6 +286,50 @@ def hierarchy_curve(merges, ends, census, levels, heights):
                 turnover=churn.tolist(), impostor_share=impostor.tolist(),
                 current=current.tolist(), current_turnover=current_churn.astype(int).tolist(),
                 local_merges=len(merges), root_transitions=len(ends))
+
+
+def progressive_curve(nodes, height_m, parents, wood, level_wood, heights):
+    """Measure the saved 3D bands, retaining both geometry ranges during a fade."""
+    settled = {}
+    merges = []
+    cards, triangles = 0, 0
+    for node in nodes:
+        if not node.children:
+            count = node.index_count // 3
+            settled[node.id] = (1, count)
+            cards += 1
+            triangles += count
+            continue
+        before = tuple(map(sum, zip(*(settled[child] for child in node.children))))
+        settled[node.id] = before
+        if node.high_px:
+            parent = parents[node.id]
+            after = (len(parent['position']) // 4, len(parent['index']))
+            scale = height_m / node.diameter
+            merges.append(CutMerge(node.high_px * scale, node.low_px * scale, before, after, node.leaf_count))
+            settled[node.id] = after
+
+    heights = np.asarray(heights)
+    full_cost = (cards, triangles + wood)
+    effective, submitted, _, _ = _merge_curve(merges, heights, full_cost)
+    limits = sorted(level_wood, reverse=True)
+    stage = np.count_nonzero(heights[:, None] < limits, axis=1)
+    wood_delta = np.asarray([wood, *(level_wood[px] for px in limits)])[stage] - wood
+    delta = np.column_stack((np.zeros(len(heights), dtype=int), wood_delta))
+
+    # Use full 1% intervals independently of the requested cost samples.
+    start, end = heights.max(), heights.min()
+    steps = math.floor(math.log(end / start) / math.log(.99))
+    grid = np.r_[start * .99 ** np.arange(steps + 1), end / .99, end]
+    _, _, turnover, _ = _merge_curve(merges, grid, full_cost)
+    turnover[-2] = 0.  # The jump from the regular grid to the end interval is not a sample.
+    if end / .99 > start:
+        turnover[-1] = 0.
+    peak = int(np.argmax(turnover))
+    return dict(samples_px=heights.tolist(), effective=effective.round(6).tolist(), submitted=submitted.tolist(),
+                effective_level_wood=(effective + delta).round(6).tolist(),
+                submitted_level_wood=(submitted + delta).tolist(), max_turnover=float(turnover[peak]),
+                turnover_above_px=float(grid[max(0, peak - 1)]), turnover_below_px=float(grid[peak]))
 
 
 def sample(texture, u, v):

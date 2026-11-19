@@ -1,0 +1,127 @@
+# The four standing views from perf-grass.bench, with blade pack sizes 1, 4, 16 and 64.
+# Run with scripts/perf.sh grass-pack and PERF_ENV containing the working-34 content path and
+# OPENGOTHIC_GPU_PASSES=1. Compare Grass and the sum of GBuffer, Grass, GrassContactMask and SSAO-depth.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+# view 1 of perf-meadow.bench: the densest
+goto pos 41701 3320 795
+clear 3000
+cam at 41452 3421 -168 40003 3790 -1503
+wait 20000
+grass pack 1
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-1-pack1
+wait 8000
+perf stop
+grass pack 4
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-1-pack4
+wait 8000
+perf stop
+grass pack 16
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-1-pack16
+wait 8000
+perf stop
+grass pack 64
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-1-pack64
+wait 8000
+perf stop
+# view 2: `stone`
+goto pos 40003 3790 -1503
+cam at 40503 3581 -902 41503 3480 -902
+wait 20000
+grass pack 1
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-2-pack1
+wait 8000
+perf stop
+grass pack 4
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-2-pack4
+wait 8000
+perf stop
+grass pack 16
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-2-pack16
+wait 8000
+perf stop
+grass pack 64
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-2-pack64
+wait 8000
+perf stop
+# view 3: `far`
+goto NW_TAVERNE_TROLLAREA_04
+cam at 38907 4994 -1252 42532 2685 438
+wait 20000
+grass pack 1
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-3-pack1
+wait 8000
+perf stop
+grass pack 4
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-3-pack4
+wait 8000
+perf stop
+grass pack 16
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-3-pack16
+wait 8000
+perf stop
+grass pack 64
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-3-pack64
+wait 8000
+perf stop
+# view 4 (view 5 of perf-meadow.bench): standing on the track, the game's camera
+cam game
+goto pos 41940 3300 -317
+face -122
+wait 20000
+grass pack 1
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-4-pack1
+wait 8000
+perf stop
+grass pack 4
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-4-pack4
+wait 8000
+perf stop
+grass pack 16
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-4-pack16
+wait 8000
+perf stop
+grass pack 64
+wait 2000
+grass stats
+perf sample perf-grass-pack/view-4-pack64
+wait 8000
+perf stop

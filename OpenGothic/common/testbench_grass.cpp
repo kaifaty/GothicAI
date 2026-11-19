@@ -43,6 +43,8 @@ std::string grassFields(const GrassField* field) {
   return "\"field\":true,\"ready\":"+std::string(field->ready() ? "true" : "false")+
          ",\"cells\":"+std::to_string(st.cells)+",\"blades_stored\":"+std::to_string(st.stored)+
          ",\"blades_drawn\":"+std::to_string(st.drawn)+",\"blades_fine\":"+std::to_string(st.fine)+
+         ",\"pack\":"+std::to_string(st.pack)+",\"instances\":"+std::to_string(st.instances)+
+         ",\"blades_submitted\":"+std::to_string(st.instances*st.pack)+
          ",\"triangles\":"+std::to_string(st.triangles)+",\"draws\":"+std::to_string(st.draws)+
          ",\"buffer_bytes\":"+std::to_string(st.bytes)+",\"cells_waiting\":"+std::to_string(st.waiting)+waste;
   }
@@ -55,8 +57,13 @@ std::string grassFields(const GrassField* field) {
 // `grass parts <mask>` switches parts of the look off or paints the cover (Grass::Part).
 // `grass ground <mask>` holds the rest of the ground breakdown; 0 clears the corresponding mask.
 bool grassCommand(const std::vector<std::string>& a,World& w) {
-  if(a.size()<2 || a[0]!="grass" || (a[1]!="wait" && a[1]!="stats" && a[1]!="parts" && a[1]!="ground"))
+  if(a.size()<2 || a[0]!="grass")
     return false;
+  if(a[1]=="pack") {
+    if(a.size()!=3 || !Grass::setBenchPack(a[2]))
+      arenaAbort("grass pack expects 1, 4, 16 or 64");
+    return true;
+    }
   if(a[1]=="parts") {
     Grass::benchPartsOff() = (a.size()>2 ? uint32_t(std::strtoul(a[2].c_str(),nullptr,10)) : 0u) & Grass::PartAll;
     return true;
@@ -65,6 +72,8 @@ bool grassCommand(const std::vector<std::string>& a,World& w) {
     Grass::benchGroundPartsOff() = (a.size()>2 ? uint32_t(std::strtoul(a[2].c_str(),nullptr,10)) : 0u) & Grass::PartGroundTone;
     return true;
     }
+  if(a[1]!="wait" && a[1]!="stats")
+    return false;
   const GrassField* field = w.view()!=nullptr ? w.view()->grassField() : nullptr;
   if(a[1]=="stats") {
     event("grass_stats",grassFields(field));

@@ -33,6 +33,7 @@ layout(push_constant, std430) uniform Push {
   // scene's ring and widths
   vec4  shape;
   float swardK;       // repeats of the sward's map in a cm; 0: a ground without its own layers
+  uint  pack;         // blades per instance
   } push;
 
 layout(location = 0) out vec4 outColor;      // the painted ground under the root; w: 1 on a ground with its own layers
@@ -110,17 +111,43 @@ vec3 bladePoint(Tilt tilt, int k, int n, float height) {
   return p*(height*step);
   }
 
+void hideBlade() {
+  gl_Position   = vec4(uintBitsToFloat(0x7fc00000));
+  outColor      = vec4(0);
+  outNormal     = vec3(0,1,0);
+  outShade      = vec4(0);
+  outPrevStatic = vec3(0,0,1);
+  outPrevDelta  = vec3(0);
+  outRoot       = vec3(0);
+  }
+
 void main() {
-  // The draw's instances are the blades of the cell's squares that are in view, one square after another. Its 16
-  // spans in the table: the instance after the span's last (none: the largest number), and what to add to an
-  // instance of the span for its blade in the buffer (GrassField::draw)
-  const uint inst = uint(gl_InstanceIndex);
-  uint       at   = 0u;
-  if(inst>=span[push.table + 2u*(at+7u)]) at += 8u;
-  if(inst>=span[push.table + 2u*(at+3u)]) at += 4u;
-  if(inst>=span[push.table + 2u*(at+1u)]) at += 2u;
-  if(inst>=span[push.table + 2u*at])      at += 1u;
-  const uvec4 b = blade[inst + span[push.table + 2u*at + 1u]];
+  // Each of the draw's 16 spans stores the exclusive instance end and the blade offset.
+  // Packed spans also store the exclusive blade end, so the last pack cannot read past it.
+  const uint inst     = uint(gl_InstanceIndex);
+  const bool isPacked = push.pack!=1u;
+  const uint stride   = isPacked ? 3u : 2u;
+  uint       at       = push.table;
+  if(inst>=span[at + stride*7u]) at += stride*8u;
+  if(inst>=span[at + stride*3u]) at += stride*4u;
+  if(inst>=span[at + stride])    at += stride*2u;
+  if(inst>=span[at])             at += stride;
+
+  const int n = int(push.segments);
+  int vertex = gl_VertexIndex;
+  const uint bladeOffset = span[at+1u];
+  uint bladeIndex = inst + bladeOffset;
+  if(isPacked) {
+    const int verts = 2*n+1;
+    const int copy  = vertex/verts;
+    vertex -= copy*verts;
+    bladeIndex = inst*push.pack + uint(copy) + bladeOffset;
+    if(bladeIndex>=span[at+2u]) {
+      hideBlade();
+      return;
+      }
+    }
+  const uvec4 b = blade[bladeIndex];
 
   const vec3  root   = push.origin.xyz + vec3(float(b.x & 0x3FFFu), float((b.y & 0xFFFFu)*2u), float((b.x >> 14) & 0x3FFFu))*(1.0/16.0);
   const float lean0  = radians(8.0 + float(b.x >> 28)*(40.0/15.0));
@@ -144,13 +171,7 @@ void main() {
   height *= grow*(1.0 - smoothstep(ring.y, ring.z, d));
   const uint  partsOff = grassPartsOff(ring.w);
   if(height<=0.05 || ring.w<0.75 || (partsOff & GrassPartHide)!=0u) {
-    gl_Position   = vec4(uintBitsToFloat(0x7fc00000));
-    outColor      = vec4(0);
-    outNormal     = vec3(0,1,0);
-    outShade      = vec4(0);
-    outPrevStatic = vec3(0,0,1);
-    outPrevDelta  = vec3(0);
-    outRoot       = vec3(0);
+    hideBlade();
     return;
     }
   const float depth = (scene.viewProject*vec4(root,1.0)).w;
@@ -158,10 +179,9 @@ void main() {
   width = max(width*clamp(d/ring.x, 1.0, 8.0), 1.3*pixel);
 
   // the vertex: two at each link, one at the tip
-  const int   n    = int(push.segments);
-  const int   k    = min(gl_VertexIndex >> 1, n);
+  const int   k    = min(vertex >> 1, n);
   const float t    = float(k)/float(n);
-  const float side = k==n ? 0.0 : ((gl_VertexIndex & 1)==0 ? -0.5 : 0.5);
+  const float side = k==n ? 0.0 : ((vertex & 1)==0 ? -0.5 : 0.5);
 
   // the strip's width is never edge-on to the eye
   const vec2  fwd   = vec2(cos(facing), sin(facing));

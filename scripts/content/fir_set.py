@@ -52,6 +52,9 @@ is the control: the same set without the forest. The spruces of `--share 1` are 
 
 `eye-threshold` copies the current probe set and places the original spruce A and three relaxed cuts from
 `tree_hierarchy_probe.py --eye` in one row. All four use the same existing impostor.
+
+`bough-x4` stages the progressive hierarchy and a control in the first two places of the same row.
+Both use the current spruce A and its mesh levels and impostor.
 """
 from __future__ import annotations
 
@@ -419,6 +422,67 @@ def eye_threshold(args) -> int:
     return 0
 
 
+def bough_x4(args) -> int:
+    """Stage a progressive spruce A next to its control with their shared fallback levels."""
+    config = json.loads(args.config.read_text())
+    base_visual = f'{VISUAL}_4'
+    visual = f'{VISUAL}_BOUGH_X4'
+    control_visual = f'{VISUAL}_BOUGH_CONTROL'
+    sidecar = f'{visual}_H.json'
+    hierarchy = json.loads((args.hierarchy / sidecar).read_text())
+    control_root = args.control.resolve()
+    control = json.loads((control_root / 'meshes/meshes.json').read_text())[base_visual]
+    impostor_source = json.loads((args.impostor_from / 'meshes/meshes.json').read_text())[base_visual]
+    impostor, = (level for level in impostor_source['levels'] if 'impostor' in level)
+    levels = [level for level in control['levels'] if 'glb' in level]
+    if [level['px'] for level in levels] != [level['px'] for level in config['levels']]:
+        raise ValueError('The control must carry the four current mesh levels')
+
+    work, output = stage(control_root, args.set)
+    mesh_index = work / 'meshes/meshes.json'
+    for file in impostor['impostor'].values():
+        target = work / 'meshes' / file
+        target.unlink(missing_ok=True)
+        shutil.copyfile(args.impostor_from / 'meshes' / file, target)
+
+    relative = Path(FOLDER) / 'bough-x4'
+    meshes_dir = work / 'meshes' / relative
+    materials_dir = work / 'materials' / relative
+    meshes_dir.mkdir()
+    materials_dir.mkdir()
+    for file in (sidecar, hierarchy['glb']):
+        shutil.copyfile(args.hierarchy / file, meshes_dir / file)
+    pages = []
+    for page in hierarchy['atlas']['pages']:
+        maps = {}
+        for kind, field in (('albedo', 'rgba'), ('normal', 'attributes')):
+            file = page[field]
+            shutil.copyfile(args.hierarchy / file, meshes_dir / file)
+            os.link(meshes_dir / file, materials_dir / file)
+            maps[kind] = (relative / file).as_posix()
+        pages.append(maps)
+
+    material_index = work / 'materials/materials.json'
+    boughs = json.loads(material_index.read_text())[f"{config['materials']['boughs']}.TGA"]
+    fallback = {key: value for key, value in boughs.items() if key != 'orm'}
+    page_primitives = {(geometry['page'], geometry['primitive']) for node in hierarchy['nodes']
+                       if (geometry := node['geometry']) and 'page' in geometry}
+    rewrite(material_index, {f'FIR_HIERARCHY_{page}_{primitive}.TGA': dict(fallback, **pages[page])
+                             for page, primitive in sorted(page_primitives)})
+
+    entry = dict(control, levels=[*levels, impostor])
+    rewrite(mesh_index, {control_visual: entry, visual: dict(entry, hierarchy=(relative / sidecar).as_posix())})
+    layers = work / 'worlds' / WORLD / 'vobs.d'
+    (layers / 'fir-probe.json').unlink()
+    placements = [dict(key=f'fir-bough-x4-{i}', kind='mesh', visual=name, position=position,
+                       yaw_deg=0, collision='none')
+                  for i, (name, position) in enumerate(zip((control_visual, visual), EYE_ROW[:2], strict=True))]
+    (layers / 'fir-bough-x4.json').write_text(json.dumps(dict(format=1, add=placements), indent=1) + '\n')
+    work.rename(output)
+    print(output)
+    return 0
+
+
 def forest_layout(count: int) -> list[dict]:
     """The places of a forest of `count` spruces, a square of an even number: column, row, x and z in Gothic
     centimetres, yaw, and the number of the spruce of PROBE (1 to 5)."""
@@ -586,9 +650,14 @@ def main() -> int:
     command.add_argument('--control', type=Path, required=True)
     command.add_argument('--impostor-from', type=Path, required=True)
     command.add_argument('--variants', type=Path, required=True)
+    command = commands.add_parser('bough-x4', help='stage the progressive hierarchy and the current spruce')
+    command.add_argument('set')
+    command.add_argument('--control', type=Path, required=True)
+    command.add_argument('--impostor-from', type=Path, required=True)
+    command.add_argument('--hierarchy', type=Path, required=True)
     args = parser.parse_args()
     return {'textures': textures, 'probe': probe, 'forest': forest,
-            'eye-threshold': eye_threshold}[args.command](args)
+            'eye-threshold': eye_threshold, 'bough-x4': bough_x4}[args.command](args)
 
 
 if __name__ == '__main__':

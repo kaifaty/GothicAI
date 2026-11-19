@@ -101,8 +101,8 @@ PERF_WAIT=$((10#$PERF_WAIT))
 if [[ $# == 0 ]]; then PLACES=(market harbour forest interior combat); else PLACES=("$@"); fi
 for place in "${PLACES[@]}"; do
   case "$place" in
-    market|market-walk|harbour|harbour-night|house-night|forest|interior|combat|shot|face|face-far|rock|meadow|grass|grass-track|grass-fields|grass-ground|grass-ground-fields|trees|xardas|temple|fires|firerain|crops|crops-onar) ;;
-    *) fail "unknown place: $place (market market-walk harbour harbour-night house-night forest interior combat shot face face-far rock meadow grass grass-track grass-fields grass-ground grass-ground-fields trees xardas temple fires firerain crops crops-onar)" ;;
+    market|market-walk|harbour|harbour-night|house-night|forest|interior|combat|shot|face|face-far|rock|meadow|grass|grass-track|grass-fields|grass-pack|grass-fields-pack|grass-ground|grass-ground-fields|trees|xardas|temple|fires|firerain|crops|crops-onar) ;;
+    *) fail "unknown place: $place (market market-walk harbour harbour-night house-night forest interior combat shot face face-far rock meadow grass grass-track grass-fields grass-pack grass-fields-pack grass-ground grass-ground-fields trees xardas temple fires firerain crops crops-onar)" ;;
   esac
 done
 export PERF_WINDOW PERF_REPEAT PERF_WAIT
@@ -349,6 +349,9 @@ try:
                          '-nospots', '-notone', '-noribbonnormal', '-nolayernormal')
         segments_expected = [f'perf-{place}/view-{view}{suffix}'
                              for view in (5, 1) for suffix in track_samples]
+    elif place in ('grass-pack', 'grass-fields-pack'):
+        segments_expected = [f'perf-{place}/view-{view}-pack{pack}'
+                             for view in range(1, 5) for pack in (1, 4, 16, 64)]
     elif place in ('grass-ground', 'grass-ground-fields'):
         ground_samples = ('', '-nolayers', '-nopainted', '-noborder', '-nobare', '-nobetween',
                           '-nosward', '-nolayermaps', '-nogrounddetail', '-notone')
