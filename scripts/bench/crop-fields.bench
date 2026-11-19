@@ -1,0 +1,61 @@
+# The crop fields as they are (reports/content/2026-11-19-crop-fields): the tilled ground of Lobart's, Onar's and
+# Sekob's farms from the eye's height at the field's edge and from 10-15 m over it. Frames for the eye, no time and
+# no count: run once on Ryzen at 2560x1440,
+#   TEMPEST_WINDOW_SIZE=2560x1440 scripts/bench.sh crop-fields <out>
+# The cameras are of a census of the top surface (ground textures *ACKER*), the line of sight clear of trees. A shot
+# takes the frame after the commands of its tick: a wait after each.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+# view 1: Lobart's grain, the original's cards (NW_NATURE_PLANT_03), from the field's edge
+goto NW_FARM1_FIELD_01
+cam at 11397 1535 -15229 10990 1274 -12919
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot lobart-eye
+wait 300
+# view 2: the same field from 15 m over it
+cam at 6690 2151 -12919 10990 1274 -12919
+wait 8000
+grass wait
+wait 2000
+shot lobart-over
+wait 300
+# view 3: Onar's north field from its edge
+goto NW_BIGFARM_FARM4_PATH_04
+cam at 66137 2617 -8501 61058 2358 -7605
+wait 15000
+grass wait
+wait 2000
+shot onar-eye
+wait 300
+# view 4: the same field from 10 m over its far edge
+cam at 51745 2442 -9247 61058 2358 -7605
+wait 8000
+grass wait
+wait 2000
+shot onar-over
+wait 300
+# view 5: Onar's south field from 10 m over it
+goto NW_BIGMILL_PATH_06
+cam at 53238 5604 -16818 61007 2217 -15448
+wait 15000
+grass wait
+wait 2000
+shot onar-south-over
+wait 300
+# view 6: Sekob's field from its edge
+goto NW_FARM3_FIELD_01
+cam at 50624 3119 -24578 50945 3129 -22759
+wait 15000
+grass wait
+wait 2000
+shot sekob-eye
+wait 300
