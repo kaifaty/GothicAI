@@ -1033,7 +1033,8 @@ PfxEmitterMesh* Resources::implLoadEmiterMesh(std::string_view name) {
 
   auto& ret = emiMeshCache[cname];
 
-  if(FileExt::hasExt(cname,"3DS")) {
+  // a static mesh by its visual's name (.3DS) or by its ProtoMesh's (.MRM: an item's mesh, graphics/itemview)
+  if(FileExt::hasExt(cname,"3DS") || FileExt::hasExt(cname,"MRM")) {
     FileExt::exchangeExt(cname,"3DS","MRM");
 
     bool replaced = false;
