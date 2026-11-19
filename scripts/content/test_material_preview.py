@@ -1,6 +1,7 @@
 """Architectural sheet views retain the physical shape and bounded edges."""
 from pathlib import Path
 import importlib.util
+import re
 
 import numpy as np
 from PIL import Image
@@ -9,6 +10,36 @@ from PIL import Image
 spec = importlib.util.spec_from_file_location("material_preview", Path(__file__).with_name("material_preview.py"))
 preview = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(preview)
+
+
+def test_meadow_road_preview_matches_shader_constants():
+    # Read the defaults used by scripts/content/landscape_meadow_road.py.
+    import landscape_meadow_road as road
+
+    shader = Path(__file__).resolve().parents[2] / "OpenGothic/shader/grass/grass_track.glsl"
+    source = re.sub(r"/\*.*?\*/|//[^\n]*", "", shader.read_text(encoding="utf-8"), flags=re.DOTALL)
+    scalars = {
+        "GrassTrackBody": road.BODY,
+        "GrassTrackStainFrom": road.STAIN_AT[0],
+        "GrassTrackStainTo": road.STAIN_AT[1],
+        "GrassTrackStainRut": road.STAIN_RUT,
+        "GrassTrackCrustTint": road.CRUST_TINT,
+    }
+    for name, expected in scalars.items():
+        match = re.search(rf"\bconst\s+float\s+{name}\s*=\s*([^;]+);", source)
+        assert match is not None, f"Missing shader constant {name}"
+        assert float(match[1]) == expected, f"{name} differs between shader and preview"
+
+    stain = re.search(r"\bconst\s+vec3\s+GrassTrackStain\s*=\s*vec3\s*\(([^()]+)\)\s*;", source)
+    assert stain is not None, "Missing shader constant GrassTrackStain"
+    assert tuple(float(channel) for channel in stain[1].split(",")) == road.STAIN, (
+        "GrassTrackStain differs between shader and preview"
+    )
+
+    spots = re.search(r"\bconst\s+float\s+spots\s*=\s*([^;]+);", source)
+    assert spots is not None, "Missing shader stain noise expression"
+    steps = tuple(int(step) for step in re.findall(r"\bgrassTrackNoise\s*\(\s*place\s*,\s*(\d+)\s*,", spots[1]))
+    assert steps == road.STAIN_STEPS, "Stain noise steps differ between shader and preview"
 
 
 def test_tall_beam_preview_restores_physical_proportions():
