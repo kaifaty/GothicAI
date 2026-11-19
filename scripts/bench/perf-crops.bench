@@ -1,0 +1,47 @@
+# The crops of Lobart's field by time (reports/content/2026-11-19-crop-fields, plan step 5): four held views of
+# crop-pilot.bench at noon, over the strips of rye, stubble and plough of a set built by
+# scripts/content/crop_field_set.py. Compare the set with the content it was copied from:
+#   PERF_ENV='OPENGOTHIC_GPU_PASSES=1' scripts/perf-content.sh <content today> <crop set> crops
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+goto NW_FARM1_FIELD_01
+# view 1: from the field's edge, the eye's height: both plots across the frame
+cam at 11397 1535 -15229 10990 1274 -12919
+clear 3000
+wait 20000
+perf sample perf-crops/view-1
+wait 8000
+perf stop
+shot view-1
+wait 300
+# view 2: from 15 m over the field: every row is drawn
+cam at 6690 2151 -12919 10990 1274 -12919
+wait 8000
+perf sample perf-crops/view-2
+wait 8000
+perf stop
+shot view-2
+wait 300
+# view 3: inside the rye, the eye's height: the cards fill the frame, the worst for overdraw
+cam at 10271 1439 -13394 11431 1463 -14344
+wait 8000
+perf sample perf-crops/view-3
+wait 8000
+perf stop
+shot view-3
+wait 300
+# view 4: the strip's edge: tufts of single stalks before the wall of rye
+cam at 9754 1413 -13552 10682 1455 -14312
+wait 8000
+perf sample perf-crops/view-4
+wait 8000
+perf stop
+shot view-4
+wait 300

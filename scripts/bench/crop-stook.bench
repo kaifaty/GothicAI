@@ -1,0 +1,55 @@
+# A stook of the crop set stands in the way (reports/content/2026-11-19-crop-fields, «Проходимость»): the hero runs
+# from 4 m at the stook `crop-1-01154` of the set crop-field-4 (10065 1326 -13872) along four headings; on the one
+# that leads at the stook he must stop before it, on the others he runs free. Read the `pos` pairs of the log.
+#   OPENGOTHIC_CONTENT=<set> scripts/bench.sh crop-stook <out>
+# @timeout 300
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+goto pos 9665 1340 -13872
+clear 3000
+wait 12000
+face 0
+wait 600
+pos
+hold forward 2500
+wait 3200
+pos
+shot heading-0
+wait 300
+goto pos 9665 1340 -13872
+wait 1500
+face 90
+wait 600
+pos
+hold forward 2500
+wait 3200
+pos
+shot heading-90
+wait 300
+goto pos 9665 1340 -13872
+wait 1500
+face 180
+wait 600
+pos
+hold forward 2500
+wait 3200
+pos
+shot heading-180
+wait 300
+goto pos 9665 1340 -13872
+wait 1500
+face 270
+wait 600
+pos
+hold forward 2500
+wait 3200
+pos
+shot heading-270
+wait 300
