@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -323,9 +324,11 @@ void packIndices() {
               "packed strips must follow the same link order as the original index buffer");
       for(uint32_t copy=0; copy<pack; ++copy) {
         const size_t offset = copy*vertices;
-        const auto   first  = indices.begin()+start+copy*count;
+        const auto   first  = indices.begin()+static_cast<std::ptrdiff_t>(start+copy*count);
+        const auto   last   = first+static_cast<std::ptrdiff_t>(count);
+        const auto   source = legacy.begin()+static_cast<std::ptrdiff_t>(base);
         require(offset+vertices-1<=UINT16_MAX &&
-                std::equal(first, first+count, legacy.begin()+base, [&](uint16_t index, uint16_t original) {
+                std::equal(first, last, source, [&](uint16_t index, uint16_t original) {
                   return index==original+offset;
                   }), "each copy must keep the blade topology with its own uint16 vertex indices");
         }
