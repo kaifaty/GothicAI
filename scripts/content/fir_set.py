@@ -41,7 +41,8 @@ the triangles twice under a one-sided record, as fir-probe-2 has them.
 `--levels` builds the levels of detail configured in fir.json, drawn under 400, 200, 100 and 50 pixels of
 the spruce's height on screen. Each level has a GLB beside the full spruce's (<VISUAL>_L1.glb ...) and an entry
 in `"levels": [{"glb": ..., "px": 400}, ...]`. `--random-levels` builds the original cost-stand levels using
-thin() with shares 1/2, 1/4, 1/8 and 1/32. The default set contains only the full spruces.
+thin() with shares 1/2, 1/4, 1/8 and 1/32. The default set contains only the full spruces. The full two-sided
+spruce GLBs include crown ranks for the smooth near transition. The lower levels keep their layout.
 
 `forest` builds a set of the cost stand (reports/engine/2026-11-16-modern-trees/tree-cost.md) the same way: the
 five spruces of PROBE, thinned to `--share` of their triangles by mesh3d/blender/fir_tree.py thin() when below 1,
@@ -321,7 +322,8 @@ def probe(args) -> int:
         visual = f'{VISUAL}_{number}'
         tree = fir_tree.build(config, seed, scale, args.pairs)
         glb = folder / f'{visual}.glb'
-        tree_glb.write(glb, [{k: v for k, v in p.items() if k != 'owner'} for p in tree.parts], visual,
+        parts = tree.parts if args.pairs else fir_tree.ranked_parts(tree, mask)
+        tree_glb.write(glb, parts, visual,
                        extras=dict(tree=config['id'], seed=config['seed'] if seed is None else seed, scale=scale))
         read = tree_check.check(glb)
         fails = list(read['fails'])
@@ -442,7 +444,8 @@ def forest(args) -> int:
         full = fir_tree.build(config, seed, scale)
         tree = fir_tree.thin(full, args.share, number)
         glb = folder / f'{visual}.glb'
-        tree_glb.write(glb, [{k: v for k, v in p.items() if k != 'owner'} for p in tree.parts], visual,
+        parts = fir_tree.ranked_parts(tree, mask) if tree is full else tree.parts
+        tree_glb.write(glb, parts, visual,
                        extras=dict(tree=config['id'], seed=config['seed'] if seed is None else seed, scale=scale,
                                    share=args.share))
         read = tree_check.check(glb)

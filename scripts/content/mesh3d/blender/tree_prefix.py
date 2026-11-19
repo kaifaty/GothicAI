@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
 
 import tree_density
 import tree_glb
@@ -224,6 +223,8 @@ def measure(full_path, levels, mask, atlas_luma, heights=SWEEP):
 
 
 def main():
+    from PIL import Image
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('full', type=Path)
     parser.add_argument('--levels', required=True, nargs=4, type=Path, metavar='GLB',

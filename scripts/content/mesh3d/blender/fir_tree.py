@@ -1,6 +1,7 @@
 """The spruce's near level of detail as arrays: trunk, whorls of first-order branches, bough cards. NumPy only.
 
     build(config, seed=None, scale=1.0, pairs=False) -> Tree
+    ranked_parts(tree, mask) -> list[dict]
     thin(tree, share, seed=0) -> Tree
     design_level(tree, level, mask, atlas) -> Tree
 
@@ -696,6 +697,26 @@ class Fir:
 
 def build(config: dict, seed: int | None = None, scale: float = 1., pairs: bool = False) -> Tree:
     return Fir(config, seed, pairs).build(scale)
+
+
+def ranked_parts(tree: Tree, mask: np.ndarray) -> list[dict]:
+    """Mark the full crown by rank, keeping the original vertex and index streams."""
+    from tree_prefix import rank_cards
+
+    bark, boughs = tree.parts
+    starts = np.asarray([card['first'] for card in tree.cards])
+    counts = np.asarray([card['count'] for card in tree.cards])
+    by_face = np.searchsorted(starts, boughs['index'][:, 0], side='right') - 1
+    costs = np.bincount(by_face, minlength=len(starts))
+    full = np.concatenate((bark['position'], boughs['position']))
+    order = rank_cards(full, bark, boughs, mask, by_face, costs)
+
+    # Give the leading shoot priority while keeping the measured coverage order elsewhere.
+    leader = np.asarray([card['role'] == 'leader' for card in tree.cards])[order]
+    order = np.concatenate((order[leader], order[~leader]))
+    rank = np.empty(len(order), dtype=np.uint16)
+    rank[order] = np.arange(1, len(order) + 1, dtype=np.uint16)
+    return [bark, dict(boughs, card_id=np.repeat(rank, counts))]
 
 
 def thin(tree: Tree, share: float, seed: int = 0) -> Tree:

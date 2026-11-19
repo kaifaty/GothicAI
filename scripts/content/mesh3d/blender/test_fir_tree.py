@@ -244,11 +244,35 @@ def digest(tree) -> str:
     return h.hexdigest()
 
 
-def test_spruce_a_is_built_as_before_and_thin_is_a_separate_step(config):
+def test_spruce_a_is_built_as_before_and_thin_is_a_separate_step(config, tmp_path):
     """thin() of the cost stand (reports/engine/2026-11-16-modern-trees/tree-cost.md) does not touch spruce A:
     the digest is that of the generator before it; share 1 gives the tree itself."""
     tree = fir_tree.build(config)
     assert digest(tree) == 'c6e92de4460a137d725f6f97a5442c30865f6c786054bf300da110c85ef9d79b'
+    mask = tree_density.load_mask(HERE / config['atlas']['mask'])
+    full = tmp_path / 'full.glb'
+    ranked = tmp_path / 'ranked.glb'
+    tree_glb.write(full, tree.parts, 'fir-a')
+    tree_glb.write(ranked, fir_tree.ranked_parts(tree, mask), 'fir-a')
+    marked_parts = tree_glb.read(ranked)
+    for unmarked, marked in zip(tree_glb.read(full), marked_parts, strict=True):
+        assert 'card_id' not in unmarked
+        for attr in ('position', 'index', 'uv', 'normal', 'colour'):
+            np.testing.assert_array_equal(marked[attr], unmarked[attr])
+    wood, boughs = marked_parts
+    assert 'card_id' not in wood
+    ids = boughs['card_id']
+    assert ids.dtype == np.uint16
+    card_ids = ids[[card['first'] for card in tree.cards]]
+    np.testing.assert_array_equal(np.sort(card_ids), np.arange(1, len(tree.cards) + 1))
+    np.testing.assert_array_equal(ids, np.repeat(card_ids, [card['count'] for card in tree.cards]))
+    leaders = [rank for card, rank in zip(tree.cards, card_ids) if card['role'] == 'leader']
+    assert sorted(leaders) == list(range(1, len(leaders) + 1))
+    marked_bytes = ranked.read_bytes()
+    rebuilt = fir_tree.build(config)
+    tree_glb.write(ranked, fir_tree.ranked_parts(rebuilt, mask), 'fir-a')
+    assert ranked.read_bytes() == marked_bytes
+
     assert fir_tree.thin(tree, 1.) is tree
     full_width = sum(tree.metrics['crown_width_m'])
     for share in (.5, .25, .125):
@@ -257,7 +281,7 @@ def test_spruce_a_is_built_as_before_and_thin_is_a_separate_step(config):
         assert abs(sum(thinned.metrics['crown_width_m']) / full_width - 1) < .03
         assert thinned.metrics['thin']['card_growth'] == pytest.approx(thinned.metrics['thin']['cards_share'] ** -.5,
                                                                        abs=1e-3)
-    assert digest(fir_tree.build(config)) == digest(tree)
+    assert digest(rebuilt) == digest(tree)
 
 
 @pytest.mark.parametrize(('px', 'old_share'), [(400, .5), (200, .25), (100, .125), (50, 1 / 32)])

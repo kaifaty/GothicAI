@@ -10,6 +10,9 @@ COLOR_0 — four normalised bytes, no gamma (reports/engine/2026-11-16-modern-tr
     B  weight of the leaf's flutter: 0 at the stem, 1 at the card's free edge; 0 on wood
     A  openness of the crown: 1 outside, 0 in its depth; 1 on the trunk
 
+An optional crown attribute _CARD_ID is an unnormalized unsigned short with the card's rank plus one.
+Unmarked primitives, including the wood, omit it.
+
 A card is listed once and its part is `two_sided`: the material's record of materials.json says
 `"two_sided": "same"`, the engine draws both sides and lights them by the same normal
 (reports/engine/2026-11-16-modern-trees/two-sided.md). In the mode of pairs a part is one-sided and a card is
@@ -39,15 +42,17 @@ def from_gltf(vectors: np.ndarray) -> np.ndarray:
 
 def write(path: Path, parts: list[dict], name: str | None = None, extras: dict | None = None) -> dict:
     """parts: one per material — name, group, cutout, two_sided, position (n, 3) Z up, normal, uv, colour (n, 4)
-    uint8, index (t, 3). Returns the triangle count per material."""
+    uint8, index (t, 3), optional card_id (n,) uint16. Returns the triangle count per material."""
     chunks, views, accessors, primitives, materials, offset = [], [], [], [], [], 0
 
-    def push(array: np.ndarray, target: int | None, kind: str, component: int, **more) -> int:
+    def push(array: np.ndarray, target: int | None, kind: str, component: int, *, stride: int = 0, **more) -> int:
         nonlocal offset
         data = array.tobytes()
         view = dict(buffer=0, byteOffset=offset, byteLength=len(data))
         if target is not None:
             view['target'] = target
+        if stride:
+            view['byteStride'] = stride
         views.append(view)
         data += b'\0' * (-len(data) % 4)
         chunks.append(data)
@@ -71,6 +76,11 @@ def write(path: Path, parts: list[dict], name: str | None = None, extras: dict |
             NORMAL=push(normal, 34962, 'VEC3', FLOAT),
             TEXCOORD_0=push(np.ascontiguousarray(part['uv'], np.float32), 34962, 'VEC2', FLOAT),
             COLOR_0=push(colour, 34962, 'VEC4', UBYTE, normalized=True))
+        if 'card_id' in part:
+            # glTF vertex attributes are aligned to four bytes, including scalar shorts.
+            ids = np.zeros((len(position), 2), dtype='<u2')
+            ids[:, 0] = part['card_id']
+            attributes['_CARD_ID'] = push(ids, 34962, 'SCALAR', USHORT, stride=4)
         primitives.append(dict(attributes=attributes, material=len(materials),
                                indices=push(index.astype(np.uint16).reshape(-1), 34963, 'SCALAR', USHORT)))
         material = dict(name=part['name'], doubleSided=bool(part.get('two_sided')), extras=dict(group=part.get('group', 'WOOD')),
@@ -121,11 +131,14 @@ def read(path: Path) -> list[dict]:
     for prim in document['meshes'][0]['primitives']:
         at = prim['attributes']
         colour = document['accessors'][at['COLOR_0']] if 'COLOR_0' in at else None
-        out.append(dict(
+        part = dict(
             name=document['materials'][prim['material']]['name'],
             material=document['materials'][prim['material']],
             position=from_gltf(accessor(at['POSITION'])), normal=from_gltf(accessor(at['NORMAL'])),
             uv=accessor(at['TEXCOORD_0']), index=accessor(prim['indices']).reshape(-1, 3).astype(np.int64),
             colour=accessor(at['COLOR_0']) if colour else None,
-            colour_format=(colour['componentType'], colour['type'], bool(colour.get('normalized'))) if colour else None))
+            colour_format=(colour['componentType'], colour['type'], bool(colour.get('normalized'))) if colour else None)
+        if '_CARD_ID' in at:
+            part['card_id'] = accessor(at['_CARD_ID']).reshape(-1)
+        out.append(part)
     return out
