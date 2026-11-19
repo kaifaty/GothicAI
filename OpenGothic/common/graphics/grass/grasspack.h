@@ -18,6 +18,10 @@
 namespace Grass {
 
 constexpr std::array<uint32_t, 4> PackSizes = {1, 4, 16, 64};
+// Four blades an instance: the same blades at the same places, submitted with a quarter of the instances. On an
+// RTX 3080 the pass `Grass` is 0.08-0.14 ms cheaper than with one, 16 and 64 give less
+// (reports/engine/2026-11-19-grass-next, the first probe). OPENGOTHIC_GRASS_PACK=1 is the old path.
+constexpr uint32_t DefaultPack = 4;
 
 inline uint32_t parsePackSize(std::string_view text) {
   uint32_t size = 0;
@@ -33,9 +37,9 @@ inline uint32_t& packSize() {
     if(const char* env = std::getenv("OPENGOTHIC_GRASS_PACK")) {
       if(const auto parsed = parsePackSize(env))
         return parsed;
-      Tempest::Log::e("Invalid OPENGOTHIC_GRASS_PACK. Expected 1, 4, 16 or 64. Using 1.");
+      Tempest::Log::e("Invalid OPENGOTHIC_GRASS_PACK. Expected 1, 4, 16 or 64. Using the default.");
       }
-    return 1u;
+    return DefaultPack;
     }();
   return size;
   }
