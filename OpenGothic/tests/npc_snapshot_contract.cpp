@@ -6,6 +6,7 @@
 #include "itemdefinitions.h"
 #include "npcdefinitions.h"
 #include "placementdefinitions.h"
+#include "activitydefinitions.h"
 #include "game/npcdefinitionruntime.h"
 #include "game/placementdefinitionruntime.h"
 #include "game/itemdefinitionruntime.h"
@@ -21,6 +22,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 
 namespace fs=std::filesystem;
@@ -1095,6 +1097,90 @@ void itemSelection(const fs::path& dir) {
   catch(...) { environment(hadPrevious ? saved.c_str() : nullptr); throw; }
   environment(hadPrevious ? saved.c_str() : nullptr);
   }
+
+// D4.1: the activity template in the synthetic program, the comparison with a fresh VM from disk,
+// and a tampered ready base.
+void activityDefinitions(const fs::path& dir) {
+  const auto program=NpcDefinitionFixture::program();
+  const auto base=dir/"activity-definitions",definitions=base/"definitions"/program.sha256;
+  const auto routines=definitions/"routines.json",file=definitions/"activities.json";
+  NpcSnapshot::writeRoutines(program,routines);
+  const auto counts=NpcSnapshot::writeActivities(program,file,routines);
+  check(counts.total==4 && counts.captured==2,"activity corpus: two template states captured, ZS_SMITH_SWAPPED and ZS_TEST refused");
+  check(NpcSnapshot::verifyActivities(program,file,routines)==0,"every activity verifies from disk against a fresh VM");
+  const auto library=ActivityDefinitions::read(base,program.sha256);
+  const auto& anvil=library.activities.at("ZS_SMITH_ANVIL");
+  check(anvil.perceptions=="PERCEPTION_SET_NORMAL" && anvil.walkMode==1 &&
+        anvil.approach==ActivityDefinitions::Approach::NearestWaypoint && anvil.scheme=="BSANVIL" &&
+        anvil.busyBodyState==32784 && anvil.useState==1 && anvil.leaveState==-1 && anvil.loopResult==0,
+        "the anvil record holds the parameters its script passes");
+  check(library.activities.at("ZS_SMITH_FIRE").scheme=="BSFIRE","the same template captures another object");
+  check(library.uncaptured.at("ZS_TEST").starts_with("missing_phase: ZS_TEST_LOOP"),"a state without Loop keeps its reason");
+  check(library.uncaptured.at("ZS_SMITH_SWAPPED").starts_with("template_mismatch: ZS_SMITH_SWAPPED with ") &&
+        library.uncaptured.at("ZS_SMITH_SWAPPED").find("call 2 VM AI_SETWALKMODE(self,1), template NPC_GETLOOKATTARGET")!=std::string::npos,
+        "a state with correct phases and a call out of order is refused at that call");
+  const auto second=dir/"activities-identical.json";
+  NpcSnapshot::writeActivities(program,second,routines);
+  std::ifstream a(file,std::ios::binary),b(second,std::ios::binary);
+  check(std::string(std::istreambuf_iterator<char>(a),{})==std::string(std::istreambuf_iterator<char>(b),{}),
+        "two activity imports are byte-identical");
+  std::ifstream input(file,std::ios::binary);
+  const std::string original{std::istreambuf_iterator<char>(input),{}};
+  auto tampered=original;
+  const auto at=tampered.find("\"BSANVIL\"");
+  check(at!=std::string::npos,"the anvil scheme is in the file");
+  tampered.replace(at,9,"\"BSFIRE\"");
+  {
+    std::ofstream out(file,std::ios::binary);
+    out<<tampered;
+  }
+  std::cerr<<"expected activity difference follows:\n";
+  check(NpcSnapshot::verifyActivities(program,file,routines)!=0,"a changed object scheme in a ready base fails the comparison");
+  auto repeated=original;
+  repeated.insert(at+9,",\n                \"scheme\": \"BSFIRE\"");
+  {
+    std::ofstream out(file,std::ios::binary);
+    out<<repeated;
+  }
+  std::cerr<<"expected activity difference follows:\n";
+  check(NpcSnapshot::verifyActivities(program,file,routines)!=0,"a repeated parameter key in a ready base fails the comparison");
+  std::ofstream(file,std::ios::binary)<<original;
+  }
+
+void realActivities(const NpcSnapshot::Program& program,const fs::path& base,const fs::path& dir) {
+  const auto routines=base/"definitions"/program.sha256/"routines.json";
+  const auto fresh=dir/"activity-base",file=fresh/"definitions"/program.sha256/"activities.json";
+  const auto start=std::chrono::steady_clock::now();
+  const auto counts=NpcSnapshot::writeActivities(program,file,routines);
+  const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
+  check(NpcSnapshot::verifyActivities(program,file,routines)==0,"real activities verify from disk against a fresh VM");
+  const auto library=ActivityDefinitions::read(fresh,program.sha256);
+  // The states come from the game's own routine reader, not from the import's corpus.
+  std::set<std::string> states,recorded;
+  for(const auto& [name,rows]:RoutineDefinitions::read(base,program.sha256).routines)
+    for(const auto& row:rows) states.insert(row.state);
+  for(const auto& [name,activity]:library.activities) recorded.insert(name);
+  for(const auto& [name,reason]:library.uncaptured) recorded.insert(name);
+  check(states.size()==counts.total && recorded==states,"every state of the base's routines has one activity record");
+  check(library.activities.contains("ZS_SMITH_ANVIL"),"the real ZS_SMITH_ANVIL is captured by the template");
+  check(library.uncaptured.contains("ZS_SIT_THRONE") && library.uncaptured.at("ZS_SIT_THRONE").starts_with("template_mismatch: "),
+        "the real ZS_SIT_THRONE, whose Init asks the body state first, is refused by the comparison");
+  const auto& anvil=library.activities.at("ZS_SMITH_ANVIL");
+  check(anvil.scheme=="BSANVIL" && anvil.perceptions=="PERCEPTION_SET_NORMAL" && anvil.walkMode==1 && anvil.useState==1 &&
+        anvil.leaveState==-1 && anvil.busyBodyState==32784,"the real anvil parameters");
+  std::string captured;
+  for(const auto& [name,activity]:library.activities) captured+=(captured.empty() ? "" : ", ")+name+" ("+activity.scheme+")";
+  std::cout<<"Real activities: "<<counts.total<<" states, "<<counts.captured<<" captured, "<<counts.situations
+           <<" compared situations, "<<ms<<" ms: "<<captured<<"\n";
+  for(const auto& [name,reason]:library.uncaptured) std::cout<<"  VM: "<<name<<": "<<reason<<"\n";
+  const auto section=base/"definitions"/program.sha256/"activities.json";
+  if(fs::exists(section)) {
+    std::ifstream x(section,std::ios::binary),y(file,std::ios::binary);
+    check(std::string(std::istreambuf_iterator<char>(x),{})==std::string(std::istreambuf_iterator<char>(y),{}),
+          "the ready base's activities.json equals a fresh import");
+    }
+  }
+
 void fixture(const fs::path& dir) {
   auto p=Fixture().make();
   npcLayout(p);
@@ -1105,6 +1191,7 @@ void fixture(const fs::path& dir) {
   itemDefinitions(dir);
   npcDefinitions(dir);
   placementDefinitions(dir);
+  activityDefinitions(dir);
   itemSelection(dir);
   routineDefinitions(dir);
   routineSelection(dir);
@@ -1187,6 +1274,7 @@ int main() {
       NpcSnapshot::write(program,dir/"real");
       check(NpcSnapshot::verify(program,dir/"real")==0,"real corpus verifies");
       runtimeItems(program,base);
+      realActivities(program,base,dir);
       }
     fs::remove_all(dir);
     std::cout<<"NPC snapshot contract passed: "<<assertions<<" assertions\n";

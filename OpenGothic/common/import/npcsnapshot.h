@@ -36,6 +36,14 @@ PlacementCounts writePlacements(const Program& program, const std::filesystem::p
                                const std::filesystem::path& worldsDirectory);
 int verifyPlacements(const Program& program, const std::filesystem::path& file,
                      const std::filesystem::path& worldsDirectory);
+struct ActivityCounts {
+  size_t total = 0, captured = 0, situations = 0;
+  };
+// States of the rows in `routines`; each captured when the template walk equals its three VM phases.
+ActivityCounts writeActivities(const Program& program, const std::filesystem::path& file,
+                               const std::filesystem::path& routines);
+int verifyActivities(const Program& program, const std::filesystem::path& file,
+                     const std::filesystem::path& routines);
 struct RoutineCounts {
   size_t total = 0, captured = 0;
   };
