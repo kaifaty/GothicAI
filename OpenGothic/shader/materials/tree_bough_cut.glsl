@@ -1,6 +1,8 @@
 #ifndef TREE_BOUGH_CUT_GLSL
 #define TREE_BOUGH_CUT_GLSL
 
+#include "tree_bough_dissolve.glsl"
+
 struct BoughNode {
   vec4 sphere;
   vec3 boxMin;
@@ -21,8 +23,6 @@ struct BoughProjection {
   };
 
 BoughNode boughGetNode(uint i);
-bool boughWasCoarse(uint i);
-void boughSetCoarse(uint i, bool coarse);
 void boughEmit(uint i, uint transition, float weight);
 
 float boughScreenSize(BoughNode node, BoughProjection projection) {
@@ -31,8 +31,7 @@ float boughScreenSize(BoughNode node, BoughProjection projection) {
   return depth<=projection.nearZ ? uintBitsToFloat(0x7f800000u) : node.diameter * projection.focalScale / depth;
   }
 
-// Preorder lets a selected proxy skip all its descendants. For the ordinary meshlet fast path, stop as soon as
-// there is any proxy or active band. That query leaves the previous cut intact for the emitting walk.
+// Preorder lets a selected proxy skip all its descendants. Stop at the first proxy for the fast-path query.
 bool boughWalk(uint root, BoughProjection projection, bool emit) {
   const uint end = boughGetNode(root).subtreeEnd;
   uint band = 0u, bandEnd = 0u;
@@ -54,27 +53,24 @@ bool boughWalk(uint root, BoughProjection projection, bool emit) {
       continue;
       }
 
-    const float size = boughScreenSize(node, projection);
-    const float limit = node.thresholdPx * (boughWasCoarse(i) ? 1.1 : 1.0);
-    const bool coarse = size<limit;
-    const bool inBand = size>node.lowPx && size<node.highPx;
-    if(!emit) {
-      if(coarse || inBand)
-        return true;
-      ++i;
-      continue;
-      }
-    boughSetCoarse(i, coarse);
-
-    // Nested boxes and threshold ordering keep descendant bands outside the active ancestor's band.
-    const float weight = inBand ? 1.0 - smoothstep(node.lowPx, node.highPx, size) : 0.0;
-    if(coarse) {
-      boughEmit(i, band!=0u ? band : (inBand ? i+1u : 0u), band!=0u ? bandWeight : weight);
+    // Nested boxes and ordered thresholds guarantee that the replaced cut has no active descendant band.
+    if(band!=0u) {
+      boughEmit(i, band, bandWeight);
       i = node.subtreeEnd;
       continue;
       }
-    if(inBand && band==0u) {
-      band = 0x8000u | (i+1u);
+
+    const float weight = 1.0 - smoothstep(node.lowPx, node.highPx, boughScreenSize(node, projection));
+    if(weight>0.0 && !emit)
+      return true;
+    if(weight>=1.0) {
+      boughEmit(i, 0u, 0.0);
+      i = node.subtreeEnd;
+      continue;
+      }
+    if(weight>0.0) {
+      boughEmit(i, i+1u, weight);
+      band = BoughChildSide | (i+1u);
       bandEnd = node.subtreeEnd;
       bandWeight = weight;
       }

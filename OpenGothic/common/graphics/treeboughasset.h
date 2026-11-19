@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <span>
 #include <vector>
 
 #include "graphics/material.h"
@@ -78,6 +77,6 @@ void attach(StaticMesh& mesh, const std::filesystem::path& file);
 
 float screenSize(const Node& node, const Projection& view);
 float parentWeight(const Node& node, float px);
-void select(const Asset& asset, const Projection& view, std::span<uint32_t> history, std::vector<Selected>& out);
+void select(const Asset& asset, const Projection& view, std::vector<Selected>& out);
 
 }

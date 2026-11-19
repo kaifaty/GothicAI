@@ -324,7 +324,7 @@ void meshShader(const uvec4 task, const uint materialRef) {
     vec4 pos = processVertex(var, instanceId, meshletId, bucketId, laneID);
     gl_MeshVerticesEXT[laneID].gl_Position = pos;
 #if defined(TREE_BOUGH_CARDS)
-    boughFadeOut[laneID] = boughFade(task);
+    boughFadeOut[laneID] = boughFade(task, boughMaskOut[laneID]);
 #endif
 #if defined(VIRTUAL_SHADOW)
     vsmClip[laneID] = pos.xyw;

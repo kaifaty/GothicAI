@@ -3,7 +3,6 @@
 #include <Tempest/Log>
 
 #include <algorithm>
-#include <cassert>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -356,30 +355,27 @@ std::unique_ptr<Asset> load(const StaticMesh& mesh, const std::filesystem::path&
   return asset;
   }
 
-void selectNode(const Asset& asset, uint32_t i, const Projection& view, std::span<uint32_t> history,
-                uint32_t transition, float weight, std::vector<Selected>& out) {
+void selectNode(const Asset& asset, uint32_t i, const Projection& view, uint32_t transition, float weight,
+                std::vector<Selected>& out) {
   const auto& node = asset.nodes[i];
   const bool leaf = node.subtreeEnd==i+1;
-  bool coarse = false;
-  if(node.thresholdPx>0.f) {
-    const float px = screenSize(node,view);
-    const uint32_t bit = 1u<<(i%32u);
-    auto& word = history[i/32u];
-    coarse = px<node.thresholdPx*((word&bit)!=0u ? MeshLevels::Hysteresis : 1.f);
-    word = (word&~bit) | (coarse ? bit : 0u);
-    if(transition==0 && px>node.lowPx && px<node.highPx) {
-      transition = i+1;
-      weight = parentWeight(node,px);
-      }
-    }
-  if(leaf || coarse) {
+  if(leaf || (transition!=0u && node.highPx>0.f)) {
     out.push_back({i,transition,weight});
     return;
     }
-  if(transition!=0)
-    transition |= DescendantSide;
+  if(transition==0u && node.highPx>0.f) {
+    weight = parentWeight(node,screenSize(node,view));
+    if(weight>=1.f) {
+      out.push_back({i,0u,0.f});
+      return;
+      }
+    if(weight>0.f) {
+      out.push_back({i,i+1u,weight});
+      transition = DescendantSide | (i+1u);
+      }
+    }
   for(auto child=i+1; child<node.subtreeEnd; child=asset.nodes[child].subtreeEnd)
-    selectNode(asset,child,view,history,transition,weight,out);
+    selectNode(asset,child,view,transition,weight,out);
   }
 
 }
@@ -435,11 +431,10 @@ float parentWeight(const Node& node, float px) {
   return 1.f-t*t*(3.f-2.f*t);
   }
 
-void select(const Asset& asset, const Projection& view, std::span<uint32_t> history, std::vector<Selected>& out) {
-  assert(history.size()>=(asset.nodes.size()+31u)/32u);
+void select(const Asset& asset, const Projection& view, std::vector<Selected>& out) {
   out.clear();
   for(const auto root:asset.roots)
-    selectNode(asset,root,view,history,0u,0.f,out);
+    selectNode(asset,root,view,0u,0.f,out);
   }
 
 }

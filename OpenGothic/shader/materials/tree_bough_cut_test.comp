@@ -10,24 +10,29 @@ layout(binding = 1, std430) readonly buffer Views { BoughProjection views[]; };
 layout(binding = 2, std430) readonly buffer Roots { uint roots[]; };
 layout(binding = 3, std430) writeonly buffer Cuts { uvec4 cuts[]; };
 
-uint first, count;
-uint history = 0u; // The fixture has fewer than 32 nodes.
+uint first, count, maskFailures;
 
 BoughNode boughGetNode(uint i) {
   return nodes[i];
   }
 
-bool boughWasCoarse(uint i) {
-  return (history & (1u << i)) != 0u;
-  }
-
-void boughSetCoarse(uint i, bool coarse) {
-  const uint bit = 1u << i;
-  history = coarse ? (history | bit) : (history & ~bit);
+uint coverageFailures(uint weight, uint seed) {
+  uint failures = 0u;
+  for(uint pixel=0u; pixel<64u; ++pixel) {
+    const vec2 sampleOffset = vec2(pixel % 8u, pixel / 8u) - vec2(3.5);
+    const uint fade = BoughFadeActive | weight;
+    const bool parent = boughCovers(fade, seed, sampleOffset);
+    const bool child = boughCovers(fade | BoughFadeChild, seed, sampleOffset);
+    failures += uint(parent==child || (weight==0u && parent) || (weight==BoughWeightMask && child) ||
+                     !boughCovers(0u, seed, sampleOffset));
+    }
+  return failures;
   }
 
 void boughEmit(uint i, uint transition, float weight) {
   cuts[first + 1u + count++] = uvec4(i, transition, floatBitsToUint(weight), 0u);
+  if(transition!=0u && (transition & BoughChildSide)==0u)
+    maskFailures += coverageFailures(uint(weight * float(BoughWeightMask)), i);
   }
 
 void main() {
@@ -35,15 +40,16 @@ void main() {
   for(uint sampleId = 0; sampleId < uint(views.length()); ++sampleId) {
     first = sampleId * stride;
     count = 0u;
-    const uint before = history;
+    maskFailures = 0u;
+    if(sampleId==0u)
+      maskFailures = coverageFailures(0u, 0u) + coverageFailures(BoughWeightMask, 0u);
     bool compact = false;
     for(uint root = 0; root < uint(roots.length()); ++root) {
       if(boughWalk(roots[root], views[sampleId], false))
         compact = true;
       }
-    const bool probeChangedHistory = history != before;
     for(uint root = 0; root < uint(roots.length()); ++root)
       boughWalk(roots[root], views[sampleId], true);
-    cuts[first] = uvec4(count, history, uint(compact), uint(probeChangedHistory));
+    cuts[first] = uvec4(count, uint(compact), maskFailures, 0u);
     }
   }

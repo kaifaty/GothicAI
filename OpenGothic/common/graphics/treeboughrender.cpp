@@ -4,7 +4,6 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
-#include <limits>
 #include <stdexcept>
 
 #include "frameprofile.h"
@@ -24,10 +23,6 @@ ComputePipeline compute(std::string_view name) {
   auto& device = Resources::device();
   const auto shader = GothicShader::get(name);
   return device.pipeline(device.shader(shader.data,shader.len));
-  }
-
-uint32_t stateWords(const TreeBough::Asset& asset) {
-  return 1u + uint32_t((asset.nodes.size()+31u)/32u);
   }
 
 Vec3 column(const Matrix4x4& m, size_t i) {
@@ -110,20 +105,28 @@ void TreeBoughRender::registerAsset(const StaticMesh& mesh, Asset& asset) {
     asset.rangeCommands[i] = at->second | (uint32_t(bucket.toInt()) << 16u);
     }
 
-  // Worst possible binary cut for each command. Leaves of distinct roots can all contribute together.
-  std::vector<uint32_t> branch(source.nodes.size());
+  // A parent's band can overlap only the coarse cut below it. Otherwise the child cuts can peak independently.
+  struct CutCapacity {
+    uint32_t coarse = 0, peak = 0;
+    };
+  std::vector<CutCapacity> branch(source.nodes.size());
   for(const auto& [key,id]:perClass) {
-    std::fill(branch.begin(), branch.end(), 0u);
+    std::fill(branch.begin(), branch.end(), CutCapacity{});
     uint32_t capacity = 0;
     for(size_t i=source.nodes.size(); i-- > 0;) {
-      const bool canDraw = asset.rangeCommands[i]!=uint32_t(-1) && source.ranges[i].primitive==key.first &&
-                           (asset.rangeCommands[i] & 0xffffu)==id;
-      const uint32_t want = std::max(branch[i], uint32_t(canDraw));
-      const uint32_t parent = source.nodes[i].parent;
-      if(parent==TreeBough::NoNode)
-        capacity += want;
-      else
-        branch[parent] += want;
+      const auto& node = source.nodes[i];
+      auto [coarse,peak] = branch[i];
+      if(node.highPx>0.f || node.subtreeEnd==i+1u) {
+        const uint32_t own = source.ranges[i].primitive==key.first && (asset.rangeCommands[i] & 0xffffu)==id;
+        peak = std::max(peak,coarse+own);
+        coarse = own;
+        }
+      if(node.parent==TreeBough::NoNode) {
+        capacity += peak;
+        } else {
+        branch[node.parent].coarse += coarse;
+        branch[node.parent].peak += peak;
+        }
       }
     asset.capacity.emplace_back(id,capacity);
     }
@@ -140,22 +143,9 @@ void TreeBoughRender::add(const StaticMesh& mesh, uint32_t cluster, uint16_t mai
   for(auto [id,capacity]:asset->second.capacity)
     commands[id].draw.maxPayload += capacity;
 
-  const uint32_t words = stateWords(*mesh.treeBough);
-  const auto gap = std::find_if(freeState.begin(), freeState.end(), [&](const auto& item) { return item.second>=words; });
-  uint32_t offset = stateSize;
-  if(gap==freeState.end()) {
-    stateSize += words;
-    } else {
-    offset = gap->first;
-    const uint32_t rest = gap->second-words;
-    freeState.erase(gap);
-    if(rest>0)
-      freeState.emplace(offset+words,rest);
-    }
-  clearState.emplace_back(offset,words);
-  entries.emplace(cluster,Entry{&mesh,uint32_t(main) | (uint32_t(impostor)<<16u),first,count,offset,0});
+  entries.emplace(cluster,Entry{&mesh,uint32_t(main) | (uint32_t(impostor)<<16u),first,count,0});
   if(cpu)
-    references.try_emplace(cluster).first->second.history.resize(words-1u);
+    references.try_emplace(cluster);
   dirty = true;
   }
 
@@ -171,20 +161,6 @@ void TreeBoughRender::remove(uint32_t cluster) {
     demandProxyTextures(*e.mesh->treeBough,false);
     assets.erase(asset);
     }
-  auto gap = freeState.emplace(e.stateOffset,stateWords(*e.mesh->treeBough)).first;
-  if(gap!=freeState.begin()) {
-    const auto prev = std::prev(gap);
-    if(prev->first+prev->second==gap->first) {
-      prev->second += gap->second;
-      freeState.erase(gap);
-      gap = prev;
-      }
-    }
-  const auto next = std::next(gap);
-  if(next!=freeState.end() && gap->first+gap->second==next->first) {
-    gap->second += next->second;
-    freeState.erase(next);
-    }
   references.erase(cluster);
   entries.erase(found);
   dirty = true;
@@ -193,7 +169,7 @@ void TreeBoughRender::remove(uint32_t cluster) {
 void TreeBoughRender::setTransform(uint32_t cluster, const Matrix4x4& transform) {
   const auto ref = references.find(cluster);
   if(ref!=references.end())
-    ref->second.transform = transform;
+    ref->second = transform;
   }
 
 void TreeBoughRender::copy(Encoder<CommandBuffer>& enc, const StorageBuffer& source, StorageBuffer& destination,
@@ -207,7 +183,7 @@ void TreeBoughRender::copy(Encoder<CommandBuffer>& enc, const StorageBuffer& sou
   enc.dispatchThreads(count);
   }
 
-void TreeBoughRender::uploadData(Encoder<CommandBuffer>& enc) {
+void TreeBoughRender::uploadData() {
   auto& device = Resources::device();
   const uint32_t mapCount = entries.rbegin()->first+1u;
   std::vector<uint32_t> words(4u+mapCount);
@@ -226,7 +202,7 @@ void TreeBoughRender::uploadData(Encoder<CommandBuffer>& enc) {
     float ratio = 0.f;
     for(const auto& n:source.nodes)
       if(n.highPx>0.f)
-        ratio = std::max(ratio,std::max(n.highPx,n.thresholdPx*1.1f)/n.diameter);
+        ratio = std::max(ratio,n.highPx/n.diameter);
     words.insert(words.end(),{roots,uint32_t(source.roots.size()),nodes,uint32_t(source.nodes.size()),
                               ranges,source.sourceCards,source.sourceTriangles,std::bit_cast<uint32_t>(ratio)});
     putVec(words,(box[0]+box[1])*0.5f);
@@ -244,6 +220,7 @@ void TreeBoughRender::uploadData(Encoder<CommandBuffer>& enc) {
     asset.offset = base;
     }
   uint32_t entry = entryBase;
+  uint32_t stateOffset = StatsCount;
   referenceSize = 0;
   for(auto& [cluster,v]:entries) {
     words[4u+cluster] = entry;
@@ -251,29 +228,15 @@ void TreeBoughRender::uploadData(Encoder<CommandBuffer>& enc) {
     if(cpu)
       referenceSize += 1u + 2u*uint32_t(v.mesh->treeBough->nodes.size());
     const uint32_t record[] = {cluster,v.commands,v.first,v.count,assets.at(v.mesh).offset,
-                               v.stateOffset,v.referenceOffset,0u};
+                               stateOffset++,v.referenceOffset,0u};
     std::copy_n(record,8,words.data()+entry);
     entry += 8u;
     }
   Resources::recycle(std::move(data));
   data = device.ssbo(words);
 
-  if(state.byteSize()<size_t(stateSize)*sizeof(uint32_t)) {
-    const uint32_t nextSize = std::bit_ceil(stateSize);
-    auto next = device.ssbo(Uninitialized, size_t(nextSize)*sizeof(uint32_t));
-    if(state.isEmpty()) {
-      const std::vector<uint32_t> zero(nextSize);
-      next.updateAsync(zero.data(),0,zero.size()*sizeof(uint32_t));
-      } else {
-      copy(enc,state,next,0,nextSize,uint32_t(state.byteSize()/sizeof(uint32_t)));
-      Resources::recycle(std::move(state));
-      }
-    state = std::move(next);
-    }
-  // The initialized metadata may follow earlier frames in the same queue. Clear only recycled or new slots.
-  for(auto [offset,count]:clearState)
-    copy(enc,data,state,offset,count,0);
-  clearState.clear();
+  Resources::recycle(std::move(state));
+  state = device.ssbo(std::vector<uint32_t>(stateOffset));
 
   std::vector<DrawCommands::IndirectCmd> draws;
   draws.reserve(commands.size());
@@ -301,9 +264,9 @@ void TreeBoughRender::uploadReference() {
     const auto& c = owner.clusters[cluster];
     if(c.meshletCount==0 || c.commandId!=uint16_t(entry.commands))
       continue;
-    auto& ref = references.at(cluster);
+    const auto& transform = references.at(cluster);
     const auto& asset = *entry.mesh->treeBough;
-    TreeBough::select(asset,project(ref.transform,owner.scene),ref.history,selected);
+    TreeBough::select(asset,project(transform,owner.scene),selected);
     auto* out = words.data()+entry.referenceOffset;
     out[0] = 0;
     for(const auto& s:selected) {
@@ -318,13 +281,11 @@ void TreeBoughRender::uploadReference() {
   referenceData = device.ssbo(words);
   }
 
-void TreeBoughRender::commit(Encoder<CommandBuffer>& enc) {
-  if(entries.empty()) {
-    clearState.clear();
+void TreeBoughRender::commit() {
+  if(entries.empty())
     return;
-    }
   if(dirty) {
-    uploadData(enc);
+    uploadData();
     dirty = false;
     }
   if(cpu)
@@ -383,7 +344,7 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
   enc.setBinding(10,lateHiZ ? owner.history.status : data);
   enc.setPipeline(expandPipeline);
   enc.setPushData(Push{token,flags,scene.znear,1});
-  enc.dispatchThreads(std::max<size_t>(5,commands.size()));
+  enc.dispatchThreads(std::max<size_t>(StatsCount,commands.size()));
   enc.setPushData(Push{token,flags,scene.znear,0});
   enc.dispatch(entries.size());
   }
@@ -410,7 +371,9 @@ void TreeBoughRender::draw(Encoder<CommandBuffer>& enc, DrawCommands::HistoryDra
 void TreeBoughRender::readStats(Encoder<CommandBuffer>& enc, uint8_t frame, bool expanded) {
   auto& device = Resources::device();
   constexpr FrameProfile::Amount names[] = {FrameProfile::Amount::TreeBoughNodes,FrameProfile::Amount::TreeBoughSourceCards,
-    FrameProfile::Amount::TreeBoughParentCards,FrameProfile::Amount::TreeBoughTriangles,FrameProfile::Amount::TreeBoughHeightPx};
+    FrameProfile::Amount::TreeBoughParentCards,FrameProfile::Amount::TreeBoughTriangles,FrameProfile::Amount::TreeBoughActiveBands,
+    FrameProfile::Amount::TreeBoughVersionPairs,FrameProfile::Amount::TreeBoughBandTriangles,FrameProfile::Amount::TreeBoughHeightPx};
+  static_assert(std::size(names)==StatsCount);
   uint32_t values[std::size(names)] = {};
   if(readPending[frame]) {
     device.readBytes(stats[frame],values,sizeof(values));

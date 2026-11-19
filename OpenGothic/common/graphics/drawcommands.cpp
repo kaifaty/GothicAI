@@ -314,7 +314,7 @@ void DrawCommands::addClusters(uint16_t cmdId, uint32_t meshletCount) {
 
 void DrawCommands::commit(Encoder<CommandBuffer>& enc) {
   if(boughs)
-    boughs->commit(enc);
+    boughs->commit();
   bool cmdChg = false;
   for(auto& v:views) {
     if(isViewEnabled(v.viewport)) {
