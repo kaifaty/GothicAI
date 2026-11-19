@@ -236,7 +236,7 @@ inline Helpers helpers(Fixture& f,uint32_t npcClass,uint32_t self,uint32_t rando
   const auto scale=f.fn("MDL_SETMODELSCALE",{Type::INSTANCE,Type::FLOAT,Type::FLOAT,Type::FLOAT},true);
   const auto overlay=f.fn("MDL_APPLYOVERLAYMDS",{Type::INSTANCE,Type::STRING},true);
   const auto humans=text("HUMANS.MDS"),maleBody=text("hum_body_Naked0"),femaleBody=text("Hum_Body_Babe0");
-  h.head=text("HUM_HEAD_CONTRACT");
+  h.head=text("");
   h.visual=function("B_SETNPCVISUAL",{Type::INSTANCE,Type::INT,Type::STRING,Type::INT,Type::INT,Type::INT},
                     {"SLF","GENDER","HEADMESH","FACETEX","BODYTEX","ARMORINSTANCE"});
   f.begin(h.visual); parameters(h.visual);
@@ -373,7 +373,6 @@ inline NpcSnapshot::Program program() {
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,0u); f.op(Op::PUSHV,helper.head); f.op(Op::PUSHI,0u); f.op(Op::PUSHI,0u);
   f.op(Op::PUSHI,item); f.call(helper.visual);
   f.op(Op::PUSHV,self); f.op(Op::PUSHI,30u); f.call(helper.fight);
-  f.op(Op::PUSHV,self); f.op(Op::PUSHI,item); f.op(Op::BE,equip);
   // The helper must read the attribute after on_equip added five, then add fifteen.
   f.call(addAfterEquip);
   // Moving the helper to the end reads forty instead of fifteen; EXP preserves its result.

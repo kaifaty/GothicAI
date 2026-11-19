@@ -747,7 +747,7 @@ std::map<std::string,std::string> helperLocalText(daedalus::DaedalusVm& vm,const
       if constexpr(std::is_same_v<Type,std::string>) return Bench::bodyJson(value);
       else if constexpr(std::is_same_v<Type,int32_t>) return std::to_string(value);
       else if constexpr(std::is_same_v<Type,float>) return std::to_string(std::bit_cast<uint32_t>(value));
-      else return value==npc.handlePtr() ? "self" : value ? "symbol "+std::to_string(value->symbol_index()) : "null";
+      else return value==std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()) ? "self" : value ? "symbol "+std::to_string(value->symbol_index()) : "null";
       },entry.value);
   return result;
   }
@@ -1027,12 +1027,14 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
   vm.global_item()->set_instance(oldItem);
   NpcDefinitionContract::random(script)=random;
   NpcDefinitionContract::isolatedRandom(script)=isolatedRandom;
-  require(count==library.npcs.size()+1 && dailyCount>0,"all captured NPCs and actual startup routines must be compared");
-  require(referenceHelperCalls>0,"the helpers-off reference must actually execute the captured helpers in the VM");
+  std::fprintf(stderr,"NPC definition coverage (%s, %s): %zu/%zu NPCs, %zu startup routines, %zu reference helper calls\n",
+               helpersOnly ? "helpers" : "constructors",isolated ? "NPC" : "shared",count,library.npcs.size()+1,dailyCount,referenceHelperCalls);
   for(const auto& value:differences) std::fprintf(stderr,"[npc-definition-difference] %s\n",value.c_str());
   std::fprintf(stderr,"NPC definition differences: %zu NPCs, %zu fields\n",differentNpcs.size(),differences.size());
   if(!differences.empty())
     throw std::runtime_error("live NPC differs: "+std::to_string(differences.size())+" differences; "+differences.front());
+  require(count==library.npcs.size()+1 && dailyCount>0,"all captured NPCs and actual startup routines must be compared");
+  require(referenceHelperCalls>0,"the helpers-off reference must actually execute the captured helpers in the VM");
   std::printf("Live NPC equality (%s, %s): %zu captured NPCs and one director template; %zu startup daily routines; record, appearance, ordered inventory, equipped and active items, talents, attitudes, routines, ITEM and RNG match\n",
               helpersOnly ? "helper records vs helper VM" : "records vs constructors",isolated ? "NPC streams" : "shared stream",count-1,dailyCount);
   }
