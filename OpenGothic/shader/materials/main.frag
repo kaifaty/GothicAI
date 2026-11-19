@@ -13,6 +13,9 @@
 // FLAT_NORMAL: the landscape's variants (a fragment shader is not told MESH_TYPE)
 #if defined(GBUFFER) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
 #include "grass/grass_ground.glsl"
+#if defined(BINDLESS) && !defined(HISTORY_DEPTH) && !defined(ATEST)
+#define GRASS_PAINT_PROBE
+#endif
 #endif
 #include "water/gerstner_wave.glsl"
 #include "lighting/shadow_sampling.glsl"
@@ -340,7 +343,11 @@ vec4 strandTexel() {
 
 #if defined(MAT_UV)
 #if defined(ANTITILE_MATERIAL)
-vec4 diffuseTex(out MaterialSampling maps) {
+vec4 diffuseTex(out MaterialSampling maps
+#if defined(GRASS_PAINT_PROBE)
+                , bool probePaint, bool skipPaint
+#endif
+                ) {
 #else
 vec4 diffuseTex() {
 #endif
@@ -354,6 +361,10 @@ vec4 diffuseTex() {
   maps.dpdy = dFdy(shInp.pos);
 #endif
   projectionPlanes(maps.proj);
+#if defined(GRASS_PAINT_PROBE)
+  if(skipPaint)
+    return vec4(0);
+#endif
 #endif
 #if !defined(SIMPLE_MAT) && (MESH_TYPE!=T_PFX)
   ivec2 texAniMapDirPeriod = bucket[bucketId].texAniMapDirPeriod;
@@ -406,6 +417,13 @@ vec4 diffuseTex() {
     tex = antitileDiffuse(maps, tId);
   else if(maps.proj.on)
     tex = projectionAlbedo(maps.proj, tId);
+#if defined(GRASS_PAINT_PROBE)
+  else if(probePaint) {
+    // At a partial layer, the skip can differ across a quad. Use the gradients taken above.
+    tex = textureGrad(sampler2D(textureMain[tId], samplerMain), uv,
+                      maps.duvdx*scene.mipGradScale, maps.duvdy*scene.mipGradScale);
+    }
+#endif
   else
     // The material flag is uniform within the primitive (flat bucketId).
     tex = texture(sampler2D(textureMain[tId], samplerMain),uv,scene.mipBias);
@@ -489,12 +507,20 @@ float emberBreath(vec3 pos) {
 #endif
 
 #if defined(ANTITILE_MATERIAL)
-void mainGBuffer(vec4 t, MaterialSampling maps) {
+void mainGBuffer(vec4 t, MaterialSampling maps
+#if defined(GRASS_PAINT_PROBE)
+                 , bool skipPaint
+#endif
+                 ) {
 #else
 void mainGBuffer(vec4 t) {
 #endif
-  outDiffuse.rgb = t.rgb;
   outDiffuse.a   = encodeHintBits();
+#if defined(GRASS_PAINT_PROBE)
+  if(skipPaint)
+    return; // The layer writes every other material channel.
+#endif
+  outDiffuse.rgb = t.rgb;
   const vec3 normal = sideNormal();
   outNormal      = encodeNormal(normal);
 #if defined(MATERIAL_MAPS)
@@ -1095,10 +1121,31 @@ void main() {
     }
 #endif
 
+#if defined(GBUFFER) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL) && defined(BINDLESS) && !defined(HISTORY_DEPTH)
+  const Bucket material = bucket[bucketId];
+  GrassLayer layer;
+  float sward = -1.0, strip = 0.0;
+#endif
+#if defined(GRASS_PAINT_PROBE)
+  // Keep the base path when coverage or G-buffer hints can depend on the painted material.
+  const uint extraHints = BK_HAIR | BK_STRAND | BK_EYE | BK_FOLIAGE | BK_CROWN | BK_PROJECTION;
+  const bool probePaint = (scene.viewFlags & GrassPartGroundPaint)!=0u &&
+                         (material.flags & (BK_GROUND | BK_VERGE))!=0u &&
+                         (material.flags & extraHints)==0u && material.emissive<=0.0;
+  const vec3 grassDpdx = dFdx(shInp.pos), grassDpdy = dFdy(shInp.pos);
+  if(probePaint)
+    sward = grassOwnLayers(material, shInp.pos, shInp.normal, grassDpdx, grassDpdy, layer, strip);
+  const bool skipPaint = probePaint && sward>=0.0 && layer.share==1.0;
+#endif
+
 #if defined(MAT_UV) && (!defined(HISTORY_DEPTH) || defined(ATEST))
 #if defined(ANTITILE_MATERIAL)
   MaterialSampling maps;
-  vec4 t = diffuseTex(maps);
+  vec4 t = diffuseTex(maps
+#if defined(GRASS_PAINT_PROBE)
+                      , probePaint, skipPaint
+#endif
+                      );
 #else
   vec4 t = diffuseTex();
 #endif
@@ -1122,7 +1169,11 @@ void main() {
 #if defined(GBUFFER)
 #if !defined(HISTORY_DEPTH)
 #if defined(ANTITILE_MATERIAL)
-  mainGBuffer(t, maps);
+  mainGBuffer(t, maps
+#if defined(GRASS_PAINT_PROBE)
+              , skipPaint
+#endif
+              );
 #else
   mainGBuffer(t);
 #endif
@@ -1130,15 +1181,17 @@ void main() {
 #if defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
   {
   const uint ground = bucket[bucketId].flags;
-  float sward = -1.0;
 #if defined(BINDLESS)
-  // the meadow's own two layers, the strip of them along a road (grass/grass_layers.glsl), and the road's own
-  // track (grass/grass_track.glsl)
-  if((ground & (BK_GROUND | BK_VERGE | BK_TRACK))!=0u)
-    sward = grassOwnGround(ground, bucket[bucketId].fringeTex, bucket[bucketId].fringeScale, bucket[bucketId].fringeTop0,
-                           bucket[bucketId].fringeTop1, bucket[bucketId].fringeBottom0, bucket[bucketId].fringeBottom1,
-                           bucket[bucketId].foliageReach, shInp.uv*bucket[bucketId].uvScale, maps.duvdx, maps.duvdy,
-                           shInp.pos, shInp.normal, maps.dpdx, maps.dpdy, outDiffuse, outNormal, outOrm);
+  if((ground & (BK_GROUND | BK_VERGE | BK_TRACK))!=0u) {
+#if defined(GRASS_PAINT_PROBE)
+    if(!probePaint)
+#endif
+      sward = grassOwnLayers(material, shInp.pos, shInp.normal, maps.dpdx, maps.dpdy, layer, strip);
+    grassOwnGround(material, sward, layer, strip, shInp.uv*material.uvScale, maps.duvdx, maps.duvdy,
+                   shInp.pos, shInp.normal, maps.dpdx, maps.dpdy, outDiffuse, outNormal, outOrm);
+    }
+#else
+  const float sward = -1.0;
 #endif
   if(sward>-1.5 && ((ground & BK_GRASS)!=0u || sward>0.0))
     grassGround(bucket[bucketId].foliage, shInp.pos, shInp.normal, sward, outDiffuse, outNormal, outOrm);

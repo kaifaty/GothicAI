@@ -43,8 +43,15 @@ enum Part : uint32_t {
   PartTrackTone   = 1u << 22,
   PartTrackForm   = 1u << 23,
   PartTrackGrain  = 1u << 24,
-  PartAll         = (1u << 25) - 1u,
-  PartTrackMask   = PartAll & ~0xFFFFu,
+  PartGroundPaint   = 1u << 25,
+  PartGroundBorder  = 1u << 26,
+  PartGroundBare    = 1u << 27,
+  PartGroundBetween = 1u << 28,
+  PartGroundFarSward = 1u << 29,
+  PartGroundMaps    = 1u << 30,
+  PartGroundDetail  = 1u << 31,
+  PartAll         = 0xFFFFFFFFu,
+  PartViewMask    = PartAll & ~0xFFFFu,
   };
 
 inline uint32_t& benchPartsOff() {
@@ -52,7 +59,7 @@ inline uint32_t& benchPartsOff() {
   return mask;
   }
 
-// SceneDesc::grassRing.w carries the low bits as 1 + 2*mask. The track bits use SceneDesc::viewFlags.
+// SceneDesc::grassRing.w carries the low bits as 1 + 2*mask. The upper bits use SceneDesc::viewFlags.
 inline uint32_t partsOff() {
   return benchPartsOff() & 0xFFFFu;
   }

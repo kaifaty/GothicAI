@@ -1,0 +1,185 @@
+# The cost of meadow ground on views 3, 4 (standing) and 5 from perf-meadow.bench.
+# Use working-34 and OPENGOTHIC_GPU_PASSES=1. Each sample removes one part of the ground.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+walkmode run
+watch player
+cam game
+goto pos 41701 3320 795
+clear 3000
+
+# View 3: the whole meadow from afar and above.
+goto NW_TAVERNE_TROLLAREA_04
+cam at 38907 4994 -1252 42532 2685 438
+wait 20000
+grass stats
+perf sample perf-grass-ground/view-3
+wait 8000
+perf stop
+grass parts 4096
+wait 2000
+perf sample perf-grass-ground/view-3-nolayers
+wait 8000
+perf stop
+grass parts 33554432
+wait 2000
+perf sample perf-grass-ground/view-3-nopainted
+wait 8000
+perf stop
+grass parts 67108864
+wait 2000
+perf sample perf-grass-ground/view-3-noborder
+wait 8000
+perf stop
+grass parts 134217728
+wait 2000
+perf sample perf-grass-ground/view-3-nobare
+wait 8000
+perf stop
+grass parts 268435456
+wait 2000
+perf sample perf-grass-ground/view-3-nobetween
+wait 8000
+perf stop
+grass parts 536870912
+wait 2000
+perf sample perf-grass-ground/view-3-nosward
+wait 8000
+perf stop
+grass parts 1073741824
+wait 2000
+perf sample perf-grass-ground/view-3-nolayermaps
+wait 8000
+perf stop
+grass parts 2147483648
+wait 2000
+perf sample perf-grass-ground/view-3-nogrounddetail
+wait 8000
+perf stop
+grass parts 0
+grass ground 1
+wait 2000
+perf sample perf-grass-ground/view-3-notone
+wait 8000
+perf stop
+grass ground 0
+
+# View 4: standing at the start of meadow-walk, with the game's camera.
+cam game
+walkmode walk
+goto NW_TAVERNE_TROLLAREA_03
+face wp NW_TAVERNE_TROLLAREA_04
+wait 20000
+grass stats
+perf sample perf-grass-ground/view-4
+wait 8000
+perf stop
+grass parts 4096
+wait 2000
+perf sample perf-grass-ground/view-4-nolayers
+wait 8000
+perf stop
+grass parts 33554432
+wait 2000
+perf sample perf-grass-ground/view-4-nopainted
+wait 8000
+perf stop
+grass parts 67108864
+wait 2000
+perf sample perf-grass-ground/view-4-noborder
+wait 8000
+perf stop
+grass parts 134217728
+wait 2000
+perf sample perf-grass-ground/view-4-nobare
+wait 8000
+perf stop
+grass parts 268435456
+wait 2000
+perf sample perf-grass-ground/view-4-nobetween
+wait 8000
+perf stop
+grass parts 536870912
+wait 2000
+perf sample perf-grass-ground/view-4-nosward
+wait 8000
+perf stop
+grass parts 1073741824
+wait 2000
+perf sample perf-grass-ground/view-4-nolayermaps
+wait 8000
+perf stop
+grass parts 2147483648
+wait 2000
+perf sample perf-grass-ground/view-4-nogrounddetail
+wait 8000
+perf stop
+grass parts 0
+grass ground 1
+wait 2000
+perf sample perf-grass-ground/view-4-notone
+wait 8000
+perf stop
+grass ground 0
+
+# View 5: standing on the track and looking upslope.
+walkmode run
+goto pos 41940 3300 -317
+face -122
+wait 20000
+grass stats
+perf sample perf-grass-ground/view-5
+wait 8000
+perf stop
+grass parts 4096
+wait 2000
+perf sample perf-grass-ground/view-5-nolayers
+wait 8000
+perf stop
+grass parts 33554432
+wait 2000
+perf sample perf-grass-ground/view-5-nopainted
+wait 8000
+perf stop
+grass parts 67108864
+wait 2000
+perf sample perf-grass-ground/view-5-noborder
+wait 8000
+perf stop
+grass parts 134217728
+wait 2000
+perf sample perf-grass-ground/view-5-nobare
+wait 8000
+perf stop
+grass parts 268435456
+wait 2000
+perf sample perf-grass-ground/view-5-nobetween
+wait 8000
+perf stop
+grass parts 536870912
+wait 2000
+perf sample perf-grass-ground/view-5-nosward
+wait 8000
+perf stop
+grass parts 1073741824
+wait 2000
+perf sample perf-grass-ground/view-5-nolayermaps
+wait 8000
+perf stop
+grass parts 2147483648
+wait 2000
+perf sample perf-grass-ground/view-5-nogrounddetail
+wait 8000
+perf stop
+grass parts 0
+grass ground 1
+wait 2000
+perf sample perf-grass-ground/view-5-notone
+wait 8000
+perf stop
+grass ground 0

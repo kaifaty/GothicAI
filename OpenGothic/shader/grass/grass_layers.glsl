@@ -38,6 +38,13 @@ float grassTrackTone(ivec2 place) {
          grassTrackNoise(place,1920,0x7Bu)*0.14 + grassTrackNoise(place,640,0x7Cu)*0.09;
   }
 
+struct GrassLayer {
+  vec3 color;
+  vec3 normal;
+  vec3 orm;
+  float share;
+  };
+
 // tex: the sward's maps in the bindless arrays, the earth's are the next; swardK, earthK: repeats per cm; farK: the
 // far repeat's tile of the sward's, 0 without. otherTex, otherK: the maps and the repeats per cm of a road's loose
 // earth, 0 without - on a meadow the earth of its notches by the road, on a verge the road's own material under
@@ -45,8 +52,7 @@ float grassTrackTone(ivec2 place) {
 // Returns 1 on a pixel of sward, 0 of earth; -1 where the pixel is not the layers'; -2 where the cover's paint
 // took it
 float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, uint otherTex, float otherK,
-                  vec3 pos, vec3 normal, vec3 dpdx, vec3 dpdy, inout vec4 diffuse, inout uint normalOut,
-                  inout vec4 orm, out float strip) {
+                  vec3 pos, vec3 normal, vec3 dpdx, vec3 dpdy, out GrassLayer layer, out float strip) {
   strip = 0.0;
   const vec4 ring = scene.grassRing;
   if(ring.w<=0.0)
@@ -61,13 +67,17 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
   if(!verge && (partsOff & GrassPartLayers)!=0u)
     return -1.0; // the bench's: the painted ground
   const ivec2 place = ivec2(floor(pos.xz*16.0));
-  float dist, reach, margin;
-  const bool  near  = grassBorderNear(pos.xz, verge ? 180.0 : float(GrassCoverInside), dist, reach, margin);
+  const uint  groundOff = scene.viewFlags;
+  const bool  mapsOff = (groundOff & GrassPartGroundMaps)!=0u;
+  const bool  toneOff = (scene.grassGroundParts & GrassPartGroundTone)!=0u;
+  float dist = 0.0, reach = 0.0, margin = 0.0;
+  const bool  near  = (groundOff & GrassPartGroundBorder)==0u &&
+                     grassBorderNear(pos.xz, verge ? 180.0 : float(GrassCoverInside), dist, reach, margin);
   if(verge && (!near || dist>=max(float(grassCoverBeyond(int(reach))), margin)))
     return -1.0;
   const int   border = near ? grassCoverBorder(place, verge ? int(dist*16.0) : -int(dist*16.0), int(reach)) : 256;
-  int bare;
-  const int   level  = grassCoverLevel(place, border, bare);
+  const int   bare   = (groundOff & GrassPartGroundBare)==0u ? grassCoverBare(place) : 0;
+  const int   level  = grassCoverLevel(place, border, bare, (groundOff & GrassPartGroundBetween)!=0u);
 
   const float mip = scene.mipGradScale;
   const vec2  uvS = pos.xz*swardK, dxS = dpdx.xz*swardK, dyS = dpdy.xz*swardK;
@@ -79,9 +89,12 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
   const bool  notch = other && !verge && near && border<256;
   bool loose = other && (verge || (notch && bare<=0));
   bool sward = level>=256;
-  vec3 ormS = vec3(0), ormE = vec3(0);
+  const vec3 neutralOrm = vec3(1.0, GrassRoughness, 0.0);
+  vec3 ormS = neutralOrm, ormE = neutralOrm;
   const bool between = level>0 && level<256;
-  if(!sward) {
+  if(mapsOff) {
+    sward = level>GrassCoverSward;
+    } else if(!sward) {
     if(between)
       ormS = fringeTexture(2u, tex, uvS, dxS*mip, dyS*mip).rgb;
     if(loose)
@@ -114,28 +127,32 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
     }
 
   if((partsOff & GrassPartCover)!=0u) {
-    diffuse.rgb = sward ? vec3(0.0,0.7,0.0) : mix(vec3(1.0,0.0,1.0), vec3(0.8,0.2,0.0), share);
+    const vec3 color = sward ? vec3(0.0,0.7,0.0) : mix(vec3(1.0,0.0,1.0), vec3(0.8,0.2,0.0), share);
+    layer = GrassLayer(color, gn, vec3(0), share);
     return -2.0;
     }
 
   const float d = distance(pos, scene.camPos);
   vec3 albedo, o;
   vec4 nm;
-  const bool mapped = d<GrassLayerNormalTo;
+  const bool mapped = !mapsOff && d<GrassLayerNormalTo;
   if(sward) {
-    const float far = farK>0.0 ? smoothstep(GrassLayerFarFrom, GrassLayerFarTo, d) : 0.0;
+    const float far = farK>0.0 && (groundOff & GrassPartGroundFarSward)==0u ?
+                      smoothstep(GrassLayerFarFrom, GrassLayerFarTo, d) : 0.0;
     albedo = vec3(0);
     if(far<1.0)
       albedo = fringeTexture(0u, tex, uvS, dxS*mip, dyS*mip).rgb;
     if(far>0.0)
       albedo = mix(albedo, fringeTexture(0u, tex, uvS/farK, dxS*(mip/farK), dyS*(mip/farK)).rgb, far);
-    o = between ? ormS : fringeTexture(2u, tex, uvS, dxS*mip, dyS*mip).rgb;
+    o = between || mapsOff ? ormS : fringeTexture(2u, tex, uvS, dxS*mip, dyS*mip).rgb;
     if(mapped)
       nm = fringeTexture(1u, tex, uvS, dxS*mip, dyS*mip);
     } else {
     o = ormE;
     if(loose) {
-      albedo = fringeTexture(0u, otherTex, uvO, dxO*mip, dyO*mip).rgb*grassTrackTone(place);
+      albedo = fringeTexture(0u, otherTex, uvO, dxO*mip, dyO*mip).rgb;
+      if(!toneOff)
+        albedo *= grassTrackTone(place);
       if(mapped)
         nm = fringeTexture(1u, otherTex, uvO, dxO*mip, dyO*mip);
       } else {
@@ -146,7 +163,7 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
     }
   // the earth of a spot in the meadow, not of a border: there it stays the road's
   const float spot = (sward || verge || loose) ? 0.0 : smoothstep(0.0, 0.3, float(bare)/256.0);
-  if(spot>0.0) {
+  if(spot>0.0 && !toneOff) {
     const float high = smoothstep(0.25, 0.75, o.b);
     const float slow = float(grassValueNoise(place,560,0x68u)-32640)*(GrassSpotEarthSlow/32640.0);
     albedo *= mix(vec3(1.0), mix(GrassSpotEarthLow, GrassSpotEarthHigh, high)*(1.0+slow), spot);
@@ -165,19 +182,27 @@ float grassLayers(uint flags, uint tex, float swardK, float earthK, float farK, 
     n = normalize(mix(n, gn, smoothstep(0.7*GrassLayerNormalTo, GrassLayerNormalTo, d)));
     }
   // the blue was the height: neither layer has metal
-  const vec3 own = vec3(o.r, o.g, 0.0);
+  layer = GrassLayer(albedo, n, vec3(o.r, o.g, 0.0), share);
+  return sward ? 1.0 : 0.0;
+  }
+
+void grassBlendLayer(GrassLayer layer, float sward, inout vec4 diffuse, inout uint normalOut, inout vec4 orm) {
+  if(sward==-2.0) {
+    diffuse.rgb = layer.color;
+    return;
+    }
+  const float share = layer.share;
   if(share<1.0) {
     // toward what the pixel was: on a steep ground its painted texture, at the end of a verge's strip the road
-    diffuse.rgb = mix(diffuse.rgb, albedo, share);
-    normalOut   = encodeNormal(normalize(mix(decodeNormal(normalOut), n, share)));
-    orm.rgb     = mix(orm.rgb, own, share);
+    diffuse.rgb = mix(diffuse.rgb, layer.color, share);
+    normalOut   = encodeNormal(normalize(mix(decodeNormal(normalOut), layer.normal, share)));
+    orm.rgb     = mix(orm.rgb, layer.orm, share);
     } else {
-    diffuse.rgb = albedo;
-    normalOut   = encodeNormal(n);
-    orm.rgb     = own;
+    diffuse.rgb = layer.color;
+    normalOut   = encodeNormal(layer.normal);
+    orm.rgb     = layer.orm;
     }
   orm.a = 1.0;
-  return sward ? 1.0 : 0.0;
   }
 
 #endif

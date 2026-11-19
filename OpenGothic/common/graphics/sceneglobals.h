@@ -221,6 +221,7 @@ class SceneGlobals final {
       Tempest::Vec4                   grassRing;
       // the houses whose windows fade with their lamps (HouseLights::pack): three vectors a house
       Tempest::Vec4                   house[3*HouseLights::MaxHouses];
+      alignas(16) uint32_t            grassGroundParts = 0;
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];

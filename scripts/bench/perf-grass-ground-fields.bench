@@ -1,0 +1,125 @@
+# The cost of meadow ground on views 1 and 4 from perf-grass-fields.bench.
+# Use grass-stress-working-34, OPENGOTHIC_GPU_PASSES=1 and TEMPEST_OFFSCREEN=1.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+watch player
+cam game
+walkmode walk
+cadence normal
+
+# View 1: the field below the path by Sekob's farm.
+goto NW_FARM3_PATH_04
+face -65
+clear 3000
+wait 20000
+grass stats
+perf sample perf-grass-ground-fields/view-1
+wait 8000
+perf stop
+grass parts 4096
+wait 2000
+perf sample perf-grass-ground-fields/view-1-nolayers
+wait 8000
+perf stop
+grass parts 33554432
+wait 2000
+perf sample perf-grass-ground-fields/view-1-nopainted
+wait 8000
+perf stop
+grass parts 67108864
+wait 2000
+perf sample perf-grass-ground-fields/view-1-noborder
+wait 8000
+perf stop
+grass parts 134217728
+wait 2000
+perf sample perf-grass-ground-fields/view-1-nobare
+wait 8000
+perf stop
+grass parts 268435456
+wait 2000
+perf sample perf-grass-ground-fields/view-1-nobetween
+wait 8000
+perf stop
+grass parts 536870912
+wait 2000
+perf sample perf-grass-ground-fields/view-1-nosward
+wait 8000
+perf stop
+grass parts 1073741824
+wait 2000
+perf sample perf-grass-ground-fields/view-1-nolayermaps
+wait 8000
+perf stop
+grass parts 2147483648
+wait 2000
+perf sample perf-grass-ground-fields/view-1-nogrounddetail
+wait 8000
+perf stop
+grass parts 0
+grass ground 1
+wait 2000
+perf sample perf-grass-ground-fields/view-1-notone
+wait 8000
+perf stop
+grass ground 0
+
+# View 4: Onar's fields, with grass from the stress set.
+goto NW_BIGFARM_FARM4_PATH_07
+face -175
+wait 20000
+grass stats
+perf sample perf-grass-ground-fields/view-4
+wait 8000
+perf stop
+grass parts 4096
+wait 2000
+perf sample perf-grass-ground-fields/view-4-nolayers
+wait 8000
+perf stop
+grass parts 33554432
+wait 2000
+perf sample perf-grass-ground-fields/view-4-nopainted
+wait 8000
+perf stop
+grass parts 67108864
+wait 2000
+perf sample perf-grass-ground-fields/view-4-noborder
+wait 8000
+perf stop
+grass parts 134217728
+wait 2000
+perf sample perf-grass-ground-fields/view-4-nobare
+wait 8000
+perf stop
+grass parts 268435456
+wait 2000
+perf sample perf-grass-ground-fields/view-4-nobetween
+wait 8000
+perf stop
+grass parts 536870912
+wait 2000
+perf sample perf-grass-ground-fields/view-4-nosward
+wait 8000
+perf stop
+grass parts 1073741824
+wait 2000
+perf sample perf-grass-ground-fields/view-4-nolayermaps
+wait 8000
+perf stop
+grass parts 2147483648
+wait 2000
+perf sample perf-grass-ground-fields/view-4-nogrounddetail
+wait 8000
+perf stop
+grass parts 0
+grass ground 1
+wait 2000
+perf sample perf-grass-ground-fields/view-4-notone
+wait 8000
+perf stop
+grass ground 0

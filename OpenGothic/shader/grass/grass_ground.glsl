@@ -47,12 +47,14 @@ void grassGround(uint bits, vec3 pos, vec3 normal, float sward, inout vec4 diffu
   // a spot of bare earth in the sward: earth, lit as the ground it is
   const ivec2 place    = ivec2(floor(pos.xz*16.0));
   float bare = 1.0 - sward;
+  const bool detailOff = (scene.viewFlags & GrassPartGroundDetail)!=0u;
   if(sward<0.0) {
-    bare         = grassBare(place);
-    diffuse.rgb *= mix(vec3(1.0), GrassEarthTint, bare*grows);
+    bare = detailOff ? 0.0 : grassBare(place);
+    if(!detailOff)
+      diffuse.rgb *= mix(vec3(1.0), GrassEarthTint, bare*grows);
     }
-  const int   noise    = grassPatch(place);
-  if(sward>0.5)
+  const int   noise    = detailOff ? int(GrassPatchMain1) : grassPatch(place);
+  if(sward>0.5 && !detailOff)
     diffuse.rgb *= mix(GrassSwardDry, GrassSwardLush, smoothstep(GrassSwardDryAt, GrassSwardLushAt, float(noise)));
   const float stand    = grassStand(noise)*(1.0-bare)*grows;
   if(stand<=0.0)
@@ -60,7 +62,7 @@ void grassGround(uint bits, vec3 pos, vec3 normal, float sward, inout vec4 diffu
 
   const vec3  toEye = scene.camPos - pos;
   const float d     = length(toEye);
-  const bool  plain = (partsOff & GrassPartFar)!=0u;
+  const bool  plain = detailOff || (partsOff & GrassPartFar)!=0u;
   const float far   = plain ? 0.0 : smoothstep(ring.y*0.5, ring.y, d);
   const float graze = plain ? 0.0 : 1.0 - smoothstep(GrassGrazeFrom, GrassGrazeTo, dot(gn,toEye)/max(d,1.0));
   const float nearShade = (partsOff & GrassPartGroundShade)!=0u ? 1.0 : (sward>=0.0 ? GrassOwnGroundShade : GrassGroundShade);
