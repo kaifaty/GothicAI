@@ -51,10 +51,13 @@ const VisualFx* effectOf(std::string_view name) {
 }
 
 ItemView::ItemView(World& owner, const ItemRecord& item, bool shown)
-  :world(&owner), proto(Resources::loadMesh(item.visual)), material(item.material), fx(effectOf(item.effect)) {
-  if(!shown)
+  :world(&owner), material(item.material), fx(effectOf(item.effect)) {
+  if(!shown) {
+    proto = Resources::loadMesh(item.visual);
     return;
-  mesh = owner.addView(item);
+    }
+  mesh  = owner.addView(item);
+  proto = mesh.protoMesh();
   startEffect();
   }
 
