@@ -1243,7 +1243,7 @@ void main() {
 #endif
 #if defined(HISTORY_OWNER)
 #if defined(HISTORY_PAYLOAD)
-  outHistoryOwner = treeJoint ? 0u : historyOwner;
+  outHistoryOwner = historyOwner;
 #else
   // Opaque particles can win the pixel after a mesh and must clear its owner.
   outHistoryOwner = 0u;
