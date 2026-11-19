@@ -363,6 +363,25 @@ def firerain() -> list:
     ]
 
 
+def fire_bow() -> list:
+    """The fire bow (ITRW_ADDON_FIREBOW, SPELLFX_FIREBOW; magic-fire/weapon.md): the bow burns along its staves as a
+    body burns (body-fire.md): short tongues born on the bow's own mesh that rise and stay a little behind it when it
+    moves, a few embers and its own light. The game shows it on the ground, on the back and in the hand alike
+    (reports/engine/2026-11-19-item-effects)."""
+    mesh = {'shpType_S': 'MESH', 'shpIsVolume': 0, 'shpDim_S': '0 0 0', 'shpOffsetVec_S': '0 0 0'}
+    return [
+        of_torch('OWN_TORCH_SPARKS', 'OWN_FBOW_EMBERS',
+                 {**mesh, 'ppsValue': 4.0, 'velAvg': 0.1, 'velVar': 0.05, 'flyGravity_S': '0 0.00012 0',
+                  'lspPartAvg': 900.0, 'lspPartVar': 400.0, 'visSizeStart_S': '0.5 0.5'}, inherit=0.2, minPixels=2.0),
+        {'name': 'FIRE_BOW', 'base': 'OWN_HAND_LICKS', 'replaces': True, 'inherit': 0.85, 'wind': 0.15,
+         'with': ['OWN_FBOW_EMBERS'], 'light': {'range': 200, 'color': [255, 150, 60]},
+         'set': {**mesh, 'ppsValue': 120.0, 'visSizeStart_S': '14 22', 'visSizeEndScale': 0.7, 'lspPartAvg': 380.0,
+                 'lspPartVar': 100.0, 'dirMode_S': 'DIR', 'dirFOR_S': 'WORLD', 'dirAngleHead': 0.0, 'dirAngleHeadVar': 179.0,
+                 'dirAngleElev': 90.0, 'dirAngleElevVar': 15.0, 'velAvg': 0.02, 'velVar': 0.01,
+                 'flyGravity_S': '0 0.00012 0'}},
+    ]
+
+
 def body_fire() -> list:
     """The fire on a burning body (body-fire.md, concept A: the body burns like a wick).
 
@@ -411,7 +430,7 @@ def body_fire() -> list:
 
 def cmd_build(_args) -> int:
     PARTICLES.parent.mkdir(parents=True, exist_ok=True)
-    effects = firebolt() + fireball() + charged_fireball() + firestorm() + firerain() + body_fire()
+    effects = firebolt() + fireball() + charged_fireball() + firestorm() + firerain() + fire_bow() + body_fire()
     PARTICLES.write_text(json.dumps({'format': 1, 'effects': effects}, indent=1) + '\n')
     print(f'{PARTICLES.relative_to(ROOT)}: {len(effects)} effects')
     return 0
