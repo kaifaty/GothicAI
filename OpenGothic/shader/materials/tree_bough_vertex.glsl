@@ -1,4 +1,5 @@
 layout(location = 7) flat out uvec2 boughFadeOut;
+layout(location = 8) flat out vec3 boughMaskOut;
 
 void vertexShader(uvec4 task, uint materialRef) {
   const uint lane = uint(gl_VertexIndex);
@@ -13,5 +14,5 @@ void vertexShader(uvec4 task, uint materialRef) {
   gl_Position  = processVertex(var, pullVertex(bucketId, index), bucketId, task.x, index);
   bucketIdOut  = materialRef;
   shOut        = var;
-  boughFadeOut = boughFade(task);
+  boughFadeOut = boughFade(task, boughMaskOut);
   }

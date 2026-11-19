@@ -24,11 +24,14 @@ layout(push_constant, std430) uniform Push {
   uint init;
   } push;
 
+// The state prefix matches TreeBoughRender::readStats. Height is a maximum; the other counters are sums.
+const uint BoughStatsSumCount = 7u;
+const uint BoughStatsCount = BoughStatsSumCount + 1u;
 shared uint hasCompact;
 shared uint mainOffset;
-shared uint stats[4];
-uint instanceId, nodeBase, rangeBase, historyBase;
-uvec4 countByLane = uvec4(0);
+shared uint stats[BoughStatsSumCount];
+uint instanceId, nodeBase, rangeBase;
+uint countByLane[BoughStatsSumCount];
 
 vec3 readVec(uint offset) {
   return uintBitsToFloat(uvec3(data[offset], data[offset+1u], data[offset+2u]));
@@ -42,29 +45,26 @@ BoughNode boughGetNode(uint i) {
                    data[at+14u], data[at+15u]);
   }
 
-bool boughWasCoarse(uint i) {
-  return (atomicOr(state[historyBase+i/32u], 0u) & (1u << (i%32u))) != 0u;
-  }
-
-void boughSetCoarse(uint i, bool coarse) {
-  uint mask = 1u << (i%32u);
-  if(coarse)
-    atomicOr(state[historyBase+i/32u], mask);
-  else
-    atomicAnd(state[historyBase+i/32u], ~mask);
-  }
-
 void boughEmit(uint i, uint transition, float weight) {
   uint at = rangeBase+i*4u;
   uint firstIndex = data[at], indexCount = data[at+1u];
   uint key = data[at+2u], command = key & 0xffffu, bucket = key >> 16u;
   uint offset = cmd[command].writeOffset + atomicAdd(cmd[command].instanceCount, 1u);
-  uint band = uint(round(clamp(weight, 0.0, 1.0)*16777215.0));
+  uint band = uint(round(weight*float(BoughWeightMask)));
   payload[offset] = uvec4(instanceId, firstIndex, bucket | (transition << 16u), (indexCount << 24u) | band);
   if((push.flags & 2u)!=0u) {
     bool source = boughGetNode(i).subtreeEnd==i+1u;
     uint cards = data[at+3u];
-    countByLane += uvec4(1u, source ? cards : 0u, source ? 0u : cards, indexCount/3u);
+    uint triangles = indexCount/3u;
+    ++countByLane[0];
+    countByLane[source ? 1 : 2] += cards;
+    countByLane[3] += triangles;
+    if(transition!=0u) {
+      // Each active owner emits once. Each resolved child-side node pairs with that owner.
+      bool childSide = (transition & BoughChildSide)!=0u;
+      ++countByLane[childSide ? 5 : 4];
+      countByLane[6] += triangles;
+      }
     }
   }
 
@@ -78,7 +78,7 @@ void main() {
     uint i = gl_GlobalInvocationID.x;
     if(i<cmd.length())
       cmd[i].instanceCount = 0u;
-    if(i<5u)
+    if(i<BoughStatsCount)
       state[i] = 0u;
     return;
     }
@@ -103,7 +103,7 @@ void main() {
   if(lane==0u && (push.flags & 2u)!=0u) {
     vec3 center = mat3(x, y, z)*readVec(asset+8u) + origin;
     float height = uintBitsToFloat(data[asset+11u]) * length(y) * focal / max(length(center-scene.camPos), 1.0);
-    atomicMax(state[4], uint(clamp(height*1000.0, 0.0, 4294967040.0)));
+    atomicMax(state[BoughStatsSumCount], uint(clamp(height*1000.0, 0.0, 4294967040.0)));
     }
   if((status & 1u)!=0u)
     return; // impostor
@@ -117,13 +117,16 @@ void main() {
   const uint rootBase = data[asset], rootCount = data[asset+1u], nodeCount = data[asset+3u];
   nodeBase = data[asset+2u];
   rangeBase = data[asset+4u];
-  historyBase = stateBase+1u;
 
   const bool useReference = (push.flags & 1u)!=0u;
   if(lane==0u)
     hasCompact = useReference ? reference[ref] : 0u;
-  if(lane<4u)
-    stats[lane] = 0u;
+  if((push.flags & 2u)!=0u) {
+    if(lane<BoughStatsSumCount)
+      stats[lane] = 0u;
+    for(uint i=0u; i<BoughStatsSumCount; ++i)
+      countByLane[i] = 0u;
+    }
   barrier();
 
   if(!useReference) {
@@ -144,9 +147,6 @@ void main() {
 
   if(hasCompact==0u) {
     // No node has been merged and no band participates. The old full canopy is more compact.
-    if(!useReference)
-      for(uint i=lane; i<(nodeCount+31u)/32u; i+=gl_WorkGroupSize.x)
-        state[historyBase+i] = 0u;
     const uint command = data[entry+1u] & 0xffffu;
     const uint first = data[entry+2u], count = data[entry+3u];
     if(lane==0u) {
@@ -177,11 +177,11 @@ void main() {
     }
 
   if((push.flags & 2u)!=0u) {
-    for(uint i=0u; i<4u; ++i)
+    for(uint i=0u; i<BoughStatsSumCount; ++i)
       if(countByLane[i]>0u)
         atomicAdd(stats[i], countByLane[i]);
     barrier();
-    if(lane<4u && stats[lane]>0u)
+    if(lane<BoughStatsSumCount && stats[lane]>0u)
       atomicAdd(state[lane], stats[lane]);
     }
   }

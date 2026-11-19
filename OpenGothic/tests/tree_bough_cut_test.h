@@ -1,5 +1,113 @@
 // Included by mesh_gltf_test.cpp.
 
+void treeBoughRasterCases(Tempest::Device& device) {
+  using namespace Tempest;
+  constexpr uint32_t side = 32;
+  constexpr uint32_t indicesPerCard = 6;
+  const auto shader = [&](std::string_view name) {
+    const auto code = GothicShader::get(name);
+    return device.shader(code.data, code.len);
+    };
+  constexpr Resources::Vertex quad[] = {
+    {{-0.8f,-0.8f,0.4f},{0.f,0.f,1.f},{0.f,0.f},0xffffffffu},
+    {{ 0.8f,-0.8f,0.4f},{0.f,0.f,1.f},{1.f,0.f},0xffffffffu},
+    {{ 0.8f, 0.8f,0.4f},{0.f,0.f,1.f},{1.f,1.f},0xffffffffu},
+    {{-0.8f, 0.8f,0.4f},{0.f,0.f,1.f},{0.f,1.f},0xffffffffu},
+    };
+  const uint32_t compact[] = {4,0,1,2,0,2,3};
+  uint32_t packed[PackedMesh::MaxPrim] = {0x020100u,0x030200u};
+  packed[PackedMesh::MaxPrim-1] = 0x04020000u; // two triangles and four vertices
+  const uint32_t tasks[][4] = {
+    {0,0,0,indicesPerCard << 24},
+    {0,0,1u << 16,(indicesPerCard << 24) | 0x800000u},
+    {0,0,(1u | TreeBough::DescendantSide) << 16,(indicesPerCard << 24) | 0x800000u},
+    };
+  const float instance[16] = {1.f,0.f,0.f, 0.f,1.f,0.f, 0.f,0.f,1.f, 0.f,0.f,0.f};
+  uint32_t bucket[36] = {};
+  bucket[12] = bucket[15] = std::bit_cast<uint32_t>(1.f); // alphaWeight and uvScale
+  bucket[14] = 0x200u; // BK_HASHED_ALPHA
+  SceneGlobals::UboGlobal globals{};
+  globals.view = globals.project = Matrix4x4::mkIdentity();
+  globals.project[3][0] = 0.013f;
+  globals.viewProject = globals.project;
+  globals.clipInfo = {0.1f,0.f,1.f};
+  globals.screenRes = {int(side),int(side)};
+  globals.screenResInv = {1.f/float(side),1.f/float(side)};
+  globals.viewFlags = SceneGlobals::VF_TAA;
+  globals.taaFrame = 7;
+
+  const auto scene = device.ssbo(&globals, sizeof(globals));
+  const auto payload = device.ssbo(tasks, sizeof(tasks));
+  const auto instances = device.ssbo(instance, sizeof(instance));
+  const auto buckets = device.ssbo(bucket, sizeof(bucket));
+  const auto vbo = device.ssbo(quad, sizeof(quad));
+  const auto compactIbo = device.ssbo(compact, sizeof(compact));
+  const auto packedIbo = device.ssbo(packed, sizeof(packed));
+  Pixmap albedo(1,1,TextureFormat::RGBA8);
+  const uint8_t texel[] = {255,255,255,191};
+  std::memcpy(albedo.data(),texel,sizeof(texel));
+  const auto texture = device.texture(albedo,false);
+  auto diffuse = device.attachment(TextureFormat::RGBA8,side,side);
+  auto normal = device.attachment(TextureFormat::R32U,side,side);
+  auto motion = device.attachment(TextureFormat::RG16F,side,side);
+  RenderState state;
+  state.setCullFaceMode(RenderState::CullMode::NoCull);
+  state.setZWriteEnabled(false);
+
+  for(bool mesh : {false,true}) {
+    if(mesh && !device.properties().meshlets.meshShader)
+      continue;
+    const auto pipeline = [&](std::string_view vert, std::string_view meshName, std::string_view frag) {
+      if(mesh)
+        return device.pipeline(state, Shader(), shader(meshName), shader(frag));
+      return device.pipeline(Topology::Triangles,state,shader(vert),shader(frag));
+      };
+    const auto bough = pipeline("main_bough_g_slot.vert.sprv", "main_bough_g_slot.mesh.sprv", "main_bough_g_at_slot.frag.sprv");
+    const auto legacy = pipeline("main_obj_g_slot.vert.sprv", "main_obj_g_slot.mesh.sprv", "main_obj_g_at_slot.frag.sprv");
+    const auto render = [&](const RenderPipeline& pso, const StorageBuffer& ibo, uint32_t index) {
+      auto command = device.commandBuffer();
+      {
+        auto enc = command.startEncoding(device);
+        enc.setFramebuffer({{diffuse,Vec4(),Preserve},{normal,Vec4(),Preserve},{motion,Vec4(),Preserve}});
+        enc.setBinding(0,scene);
+        enc.setBinding(1,payload);
+        enc.setBinding(2,instances);
+        enc.setBinding(3,buckets);
+        enc.setBinding(4,ibo);
+        enc.setBinding(5,vbo);
+        enc.setBinding(6,texture);
+        enc.setBinding(7,Sampler::nearest(ClampMode::ClampToEdge));
+        enc.setBinding(21,instances);
+        const uint32_t push[] = {index,1};
+        enc.setPushData(push);
+        enc.setPipeline(pso);
+        if(mesh)
+          enc.dispatchMesh(1);
+        else
+          enc.draw(nullptr,0,indicesPerCard);
+        }
+      device.submit(command).wait();
+      return device.readPixels(diffuse);
+      };
+    const auto full = render(bough,compactIbo,0);
+    const auto parent = render(bough,compactIbo,1);
+    const auto child = render(bough,compactIbo,2);
+    const auto baseline = render(legacy,packedIbo,0);
+    require(std::memcmp(full.data(),baseline.data(),full.dataSize())==0,"steady bough differs from legacy card");
+    const auto covered = [](const Pixmap& pixmap, size_t i) { return static_cast<const uint8_t*>(pixmap.data())[i*4]!=0; };
+    std::array<size_t,2> draws{};
+    for(size_t i=0; i<side*side; ++i) {
+      const bool p = covered(parent,i), c = covered(child,i);
+      require(uint32_t(p)+uint32_t(c)==uint32_t(covered(full,i)),"bough raster masks overlap or leave a hole");
+      draws[0] += size_t(p);
+      draws[1] += size_t(c);
+      }
+    require(draws[0]>0 && draws[1]>0 && draws[0]+draws[1]<side*side,"bough raster fixture missed a side or the background");
+    std::cout << "tree bough " << (mesh ? "mesh" : "vertex") << " coverage: " << draws[0] << " parent and " << draws[1]
+              << " child pixels\n";
+    }
+  }
+
 void treeBoughCutCases() {
   using namespace TreeBough;
   using namespace Tempest;
@@ -71,21 +179,25 @@ void treeBoughCutCases() {
   device.submit(command).wait();
   device.readBytes(output, cuts.data(), cuts.size() * sizeof(cuts.front()));
 
-  uint32_t history = 0;
+  uint32_t binaryHistory = 0;
   std::vector<Selected> selected;
-  bool sawParentBand = false, sawChildBand = false, sawHysteresis = false;
+  std::vector<float> previousWeights(asset.nodes.size());
+  uint32_t sawBands = 0;
   for(size_t sample = 0; sample < heights.size(); ++sample) {
     const auto& view = views[sample].projection;
     const auto gpuCut = std::span(cuts).subspan(sample * stride, stride);
     const auto label = "tree bough cut at " + std::to_string(heights[sample]) + " px";
-    select(asset, view, std::span(&history, 1), selected);
+    select(asset, view, selected);
     require(gpuCut[0][0] == selected.size(), label + " count differs on GPU");
-    require(gpuCut[0][1] == history, label + " hysteresis state differs on GPU");
+    require(gpuCut[0][2] == 0, label + " two fade sides disagree on complementary coverage");
     if(sample == 0 || sample == bottom || sample + 1 == heights.size())
       require(selected.size() == (sample == bottom ? 2u : 5u), label + " did not reach the endpoint cut");
-    if(sample > bottom)
-      sawHysteresis |= gpuCut[0][0] != cuts[(heights.size() - 1 - sample) * stride][0];
-    uint32_t marked = 0;
+    if(sample > bottom) {
+      const auto outbound = std::span(cuts).subspan((heights.size() - 1 - sample) * stride, stride);
+      require(std::ranges::equal(gpuCut.subspan(1, selected.size()), outbound.subspan(1, outbound[0][0])),
+              label + " cut differs by direction");
+      }
+    std::vector<const Selected*> byNode(asset.nodes.size());
     bool needCompact = false;
     for(size_t i = 0; i < selected.size(); ++i) {
       const auto& entry = selected[i];
@@ -93,28 +205,58 @@ void treeBoughCutCases() {
       require(gpu[0] == entry.node && gpu[1] == entry.transition &&
               std::abs(std::bit_cast<float>(gpu[2]) - entry.weight) < 0.0001f,
               label + " node or transition differs on GPU");
-      const uint32_t bit = 1u << entry.node;
-      require((marked & bit) == 0, label + " selected a node twice");
-      marked |= bit;
+      require(byNode[entry.node] == nullptr, label + " selected a node twice");
+      byNode[entry.node] = &entry;
       needCompact |= entry.transition != 0 || asset.nodes[entry.node].subtreeEnd != entry.node + 1;
-      sawParentBand |= entry.transition != 0 && (entry.transition & DescendantSide) == 0;
-      sawChildBand |= (entry.transition & DescendantSide) != 0;
       }
-    require(gpuCut[0][2] == uint32_t(needCompact) && gpuCut[0][3] == 0,
-            label + " ordinary meshlet path or probe history differs");
+    require(gpuCut[0][1] == uint32_t(needCompact), label + " ordinary meshlet path differs");
+
+    uint32_t binaryCut = 0;
+    for(uint32_t i = 0; i < asset.nodes.size();) {
+      const auto& n = asset.nodes[i];
+      const uint32_t bit = 1u << i;
+      const float limit = n.thresholdPx * ((binaryHistory & bit) != 0 ? MeshLevels::Hysteresis : 1.f);
+      const bool coarse = n.highPx > 0.f && screenSize(n, view) < limit;
+      binaryHistory = (binaryHistory & ~bit) | (coarse ? bit : 0u);
+      if(coarse || n.subtreeEnd == i + 1)
+        binaryCut |= bit;
+      i = coarse ? n.subtreeEnd : i + 1;
+      }
+    for(uint32_t i = 0; i < asset.nodes.size(); ++i) {
+      const auto& n = asset.nodes[i];
+      const float weight = parentWeight(n, screenSize(n, view));
+      require(sample <= bottom ? weight >= previousWeights[i] : weight <= previousWeights[i],
+              label + " weight is not monotone with height");
+      previousWeights[i] = weight;
+      }
     for(uint32_t leaf = 0; leaf < asset.nodes.size(); ++leaf) {
       if(asset.nodes[leaf].subtreeEnd != leaf + 1)
         continue;
-      uint32_t coverage = 0, bands = 0;
+      uint32_t owner = NoNode, coverage = 0;
       for(uint32_t i = leaf; i != NoNode; i = asset.nodes[i].parent) {
-        const auto& n = asset.nodes[i];
-        const float weight = parentWeight(n, screenSize(n, view));
-        coverage += (marked >> i) & 1u;
-        bands += weight > 0.f && weight < 1.f ? 1u : 0u;
+        const float weight = previousWeights[i];
+        if(weight > 0.f && weight < 1.f) {
+          require(owner == NoNode, label + " overlapping bands");
+          owner = i;
+          sawBands |= 1u << i;
+          }
+        coverage += byNode[i] != nullptr;
         }
-      require(coverage == 1 && bands <= 1, label + " did not cover a leaf exactly once or overlapped bands");
+      require(coverage == (owner == NoNode ? 1u : 2u), label + " missing or extra versions for a leaf");
+      for(uint32_t i = leaf; i != NoNode; i = asset.nodes[i].parent) {
+        const auto* entry = byNode[i];
+        if(owner == NoNode) {
+          require((entry != nullptr) == ((binaryCut >> i) & 1u) && (entry == nullptr || entry->transition == 0u),
+                  label + " differs from the binary cut outside bands");
+          } else if(entry != nullptr) {
+          const uint32_t transition = (owner + 1u) | (i == owner ? 0u : DescendantSide);
+          require(entry->transition == transition && entry->weight == previousWeights[owner],
+                  label + " versions do not share the active band's owner and weight");
+          }
+        }
       }
     }
-  require(sawParentBand && sawChildBand && sawHysteresis, "tree bough fixture missed a band edge or hysteresis");
+  require(sawBands == ((1u << 0) | (1u << 1) | (1u << 5)), "tree bough fixture missed a band");
   std::cout << "tree bough cut: " << heights.size() << " CPU/GPU samples from 800 to 30 px and back\n";
+  treeBoughRasterCases(device);
   }

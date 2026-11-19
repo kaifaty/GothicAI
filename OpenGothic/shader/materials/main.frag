@@ -36,7 +36,9 @@ layout(location = 0) in flat uint bucketId;
 layout(location = 1) in Varyings  shInp;
 #endif
 #if defined(TREE_BOUGH_CARDS)
+#include "tree_bough_dissolve.glsl"
 layout(location = 7) in flat uvec2 boughFadeIn;
+layout(location = 8) in flat vec3 boughMaskIn;
 #endif
 #if defined(VIRTUAL_SHADOW)
 layout(location = 3) in flat uint vsmMipId;
@@ -1199,6 +1201,11 @@ void main() {
 #if defined(ATEST) && defined(MATERIAL_MAPS)
   // The history depth pass uses exactly the G-buffer coverage, including hashed TAA alpha.
   if(alphaTest<alphaThreshold())
+    discard;
+#endif
+#if defined(TREE_BOUGH_CARDS)
+  const vec2 boughSample = (gl_FragCoord.xy - boughMaskIn.xy) * boughMaskIn.z;
+  if(!boughCovers(boughFadeIn.x, boughFadeIn.y, boughSample))
     discard;
 #endif
 #if !defined(HISTORY_DEPTH)
