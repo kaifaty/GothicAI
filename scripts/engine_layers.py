@@ -97,6 +97,7 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/game/gamescript*", "gothic"),
     ("common/game/itemdefinitionruntime", "gothic"),
     ("common/game/npcdefinitionruntime", "gothic"),
+    ("common/game/npchelperruntime", "gothic"),
     ("common/game/placementdefinitionruntime", "gothic"),
     ("common/game/activitydefinitionruntime", "gothic"),
     ("common/game/routinedefinitionruntime", "gothic"),

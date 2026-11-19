@@ -1,5 +1,6 @@
 #include "baseimport.h"
 #include "npcsnapshot.h"
+#include "definitionjson.h"
 #include "asset/activitydefinitions.h"
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
@@ -436,24 +437,16 @@ std::vector<std::string> corpus(const NpcSnapshot::Program& program,const fs::pa
     }
   return {states.begin(),states.end()};
   }
-Json text(std::string_view value,Allocator& allocator) { return Json(value.data(),rapidjson::SizeType(value.size()),allocator); }
-void put(Json& json,const char* name,Json value,Allocator& allocator) { json.AddMember(text(name,allocator),value,allocator); }
-std::string bytes(std::string_view value) {
-  std::string encoded;
-  for(auto byte:value) {
-    const auto character=uint8_t(byte);
-    if(character<128) encoded+=char(character);
-    else { encoded+=char(0xc0|(character>>6)); encoded+=char(0x80|(character&63)); }
-    }
-  return encoded;
-  }
+using DefinitionJson::text;
+using DefinitionJson::put;
+using DefinitionJson::encode;
 Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allocator) {
   Json json(rapidjson::kObjectType);
   put(json,"symbol",text(symbol,allocator),allocator);
   put(json,"status",text(capture.reason.empty() ? "captured" : "uncaptured",allocator),allocator);
   if(!capture.reason.empty()) {
     put(json,"reason",text(capture.reason,allocator),allocator);
-    put(json,"detail",text(bytes(capture.detail),allocator),allocator);
+    put(json,"detail",text(encode(capture.detail),allocator),allocator);
     return json;
     }
   const auto& a=capture.activity;
@@ -464,7 +457,7 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
   put(parameters,"walk_mode",Json(a.walkMode),allocator);
   put(parameters,"approach",text(a.approach==Approach::NearestWaypoint ? "nearest_waypoint" : "distance",allocator),allocator);
   put(parameters,"approach_distance",Json(a.approachDistance),allocator);
-  put(parameters,"scheme",text(bytes(a.scheme),allocator),allocator);
+  put(parameters,"scheme",text(encode(a.scheme),allocator),allocator);
   put(parameters,"busy_body_state",Json(a.busyBodyState),allocator);
   put(parameters,"use_state",Json(a.useState),allocator);
   put(parameters,"leave_state",Json(a.leaveState),allocator);
@@ -482,26 +475,7 @@ Json envelope(const NpcSnapshot::Program& program,Allocator& allocator) {
   put(json,"string_encoding",text("unicode-byte-mapping",allocator),allocator);
   return json;
   }
-void difference(const Json& expected,const Json& actual,const std::string& path,int& errors) {
-  if(expected==actual) return;
-  if(expected.IsObject() && actual.IsObject()) {
-    // A repeated key would hide behind the first one with the same name.
-    if(expected.MemberCount()!=actual.MemberCount()) { ++errors; std::cerr<<path<<": field count differs\n"; }
-    for(auto it=expected.MemberBegin();it!=expected.MemberEnd();++it) {
-      const auto found=actual.FindMember(it->name);
-      if(found==actual.MemberEnd()) { ++errors; std::cerr<<path<<'.'<<it->name.GetString()<<": missing field\n"; }
-      else difference(it->value,found->value,path+"."+it->name.GetString(),errors);
-      }
-    for(auto it=actual.MemberBegin();it!=actual.MemberEnd();++it)
-      if(!expected.HasMember(it->name)) { ++errors; std::cerr<<path<<'.'<<it->name.GetString()<<": unexpected field\n"; }
-    }
-  else if(expected.IsArray() && actual.IsArray()) {
-    if(expected.Size()!=actual.Size()) { ++errors; std::cerr<<path<<": count differs\n"; }
-    for(rapidjson::SizeType i=0;i<std::min(expected.Size(),actual.Size());++i)
-      difference(expected[i],actual[i],path+"["+std::to_string(i+1)+"]",errors);
-    }
-  else { ++errors; std::cerr<<path<<": value differs from fresh VM\n"; }
-  }
+using DefinitionJson::difference;
 }
 
 NpcSnapshot::ActivityCounts NpcSnapshot::writeActivities(const Program& program,const fs::path& file,const fs::path& routines) {

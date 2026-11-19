@@ -134,7 +134,10 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinit
 NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::load(const std::filesystem::path& base,
                                                             const daedalus::DaedalusScript& program,
                                                             std::string_view sha256) {
-  return enabled() ? resolve(NpcDefinitions::read(base,sha256),program) : Definitions{};
+  if(!enabled()) return {};
+  auto definitions=resolve(NpcDefinitions::read(base,sha256),program);
+  definitions.helpers=NpcHelperRuntime::load(base,program,sha256);
+  return definitions;
   }
 
 void NpcDefinitionRuntime::observeCalls(daedalus::DaedalusVm& vm, const Definitions& definitions,
@@ -164,6 +167,7 @@ void NpcDefinitionRuntime::observeCalls(daedalus::DaedalusVm& vm, const Definiti
       }
     }
   vm.observe_calls([functions=std::move(functions)](const auto& function) {
+    if(LoadProbe::Npcs::initializationDepth) LoadProbe::Npcs::scriptCalls.fetch_add(1,std::memory_order_relaxed);
     if(LoadProbe::Npcs::initializationDepth && functions.contains(function.index())) LoadProbe::Npcs::deferred();
     });
   }
@@ -194,7 +198,7 @@ bool NpcDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::share
       for(const auto& argument:call.args) push(vm,argument,npc);
       const auto* function=vm.find_symbol_by_index(call.function);
       if(call.deferred) {
-        vm.unsafe_call_bl(function);
+        if(!NpcHelperRuntime::invoke(vm,npc,function,definitions.helpers)) vm.unsafe_call_bl(function);
         }
       else if(!vm.unsafe_call_external(function))
         throw std::runtime_error("NPC definitions: external is not registered: "+function->name());
