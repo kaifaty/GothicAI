@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+import hashlib
 import json
 import math
 from pathlib import Path
+import sys
 
 import numpy as np
 from PIL import Image
@@ -19,6 +21,7 @@ import tree_prefix
 
 HEIGHTS = (800, 400, 300, 200, 150, 100, 70, 50)
 LEVEL_HEIGHTS = (400, 200, 100, 50)
+EYE_FACTORS = (4, 8, 16)
 
 
 def read_rgba(path):
@@ -75,8 +78,9 @@ def schedule(nodes, fits, parents, height_m, certify):
     return merges
 
 
-def cut(nodes, roots, height_px, height_m):
+def cut(nodes, roots, height_px, height_m, *, k=1):
     """Take the binary cut through the centres of the measured transition bands."""
+    height_px /= k
     selected = []
     pending = list(roots)
     while pending:
@@ -161,6 +165,112 @@ def parts_for_comparison(parts, crown, bark):
             for part in parts]
 
 
+def read_eye_hierarchy(directory, source_path, foliage):
+    """Recover the exact saved cut thresholds and parent geometry from the hierarchy probe."""
+    saved = json.loads((directory / 'hierarchy.json').read_text())
+    if hashlib.sha256(source_path.read_bytes()).hexdigest() != saved['source']['source']:
+        raise ValueError('The hierarchy belongs to a different source GLB')
+    primitives = tree_glb.read(directory / saved['glb'])
+    nodes, parents = [], {}
+    for record in saved['nodes']:
+        ident, children = record['id'], tuple(record['children'])
+        geometry = record['geometry']
+        first, count = geometry['first_vertex'], geometry['vertex_count']
+        first_index, index_count = geometry['first_index'], geometry['index_count']
+        vertices = slice(first, first + count)
+        low, high = np.asarray(record['box'])
+        if children:
+            leaves = tuple(leaf for i in children for leaf in nodes[i - 1].leaves)
+            rest_low = np.min([nodes[i - 1].rest_low for i in children], axis=0)
+            rest_high = np.max([nodes[i - 1].rest_high for i in children], axis=0)
+            primitive = primitives[geometry['primitive']]
+            faces = slice(first_index // 3, (first_index + index_count) // 3)
+            parent = {key: primitive[key][vertices] for key in fir_hierarchy.VERTEX_FIELDS}
+            parent['index'] = primitive['index'][faces] - first
+            parent['uv'] = np.tile(lod.UV, (count // 4, 1)).astype(np.float32)
+            parents[ident] = parent
+        else:
+            positions = foliage['position'][vertices]
+            leaves = (ident,)
+            rest_low, rest_high = positions.min(axis=0), positions.max(axis=0)
+        nodes.append(fir_hierarchy.Node(ident, record['kind'], children, leaves, record['branch'],
+                                       rest_low, rest_high, low, high, first, count, first_index,
+                                       index_count, threshold_px=record['threshold_px']))
+    return nodes, saved['roots'], parents, saved['source']['height_m']
+
+
+def eye_material(name, k):
+    return f'{name}_EYE_{k}'
+
+
+def write_eye_level(path, wood, parts, k):
+    name = eye_material(parts[0]['name'], k)
+    needles = dict(join_parts(parts), material=dict(parts[0]['material'], name=name), name=name,
+                   preserve_normals=True)
+    tree_glb.write(path, [dict(wood, preserve_normals=True), needles])
+
+
+def eye_levels(args, output):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from fir_eye_frames import FOV_DEGREES, SCENARIO
+    from fir_set import EYE_ROW
+
+    start = next(line.split() for line in SCENARIO.read_text().splitlines() if line.startswith('cam at '))
+    eye, aim = np.asarray(start[2:8], dtype=float).reshape(2, 3) / 100
+    outward = lod.direction(eye - aim)
+    focal = 540 / math.tan(math.radians(FOV_DEGREES / 2))
+    source = tree_glb.read(args.glb)
+    crown = dict(rgba=read_rgba(args.atlas), tangent_normal=read_normal(args.normal))
+    wood, foliage = parts_for_comparison(source, crown, dict(rgba=read_rgba(args.bark)))
+    positions = np.concatenate([part['position'] for part in source])
+    centre = (positions.min(axis=0) + positions.max(axis=0)) * .5
+    nodes, roots, parents, height_m = read_eye_hierarchy(args.eye, args.glb, foliage)
+    level_wood = {height: len(tree_prefix.split_parts(tree_glb.read(path))[0]['index'])
+                  for height, path in zip(LEVEL_HEIGHTS, args.levels)}
+    alternatives, costs = {}, {}
+    for k, root in zip(EYE_FACTORS, EYE_ROW[1:], strict=True):
+        cuts = {height: cut(nodes, roots, height, height_m, k=k) for height in LEVEL_HEIGHTS}
+        px_per_m = {}
+        for height, ids in cuts.items():
+            for ident in ids:
+                if ident in parents:
+                    # On the return leg a level persists to 110% of its nominal onset.
+                    px_per_m.setdefault(ident, 1.1 * height / height_m)
+        print(f'k={k}: baking {len(px_per_m)} selected parent nodes', flush=True)
+        folder = output / f'eye-{k}'
+        camera = (aim, outward, np.asarray(root) / 100, centre, focal)
+        needles, proxies, atlas_bytes = bake.rebake_variant(folder, foliage, nodes, parents, px_per_m,
+                                                           args.atlas.parent, jobs=args.jobs, camera=camera)
+        write_eye_level(folder / 'base.glb', wood, [needles], k)
+        alternatives[k], costs[k] = {}, {}
+        for number, (height, ids) in enumerate(cuts.items(), 1):
+            leaves = [ident for ident in ids if not nodes[ident - 1].children]
+            merged = [proxies[ident] for ident in ids if nodes[ident - 1].children]
+            if merged:
+                merged = [dict(merged[0], **join_parts(merged))]
+            source_leaves = fir_hierarchy.leaf_part(foliage, nodes, leaves)
+            write_eye_level(folder / f'L{number}.glb', wood,
+                            [fir_hierarchy.leaf_part(needles, nodes, leaves), *merged], k)
+            alternatives[k][height] = [wood, source_leaves, *merged]
+            triangles = sum(len(part['index']) for part in (source_leaves, *merged))
+            cards = len(leaves) + sum(len(part['position']) // 4 for part in merged)
+            costs[k][height] = dict(cards=cards, triangles=triangles + len(wood['index']),
+                                    current_wood=triangles + level_wood[height])
+        print(f'k={k}: atlas {atlas_bytes} bytes', flush=True)
+
+    print('Measuring 24 whole-tree cameras', flush=True)
+    views = raster.tree_comparisons([wood, foliage], alternatives)
+    for k, heights in views.items():
+        for height, rows in heights.items():
+            modes = [mode for row in rows for mode in (row['unlit'], *row['lights'])]
+            ranges = {}
+            for name, samples in (('open_pp', rows), ('tone_pct', modes),
+                                  ('bright_pp', modes), ('mask_residual_pp', rows)):
+                values = [row[name] for row in samples]
+                ranges[name] = [min(values), max(values)]
+            print(json.dumps(dict(k=k, height=height, views=len(rows), **costs[k][height], **ranges)), flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('glb', type=Path)
@@ -172,9 +282,13 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--sheets', type=Path)
     parser.add_argument('--jobs', type=int, default=1)
+    parser.add_argument('--eye', type=Path, help='read a saved hierarchy and bake and measure its relaxed cuts')
     args = parser.parse_args()
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    if args.eye:
+        eye_levels(args, output)
+        return
     if args.sheets:
         args.sheets.mkdir(parents=True, exist_ok=True)
 
@@ -244,7 +358,8 @@ def main():
             transfer_groups[types[phase]].append(node.id)
     transfer = bake.measure_transfer(nodes, foliage, crown['rgba'], fits, transfer_groups)
     print(f'Measuring 24 whole-tree cameras with {len(merges)} certified bands', flush=True)
-    views = raster.tree_comparisons([source_wood, foliage], level_parts, parts_at, HEIGHTS, jpeg_dir=args.sheets)
+    cuts = {height: parts_at(height) for height in HEIGHTS}
+    views = raster.tree_comparisons([source_wood, foliage], {'cut': cuts, 'levels': level_parts}, jpeg_dir=args.sheets)
     steps = math.floor(math.log(30 / 800) / math.log(.99))
     heights = np.r_[800 * .99 ** np.arange(steps + 1), 30]
     model_merges, model_ends = lod.hierarchy_merges(foliage, tree, census)

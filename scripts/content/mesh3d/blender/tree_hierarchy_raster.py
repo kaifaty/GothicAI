@@ -38,7 +38,7 @@ def _texture_sample(part, u, v):
         base = (.18, .18, .18, 1.) if _cutout(part) else (.09, .06, .038, 1.)
         return np.broadcast_to(np.float32(base), (len(u), 4)), None
     h, w = rgba.shape[:2]
-    if attributes is None:
+    if attributes is None and not part.get('coverage'):
         texels = rgba[_texel_indices(rgba.shape, u, v, repeat=not _cutout(part))]
         texels[:, 3] = texels[:, 3] >= .5 if _cutout(part) else 1.
         return texels, None
@@ -48,7 +48,7 @@ def _texture_sample(part, u, v):
     xi, yi = x.astype(np.intp), y.astype(np.intp)
     fx, fy = np.float32(x - xi), np.float32(y - yi)
     base = np.zeros((len(u), 4), np.float32)
-    aux = np.zeros_like(base)
+    aux = np.zeros_like(base) if attributes is not None else None
     for dx, dy, weight in ((0, 0, (1 - fx) * (1 - fy)), (1, 0, fx * (1 - fy)),
                            (0, 1, (1 - fx) * fy), (1, 1, fx * fy)):
         at = np.minimum(yi + dy, h - 1), np.minimum(xi + dx, w - 1)
@@ -56,13 +56,15 @@ def _texture_sample(part, u, v):
         alpha = colour[:, 3] * weight
         base[:, :3] += colour[:, :3] * alpha[:, None]
         base[:, 3] += alpha
-        aux += attributes[at] * alpha[:, None]
+        if aux is not None:
+            aux += attributes[at] * alpha[:, None]
     if part.get('alpha_test'):
         alpha = base[:, 3].copy()
         coverage = alpha >= .5
         weight = np.where(coverage, 1. / np.maximum(alpha, .5), 0.)
         base *= weight[:, None]
-        aux *= weight[:, None]
+        if aux is not None:
+            aux *= weight[:, None]
     return base, aux
 
 
@@ -134,8 +136,9 @@ def raster(parts, projection, low, ppm, shape, *, foliage=None):
                     normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-8)
                     normal = _mapped_normal(normal, faces[hits], edges, texels)
                 normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-8)
-                pixels_out[dst, 4:7] = normal
-                pixels_out[dst, 7] = np.einsum('nk,nk->n', barycentric, vertex_openness)
+                alpha = rgba[selected, 3]
+                pixels_out[dst, 4:7] = normal * alpha[:, None]
+                pixels_out[dst, 7] = np.einsum('nk,nk->n', barycentric, vertex_openness) * alpha
             else:
                 normal = aux[selected, :3]
                 alpha = rgba[selected, 3]
@@ -194,7 +197,7 @@ def _pack(parts):
     groups = defaultdict(list)
     for part in parts:
         key = (id(part.get('rgba')), id(part.get('attributes')), id(part.get('tangent_normal')),
-               _cutout(part), part.get('alpha_test', False))
+               _cutout(part), part.get('alpha_test', False), part.get('coverage', False))
         groups[key].append(part)
     packed = []
     for group in groups.values():
@@ -400,14 +403,14 @@ def cost_sheet(measured, model, destination):
     _save_jpeg(sheet, destination, 160_000)
 
 
-def tree_comparisons(full_parts, level_parts, cut_parts, heights, *, jpeg_dir=None):
-    """Compare the full fir, each hard hierarchy cut and L1–L4 in 24 matched orthographic frames.
+def tree_comparisons(full_parts, alternatives, *, jpeg_dir=None):
+    """Compare alternatives grouped by representation and height in 24 matched orthographic frames.
 
     For a given view, full and variants use identical ray grids of projected height 1600, 800 or 400.
     Full rays are reused for sizes sharing a grid; box filtering does the pixel integration.
     """
     full = _pack(full_parts)
-    alternatives = {'cut': {h: cut_parts(h) for h in heights}, 'levels': level_parts}
+    heights = sorted({h for meshes in alternatives.values() for h in meshes}, reverse=True)
     packed = {}
     for name, meshes in alternatives.items():
         packed[name] = {h: full if len(parts) == len(full_parts) and all(
@@ -420,7 +423,7 @@ def tree_comparisons(full_parts, level_parts, cut_parts, heights, *, jpeg_dir=No
         span = xy.max(axis=0) - low
         sheet_rows = []
         references = {}
-        for px in sorted(set(heights) | level_parts.keys(), reverse=True):
+        for px in heights:
             ray_height = 1600 if px > 400 else 800 if px > 200 else 400
             ray_ppm = ray_height / span[1]
             if ray_height not in references:

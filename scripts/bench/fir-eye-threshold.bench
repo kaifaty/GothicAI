@@ -1,0 +1,158 @@
+# Four spruces A on the hill west of Akil's farm, in the set made by fir_set.py eye-threshold.
+# Left to right: control, k=4, k=8, k=16. The camera aims across the row at depression 20 degrees.
+# Log-spaced segments run from 23 to 400 m and back. The 56-48 px band is slower so the
+# 50 px mesh level and 49 px impostor switches are separated in both directions, including hysteresis.
+# Keep each wait equal to its cam fly duration. The marks timestamp the route for fir_eye_frames.py.
+# OPENGOTHIC_CONTENT=<set> OPENGOTHIC_MESH_LEVELS=1 OPENGOTHIC_IMPOSTORS=1 TEMPEST_WINDOW_SIZE=1920x1080 \
+#   BENCH_HOST=ryzen RYZEN_BENCH_WINDOW=1 RYZEN_LOCK_WAIT=1200 scripts/bench.sh fir-eye-threshold <output>
+# @timeout 1200
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+set time 12 0
+
+goto pos 42700 3517 -2230
+clear 3000
+streaming wait
+grass wait
+cam at 45769.34 7789.28 -1423.37 47854.16 7003.70 -864.74
+wait 5000
+rec fir-eye-threshold
+wait 1000
+
+# Away from the row.
+cam fly 45399.17 7928.77 -1522.55 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 44963.27 8093.02 -1639.35 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 44449.97 8286.43 -1776.89 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 43845.54 8514.19 -1938.85 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 43133.78 8782.39 -2129.56 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 42295.65 9098.20 -2354.14 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 41308.70 9470.09 -2618.59 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 40146.51 9908.02 -2930.00 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 38777.97 10423.70 -3296.70 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 37166.43 11030.94 -3728.51 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 35268.76 11746.00 -4236.99 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 33034.14 12588.03 -4835.75 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 30402.75 13579.56 -5540.83 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 27304.14 14747.15 -6371.10 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 23655.36 16122.04 -7348.79 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 22704.59 16480.30 -7603.55 47854.16 7003.70 -864.74 4700
+mark fir-eye-leg
+wait 4700
+cam fly 21716.47 16852.64 -7868.31 47854.16 7003.70 -864.74 4700
+mark fir-eye-leg
+wait 4700
+cam fly 20689.52 17239.60 -8143.48 47854.16 7003.70 -864.74 4700
+mark fir-eye-leg
+wait 4700
+cam fly 19622.22 17641.77 -8429.46 47854.16 7003.70 -864.74 4700
+mark fir-eye-leg
+wait 4700
+cam fly 15838.30 19067.59 -9443.36 47854.16 7003.70 -864.74 2800
+mark fir-eye-leg
+wait 2800
+cam fly 11547.23 20684.51 -10593.15 47854.16 7003.70 -864.74 2800
+mark fir-eye-leg
+wait 2800
+wait 2000
+
+# Back along the same line.
+cam fly 15838.30 19067.59 -9443.36 47854.16 7003.70 -864.74 2800
+mark fir-eye-leg
+wait 2800
+cam fly 19622.22 17641.77 -8429.46 47854.16 7003.70 -864.74 2800
+mark fir-eye-leg
+wait 2800
+cam fly 20689.52 17239.60 -8143.48 47854.16 7003.70 -864.74 4700
+mark fir-eye-leg
+wait 4700
+cam fly 21716.47 16852.64 -7868.31 47854.16 7003.70 -864.74 4700
+mark fir-eye-leg
+wait 4700
+cam fly 22704.59 16480.30 -7603.55 47854.16 7003.70 -864.74 4700
+mark fir-eye-leg
+wait 4700
+cam fly 23655.36 16122.04 -7348.79 47854.16 7003.70 -864.74 4700
+mark fir-eye-leg
+wait 4700
+cam fly 27304.14 14747.15 -6371.10 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 30402.75 13579.56 -5540.83 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 33034.14 12588.03 -4835.75 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 35268.76 11746.00 -4236.99 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 37166.43 11030.94 -3728.51 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 38777.97 10423.70 -3296.70 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 40146.51 9908.02 -2930.00 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 41308.70 9470.09 -2618.59 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 42295.65 9098.20 -2354.14 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 43133.78 8782.39 -2129.56 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 43845.54 8514.19 -1938.85 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 44449.97 8286.43 -1776.89 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 44963.27 8093.02 -1639.35 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 45399.17 7928.77 -1522.55 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+cam fly 45769.34 7789.28 -1423.37 47854.16 7003.70 -864.74 3600
+mark fir-eye-leg
+wait 3600
+mark fir-eye-returned
+wait 1000
+stop
+wait 500
