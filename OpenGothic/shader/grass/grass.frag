@@ -46,7 +46,7 @@ void main() {
     through = 0.0;
     }
   outDiffuse = vec4(color, float(GBufFoliageBit)/255.0);
-  outNormal  = encodeNormal(normalize(inNormal));
+  outNormal  = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u ? 0u : encodeNormal(normalize(inNormal));
   outOrm     = vec4(ao, GrassRoughness, through, 1.0);
 
   // as motionResidual of materials/main.frag

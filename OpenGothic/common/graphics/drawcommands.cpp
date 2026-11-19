@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdlib>
 #include <limits>
+#include <ostream>
+#include <unordered_map>
 
 #include "graphics/clusterlodrender.h"
 #include "graphics/mesh/submesh/animmesh.h"
@@ -434,10 +436,18 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
       push.meshletCount = uint32_t(orderIds.size());
       }
     auto* pso = ordered ? &Shaders::inst().visibilityPassShOrd : &Shaders::inst().visibilityPassSh;
-    if(viewport==SceneGlobals::V_Main)
+    if(viewport==SceneGlobals::V_Main) {
       pso = ordered ? &Shaders::inst().visibilityPassHiZOrd : &Shaders::inst().visibilityPassHiZ;
-    else if(viewport==SceneGlobals::V_HiZ)
+      cmd.setBinding(10, buckets.treeHiZBounds());
+      if(scene.isTreeOcclusionProbe()) {
+        pso = ordered ? &Shaders::inst().visibilityPassHiZProbeOrd : &Shaders::inst().visibilityPassHiZProbe;
+        const std::vector<uint32_t> empty(clusters.size());
+        treeOcclusionDecisions = Resources::device().ssbo(Tempest::BufferHeap::Readback, empty);
+        cmd.setBinding(11, treeOcclusionDecisions);
+        }
+      } else if(viewport==SceneGlobals::V_HiZ) {
       pso = ordered ? &Shaders::inst().visibilityPassHiZCrOrd : &Shaders::inst().visibilityPassHiZCr;
+      }
 
     cmd.setBinding(T_Scene,    scene.uboGlobal[viewport]);
     cmd.setBinding(T_Payload,  view.visClusters);
@@ -453,6 +463,36 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass) {
     cmd.setPushData(push);
     cmd.setPipeline(*pso);
     cmd.dispatchThreads(ordered ? 1 : push.meshletCount);
+    }
+  }
+
+void DrawCommands::writeTreeOcclusionDecisions(std::ostream& out) {
+  auto& device = Resources::device();
+  std::vector<uint32_t> flags(clusters.size());
+  device.readBytes(treeOcclusionDecisions, flags.data(), flags.size()*sizeof(uint32_t));
+  treeOcclusionDecisions = {};
+
+  // Count real primitives of the rejected meshlets from the same packed indices as main.vert.
+  std::unordered_map<const StorageBuffer*, std::vector<uint32_t>> indices;
+  for(size_t i=0; i<flags.size(); ++i) {
+    const auto& cluster = clusters[i];
+    uint32_t triangles = 0;
+    if((flags[i] & 3u)==1u) { // legacy passes and precise rejects
+      const auto& bucket = buckets[cluster.bucketId];
+      const auto& ibo = bucket.staticMesh!=nullptr ? bucket.staticMesh->ibo8Buffer() : bucket.animMesh->ibo8;
+      auto [at, firstUse] = indices.try_emplace(&ibo);
+      auto& words = at->second;
+      if(firstUse) {
+        words.resize(ibo.byteSize()/sizeof(uint32_t));
+        device.readBytes(ibo, words.data(), ibo.byteSize());
+        }
+      for(size_t m=0; m<cluster.meshletCount; ++m) {
+        const uint32_t bits = words.at((cluster.firstMeshlet+m+1)*PackedMesh::MaxPrim-1);
+        triangles += (bits & 0xffu)==((bits>>8u) & 0xffu) ? (bits>>16u) & 0xffu : PackedMesh::MaxPrim;
+        }
+      }
+    const uint32_t row[] = {flags[i], cluster.meshletCount, triangles};
+    out.write(reinterpret_cast<const char*>(row), sizeof(row));
     }
   }
 

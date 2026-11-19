@@ -9,6 +9,7 @@
 #include "meshclusterlod.h"
 #include "graphics/shaders.h"
 #include "graphics/meshlevels.h"
+#include "graphics/foliagetree.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/skeleton.h"
@@ -2785,6 +2786,67 @@ void mobsiVobLifetime(Tempest::Device& device) {
   std::cout << "mobsi streaming lifetime: 2 Near/Outside/Near cycles, resident animated pose, texture demand released\n";
   }
 
+void treeHiZBoundsCases() {
+  using Tempest::Vec3;
+  const auto spruce = [](float crownX, float barkHeight) {
+    asset::StaticMesh mesh;
+    mesh.positions = {{10,100,20},{25,100,22},{12,barkHeight,24},
+                      {crownX,700,80},{crownX+120,600,110},{crownX+50,1000,60}};
+    mesh.bbox = {{10,100,20},{crownX+120,barkHeight,110}};
+    for(const auto* name : {"HIZ_TREE_BARK.TGA", "HIZ_TREE_CROWN.TGA"}) {
+      const auto first = uint16_t(mesh.sub_meshes.size()*3);
+      auto& part = mesh.sub_meshes.emplace_back();
+      part.mat.name = part.mat.texture = name;
+      part.wedges = {{{0,0,1},{0,0},first},{{0,0,1},{1,0},uint16_t(first+1)},{{0,0,1},{0,1},uint16_t(first+2)}};
+      part.triangles.push_back({{0,1,2}});
+      }
+    return mesh;
+    };
+
+  PackedMesh packed(spruce(220,1200),PackedMesh::PK_Visual,true);
+  packed.addLevel(spruce(160,1100),150);
+  const StaticMesh mesh(packed);
+  const auto box = [&](size_t material, uint8_t stage, float height) {
+    const auto level = mesh.pickLevel(stage,height,false);
+    const auto& sub = mesh.sub.at(material);
+    const auto [first,count] = mesh.levelMeshlets(sub.iboOffset,sub.iboLength,level.glb);
+    const auto* bounds = mesh.treeHiZBox(first,count);
+    require(bounds!=nullptr,"the HiZ box must exist for the selected material and meshlet slice");
+    return *bounds;
+    };
+  const auto bark = box(0,0,151), coarseBark = box(0,0,149);
+  const auto crown = box(1,0,151), coarseCrown = box(1,0,149);
+  require(bark.min==Vec3(10,100,20) && bark.max==Vec3(25,1200,24) &&
+          crown.min==Vec3(220,600,60) && crown.max==Vec3(340,1000,110) &&
+          coarseBark.min==bark.min && coarseBark.max==Vec3(25,1100,24) &&
+          coarseCrown.min==Vec3(160,600,60) && coarseCrown.max==Vec3(280,1000,110),
+          "the rest boxes must exclude the other material, the other level and meshlet padding");
+
+  const uint32_t bits = FoliageWind::pack(mesh.sub[1].material.foliage,FoliageWind::Both);
+  const float reach = mesh.bbox.bbox[1].y;
+  const Vec3 axes[3] = {Vec3(1,0,0),Vec3(0,1.2f,0),Vec3(0.96f,0,0.28f)};
+  const float full = FoliageTree::travel(bits,reach);
+  const auto growAt = [&](float distance, float px) {
+    return FoliageTree::travel(bits,reach,FoliageTree::fade(bits,reach,axes[1].length(),distance,px));
+    };
+  const float partial = growAt(10000,1080);
+  require(growAt(1000,1080)==full && partial>0.f && partial<full && growAt(50000,1080)==0.f &&
+          growAt(50000,0)==full,"the box must follow the vertex wind fade and keep full travel with the fade off");
+  for(const float distance : {1000.f,10000.f,50000.f}) {
+    const auto fade = FoliageTree::fade(bits,reach,axes[1].length(),distance,1080);
+    for(int i=0; i<64; ++i) {
+      const float phase = float(i)/64.f, angle = 2.f*float(M_PI)*phase;
+      FoliageWind::Scene wind;
+      wind.wind = {std::sin(angle),std::cos(angle),1,1};
+      wind.phase = {phase,phase,phase,phase};
+      wind.swing = {phase,0,0,0};
+      const auto moved = FoliageTree::bend(crown.max,0xFFB04BFFu,bits,reach,axes,Vec3(),wind,{},false,fade);
+      require((moved-crown.max).length()<=growAt(distance,1080)+0.001f,
+              "the faded box must contain the wind's travel throughout the gust");
+      }
+    }
+  }
+
 void maskBc1Policy(const Fixture& fixture) {
   std::filesystem::create_directories(fixture.root/"materials");
   alphaDdsFile(fixture.root/"materials/transparent-bc1.dds",true);
@@ -2796,7 +2858,9 @@ void maskBc1Policy(const Fixture& fixture) {
     "SLOT_V0.TGA":{"albedo":"transparent-bc1.dds"},
     "SLOT_V1.TGA":{"albedo":"opaque-bc3.dds"},
     "OPAQUE_BC1.TGA":{"albedo":"opaque-bc1.dds"},
-    "OPAQUE_BC3.TGA":{"albedo":"opaque-bc3.dds"}
+    "OPAQUE_BC3.TGA":{"albedo":"opaque-bc3.dds"},
+    "HIZ_TREE_BARK.TGA":{"albedo":"opaque-bc1.dds","foliage":{"anchor":"tree","wind":4,"flutter":0}},
+    "HIZ_TREE_CROWN.TGA":{"albedo":"opaque-bc3.dds","foliage":{"anchor":"tree","wind":4,"flutter":4}}
   })");
   for(const bool hi:{false,true}) {
     zenkit::Font font;
@@ -2850,6 +2914,7 @@ void maskBc1Policy(const Fixture& fixture) {
     Shaders shaders;
     shaders.waitCompiler();
     fixture.mount();
+    treeHiZBoundsCases();
     resourceColorCase(device,colorPath);
     const auto& font=Resources::font("ORIGINAL.extra.tga",Resources::FontType::Normal,1.25f);
     require(font.pixelSize()==21 && font.textSize("A B")==Tempest::Size(35,21),

@@ -2,6 +2,7 @@
 
 #include <Tempest/RenderPipeline>
 #include <Tempest/StorageBuffer>
+#include <iosfwd>
 #include <vector>
 
 #include "sceneglobals.h"
@@ -65,6 +66,7 @@ class DrawCommands {
 
     void     visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
     void     visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    void     writeTreeOcclusionDecisions(std::ostream& out);
     void     visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void     drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -155,6 +157,7 @@ class DrawCommands {
     // bench `deterministic on`: cluster ids sorted by what they draw, not by the order they were allocated in
     std::vector<uint32_t>    orderIds, orderNext;
     Tempest::StorageBuffer   orderSsbo;
+    Tempest::StorageBuffer   treeOcclusionDecisions;
     Tempest::StorageBuffer   vsmIndirectCmd;
     Tempest::StorageBuffer   vsmCandidates; // vsm_visibility_pass.comp: a cluster and a page entry, for the meshlets' pass
 

@@ -68,6 +68,49 @@ void require(bool condition, const std::string& message) {
     throw std::runtime_error(message);
   }
 
+void checkHiZCoverage() {
+  struct Case {
+    const char* label;
+    std::array<float,4> rect;
+    int mip;
+    std::set<std::pair<int,int>> texels;
+    Tempest::Point screen = {89,53};
+    Tempest::Point tile = {16,16};
+    };
+  const Case cases[] = {
+    {"upper edge on tile boundary", {15.75f,18.f,16.f,20.f}, 0, {{0,1},{1,1}}},
+    {"lower edge on tile boundary", {16.f,18.f,18.f,20.f}, 0, {{1,1}}},
+    {"lower edge rounded toward a tile boundary", {std::nextafter(16.f,0.f),32.f,16.75f,32.75f}, 0, {{0,2},{1,2}}},
+    {"one pixel", {75.25f,36.25f,75.75f,36.75f}, 0, {{4,2}}},
+    {"padded screen edge", {79.75f,51.25f,129.f,65.f}, 0, {{4,3},{5,3}}},
+    {"finer mip fits", {32.5f,14.f,86.f,17.f}, 1, {{1,0},{2,0}}},
+    {"finer mip crosses three tiles", {16.5f,14.f,64.5f,17.f}, 2, {{0,0},{1,0}}},
+    {"rectangular pyramid with a collapsed axis", {-1.f,-1.f,89.f,18.f}, 2, {{0,0},{1,0}}, {89,18}},
+    {"last mip of a one-texel pyramid", {0.f,0.f,1.f,1.f}, 0, {{0,0}}, {1,1}, {1,1}},
+    };
+  for(const auto& t:cases) {
+    const auto tileIndex=[](float endpoint, int screen, int tile) {
+      return int(std::clamp(endpoint,0.f,float(screen-1)))/tile;
+      };
+    const int lx=tileIndex(t.rect[0],t.screen.x,t.tile.x), ly=tileIndex(t.rect[1],t.screen.y,t.tile.y);
+    const int hx=tileIndex(t.rect[2],t.screen.x,t.tile.x), hy=tileIndex(t.rect[3],t.screen.y,t.tile.y);
+    int mip=int(std::bit_width(uint32_t(std::max({1,hx-lx,hy-ly}))))-1;
+    if((hx>>mip)-(lx>>mip)>1 || (hy>>mip)-(ly>>mip)>1)
+      ++mip;
+    std::set<std::pair<int,int>> covered, reference;
+    for(int y=ly>>mip;y<=hy>>mip;++y)
+      for(int x=lx>>mip;x<=hx>>mip;++x)
+        covered.emplace(x,y);
+    // Enumerate real framebuffer pixels by their half-open cells. Padded pixels cannot win a fragment.
+    for(int y=0;y<t.screen.y;++y)
+      for(int x=0;x<t.screen.x;++x)
+        if(float(x+1)>t.rect[0] && float(y+1)>t.rect[1] && float(x)<=t.rect[2] && float(y)<=t.rect[3])
+          reference.emplace(x/(t.tile.x<<mip),y/(t.tile.y<<mip));
+    require(mip==t.mip && covered==reference && covered==t.texels,std::string("HiZ coverage: ")+t.label);
+    }
+  std::printf("HiZ coverage: %zu pixel-boundary, screen-edge and mip cases\n",std::size(cases));
+  }
+
 struct TemporaryDirectory {
   fs::path path = fs::temp_directory_path()/
     ("gothic-wcb-contract-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -582,6 +625,7 @@ class GpuVisibilityCut {
       // The 8x8 HiZ makes its full-screen box large enough for the occluder pipeline.
       SceneGlobals::UboGlobal globals{};
       const uint32_t blank[36]{};
+      globals.viewFlags=SceneGlobals::VF_HIZ_PRECISE;
       scene=device.ssbo(&globals,sizeof(globals));
       globals.viewFlags=SceneGlobals::VF_SHADOW;
       shadowScene=device.ssbo(&globals,sizeof(globals));
@@ -631,6 +675,8 @@ class GpuVisibilityCut {
           encoder.setBinding(7,hiZ);
           encoder.setBinding(8,levelIndices);
           encoder.setBinding(9,records);
+          if(pass==1)
+            encoder.setBinding(10,dummy);
           encoder.setPipeline(pipelines[pass]);
           encoder.setPushData(push);
           encoder.dispatchThreads(1);
@@ -1141,6 +1187,7 @@ int main(int argc, char** argv) {
   TemporaryDirectory temporary;
   try {
     require(argc==1 || (argc==2 && std::string_view(argv[1])=="--gpu"),"usage: gothic-wcb-contract [--gpu]");
+    checkHiZCoverage();
     fs::create_directories(temporary.path);
     selectionFixtures(temporary.path);
     chunkFixtures(temporary.path);

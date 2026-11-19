@@ -127,8 +127,8 @@ class WorldView {
 
     void                dbgClusters(Tempest::Painter& p, Tempest::Vec2 wsz);
 
-    void setTreeOcclusionProbe() { sGlobal.setTreeOcclusionProbe(); }
-    void writeTreeOcclusionProbe(std::ostream& out) { visuals.writeTreeOcclusionProbe(out); }
+    void setTreeOcclusionProbe(bool verify) { sGlobal.setTreeOcclusionProbe(verify); }
+    void writeTreeOcclusionProbe(std::ostream& out, std::ostream& decisions) { visuals.writeTreeOcclusionProbe(out, decisions); }
 
     const SceneGlobals& sceneGlobals() const { return sGlobal; }
     const Sky&          sky() const { return gSky; }

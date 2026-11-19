@@ -932,7 +932,8 @@ void VisualObjects::preFrameUpdateTrees() {
     }
   }
 
-void VisualObjects::writeTreeOcclusionProbe(std::ostream& out) {
+void VisualObjects::writeTreeOcclusionProbe(std::ostream& out, std::ostream& decisions) {
+  drawCmd.writeTreeOcclusionDecisions(decisions);
   for(auto id : objectsLevels) {
     auto& obj = objects[id];
     const auto& bucket = *obj.bucketId;
@@ -950,7 +951,20 @@ void VisualObjects::writeTreeOcclusionProbe(std::ostream& out) {
       out << ' ' << obj.pos.data()[i];
     for(const auto& v : mesh.drawn.bbox)
       out << ' ' << v.x << ' ' << v.y << ' ' << v.z;
-    out << ' ' << grow << ' ' << currentGrow << '\n';
+    auto lo = mesh.drawn.bbox[0] - Vec3(grow);
+    auto hi = mesh.drawn.bbox[1] + Vec3(grow);
+    if(const auto* box = mesh.treeHiZBox(cluster.firstMeshlet, cluster.meshletCount)) {
+      const auto bits = mat.hasMaterialMaps() ? FoliageWind::pack(mat.foliage, FoliageWind::enabled()) : 0u;
+      const float reach = FoliageTree::reach(mat.foliage, mesh.bbox.bbox[0], mesh.bbox.bbox[1]);
+      const Vec3 up(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
+      const Vec3 root(obj.pos.at(3,0), obj.pos.at(3,1), obj.pos.at(3,2));
+      const auto fade = FoliageTree::fade(bits, reach, up.length(), (root-scene.camPos()).length(), scene.foliageFade());
+      const float margin = FoliageTree::travel(bits, reach, fade);
+      lo = Vec3(std::max(lo.x, box->min.x-margin), std::max(lo.y, box->min.y-margin), std::max(lo.z, box->min.z-margin));
+      hi = Vec3(std::min(hi.x, box->max.x+margin), std::min(hi.y, box->max.y+margin), std::min(hi.z, box->max.z+margin));
+      }
+    out << ' ' << grow << ' ' << currentGrow << ' ' << obj.clusterId
+        << ' ' << lo.x << ' ' << lo.y << ' ' << lo.z << ' ' << hi.x << ' ' << hi.y << ' ' << hi.z << '\n';
     }
   }
 

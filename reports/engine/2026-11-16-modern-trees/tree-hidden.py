@@ -13,6 +13,8 @@ import numpy as np
 CORNERS = np.array(list(product((0, 1), repeat=3)))
 SIZE_LIMITS = (1, 2, 4, 8, 16, 32, 64)
 TERRAIN_ID = 0xffffffff
+CLUSTER_TAG = 0x80000000
+LEGACY, PRECISE, WIDE, ELIGIBLE, DRAWN = 1, 2, 4, 8, 16
 
 
 def pack_depth(z):
@@ -81,13 +83,16 @@ class Depth:
             if method == "unpacked_pixels":
                 return bool(depth <= z), 0
             return bool(pack_depth(depth) <= np.float32(self.encode(z) / 65535)), 0
-        tiles = np.trunc(self.rectangle(rect) / self.tile).astype(int)
+        pixels = self.rectangle(rect)
+        if method == "precise":
+            pixels = np.clip(pixels, 0, self.screen - 1)
+        tiles = np.trunc(pixels / self.tile).astype(int)
         lo, hi = np.clip(tiles, 0, np.array(self.mips[0].shape[::-1]) - 1)
         span = int((hi - lo).max())
         lod = (span - 1).bit_length() if span else 0
         if method == "tiles":
             lod = 0
-        if method == "tight_mip":
+        if method in ("tight_mip", "precise"):
             lod = 0
             while ((hi >> lod) - (lo >> lod)).max() > 1:
                 lod += 1
@@ -96,7 +101,10 @@ class Depth:
         if method == "stock" and span:
             x1, y1 = x0 + 1, y0 + 1
         z = self.mips[lod][y0:y1 + 1, x0:x1 + 1].max()
-        return bool(pack_depth(depth) <= np.float32(z / 65535)), lod
+        packed = pack_depth(depth)
+        if method == "precise":
+            packed = min(packed, 1.)
+        return bool(packed <= np.float32(z / 65535)), lod
 
 
 def project(box, model, vp, near):
@@ -178,6 +186,8 @@ def replay(path, shared, geometry):
         return np.fromfile(path.with_suffix(suffix), dtype=dtype).reshape(screen[::-1])
 
     lines = path.with_suffix(".txt").read_text().splitlines()
+    if len(lines[0].split()) > 5:
+        return replay_precise(path, lines, shared, geometry)
     w, h, hw, hh, near = map(float, lines[0].split())
     screen, base = (int(w), int(h)), (int(hw), int(hh))
     vp = np.array(lines[1].split(), dtype=np.float32).reshape(4, 4)
@@ -342,6 +352,93 @@ def replay(path, shared, geometry):
             triangles_removed=counts["triangles"] - tris[label], clusters_or_parts_submitted=parts_kept[label],
         )
     return data
+
+
+def replay_precise(path, lines, shared, geometry):
+    w, h, hw, hh, near, mode = lines[0].split()
+    screen, base = (int(w), int(h)), (int(hw), int(hh))
+    vp = np.array(lines[1].split(), dtype=np.float32).reshape(4, 4)
+    planes = np.array([line.split() for line in lines[2:8]], dtype=np.float32)
+    pre = np.fromfile(path.with_suffix(".pre.f32"), dtype="<f4").reshape(screen[::-1])
+    depth = Depth(pre, base)
+    mip_diff = depth.load_gpu(path.with_suffix(".hiz.u16"))
+    ids = np.fromfile(path.with_suffix(".id.u32"), dtype="<u4").reshape(screen[::-1])
+    owner, count = np.unique(ids[ids >= CLUSTER_TAG] ^ np.uint32(CLUSTER_TAG), return_counts=True)
+    decisions = np.fromfile(path.with_suffix(".decisions.u32"), dtype="<u4").reshape(-1, 3)
+    flags, meshlets, triangles = decisions.T
+    if owner.size and owner.max() >= len(flags):
+        raise ValueError(f"A G-buffer owner has no visibility record in {path}")
+    legacy, precise, wide = ((flags & bit) != 0 for bit in (LEGACY, PRECISE, WIDE))
+    removed = legacy & ~precise
+    violating = removed[owner] if mode == "verify" else np.zeros(len(owner), dtype=bool)
+    drawn = (flags & DRAWN) != 0
+    pixels = dict(zip(map(int, owner), map(int, count), strict=True))
+
+    visible, tree_tris, tree_meshlets = Counter(), Counter(), Counter()
+    canopy = Counter()
+    submitted = set()
+    counts = Counter()
+    mesh_names = {}
+    for line in lines[8:]:
+        fields = line.split()
+        _, level, meshlet_count, crown = map(int, fields[:4])
+        cluster = int(fields[32])
+        key = tuple(map(float, fields[24:30]))
+        model = np.array(fields[8:24], dtype=np.float32).reshape(4, 4)[:, :3]
+        tree = tuple(model[3])
+        lone = tree[0] == 48500 and tree[2] == 500
+
+        sphere = np.array(fields[4:8], dtype=np.float32)
+        cpu_eligible = meshlet_count > 0 and in_frustum(sphere, planes)
+        counts["cpu_frustum_mismatches"] += cpu_eligible != bool(flags[cluster] & ELIGIBLE)
+        if cpu_eligible:
+            box = np.array(fields[33:39], dtype=np.float32).reshape(2, 3)
+            rect, z = project(box, model, vp, float(near))
+            cpu_precise = depth.test(rect, z, "precise")[0]
+        else:
+            cpu_precise = False
+        counts["cpu_precise_passed"] += cpu_precise
+        counts["gpu_precise_passed"] += precise[cluster]
+        counts["cpu_gpu_decision_mismatches"] += cpu_precise != precise[cluster]
+        counts["trees_clusters_reintroduced_from_wide"] += precise[cluster] and not wide[cluster]
+        counts["trees_clusters_reintroduced_from_legacy"] += precise[cluster] and not legacy[cluster]
+        if drawn[cluster] and crown:
+            canopy["all_canopy_clusters"] += 1
+            canopy["all_canopy_meshlets"] += meshlet_count
+
+        if lone:
+            continue
+        visible[tree] += pixels.get(cluster, 0)
+        if drawn[cluster]:
+            if key not in mesh_names:
+                box = np.array(key, dtype=np.float32).reshape(2, 3)
+                error, name = min((float(np.max(np.abs(box - v))), name) for name, v in shared.items())
+                if error > .02:
+                    raise ValueError(f"No spruce with bounds {key}. Closest {name}, {error:g} cm off")
+                mesh_names[key] = name
+            _, triangle_count, _ = geometry[mesh_names[key], level, bool(crown)]
+            submitted.add(tree)
+            tree_tris[tree] += triangle_count
+            tree_meshlets[tree] += meshlet_count
+        if removed[cluster]:
+            counts["forest_clusters_removed"] += 1
+            counts["forest_meshlets_removed"] += meshlet_count
+            counts["forest_triangles_removed"] += triangles[cluster]
+
+    seen = {tree for tree, area in visible.items() if area}
+    hidden = submitted - seen
+    return dict(
+        mode=mode, screen=screen, hiz=base, mip_gpu_cpu_diff=mip_diff,
+        hiz_pass=len(submitted), visible_trees=len(seen), zero_pixels=len(hidden),
+        hidden_triangles=sum(tree_tris[t] for t in hidden), hidden_meshlets=sum(tree_meshlets[t] for t in hidden),
+        main_clusters=int(drawn.sum()), main_meshlets=int(meshlets[drawn].sum()),
+        all_canopy_clusters=canopy["all_canopy_clusters"], all_canopy_meshlets=canopy["all_canopy_meshlets"],
+        clusters_removed=int(removed.sum()), meshlets_removed=int(meshlets[removed].sum()),
+        triangles_removed=int(triangles[removed].sum()), clusters_reintroduced_from_legacy=int((precise & ~legacy).sum()),
+        clusters_reintroduced_from_wide=int((precise & ~wide).sum()),
+        violation_clusters=int(violating.sum()), violation_pixels=int(count[violating].sum()),
+        unexpected_owner_clusters=int((~drawn[owner]).sum()), **{k: int(v) for k, v in counts.items()},
+    )
 
 
 def main():
