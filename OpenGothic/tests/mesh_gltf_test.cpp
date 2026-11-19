@@ -1469,9 +1469,21 @@ int levelSwitchChild(std::string_view mode) {
     settings = std::make_unique<Settings>();
     settings->load((fixture.root/"system.ini").u16string(), (fixture.root/"user.ini").u16string());
     const bool enabled = MeshLevels::smoothTreesEnabled();
-    const float px[] = {400.f, 200.f, 100.f, 50.f};
-    require(enabled==(mode=="smooth-default") && MeshLevels::pickVisual(px, 4, 0, 399.f, enabled)==(enabled ? 0 : 1),
-            "only the enabled tree switch may skip L1: "+std::string(mode));
+    const bool marked = mode!="smooth-unmarked";
+    colorGlbFile(fixture.root/"meshes/test/own.glb",2,0,marked ? uint16_t(1) : uint16_t(0));
+    fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":[)"
+                  R"({"glb":"test/own.glb","px":400},{"glb":"test/own.glb","px":200}]}})");
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1,"the tree switch fixture must load");
+    const auto& mesh = proto->attach[0];
+    const bool usePrefix = enabled && marked;
+    const bool useLevels = mode!="smooth-parent";
+    require(enabled==(mode=="smooth-default" || !marked) && mesh.cardCount==unsigned(usePrefix) &&
+            mesh.levels.size()==(useLevels ? 2u : 0u) &&
+            mesh.pickLevel(0,399.f,false,true).glb==(!useLevels || usePrefix ? 0 : 1),
+            "only a marked tree with both switches enabled may skip L1: "+std::string(mode));
     return 0;
     }
   const bool impostorOnly = mode.starts_with("impostor-");
@@ -1562,6 +1574,7 @@ void levelCases(const Fixture& fixture) {
   levelSwitchCase("shadow-env");
   levelSwitchCase("shadow-ini");
   levelSwitchCase("smooth-default");
+  levelSwitchCase("smooth-unmarked");
   levelSwitchCase("smooth-env");
   levelSwitchCase("smooth-ini");
   levelSwitchCase("smooth-parent");
