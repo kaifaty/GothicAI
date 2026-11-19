@@ -965,8 +965,9 @@ void VisualObjects::preFrameUpdateLevels() {
       shadowLevel = level.glb;
       if(!obj.isGhost && FoliageTree::isTree(obj.bucketId->mat.foliage)) {
         const float shadowHeight = MeshLevels::screenHeight(worldHeight, distance, py, 1080);
-        shadowLevel = fullShadows ? 0 : MeshLevels::pickShadow(mesh->levels.size(), obj.shadowLevel, shadowHeight,
-                                                             level.glb, shadowLevels);
+        const bool wasSeparate = obj.shadowLevel!=obj.level.glb;
+        shadowLevel = fullShadows ? 0 : MeshLevels::pickShadow(mesh->levels.size(), obj.shadowLevel, wasSeparate,
+                                                             shadowHeight, level.glb, shadowLevels);
         }
       if(level.impostor() && obj.levelSub==0 && obj.visible && drawStatic) {
         const Vec3 x(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2));

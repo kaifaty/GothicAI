@@ -103,12 +103,13 @@ inline uint8_t pick(const float* px, size_t count, uint8_t current, float height
   return uint8_t(level);
   }
 
-// Keep the visual GLB when the tree fills at least 800 pixels at 1080p. Farther out, sun and lamps share the
-// coarser scale based on the main view's field of view. Neither shadow path takes the impostor card.
-inline uint8_t pickShadow(size_t count, uint8_t current, float heightAt1080, uint8_t visualGlb, bool enabled) {
+// Leave the visual GLB below 800 pixels at 1080p and return to it at 880. Farther out, sun and lamps share
+// the coarser scale based on the main view's field of view. Neither shadow path takes the impostor card.
+inline uint8_t pickShadow(size_t count, uint8_t current, bool wasSeparate, float heightAt1080, uint8_t visualGlb, bool enabled) {
   constexpr float closeUpPx = 800.f;
   constexpr float px[MaxLevels] = {2400.f, 1400.f, closeUpPx, 400.f};
-  if(!enabled || heightAt1080>=closeUpPx)
+  const float visualThreshold = wasSeparate ? closeUpPx*Hysteresis : closeUpPx;
+  if(!enabled || heightAt1080>=visualThreshold)
     return visualGlb;
   return pick(px, std::min(count, MaxLevels), current, heightAt1080);
   }

@@ -1458,7 +1458,7 @@ int levelSwitchChild(std::string_view mode) {
     settings = std::make_unique<Settings>();
     settings->load((fixture.root/"system.ini").u16string(), (fixture.root/"user.ini").u16string());
     const bool enabled = MeshLevels::shadowLevelsEnabled();
-    require(enabled==(mode=="shadow-default") && MeshLevels::pickShadow(4, 0, 700.f, 0, enabled)==(enabled ? 3 : 0),
+    require(enabled==(mode=="shadow-default") && MeshLevels::pickShadow(4, 0, false, 700.f, 0, enabled)==(enabled ? 3 : 0),
             "the shadow switch must affect only the shadow level: "+std::string(mode));
     return 0;
     }
@@ -1543,10 +1543,17 @@ void levelCases(const Fixture& fixture) {
   levelSwitchCase("shadow-env");
   levelSwitchCase("shadow-ini");
 
-  require(MeshLevels::pickShadow(4, 4, 1200.f, 0, true)==0 && MeshLevels::pickShadow(4, 0, 800.f, 1, true)==1 &&
-          MeshLevels::pickShadow(4, 0, 799.f, 0, true)==3 && MeshLevels::pickShadow(4, 0, 390.f, 0, true)==4 &&
-          MeshLevels::pickShadow(4, 4, 420.f, 1, true)==4 && MeshLevels::pickShadow(4, 4, 450.f, 1, true)==3 &&
-          MeshLevels::pickShadow(2, 0, 390.f, 0, true)==2 && MeshLevels::pickShadow(4, 3, 2500.f, 4, false)==4,
+  const auto spruceShadow = [](uint8_t previous, float height) {
+    return MeshLevels::pickShadow(4, previous, previous!=0, height, 0, true);
+    };
+  const auto separate = spruceShadow(0, 799.9f);
+  require(spruceShadow(0, 800.f)==0 && separate==3 && spruceShadow(separate, 800.f)==3 &&
+          spruceShadow(separate, 879.9f)==3 && spruceShadow(separate, 880.f)==0 && spruceShadow(0, 879.9f)==0,
+          "the near shadow must leave the visual GLB below 800 pixels and return at 880 pixels");
+  require(MeshLevels::pickShadow(4, 1, false, 850.f, 0, true)==0 && MeshLevels::pickShadow(4, 0, false, 800.f, 1, true)==1 &&
+          MeshLevels::pickShadow(4, 0, false, 390.f, 0, true)==4 &&
+          MeshLevels::pickShadow(4, 4, true, 420.f, 1, true)==4 && MeshLevels::pickShadow(4, 4, true, 450.f, 1, true)==3 &&
+          MeshLevels::pickShadow(2, 0, false, 390.f, 0, true)==2 && MeshLevels::pickShadow(4, 3, true, 850.f, 0, false)==0,
           "shadow LOD must match the near visual GLB and use its own thresholds and hysteresis farther away");
 
   // Spruce A, 18 m, at 1920x1080 and 67.5 degrees: 400, 200, 100 and 50 px at 36, 73, 145 and 291 m
