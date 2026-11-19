@@ -6,17 +6,64 @@ twice in the mode of pairs (reports/engine/2026-11-16-modern-trees/two-sided.md)
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 import fir
 import fir_tree
+import tree_bough_lod
 import tree_density
 import tree_glb
 import tree_prefix
 
 HERE = Path(__file__).resolve().parent
+
+
+def test_bough_lod_measures_a_small_fir(tmp_path, monkeypatch):
+    def quad(camera):
+        plane = np.column_stack((tree_bough_lod.UV * (2., 1.) - (1., .5), np.zeros(4)))
+        return plane @ tree_bough_lod.basis(camera).T
+
+    def part(name, position, phase, index, cutout):
+        colour = np.zeros((len(position), 4), np.uint8)
+        colour[:, 1] = phase
+        uv = np.tile(tree_bough_lod.UV, (len(position) // 4, 1))
+        return dict(name=name, position=np.asarray(position, np.float32),
+                    normal=np.tile((0., 0., 1.), (len(position), 1)), uv=uv,
+                    colour=colour, index=index, cutout=cutout)
+
+    indices = tree_bough_lod.QUAD
+    front, side = quad(tree_bough_lod.FRONT), quad(tree_bough_lod.SIDE)
+    wood = part('wood', [(-.1, 0., -.3), (.1, 0., -.3), (.1, 0., 3.), (-.1, 0., 3.)], 0, indices, False)
+    foliage = part('foliage', np.concatenate((front, side, front + (0., 0., 1.))),
+                   [23] * 8 + [0] * 4, np.concatenate((indices, indices + 4, indices + 8)), True)
+    branch = SimpleNamespace(phase=23 / 255, points=np.zeros((1, 3)), azimuth=0., height=.2, whorl=0, length=2.)
+    metrics = dict(cards_total=3, cards={'mock': 3}, cards_by_role={'roof': 2, 'sleeve': 1})
+    monkeypatch.setattr(fir_tree, 'build', lambda *_: SimpleNamespace(
+        parts=[wood, foliage], branches=[branch], stubs=0, cards=[], metrics=metrics))
+    config = dict(id='mock', cards={'top': [.8]}, whorl={'skirt': 1})
+    glb = tmp_path / 'mock.glb'
+    tree_glb.write(glb, [wood, foliage], extras=dict(tree='mock', seed=7, scale=1.))
+
+    boughs, projected, census = tree_bough_lod.measure_branches(glb, config)
+    assert census['branches'] == 1
+    assert census['types'] == {'skirt': 1}
+    assert (census['wood'], census['fixed_foliage'], census['full']) == (2, 2, 8)
+    assert projected.shape == (24, 1)
+    assert next(tree_bough_lod.budgets(boughs, projected, census))['options']['48/16']['steady'] == 8
+
+    bough = boughs[0]
+    texture = np.ones((4, 4, 4), np.float32)
+    cross = tree_bough_lod.bake(bough, texture, (tree_bough_lod.FRONT, tree_bough_lod.SIDE), 1)
+    variants = [cross[:1], cross, cross]
+    cases = {view: result for view, result, _ in tree_bough_lod.measure_views(bough, bough, texture, variants)}
+    edge = cases['side'][32]
+    assert edge['single']['tone_pct'] is None
+    assert edge['single']['open_pp'] > 90
+    assert abs(edge['cross']['open_pp']) < 2
+    assert abs(edge['cross']['tone_pct']) < .01
 
 
 @pytest.fixture(scope='module')
