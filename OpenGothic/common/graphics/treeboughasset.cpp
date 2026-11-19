@@ -425,9 +425,10 @@ float screenSize(const Node& node, const Projection& view) {
   return depth>view.nearZ ? node.diameter*view.focalScale/depth : std::numeric_limits<float>::infinity();
   }
 
-static float fadeWeight(float low, float high, float px) {
-  const float t = std::clamp((px-low)/(high-low),0.f,1.f);
-  return 1.f-t*t*(3.f-2.f*t);
+template<class Float>
+static Float fadeWeight(Float low, Float high, Float px) {
+  const auto t = std::clamp((px-low)/(high-low),Float(0),Float(1));
+  return Float(1)-t*t*(Float(3)-Float(2)*t);
   }
 
 float parentWeight(const Node& node, float px) {
@@ -435,7 +436,9 @@ float parentWeight(const Node& node, float px) {
   }
 
 float impostorJointWeight(float threshold, float px) {
-  return fadeWeight(threshold*(46.f/49.f),threshold*(56.f/49.f),px);
+  // Float intermediates can reverse the curve by one ULP near the upper edge.
+  const double scale = double(threshold)/49.0;
+  return float(fadeWeight(46.0*scale,56.0*scale,double(px)));
   }
 
 uint32_t impostorJointFade(float weight) {

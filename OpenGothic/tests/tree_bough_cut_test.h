@@ -164,6 +164,9 @@ void treeBoughCutCases() {
           std::abs(impostorJointWeight(impostorPx, 51.f) - 0.5f)<1e-6f &&
           impostorJointFade(0.f)==0u && impostorJointFade(1.f)==0u,
           "impostor joint endpoints, midpoint or steady fade encoding differ");
+  require(impostorJointWeight(impostorPx, 55.99828f)<=
+          impostorJointWeight(impostorPx, std::nextafter(55.99828f, 0.f)),
+          "impostor joint reversed between adjacent floats near the upper edge");
   std::vector<View> views;
   std::vector<uint32_t> jointWeights;
   for(const auto height : heights) {
