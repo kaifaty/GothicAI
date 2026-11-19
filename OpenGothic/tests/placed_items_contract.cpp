@@ -876,11 +876,14 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
     (void)definition;
     helperAddresses.insert(vm.find_symbol_by_name(name)->address());
     }
-  std::set<uint32_t> onEquipAddresses;
+  // Equipment callbacks remain scripts, including the unequip/equip pair when the
+  // constructor's final auto-equip selects an item already in its weapon slot.
+  std::set<uint32_t> itemCallbackAddresses;
   for(const auto& [symbol,item]:NpcDefinitionContract::items(script).items) {
     (void)symbol;
-    if(const auto* callback=vm.find_symbol_by_index(uint32_t(item.on_equip)); callback && callback->type()==daedalus::DaedalusDataType::FUNCTION)
-      onEquipAddresses.insert(callback->address());
+    for(const auto function:{item.on_equip,item.on_unequip})
+      if(const auto* callback=vm.find_symbol_by_index(uint32_t(function)); callback && callback->type()==daedalus::DaedalusDataType::FUNCTION)
+        itemCallbackAddresses.insert(callback->address());
     }
   size_t count=0,dailyCount=0,referenceHelperCalls=0;
   std::vector<std::string> differences;
@@ -921,18 +924,18 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
         const auto* onEquip=vm.find_symbol_by_name("ON_EQUIP");
         if(syntheticEquip) require(onEquip!=nullptr,"synthetic equipment has an on_equip callback");
         const auto onEquipAddress=onEquip ? onEquip->address() : uint32_t(-1);
-        size_t routineInstructions=0,constructorInstructions=0,onEquipCalls=0,helperCalls=0,onEquipDepth=0;
+        size_t routineInstructions=0,constructorInstructions=0,onEquipCalls=0,helperCalls=0,itemCallbackDepth=0;
         int32_t joraAfterEquip=-1;
         const auto* fightSkills=vm.find_symbol_by_name("B_SETFIGHTSKILLS");
         const auto constructorAddress=symbol->address();
         vm.observe_instructions([&](const daedalus::DaedalusInstruction& instruction) {
-          if(onEquipAddresses.contains(vm.pc())) ++onEquipDepth;
+          if(itemCallbackAddresses.contains(vm.pc())) ++itemCallbackDepth;
           if(routineAddresses.contains(vm.pc())) ++routineInstructions;
           if(vm.pc()==constructorAddress) ++constructorInstructions;
           if(vm.pc()==onEquipAddress) ++onEquipCalls;
-          if(helperAddresses.contains(vm.pc()) && onEquipDepth==0) ++helperCalls;
-          if(onEquipDepth>0 && instruction.op==daedalus::DaedalusOpcode::BL) ++onEquipDepth;
-          if(onEquipDepth>0 && instruction.op==daedalus::DaedalusOpcode::RSR) --onEquipDepth;
+          if(helperAddresses.contains(vm.pc()) && itemCallbackDepth==0) ++helperCalls;
+          if(itemCallbackDepth>0 && instruction.op==daedalus::DaedalusOpcode::BL) ++itemCallbackDepth;
+          if(itemCallbackDepth>0 && instruction.op==daedalus::DaedalusOpcode::RSR) --itemCallbackDepth;
           if(name=="VLK_408_JORA" && fightSkills && vm.pc()==fightSkills->address()) {
             const auto self=std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
             joraAfterEquip=self->hitchance[1];
@@ -986,7 +989,7 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
         restoreHelperLocals(localBaseline);
         script.setSeed(contractSeed);
         vm.global_item()->set_instance(oldItem);
-        routineInstructions=0; constructorInstructions=0; onEquipCalls=0; helperCalls=0; onEquipDepth=0;
+        routineInstructions=0; constructorInstructions=0; onEquipCalls=0; helperCalls=0; itemCallbackDepth=0;
         actual=create(symbol->index(),policy);
         difference(name,"record constructor calls","0",std::to_string(constructorInstructions));
         difference(name,"captured helper VM calls","0",std::to_string(helperCalls));
