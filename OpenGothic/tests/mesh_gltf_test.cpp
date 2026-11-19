@@ -1763,6 +1763,15 @@ void clusterHierarchyCases(const Fixture& fixture) {
   MeshClusterLod::write(dir/"reserialized.glb",bytes.size(),sourceCrc32,*restored);
   require(gothicglb::readFile(dir/"cluster.clod")==gothicglb::readFile(dir/"reserialized.clod"),
           "graph round trip must preserve every packed field");
+  const auto graphBytes = gothicglb::readFile(dir/"cluster.clod");
+  const auto staleGlb = dir/"stale.glb";
+  for(const size_t offset:{4u,8u,12u}) { // Format, GLB loader and cluster builder versions.
+    auto stale = graphBytes;
+    stale.at(offset) ^= 1u;
+    gothicglb::writeFile(dir/"stale.clod",stale.data(),stale.size());
+    require(!MeshClusterLod::read(staleGlb,bytes.size(),sourceCrc32,mesh,locked),
+            "a different format, loader or builder version must invalidate the graph");
+    }
 
   const auto load = [&](bool clustered, size_t levels, float impostor) {
     Resources resources;
@@ -1787,7 +1796,16 @@ void clusterHierarchyCases(const Fixture& fixture) {
   require(nameAt!=bytes.end(),"GLB fixture must contain its node name");
   *nameAt = 'D';
   gothicglb::writeFile(glb,bytes.data(),bytes.size());
-  require(load(false,0,0)==clusteredHull,"the clustered and ordinary visuals must use identical hull geometry");
+  {
+    size_t rejected = 0;
+    Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+      if(mode==Tempest::Log::Error && std::string_view(text).find("cluster hierarchy for \"OWN_MESH\"")!=std::string_view::npos)
+        ++rejected;
+      });
+    struct LogReset { ~LogReset() { Tempest::Log::setOutputCallback({}); } } reset;
+    require(load(false,0,0)==clusteredHull,"the clustered and ordinary visuals must use identical hull geometry");
+    require(rejected==1,"a stale graph must log one rejection naming its visual");
+  }
   *nameAt = 'C';
   gothicglb::writeFile(glb,bytes.data(),bytes.size());
 

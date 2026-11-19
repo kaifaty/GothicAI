@@ -892,14 +892,17 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
                   rigid &= !found->second.foliage.on && !found->second.strand;
                   }
                 }
-              if(rigid)
-                if(auto graph = MeshClusterLod::read(source->file,source->sourceSize,source->sourceCrc32,zmsh,locked)) {
-                  if(std::ranges::any_of(graph->clusters, [](const auto& c) { return c.level!=0; })) {
-                    visual.emplace(zmsh,*graph);
-                    Log::i("[cluster-lod] mesh ",key,": ",uint64_t(graph->clusters.size())," clusters");
-                    }
+              if(rigid) {
+                auto graph = MeshClusterLod::read(source->file,source->sourceSize,source->sourceCrc32,zmsh,locked);
+                if(!graph) {
+                  Log::e("meshes: cluster hierarchy for \"",key,"\" is not used: stale or invalid .clod file");
+                  }
+                else if(std::ranges::any_of(graph->clusters, [](const auto& c) { return c.level!=0; })) {
+                  visual.emplace(zmsh,*graph);
+                  Log::i("[cluster-lod] mesh ",key,": ",uint64_t(graph->clusters.size())," clusters");
                   }
                 }
+              }
             }
           catch(const std::exception& error) {
             Log::e("meshes: cluster hierarchy for \"",key,"\" is not used: ",error.what());

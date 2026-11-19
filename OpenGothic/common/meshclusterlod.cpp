@@ -25,7 +25,11 @@ using ClusterLod::Vertex;
 constexpr size_t SectionCount = 5;
 struct Header {
   std::array<char,4>                  magic = {'G','C','L','D'};
-  uint32_t                           version = 1;
+  uint32_t                           version = 2;
+  // Bump the relevant revision when GLB decoding or graph construction changes the cooked output.
+  // The content set validator in scripts/content/building_set.py checks the same revisions.
+  uint32_t                           loaderVersion = 1;
+  uint32_t                           builderVersion = 1;
   uint32_t                           glbSize = 0;
   uint32_t                           glbCrc32 = 0;
   uint32_t                           payloadCrc32 = 0;
@@ -34,7 +38,7 @@ struct Header {
 
 static_assert(std::endian::native==std::endian::little);
 static_assert(sizeof(float)==4 && std::numeric_limits<float>::is_iec559);
-static_assert(sizeof(Header)==40 && sizeof(Vertex)==36 && sizeof(Cluster)==48 && sizeof(Group)==20);
+static_assert(sizeof(Header)==48 && sizeof(Vertex)==36 && sizeof(Cluster)==48 && sizeof(Group)==20);
 constexpr size_t Strides[SectionCount] = {sizeof(Vertex),sizeof(uint32_t),sizeof(uint8_t),sizeof(Cluster),sizeof(Group)};
 
 std::filesystem::path pathFor(const std::filesystem::path& glb) {
@@ -184,6 +188,7 @@ std::optional<Graph> read(const std::filesystem::path& glb, size_t glbSize, uint
   Header h;
   const Header expected;
   if(!file.read(reinterpret_cast<char*>(&h),sizeof(h)) || h.magic!=expected.magic || h.version!=expected.version ||
+     h.loaderVersion!=expected.loaderVersion || h.builderVersion!=expected.builderVersion ||
      h.glbSize!=glbSize || h.glbCrc32!=glbCrc32)
     return std::nullopt;
   uint64_t payloadSize = 0;

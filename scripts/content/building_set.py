@@ -29,7 +29,7 @@ with a staging set as base, it is that set with only these entries replaced.
 
 `compose SET PART...` joins the sets of several assets into one staging set for the game:
 each texture belongs to exactly one part, so a shared texture lives in its own asset. Meshes of a
-part (a prop's GLB with its `.convex-parts` and `.fracture` caches and its `.debris.glb`), particle descriptions
+part (a prop's GLB with its `.convex-parts`, `.fracture`, `.debris.glb` and `.clod`), particle descriptions
 (`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`) come along. A part may be a composed set: the working
 set plus one new part keeps the names of the working set's parts. `--without PART` leaves a part of such a
 composed set behind, so that a new part takes its place.
@@ -49,6 +49,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 import shutil
+import struct
 import sys
 import zlib
 
@@ -79,7 +80,12 @@ CACHES = {
 # A destructible's debris (its pieces as parts, reports/content/2026-11-wood-fracture) travels with its GLB;
 # beside it the `.fracture` must be version 3, cut from that debris.
 DEBRIS, DEBRIS_TAG = '.debris.glb', 'GOTHIC_FRACTURE 3'
-SIDECARS = (*CACHES, DEBRIS)
+CLUSTER_LOD = '.clod'
+# Match the format, GLB loader and builder revisions in OpenGothic/common/meshclusterlod.cpp.
+CLOD_HEADER = struct.Struct('<4s11I')
+CLOD_SIGNATURE = (b'GCLD', 2, 1, 1)
+SIDECARS = (*CACHES, DEBRIS, CLUSTER_LOD)
+CACHE_COMMANDS = {suffix: args[3] for suffix, args in CACHES.items()} | {CLUSTER_LOD: 'content-convert cook-mesh-lod'}
 MODES = ('target', 'group', 'match')
 
 
@@ -524,10 +530,26 @@ def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:
     return result
 
 
+def fresh_clod(glb: Path, cache: Path) -> bool:
+    with cache.open('rb') as stream:
+        header = stream.read(CLOD_HEADER.size)
+        if len(header) != CLOD_HEADER.size:
+            return False
+        magic, version, loader, builder, size, crc, payload_crc, *counts = CLOD_HEADER.unpack(header)
+        if (magic, version, loader, builder) != CLOD_SIGNATURE or size != glb.stat().st_size:
+            return False
+        if sum(count * stride for count, stride in zip(counts, (36, 4, 1, 48, 20))) != cache.stat().st_size - CLOD_HEADER.size:
+            return False
+        actual_crc = 0
+        for chunk in iter(lambda: stream.read(1 << 20), b''):
+            actual_crc = zlib.crc32(chunk, actual_crc)
+    return actual_crc == payload_crc and zlib.crc32(glb.read_bytes()) == crc
+
+
 def stale_caches(content: Path) -> dict[str, list[str]]:
     """Visuals of a content folder by cache suffix whose GLB lacks a fresh adjacent cache it needs: without
     `.convex-parts` a table or cupboard gets one hull instead of the compound, without `.fracture` a
-    destructible never breaks."""
+    destructible never breaks. Cluster LOD is optional, but an existing `.clod` must match its GLB."""
     index = content / 'meshes/meshes.json'
     if not index.is_file():
         return {}
@@ -550,6 +572,11 @@ def stale_caches(content: Path) -> dict[str, list[str]]:
             wanted = (DEBRIS_TAG,) if suffix == '.fracture' and glb.with_suffix(DEBRIS).is_file() else tags
             if len(header) != 2 or header[0] not in wanted or header[1] != f'source {len(source)} {zlib.crc32(source):08x}':
                 stale.setdefault(suffix, []).append(key)
+    for visual, entry in entries:
+        glb = content / 'meshes' / entry['glb']
+        cache = glb.with_suffix(CLUSTER_LOD)
+        if cache.is_file() and not fresh_clod(glb, cache):
+            stale.setdefault(CLUSTER_LOD, []).append(Path(visual).stem.upper())
     return stale
 
 
@@ -558,12 +585,12 @@ def enable(name: str) -> dict:
     when OPENGOTHIC_CONTENT is unset. Its `materials/`, `meshes/`, `worlds/`, `particles.d/` and `vobtrees.d/` are replaced; other folders
     there stay; `enabled.json` records the set. Enabling is the user's decision (gate `enable`). A set whose
     tables or cupboards lack a fresh `.convex-parts`, or whose destructibles lack a fresh `.fracture`, is
-    refused: the collision and fracture steps cannot be skipped."""
+    refused, as is a set with a stale cluster LOD graph."""
     staging = remaster.data_root() / 'content-staging' / name
     if not (staging / 'materials/materials.json').is_file():
         raise ValueError(f'{staging}: no materials/materials.json')
     if stale := stale_caches(staging):
-        raise ValueError(f'{name}: ' + '; '.join(f'no fresh {suffix} for {", ".join(keys)}; run {CACHES[suffix][3]} {staging}'
+        raise ValueError(f'{name}: ' + '; '.join(f'no fresh {suffix} for {", ".join(keys)}; run {CACHE_COMMANDS[suffix]} {staging}'
                                                  for suffix, keys in stale.items()))
     live = remaster.data_root() / 'content'
     incoming = live / '.enable'

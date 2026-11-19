@@ -1,3 +1,4 @@
+#include "basestore.h"
 #include "gothicglb.h"
 #include "graphics/mesh/clusterlod.h"
 #include "gltfmesh.h"
@@ -13,6 +14,7 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -476,30 +478,101 @@ rapidjson::Document readIndex(const fs::path& path) {
   return doc;
   }
 
-std::vector<OwnMesh> ownMeshes(const fs::path& root) {
+std::vector<OwnMesh> ownMeshes(const fs::path& root, size_t* skipped = nullptr) {
   const auto index = root/"meshes"/"meshes.json";
   const auto doc = readIndex(index);
   std::vector<OwnMesh> meshes;
+  const auto reject = [&](const std::string& message) {
+    if(skipped==nullptr)
+      throw std::runtime_error(message);
+    std::cerr << "mesh LOD: " << message << '\n';
+    ++*skipped;
+    };
   for(const auto& member:doc.GetObject()) {
+    const std::string key(member.name.GetString(),member.name.GetStringLength());
     const auto& value = member.value;
-    if(!value.IsObject() || !value.HasMember("glb") || !value["glb"].IsString())
-      throw std::runtime_error("invalid GLB record "+std::string(member.name.GetString())+" in "+index.string());
+    if(key.empty() || key.find('\0')!=std::string::npos || key.find_first_of("/\\")!=std::string::npos ||
+       fs::path(key).has_extension() || !value.IsObject() || !value.HasMember("glb") || !value["glb"].IsString()) {
+      reject("invalid record \""+key+"\" in "+index.string());
+      continue;
+      }
     const std::string name(value["glb"].GetString(),value["glb"].GetStringLength());
     const fs::path path(name);
     if(path.is_absolute() || path.has_root_name() || name.find('\0')!=std::string::npos || !FileExt::hasExt(name,"GLB") ||
-       std::find(path.begin(),path.end(),"..")!=path.end())
-      throw std::runtime_error("invalid GLB path "+name+" in "+index.string());
-    meshes.push_back({member.name.GetString(),path,value.HasMember("levels") || value.HasMember("impostor")});
+       std::find(path.begin(),path.end(),"..")!=path.end()) {
+      reject("invalid GLB path for \""+key+"\" in "+index.string());
+      continue;
+      }
+    meshes.push_back({key,path,value.HasMember("levels") || value.HasMember("impostor")});
     }
   return meshes;
   }
 
 enum MaterialLock : uint8_t { TwoSided = 1, Deforming = 2 };
 
-std::string materialKey(std::string name) {
+std::string upperKey(std::string name) {
   for(char& c:name)
     c = char(std::toupper(static_cast<unsigned char>(c)));
   return name;
+  }
+
+fs::path meshCatalogBase() {
+  if(const auto* base = std::getenv("OPENGOTHIC_BASE"); base!=nullptr && *base!='\0')
+    return base;
+  const auto cache = BaseStore::cacheRoot();
+  if(const auto* fingerprint = std::getenv("OPENGOTHIC_BASE_FINGERPRINT"); fingerprint!=nullptr && *fingerprint!='\0') {
+    const std::string_view key(fingerprint);
+    if(key.size()!=64 || key.find_first_not_of("0123456789abcdef")!=std::string_view::npos)
+      throw std::runtime_error("invalid OPENGOTHIC_BASE_FINGERPRINT");
+    const auto local = cache/fingerprint;
+    if(fs::is_regular_file(local/"models"/"models.json"))
+      return local;
+    if(const auto* store = std::getenv("OPENGOTHIC_BASE_STORE"); store!=nullptr && *store!='\0')
+      return fs::path(store)/"base"/fingerprint;
+    return local;
+    }
+  if(!fs::is_directory(cache))
+    return {};
+  fs::path newest;
+  auto newestTime = fs::file_time_type::min();
+  for(const auto& entry:fs::directory_iterator(cache)) {
+    const auto& candidate = entry.path();
+    if(candidate.filename().string().size()!=64 || !fs::is_regular_file(candidate/"base.json") ||
+       !fs::is_regular_file(candidate/"models"/"models.json") ||
+       !fs::is_regular_file(candidate/"meshes"/"meshes.json"))
+      continue;
+    const auto time = fs::last_write_time(candidate/"base.json");
+    if(time>newestTime || (time==newestTime && candidate<newest)) {
+      newest = candidate;
+      newestTime = time;
+      }
+    }
+  return newest;
+  }
+
+std::set<std::string> modelOnlyMeshes() {
+  const auto base = meshCatalogBase();
+  const auto modelIndex = base/"models"/"models.json";
+  const auto meshIndex = base/"meshes"/"meshes.json";
+  if(base.empty() || !fs::is_regular_file(modelIndex) || !fs::is_regular_file(meshIndex))
+    throw std::runtime_error("cook-mesh-lod needs a ready base with model and static mesh catalogs; set OPENGOTHIC_BASE");
+  const auto models = readIndex(modelIndex);
+  const auto meshes = readIndex(meshIndex);
+  if(!models.HasMember("files") || !models["files"].IsObject())
+    throw std::runtime_error("invalid model catalog "+modelIndex.string());
+  if(!meshes.HasMember("meshes") || !meshes["meshes"].IsObject())
+    throw std::runtime_error("invalid static mesh catalog "+meshIndex.string());
+  std::set<std::string> names;
+  for(const auto& entry:models["files"].GetObject()) {
+    auto key = upperKey(entry.name.GetString());
+    // Static overrides use the same extensionless key. In case of overlap, a .3DS can use the graph.
+    if(FileExt::hasExt(key,"MDL") || FileExt::hasExt(key,"MDM") || FileExt::hasExt(key,"MDS") || FileExt::hasExt(key,"MSB")) {
+      key.resize(key.size()-4);
+      if(!meshes["meshes"].HasMember(key.c_str()))
+        names.insert(std::move(key));
+      }
+    }
+  return names;
   }
 
 std::map<std::string,uint8_t> ownMaterialLocks(const fs::path& root) {
@@ -521,7 +594,7 @@ std::map<std::string,uint8_t> ownMaterialLocks(const fs::path& root) {
     if((value.HasMember("foliage") && value["foliage"].IsObject()) ||
        (value.HasMember("strand") && value["strand"].IsTrue()))
       mask |= Deforming;
-    flags[materialKey(member.name.GetString())] = mask;
+    flags[upperKey(member.name.GetString())] = mask;
     }
   return flags;
   }
@@ -531,7 +604,7 @@ struct OwnMeshInput {
     mesh = loadGltfMesh(path,&bytes);
     colors = loadGltfMeshColors(bytes,mesh);
     for(const auto& sub:mesh.sub_meshes) {
-      const auto it = materialLocks.find(materialKey(sub.mat.texture));
+      const auto it = materialLocks.find(upperKey(sub.mat.texture));
       lockFlags.push_back(it==materialLocks.end() ? 0 : it->second);
       }
     }
@@ -696,43 +769,53 @@ void runOwnMeshClusterLod(const std::vector<std::filesystem::path>& roots, const
     };
   std::vector<Set> sets;
   MeshCounts all;
+  const auto models = cook ? modelOnlyMeshes() : std::set<std::string>();
   for(const auto& root:roots) {
     Set set;
     set.root = root;
     const auto materialLocks = ownMaterialLocks(root);
-    size_t written = 0, skipped = 0;
-    for(const auto& entry:ownMeshes(root)) {
-      if(cook && entry.discrete) {
+    size_t written = 0, skipped = 0, invalid = 0;
+    for(const auto& entry:ownMeshes(root,cook ? &invalid : nullptr)) {
+      if(cook && (entry.discrete || models.contains(upperKey(entry.name)))) {
         ++skipped;
         continue;
         }
       const auto path = root/"meshes"/entry.relative;
+      std::optional<OwnMeshInput> input;
+      ClusterLod::Graph graph;
+      double ms = 0;
       try {
-        const OwnMeshInput input(path,materialLocks);
-        if(cook && std::ranges::any_of(input.lockFlags,[](uint8_t flags) { return (flags & Deforming)!=0; })) {
+        input.emplace(path,materialLocks);
+        if(cook && std::ranges::any_of(input->lockFlags,[](uint8_t flags) { return (flags & Deforming)!=0; })) {
           ++skipped;
           continue;
           }
         const auto started = std::chrono::steady_clock::now();
-        const auto graph = MeshClusterLod::build(input.mesh,input.colors,input.lockFlags);
-        const double ms = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
-        if(cook) {
-          const auto crc = uint32_t(mz_crc32(0,input.bytes.data(),input.bytes.size()));
-          MeshClusterLod::write(path,input.bytes.size(),crc,graph);
-          ++written;
-          } else {
-          auto counts = meshCounts(input,graph,ms,entry.discrete);
-          set.total.add(counts);
-          set.rows.emplace_back(entry.name,std::move(counts));
-          }
+        graph = MeshClusterLod::build(input->mesh,input->colors,input->lockFlags);
+        ms = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
         }
       catch(const std::exception& error) {
-        throw std::runtime_error(path.string()+": "+error.what());
+        const auto message = "\""+entry.name+"\" ("+path.string()+"): "+error.what();
+        if(!cook)
+          throw std::runtime_error(message);
+        std::cerr << "mesh LOD: skipping " << message << '\n';
+        ++invalid;
+        continue;
+        }
+      if(cook) {
+        const auto& bytes = input->bytes;
+        const auto crc = uint32_t(mz_crc32(0,bytes.data(),bytes.size()));
+        MeshClusterLod::write(path,bytes.size(),crc,graph);
+        ++written;
+        } else {
+        auto counts = meshCounts(*input,graph,ms,entry.discrete);
+        set.total.add(counts);
+        set.rows.emplace_back(entry.name,std::move(counts));
         }
       }
     if(cook) {
       std::cout << root.string() << ": " << written << " mesh LOD graphs cooked, " << skipped
-                << " records with discrete levels, impostors or deforming materials skipped\n";
+                << " ineligible records and " << invalid << " invalid records skipped\n";
       } else {
       all.add(set.total);
       sets.push_back(std::move(set));
