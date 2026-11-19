@@ -8,6 +8,7 @@
 #include <Tempest/Vec>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -25,6 +26,7 @@
 #include "asset/worldmesh.h"
 #include "graphics/grass/grassborder.h"
 #include "graphics/grass/grassdiag.h"
+#include "graphics/grass/grasspack.h"
 #include "graphics/grass/grassplace.h"
 #include "graphics/grass/grasswaste.h"
 #include "worldchunkmanifest.h"
@@ -82,6 +84,8 @@ class GrassField final {
       size_t drawn     = 0; // of them the last frame drew: in view, of a rank the ring keeps at the cell's distance
       size_t fine      = 0; // of those the fine blades of the short sward
       size_t triangles = 0; // of those
+      uint32_t pack    = 1; // blades per instance
+      size_t instances = 0; // submitted instances, including each partially filled pack
       size_t draws     = 0; // draw calls of the last frame
       size_t drawUs    = 0; // with OPENGOTHIC_GRASS_WASTE=1: the mean time of draw() on the CPU, microseconds
       size_t bytes     = 0; // of the buffers
@@ -196,7 +200,7 @@ class GrassField final {
     std::vector<const Tempest::Texture2d*> slotTex;
     std::vector<const Tempest::Texture2d*> slotSward; // of a ground with its own layers the sward's map
     std::vector<Grass::Params>          slotParams;
-    Tempest::IndexBuffer<uint16_t>      ibo;
+    std::array<Tempest::IndexBuffer<uint16_t>, Grass::PackSizes.size()> packBuffers;
     Tempest::StorageBuffer              borderGpu;
     std::vector<uint32_t>               borderCpu;
     Stats                               last;
