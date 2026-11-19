@@ -84,7 +84,6 @@ void main() {
   uvec2 sz   = unpackVsmPageSize(p0);
   ivec3 at   = unpackVsmPageInfo(p0);
   uint  size = sz.x;
-  const int cut = vsmCutMip(vsm.header.admitPrevBits);
   for(uint i=col+sz.x; i<VSM_PAGE_TBL_SIZE; i+=sz.x) {
     const uint  pId1 = off+i;
     const uint  p1   = vsm.pageList[pId1];
@@ -93,8 +92,8 @@ void main() {
     const ivec3 at1  = unpackVsmPageInfo(p1);
     if(sz.y!=sz1.y || at+uvec3(size,0,0)!=at1 || om1)
       break;
-    if(size+sz.x>=16 || (at.z==cut && vsmSunBin(at1, ivec2(1))!=vsmSunBin(at, ivec2(1)))) {
-      // restart stripe: at 16 pages, or at the next ring in the mip of the cut (vsmCutMip)
+    if(size+sz.x>=16 || at1.x%VSM_STRIPE_PAGES==0 || vsmSunBin(at1, ivec2(1))!=vsmSunBin(at, ivec2(1))) {
+      // restart stripe: at 16 pages, at a column of the grid of the table, or at the next ring (VSM_STRIPE_PAGES)
       vsm.pageList[pId] = packVsmPageInfo(at, ivec2(size, sz.y));
       pId  = pId1;
       sz   = sz1;
