@@ -1,0 +1,111 @@
+# VSM pair demand at the five views of perf-trees.bench, with OPENGOTHIC_VSM_STATS=1 and the default pair cap.
+# Use the NEWWORLD forest set and 1920x1080 window from tree-shadow-level.bench, with OPENGOTHIC_BENCH_REALTIME=1.
+# VSM stats are logged every five wall seconds. Each static window lasts eleven seconds after settling.
+# @timeout 480
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+walkmode run
+watch player
+
+set time 12 0
+goto pos 54140 1650 -10780
+clear 3000
+cam at 54140 1760 -10780 60000 2060 -10780
+streaming wait
+wait real 12000
+ztimer multiplyer 0
+log shadow-pairs inside on begin
+wait real 11000
+log shadow-pairs inside on end
+shadow levels off
+wait real 1000
+log shadow-pairs inside off begin
+wait real 11000
+log shadow-pairs inside off end
+shadow levels on
+ztimer realtime
+
+goto pos 48765 6250 -3156
+clear 5000
+cam at 48765 6679 -3156 54140 2190 -10780
+streaming wait
+wait real 12000
+ztimer multiplyer 0
+log shadow-pairs near-30 on begin
+wait real 11000
+log shadow-pairs near-30 on end
+shadow levels off
+wait real 1000
+log shadow-pairs near-30 off begin
+wait real 11000
+log shadow-pairs near-30 off end
+shadow levels on
+ztimer realtime
+
+goto pos 42364 1700 -8973
+clear 5000
+cam at 42364 1808 -8973 54140 2490 -10780
+streaming wait
+wait real 12000
+ztimer multiplyer 0
+log shadow-pairs far-100 on begin
+wait real 11000
+log shadow-pairs far-100 on end
+shadow levels off
+wait real 1000
+log shadow-pairs far-100 off begin
+wait real 11000
+log shadow-pairs far-100 off end
+shadow levels on
+ztimer realtime
+
+goto pos 23216 4300 -8618
+clear 5000
+cam at 23216 11160 -8618 54140 2490 -10780
+streaming wait
+wait real 12000
+ztimer multiplyer 0
+log shadow-pairs far-300 on begin
+wait real 11000
+log shadow-pairs far-300 on end
+shadow levels off
+wait real 1000
+log shadow-pairs far-300 off begin
+wait real 11000
+log shadow-pairs far-300 off end
+shadow levels on
+ztimer realtime
+
+cam game
+goto pos 54500 1640 -12700
+clear 5000
+face 110
+streaming wait
+wait real 15000
+set time 12 0
+press forward
+wait 500
+log shadow-pairs pass on begin
+wait 9000
+log shadow-pairs pass on end
+release forward
+wait 500
+
+shadow levels off
+cam game
+goto pos 54500 1640 -12700
+clear 5000
+face 110
+streaming wait
+wait real 15000
+set time 12 0
+press forward
+wait 500
+log shadow-pairs pass off begin
+wait 9000
+log shadow-pairs pass off end
+release forward
+wait 500

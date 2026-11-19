@@ -228,6 +228,18 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     else
       arenaAbort("impostor expects force, off, or auto");
     }
+  else if(c=="shadow" && a.size()==3 && a[1]=="levels") {
+    if(a[2]=="on")
+      VisualObjects::benchShadowLevels = VisualObjects::BenchShadowLevels::On;
+    else if(a[2]=="off")
+      VisualObjects::benchShadowLevels = VisualObjects::BenchShadowLevels::Off;
+    else if(a[2]=="full")
+      VisualObjects::benchShadowLevels = VisualObjects::BenchShadowLevels::Full;
+    else if(a[2]=="auto")
+      VisualObjects::benchShadowLevels = VisualObjects::BenchShadowLevels::Auto;
+    else
+      arenaAbort("shadow levels expects on, off, full, or auto");
+    }
   else if(c=="grass" && grassCommand(a,w)) return;
   else if(waterCommand(bench.water,waterContext(),a,w,pl,ctrl)) return;
   else if(c=="item-save" && a.size()==2 && a[1]=="initial") {
