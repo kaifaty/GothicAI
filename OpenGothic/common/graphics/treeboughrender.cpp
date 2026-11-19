@@ -68,7 +68,7 @@ TreeBoughRender::~TreeBoughRender() {
   }
 
 uint32_t TreeBoughRender::command(const Material& material, uint16_t bucket, uint32_t indices) {
-  const bool bindless = Shaders::options().doBindless;
+  const bool bindless = Shaders::options().doBindless && !material.hasFrameAnimation();
   const uint32_t bucketId = bindless ? uint32_t(-1) : bucket;
   const auto pso = Shaders::inst().materialPipeline(material, DrawCommands::Static, Shaders::T_Main, bindless, true);
   for(uint32_t i=0; i<commands.size(); ++i)
@@ -354,6 +354,12 @@ const ComputePipeline& TreeBoughRender::cull(Encoder<CommandBuffer>& enc, bool h
     token = epoch;
     }
   return pipeline;
+  }
+
+const ComputePipeline& TreeBoughRender::historyClassify() {
+  if(historyPipeline.isEmpty())
+    historyPipeline = compute("hiz_history_bough_classify.comp.sprv");
+  return historyPipeline;
   }
 
 void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool lateHiZ) {

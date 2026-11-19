@@ -21,6 +21,7 @@ class TreeBoughRender {
     bool ready() const { return !entries.empty() && !data.isEmpty(); }
     const Tempest::ComputePipeline& cull(Tempest::Encoder<Tempest::CommandBuffer>& enc, bool hiZ, bool probe,
                                          bool history, bool ordered, uint32_t& token);
+    const Tempest::ComputePipeline& historyClassify();
     void expand(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint32_t token, bool lateHiZ);
     void draw(Tempest::Encoder<Tempest::CommandBuffer>& enc, DrawCommands::HistoryDraw history);
     void readStats(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint8_t frame, bool expanded);
@@ -74,6 +75,6 @@ class TreeBoughRender {
     std::array<Tempest::StorageBuffer,Resources::MaxFramesInFlight> stats;
     std::array<bool,Resources::MaxFramesInFlight> readPending = {};
     Tempest::ComputePipeline cullPipelines[4][2];
-    Tempest::ComputePipeline expandPipeline, copyPipeline;
+    Tempest::ComputePipeline expandPipeline, copyPipeline, historyPipeline;
     const bool cpu;
   };

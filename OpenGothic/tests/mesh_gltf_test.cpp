@@ -9,6 +9,7 @@
 #include "meshclusterlod.h"
 #include "graphics/shaders.h"
 #include "graphics/meshlevels.h"
+#include "graphics/treeboughasset.h"
 #include "graphics/foliagetree.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/facerig.h"
@@ -27,6 +28,7 @@
 #include "physics/fracture.h"
 #include "resources.h"
 #include "settings.h"
+#include "shader.h"
 #include "asset/fromzenkit.h"
 #include "baseimport.h"
 #include "basemesh.h"
@@ -49,6 +51,9 @@
 #include <Tempest/MemReader>
 #include <Tempest/MemWriter>
 #include <Tempest/VulkanApi>
+#ifdef __APPLE__
+#include <Tempest/MetalApi>
+#endif
 #include <zenkit/Stream.hh>
 #include <zenkit/Font.hh>
 #include <zenkit/Model.hh>
@@ -152,6 +157,12 @@ struct MeshGltfTest {
   };
 
 namespace {
+#ifdef __APPLE__
+using TestApi = Tempest::MetalApi;
+#else
+using TestApi = Tempest::VulkanApi;
+#endif
+
 size_t assertions = 0;
 
 void require(bool condition, std::string_view message) {
@@ -170,6 +181,7 @@ void textFile(const std::filesystem::path& path, std::string_view text) {
   }
 
 #include "mesh_gltf_color.h" // word, real; colorCases
+#include "tree_bough_cut_test.h"
 
 struct GlbOptions {
   size_t positions = 3;
@@ -1463,6 +1475,31 @@ int levelSwitchChild(std::string_view mode) {
   const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str(),"-rt","0"};
   CommandLine commandLine(5,args);
   std::unique_ptr<Settings> settings;
+  if(mode.starts_with("bough-")) {
+    glbFile(fixture.root/"meshes/test/lod1.glb");
+    fixture.index(mode!="bough-legacy" ?
+      R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400}],"hierarchy":"test/missing.json"}})" :
+      R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400}]}})");
+    Resources resources;
+    if(mode!="bough-legacy") {
+      // The game indexes the content before it loads its settings.
+      textFile(fixture.root/"system.ini", "");
+      textFile(fixture.root/"user.ini", "[INTERNAL]\ntreeBoughLod=1\n");
+      settings = std::make_unique<Settings>();
+      settings->load((fixture.root/"system.ini").u16string(),(fixture.root/"user.ini").u16string());
+      }
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(TreeBough::enabled()==(mode!="bough-env-off"),"tree bough switch after settings load");
+    require(proto!=nullptr && proto->attach.size()==1 && proto->attach[0].sub.size()==1,"plain level mesh loads");
+    const auto& mesh = proto->attach[0];
+    const auto& sub = mesh.sub[0];
+    require(mesh.treeBough==nullptr && mesh.levelMeshlets(sub.iboOffset,sub.iboLength,0)==std::pair(0u,1u) &&
+            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,1)==std::pair(1u,1u) &&
+            mesh.rtSlice(sub.iboOffset,sub.iboLength)==std::pair(sub.iboOffset+sub.iboLength,sub.iboLength),
+            "missing or disabled hierarchy keeps the meshlet and ray ranges");
+    return 0;
+    }
   if(mode.starts_with("shadow-")) {
     textFile(fixture.root/"system.ini", "");
     textFile(fixture.root/"user.ini", mode=="shadow-ini" ? "[INTERNAL]\nshadowLevels=0\n" : "");
@@ -1512,7 +1549,7 @@ void levelSwitchCase(std::string_view mode) {
   for(char** e=environ; *e!=nullptr; ++e) {
     const std::string_view v(*e);
     if(!v.starts_with("OPENGOTHIC_MESH_LEVELS=") && !v.starts_with("OPENGOTHIC_IMPOSTORS=") &&
-       !v.starts_with("OPENGOTHIC_SHADOW_LEVELS=") &&
+       !v.starts_with("OPENGOTHIC_SHADOW_LEVELS=") && !v.starts_with("OPENGOTHIC_TREE_BOUGH_LOD=") &&
        !v.starts_with("GOTHIC_MESH_LEVELS_CHILD="))
       env.emplace_back(v);
     }
@@ -1523,6 +1560,10 @@ void levelSwitchCase(std::string_view mode) {
     env.push_back("OPENGOTHIC_IMPOSTORS=0");
   if(mode=="shadow-env")
     env.push_back("OPENGOTHIC_SHADOW_LEVELS=0");
+  if(mode=="bough-env-off")
+    env.push_back("OPENGOTHIC_TREE_BOUGH_LOD=0");
+  if(mode=="bough-legacy")
+    env.push_back("OPENGOTHIC_TREE_BOUGH_LOD=1");
   std::vector<char*> envp;
   for(auto& v:env)
     envp.push_back(v.data());
@@ -1553,6 +1594,9 @@ void levelCases(const Fixture& fixture) {
   levelSwitchCase("shadow-default");
   levelSwitchCase("shadow-env");
   levelSwitchCase("shadow-ini");
+  levelSwitchCase("bough-env-off");
+  levelSwitchCase("bough-legacy");
+  levelSwitchCase("bough-ini");
 
   const auto spruceShadow = [](uint8_t previous, float height) {
     return MeshLevels::pickShadow(4, previous, previous!=0, height, 0, true);
@@ -2339,7 +2383,7 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
 // into the same pages and ranges, and the live buffers and structures come back to where they were. The ray scene
 // is chosen from the command line once, by Shaders, so this is the test's last case.
 void landscapeRtLifetime(const Fixture& fixture) {
-  Tempest::VulkanApi api;
+  TestApi api;
   Tempest::Device device(api);
   if(!device.properties().raytracing.rayQuery) {
     std::cout << "landscape ray scene lifetime: skipped, the GPU has no ray query\n";
@@ -2916,7 +2960,7 @@ void maskBc1Policy(const Fixture& fixture) {
     "OWN_MODEL_REFLECTED":{"glb":"test/oblique.glb"}
   })");
 
-  Tempest::VulkanApi api;
+  TestApi api;
   Tempest::Device device(api);
   {
     Resources resources(device);
@@ -3130,7 +3174,7 @@ void effectCases(const std::string& game, const std::string& base) {
   setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
   const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str()};
   CommandLine commandLine(3,args);
-  Tempest::VulkanApi api;
+  TestApi api;
   Tempest::Device device(api);
   {
     std::string censusPath=(std::filesystem::temp_directory_path()/"gothic-music-wiring-XXXXXX").string();
@@ -3293,7 +3337,7 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
   setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
   const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-nointro"};
   CommandLine commandLine(4,args);
-  Tempest::VulkanApi api;
+  TestApi api;
   Tempest::Device device(api);
   {
     Resources resources(device);
@@ -3429,8 +3473,13 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
 
 int main() {
   try {
-    if(const char* mode=std::getenv("GOTHIC_MESH_LEVELS_CHILD"))
-      return levelSwitchChild(mode);
+    if(const char* mode=std::getenv("GOTHIC_MESH_LEVELS_CHILD")) {
+      if(std::string_view(mode)!="bough-cut")
+        return levelSwitchChild(mode);
+      treeBoughCutCases();
+      std::cout << "{\"test\":\"tree_bough_cut\",\"passed\":true,\"assertions\":" << assertions << "}\n";
+      return 0;
+      }
     // The effect receipt uses the caller's installation and base: read them before the fixture
     // points the environment at its own toy installation.
     const char* gameDir = std::getenv("GOTHIC_DIR");
@@ -3459,6 +3508,7 @@ int main() {
     indexCases(fixture);
     levelCases(fixture);
     clusterHierarchyCases(fixture);
+    treeBoughCutCases();
     fractureCache(fixture);
     modelCases(fixture);
     setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);

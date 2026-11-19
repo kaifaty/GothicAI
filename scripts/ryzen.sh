@@ -391,7 +391,7 @@ remote_probe() {
   toolchain
   local frame_profile=OFF require_runner=0
   if [[ "$action" == bench ]]; then
-    case "$(basename "$scenario")" in streaming-flythrough.bench|cluster-lod-meshes.bench) frame_profile=ON ;; esac
+    case "$(basename "$scenario")" in streaming-flythrough.bench|cluster-lod-meshes.bench|fir-bough-lod.bench) frame_profile=ON ;; esac
   fi
   if [[ "$action" == bench && "${BENCH_HEADLESS:-0}" == 1 ]]; then require_runner=1; fi
   digest="$(source_digest "$frame_profile")"
@@ -419,7 +419,7 @@ remote_prepare() {
   if [[ "$action" == e2e ]]; then check_protocol; fi
   local frame_profile=OFF require_runner=0
   if [[ "$action" == bench ]]; then
-    case "$(basename "$scenario")" in streaming-flythrough.bench|cluster-lod-meshes.bench) frame_profile=ON ;; esac
+    case "$(basename "$scenario")" in streaming-flythrough.bench|cluster-lod-meshes.bench|fir-bough-lod.bench) frame_profile=ON ;; esac
   fi
   if [[ "$action" == bench && "${BENCH_HEADLESS:-0}" == 1 ]]; then require_runner=1; fi
   build_engine "$state" "$digest" "$frame_profile" "$require_runner"

@@ -150,6 +150,7 @@ add_shader(visibility_bough_probe.comp           materials/visibility_pass.comp 
 add_shader(visibility_bough_probe_ordered.comp   materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DTREE_BOUGH_LOD -DHIZ_PROBE -DORDERED)
 add_shader(visibility_bough_history.comp         materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DTREE_BOUGH_LOD -DHIZ_HISTORY)
 add_shader(visibility_bough_history_ordered.comp materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DTREE_BOUGH_LOD -DHIZ_HISTORY -DORDERED)
+add_shader(hiz_history_bough_classify.comp       hiz/hiz_history_classify.comp -DTREE_BOUGH_LOD)
 
 add_shader(impostor.vert     materials/impostor.vert)
 add_shader(impostor.frag     materials/impostor.frag)

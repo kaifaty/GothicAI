@@ -8,6 +8,7 @@
 #include "frameprofile.h"
 #include "settings.h"
 #include "shaders.h"
+#include "treeboughrender.h"
 #include "visualobjects.h"
 
 using namespace Tempest;
@@ -119,7 +120,7 @@ void DrawCommands::classifyHistory(Encoder<CommandBuffer>& enc, const Texture2d&
   enc.setBinding(7, history.stats);
   enc.setBinding(10, buckets.treeHiZBounds());
   enc.setPushData(push);
-  enc.setPipeline(Shaders::inst().hizHistoryClassify);
+  enc.setPipeline(boughHistoryToken!=0 ? boughs->historyClassify() : Shaders::inst().hizHistoryClassify);
   enc.dispatchThreads(push.clusterCount);
   }
 
