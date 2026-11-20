@@ -5,6 +5,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Routine activities as data (reports/engine/2026-11-14-npc-data/README.md, step D4). The import
 // recognises a template in the three script phases of a routine state; the game runs the same
@@ -30,8 +31,30 @@ struct MobActivity {
   bool operator==(const MobActivity&) const = default;
   };
 
+// E2.1: imported only. No game executor is connected to this template yet.
+struct PointActivity {
+  struct Gesture {
+    std::string animation; // empty: no gesture for this outcome
+    bool resetTimer = false;
+    bool operator==(const Gesture&) const = default;
+    };
+  std::string perceptions;
+  int32_t walkMode = 1;
+  int32_t approachDistance = 500;
+  std::string point;
+  std::string occupied = "align_waypoint";
+  std::string enterAnimation, leaveAnimation;
+  int32_t timerSeconds = 5;
+  int32_t rollRange = 10;
+  std::vector<Gesture> gestures; // indexed by the random outcome, [0, rollRange)
+  int32_t initialStage = 1, walkingStage = 2, arrivedStage = 1, poseStage = 0; // aivar[19]
+  int32_t loopResult = 0;
+  bool operator==(const PointActivity&) const = default;
+  };
+
 struct Library {
   std::map<std::string,MobActivity> activities; // by the Init symbol of the state
+  std::map<std::string,PointActivity> points;
   std::map<std::string,std::string> uncaptured; // state -> reason: detail
   };
 

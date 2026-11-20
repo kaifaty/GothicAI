@@ -48,9 +48,12 @@ struct Situation {
   int32_t     distance = std::numeric_limits<int32_t>::max();
   bool        available = true;
   int32_t     body = 0;
+  bool        onPoint = false;
+  int32_t     stage = 0, seconds = 0, roll = 0;
   std::string text() const {
     return "wp="+Recorder::text(waypoint)+" look_at="+std::to_string(lookAt)+" nearest="+Recorder::text(nearest)+
-           " distance="+std::to_string(distance)+" available="+std::to_string(available)+" body="+std::to_string(body);
+           " distance="+std::to_string(distance)+" available="+std::to_string(available)+" body="+std::to_string(body)+
+           " on_point="+std::to_string(onPoint)+" stage="+std::to_string(stage)+" seconds="+std::to_string(seconds)+" roll="+std::to_string(roll);
     }
   };
 
@@ -109,7 +112,7 @@ const DaedalusSymbol* localOwner(const DaedalusSymbol& symbol,const DaedalusVm& 
 // a stop leaves it unusable, and the state then stays on the VM path anyway.
 class ScriptRun {
   public:
-    ScriptRun(const NpcSnapshot::Program& program):vm(load(program)) {
+    ScriptRun(const NpcSnapshot::Program& program,bool points=false):vm(load(program)),points(points) {
       self = vm.global_self();
       require(self!=nullptr && vm.global_other()!=nullptr,"activity definitions: program has no SELF or OTHER");
       selfNpc = vm.allocate_instance<INpc>(self);
@@ -151,16 +154,26 @@ class ScriptRun {
         if(frame==frames.rend() || !frame->assigned.contains(symbol.index()))
           throw Stop("local_state",symbol.name()+" before assignment");
         });
-      vm.observe_member_reads([this](const DaedalusSymbol& symbol,uint16_t,const DaedalusInstance* instance) {
+      vm.observe_member_reads([this](const DaedalusSymbol& symbol,uint16_t index,const DaedalusInstance* instance) {
+        if(this->points && symbol.name()=="C_NPC.AIVAR" && index==19 && instance==selfNpc.get()) {
+          current->events.push_back({"stage_read","aivar[19]->"+std::to_string(selfNpc->aivar[19]),{}});
+          return;
+          }
         if(symbol.name()!="C_NPC.WP" || instance!=selfNpc.get()) throw Stop("engine_state_read",symbol.name());
         });
       vm.observe_writes([this](const DaedalusSymbol& symbol) {
+        if(this->points && symbol.is_member()) return; // checked with index and instance below
         if(symbol.is_member()) throw Stop("engine_state_write",symbol.name());
         const auto* owner=localOwner(symbol,vm);
         if(owner==nullptr) throw Stop("game_state_write",symbol.name());
         const auto frame=std::find_if(frames.rbegin(),frames.rend(),[&](const auto& f) { return f.function==owner; });
         if(frame==frames.rend()) throw Stop("local_state_write",symbol.name());
         frame->assigned.insert(symbol.index());
+        });
+      vm.observe_member_writes([this](const DaedalusSymbol& symbol,uint16_t index,const DaedalusInstance* instance) {
+        if(!this->points || symbol.name()!="C_NPC.AIVAR" || index!=19 || instance!=selfNpc.get())
+          throw Stop("engine_state_write",symbol.name());
+        current->events.push_back({"stage_write","aivar[19]="+std::to_string(selfNpc->aivar[19]),{}});
         });
       vm.register_default_external_custom([this](DaedalusVm&,DaedalusSymbol& function) { external(function); });
       }
@@ -173,6 +186,7 @@ class ScriptRun {
       frames.clear();
       instructions = 0;
       selfNpc->wp = situation.waypoint;
+      selfNpc->aivar[19] = situation.stage;
       self->set_instance(selfNpc);
       if(function.has_return()) result.result = vm.call_function<int>(&function);
       else vm.call_function<void>(&function);
@@ -200,7 +214,9 @@ class ScriptRun {
         "NPC_GETLOOKATTARGET","HLP_ISVALIDNPC","AI_STOPLOOKAT","AI_REMOVEWEAPON","AI_SETWALKMODE","NPC_GETNEARESTWP",
         "HLP_STRCMP","NPC_GETDISTTOWP","AI_GOTOWP","WLD_ISMOBAVAILABLE","NPC_GETBODYSTATE","AI_USEMOB"};
       const auto& name=function.name();
-      if(!known.contains(name)) throw Stop("unsupported_external",name);
+      static const std::set<std::string> pointCalls={"NPC_ISONFP","WLD_ISFPAVAILABLE","AI_GOTOFP","AI_STANDUP",
+        "AI_ALIGNTOFP","AI_ALIGNTOWP","AI_PLAYANI","NPC_GETSTATETIME","NPC_SETSTATETIME","HLP_RANDOM"};
+      if(!known.contains(name) && !(points && pointCalls.contains(name))) throw Stop("unsupported_external",name);
       const auto parameters=vm.find_parameters_for_function(&function);
       Event event{name,name+"(",{}};
       std::vector<std::string> texts(parameters.size());
@@ -232,6 +248,10 @@ class ScriptRun {
       else if(name=="NPC_GETDISTTOWP") { vm.push_int(s.distance); result=std::to_string(s.distance); }
       else if(name=="WLD_ISMOBAVAILABLE") { vm.push_int(s.available); result=std::to_string(s.available); }
       else if(name=="NPC_GETBODYSTATE") { vm.push_int(s.body); result=std::to_string(s.body); }
+      else if(name=="NPC_ISONFP") { vm.push_int(s.onPoint); result=std::to_string(s.onPoint); }
+      else if(name=="WLD_ISFPAVAILABLE") { vm.push_int(s.available); result=std::to_string(s.available); }
+      else if(name=="NPC_GETSTATETIME") { vm.push_int(s.seconds); result=std::to_string(s.seconds); }
+      else if(name=="HLP_RANDOM") { vm.push_int(s.roll); result=std::to_string(s.roll); }
       else if(function.has_return()) {
         if(function.rtype()!=Type::INT) throw Stop("unsupported_external",name);
         vm.push_int(0); result="0";
@@ -253,10 +273,12 @@ class ScriptRun {
     std::vector<Frame>        frames;
     size_t                    instructions = 0;
     std::set<uint32_t>        deferred;
+    bool                     points = false;
   };
 
 struct Capture {
   MobActivity activity;
+  std::optional<PointActivity> point;
   std::string reason, detail;
   size_t situations = 0;
   };
@@ -291,10 +313,128 @@ class Recognizer {
         result.reason=stop.reason;
         result.detail=stop.detail;
         }
+      if(!result.reason.empty()) {
+        try {
+          ScriptRun script(program,true);
+          const auto phases=phasesOf(script.script());
+          result.point=extractPoint(script,phases);
+          result.situations=comparePoint(script,phases,*result.point);
+          result.reason.clear(); result.detail.clear();
+          }
+        catch(const Stop& stop) {
+          if(result.point) { result.reason=stop.reason; result.detail=stop.detail; }
+          else result.detail+="; point: "+stop.reason+": "+stop.detail;
+          result.point.reset();
+          }
+        }
       return result;
       }
 
   private:
+    PointActivity extractPoint(ScriptRun& script,const Phases& phases) const {
+      PointActivity a;
+      Situation s;
+      const auto init=script.run(*phases.init,s);
+      if(init.events.empty() || init.events.front().name!="deferred") throw Stop("no_perception_set",state);
+      a.perceptions=init.events.front().text.substr(std::string("deferred ").size());
+      s.onPoint=true; s.stage=a.arrivedStage;
+      const auto loop=script.run(*phases.loop,s);
+      const auto* point=firstEvent(loop,"NPC_ISONFP"),*enter=firstEvent(loop,"AI_PLAYANI");
+      const auto end=script.run(*phases.end,s);
+      const auto* leave=firstEvent(end,"AI_PLAYANI");
+      if(!point || !enter || !leave) throw Stop("no_point_pose",state);
+      a.point=std::get<std::string>(point->args.at(0));
+      a.enterAnimation=std::get<std::string>(enter->args.at(0));
+      a.leaveAnimation=std::get<std::string>(leave->args.at(0));
+      // This first form has a five-second timer and a ten-way draw. Other timer/draw
+      // forms stay in the VM until their branch contract is defined, regardless of name.
+      s.stage=a.poseStage; s.seconds=a.timerSeconds+1;
+      for(s.roll=0;s.roll<a.rollRange;++s.roll) {
+        const auto gesture=script.run(*phases.loop,s);
+        const auto* animation=firstEvent(gesture,"AI_PLAYANI");
+        a.gestures.push_back({animation ? std::get<std::string>(animation->args.at(0)) : "",true});
+        }
+      return a;
+      }
+
+    std::vector<std::string> walkPoint(const PointActivity& a,Phase phase,const Situation& s,int& result) const {
+      std::vector<std::string> events;
+      auto call=[&](std::string text) { events.push_back(std::move(text)); };
+      auto stage=s.stage;
+      auto read=[&] { call("aivar[19]->"+std::to_string(stage)); return stage; };
+      auto write=[&](int32_t value) { stage=value; call("aivar[19]="+std::to_string(value)); };
+      auto play=[&](const std::string& animation) { call("AI_PLAYANI(self,"+Recorder::text(animation)+")"); };
+      result=0;
+      if(phase==Phase::Init) {
+        MobActivity approach;
+        approach.perceptions=a.perceptions; approach.walkMode=a.walkMode;
+        approach.approach=Approach::Distance; approach.approachDistance=a.approachDistance;
+        events=walk(approach,phase,s,result);
+        write(a.initialStage);
+        }
+      else if(phase==Phase::End) play(a.leaveAnimation);
+      else {
+        call("NPC_ISONFP(self,"+Recorder::text(a.point)+")->"+std::to_string(s.onPoint));
+        if(s.onPoint) {
+          call("AI_ALIGNTOFP(self)");
+          if(read()==a.walkingStage) write(a.arrivedStage);
+          }
+        else {
+          call("WLD_ISFPAVAILABLE(self,"+Recorder::text(a.point)+")->"+std::to_string(s.available));
+          if(s.available) {
+            call("AI_GOTOFP(self,"+Recorder::text(a.point)+")");
+            call("AI_STANDUP(self)"); call("AI_ALIGNTOFP(self)"); write(a.walkingStage);
+            }
+          else {
+            call("AI_ALIGNTOWP(self)");
+            if(read()==a.walkingStage) write(a.arrivedStage);
+            }
+          }
+        if(read()==a.arrivedStage) { play(a.enterAnimation); write(a.poseStage); }
+        const bool posed=read()==a.poseStage;
+        call("NPC_GETSTATETIME(self)->"+std::to_string(s.seconds));
+        if(posed && s.seconds>a.timerSeconds) {
+          call("HLP_RANDOM("+std::to_string(a.rollRange)+")->"+std::to_string(s.roll));
+          const auto& gesture=a.gestures.at(size_t(s.roll));
+          if(!gesture.animation.empty()) play(gesture.animation);
+          if(gesture.resetTimer) call("NPC_SETSTATETIME(self,0)");
+          }
+        result=a.loopResult;
+        }
+      return events;
+      }
+
+    size_t comparePoint(ScriptRun& script,const Phases& phases,const PointActivity& a) const {
+      size_t count=0;
+      auto compare=[&](Phase phase,const Situation& s) {
+        const auto* fn=phase==Phase::Init ? phases.init : phase==Phase::Loop ? phases.loop : phases.end;
+        const auto actual=script.run(*fn,s);
+        int result=0;
+        const auto expected=walkPoint(a,phase,s,result);
+        if(actual.texts()!=expected || actual.result!=result)
+          throw Stop("point_template_mismatch",fn->name()+" with "+s.text());
+        ++count;
+        };
+      for(bool lookAt:{false,true})
+        for(const char* wp:{"ROUTINE_WP",""})
+          for(int32_t distance:{0,499,500,501,std::numeric_limits<int32_t>::max()}) {
+            Situation s; s.lookAt=lookAt; s.waypoint=wp; s.distance=distance;
+            compare(Phase::Init,s);
+            }
+      for(int32_t stage:{-1,0,1,2,3,std::numeric_limits<int32_t>::max()}) {
+        Situation s; s.stage=stage;
+        compare(Phase::End,s);
+        for(bool on:{false,true})
+          for(bool available:{false,true})
+            for(int32_t seconds:{0,4,5,6,std::numeric_limits<int32_t>::max()})
+              for(int32_t roll=0;roll<a.rollRange;++roll) {
+                s.onPoint=on; s.available=available; s.seconds=seconds; s.roll=roll;
+                compare(Phase::Loop,s);
+                }
+        }
+      return count;
+      }
+
     Phases phasesOf(const DaedalusVm& vm) const {
       Phases phases;
       auto phase=[&](const std::string& name,bool result) {
@@ -449,6 +589,36 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
     put(json,"detail",text(encode(capture.detail),allocator),allocator);
     return json;
     }
+  if(capture.point) {
+    const auto& a=*capture.point;
+    Json parameters(rapidjson::kObjectType),stages(rapidjson::kObjectType),gestures(rapidjson::kArrayType);
+    put(parameters,"perceptions",text(a.perceptions,allocator),allocator);
+    put(parameters,"walk_mode",Json(a.walkMode),allocator);
+    put(parameters,"approach",text("distance",allocator),allocator);
+    put(parameters,"approach_distance",Json(a.approachDistance),allocator);
+    put(parameters,"point",text(encode(a.point),allocator),allocator);
+    put(parameters,"occupied",text(a.occupied,allocator),allocator);
+    put(parameters,"enter_animation",text(encode(a.enterAnimation),allocator),allocator);
+    put(parameters,"leave_animation",text(encode(a.leaveAnimation),allocator),allocator);
+    put(parameters,"timer_seconds",Json(a.timerSeconds),allocator);
+    put(parameters,"roll_range",Json(a.rollRange),allocator);
+    put(parameters,"loop_result",Json(a.loopResult),allocator);
+    put(stages,"initial",Json(a.initialStage),allocator);
+    put(stages,"walking",Json(a.walkingStage),allocator);
+    put(stages,"arrived",Json(a.arrivedStage),allocator);
+    put(stages,"pose",Json(a.poseStage),allocator);
+    put(parameters,"aivar_19",std::move(stages),allocator);
+    for(const auto& gesture:a.gestures) {
+      Json entry(rapidjson::kObjectType);
+      put(entry,"animation",text(encode(gesture.animation),allocator),allocator);
+      put(entry,"reset_timer",Json(gesture.resetTimer),allocator);
+      gestures.PushBack(std::move(entry),allocator);
+      }
+    put(parameters,"gestures",std::move(gestures),allocator);
+    put(json,"template",text("point",allocator),allocator);
+    put(json,"parameters",std::move(parameters),allocator);
+    return json;
+    }
   const auto& a=capture.activity;
   Json perceptions(rapidjson::kObjectType),parameters(rapidjson::kObjectType);
   put(perceptions,"function",text(a.perceptions,allocator),allocator);
@@ -469,7 +639,7 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
 Json envelope(const NpcSnapshot::Program& program,Allocator& allocator) {
   Json json(rapidjson::kObjectType);
   put(json,"format",text("gothic-activity-definitions",allocator),allocator);
-  put(json,"version",Json(1),allocator);
+  put(json,"version",Json(2),allocator);
   put(json,"program_name",text(program.name,allocator),allocator);
   put(json,"program_sha256",text(program.sha256,allocator),allocator);
   put(json,"string_encoding",text("unicode-byte-mapping",allocator),allocator);
