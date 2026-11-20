@@ -49,8 +49,8 @@ void orderDraws(std::vector<Draw>& draws) {
 
 // The grass round the camera (reports/engine/2026-11-14-grass-system). The streaming of the landscape gives each
 // chunk's mesh as it reads it (addChunk); the field keeps the summary of its ground under materials with `grass`,
-// builds the blades of the 8 m cells of the ring on its own thread (Grass::buildCell), keeps one buffer per cell
-// and draws them into the G-buffer after the landscape (Shaders::grass, shader/grass/grass.vert).
+// builds the blades of the 8 m cells of the ring on its own thread (Grass::buildCell) and keeps one buffer per cell.
+// It prepares the draw list before the G-buffer pass, then draws the blades before the landscape in that pass.
 //
 // A cell is built when its chunk and the eight round it are in (or are not in the world). A cell far from the
 // camera keeps only the blades of the lower ranks, as many as the ring shows there (Grass::Ring); it is built anew
