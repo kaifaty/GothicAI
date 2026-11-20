@@ -475,6 +475,8 @@ class Renderer final {
       // fence waited for, or the bench's shot waited for the GPU), and the frame's number; the bins drawn by the
       // frames logged last, by number, to check the frame before's that the hysteresis takes
       Tempest::StorageBuffer    frameStats[Resources::MaxFramesInFlight];
+      Tempest::StorageBuffer    geometryStats;
+      Tempest::StorageBuffer    geometryRead[Resources::MaxFramesInFlight];
       uint64_t                  frameStatsNo[Resources::MaxFramesInFlight] = {};
       bool                      frameStatsWritten[Resources::MaxFramesInFlight] = {};
       uint64_t                  frameNo = 0;

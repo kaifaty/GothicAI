@@ -25,6 +25,7 @@ using namespace Tempest;
 
 VisualObjects::BenchImpostors VisualObjects::benchImpostors = BenchImpostors::Auto;
 VisualObjects::BenchShadowLevels VisualObjects::benchShadowLevels = BenchShadowLevels::Auto;
+std::optional<float> VisualObjects::benchShadowNearPx;
 
 static RtScene::Category toRtCategory(DrawCommands::Type t) {
   switch (t) {
@@ -460,6 +461,11 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   if(type==DrawCommands::Static && FoliageTree::isTree(mat.foliage)) {
     for(uint32_t i=0; i<obj.clusterCount; ++i)
       clustersMem[obj.clusterId+i].historyGeneration |= DrawClusters::HistoryStatic;
+    }
+  if(MeshLevels::vsmFrameStatsEnabled() &&
+     std::ranges::any_of(mesh.sub, [](const auto& sub) { return FoliageTree::isTree(sub.material.foliage); })) {
+    for(uint32_t i=0; i<obj.clusterCount; ++i)
+      clustersMem[obj.clusterId+i].shadowCommandId |= DrawClusters::ShadowVisual;
     }
 
   obj.textureCategory=staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic;
@@ -1019,6 +1025,11 @@ void VisualObjects::preFrameUpdateLevels() {
   const bool  shadowLevels = benchShadowLevels==BenchShadowLevels::On ||
                             (benchShadowLevels==BenchShadowLevels::Auto && MeshLevels::shadowLevelsEnabled());
   const bool  fullShadows = benchShadowLevels==BenchShadowLevels::Full;
+  const float nearPx = benchShadowNearPx.value_or(MeshLevels::shadowNearPx());
+  const bool vsmStats = MeshLevels::vsmFrameStatsEnabled();
+  const auto probePx = vsmStats ? MeshLevels::shadowProbePx() : std::nullopt;
+  if(probePx)
+    shadowProbe = {};
   const bool drawStatic = (DrawCommands::hiddenTypes & (1u << DrawCommands::Static))==0;
   for(auto id:objectsLevels) {
     auto&       obj  = objects[id];
@@ -1028,6 +1039,8 @@ void VisualObjects::preFrameUpdateLevels() {
     const bool canImpostor = obj.impostorShadowCmd!=uint16_t(-1) && benchImpostors!=BenchImpostors::Off;
     MeshLevels::Selection level;
     uint8_t shadowLevel = 0;
+    bool shadowCoarse = false;
+    bool probeChanged = false;
     uint32_t joint = 0;
     if(obj.deformCount==0 && py!=0.f && resY>0) {
       const auto& box    = mesh->bbox.bbox;
@@ -1051,12 +1064,40 @@ void VisualObjects::preFrameUpdateLevels() {
         const float shadowHeight = MeshLevels::screenHeight(worldHeight, distance, py, 1080);
         const bool boughCrown = obj.type==DrawCommands::Static && mesh->treeBough && obj.levelSub==mesh->treeBough->sourceSub;
         const uint8_t shadowNear = boughCrown && shadowLevels ? 0 : level.glb;
-        const bool wasSeparate = obj.shadowLevel!=(boughCrown && shadowLevels ? 0 : obj.level.glb);
+        const uint8_t previousNear = boughCrown && shadowLevels ? 0 : obj.level.glb;
+        const bool wasSeparate = obj.shadowLevel!=previousNear;
         shadowLevel = fullShadows ? 0 : MeshLevels::pickShadow(mesh->levels.size(), obj.shadowLevel, wasSeparate,
-                                                             shadowHeight, shadowNear, shadowLevels);
+                                                             shadowHeight, shadowNear, shadowLevels, nearPx);
+        if(vsmStats)
+          shadowCoarse = shadowLevels && !MeshLevels::shadowUsesVisual(shadowHeight, wasSeparate, nearPx);
+        if(probePx && obj.bandCluster==uint32_t(-1)) {
+          const bool probeWasSeparate = obj.shadowProbeLevel!=previousNear;
+          const uint8_t probeLevel = fullShadows ? 0 : MeshLevels::pickShadow(mesh->levels.size(), obj.shadowProbeLevel,
+                                                                            probeWasSeparate, shadowHeight, shadowNear,
+                                                                            shadowLevels, *probePx);
+          obj.shadowProbeLevel = probeLevel;
+          probeChanged = probeLevel!=shadowLevel;
+          if(obj.visible && drawStatic) {
+            const auto [first, meshlets] = mesh->levelMeshlets(obj.iboOff, obj.iboLen, probeLevel);
+            const auto triangles = mesh->shadowProbeTriangles(first, meshlets);
+            if(shadowLevels && !MeshLevels::shadowUsesVisual(shadowHeight, probeWasSeparate, *probePx)) {
+              shadowProbe.coarseTrees += obj.levelSub==0;
+              shadowProbe.coarseMeshlets += meshlets;
+              shadowProbe.coarseTriangles += triangles;
+              }
+            if(probeChanged) {
+              const auto [oldFirst, oldMeshlets] = mesh->levelMeshlets(obj.iboOff, obj.iboLen, shadowLevel);
+              shadowProbe.changedTrees += obj.levelSub==0;
+              shadowProbe.oldMeshlets += oldMeshlets;
+              shadowProbe.oldTriangles += mesh->shadowProbeTriangles(oldFirst, oldMeshlets);
+              shadowProbe.newMeshlets += meshlets;
+              shadowProbe.newTriangles += triangles;
+              }
+            }
+          }
         }
       if(obj.bandCluster!=uint32_t(-1))
-        updateLevelBand(obj, height, height*1080.f/float(resY), shadowLevels, fullShadows, level, shadowLevel);
+        updateLevelBand(obj, height, height*1080.f/float(resY), shadowLevels, fullShadows, level, shadowLevel, shadowCoarse);
       if((level.impostor() || joint!=0u) && obj.levelSub==0 && obj.visible && drawStatic) {
         const Vec3 x(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2));
         const Vec3 y(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
@@ -1079,8 +1120,14 @@ void VisualObjects::preFrameUpdateLevels() {
     auto& c = clustersMem[obj.clusterId];
     const auto command = level.impostor() ? obj.impostorShadowCmd : obj.cmdId;
     const bool separateShadow = shadowLevel!=level.glb;
+    uint32_t shadowCommand = separateShadow ? obj.cmdId : (c.shadowCommandId & 0xFFFFu);
+    if(vsmStats && (c.shadowCommandId >> 16)!=0) {
+      shadowCommand |= shadowCoarse ? DrawClusters::ShadowCoarse : DrawClusters::ShadowVisual;
+      if(probeChanged)
+        shadowCommand |= DrawClusters::ShadowProbeChanged;
+      }
     if(level==obj.level && c.commandId==command && shadowLevel==obj.shadowLevel &&
-       (!separateShadow || c.shadowCommandId==obj.cmdId))
+       c.shadowCommandId==shadowCommand)
       continue;
     obj.level = level;
     obj.shadowLevel = shadowLevel;
@@ -1092,12 +1139,12 @@ void VisualObjects::preFrameUpdateLevels() {
     c.commandId    = command;
     c.firstMeshlet = range.first;
     c.meshletCount = obj.visible ? range.second : 0u;
+    c.shadowCommandId = shadowCommand;
     if(separateShadow) {
       const auto shadow = mesh->levelMeshlets(obj.iboOff, obj.iboLen, shadowLevel);
       c.shadowFirstMeshlet = shadow.first;
       c.shadowMeshletCount = shadow.second;
       // The regular command has room for the full GLB, even when the impostor command only reserves the last one.
-      c.shadowCommandId = obj.cmdId;
       } else {
       c.shadowMeshletCount = 0;
       }
@@ -1110,6 +1157,14 @@ void VisualObjects::preFrameUpdateLevels() {
   FrameProfile::add(FrameProfile::Amount::MeshLevel3, count[3]);
   FrameProfile::add(FrameProfile::Amount::MeshLevel4, count[4]);
   FrameProfile::add(FrameProfile::Amount::MeshImpostors, impostorDraws.size());
+  }
+
+void VisualObjects::logVsmShadowProbe(uint64_t frameNo) const {
+  if(const auto px = MeshLevels::shadowProbePx()) {
+    const auto& p = shadowProbe;
+    Log::i("vsm shadow probe ", frameNo, " px=", *px, " coarse=", p.coarseTrees, "/", p.coarseMeshlets, "/", p.coarseTriangles,
+           " changed=", p.changedTrees, " old=", p.oldMeshlets, "/", p.oldTriangles, " new=", p.newMeshlets, "/", p.newTriangles);
+    }
   }
 
 void VisualObjects::preFrameUpdateWind() {
@@ -1231,8 +1286,8 @@ void VisualObjects::visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cm
   drawCmd.visibilityStats(cmd, fId);
   }
 
-void VisualObjects::visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
-  drawCmd.visibilityVsm(cmd);
+void VisualObjects::visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::StorageBuffer* geometryStats) {
+  drawCmd.visibilityVsm(cmd, geometryStats);
   }
 
 void VisualObjects::drawMultiply(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {

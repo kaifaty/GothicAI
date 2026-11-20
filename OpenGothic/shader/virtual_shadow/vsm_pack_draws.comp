@@ -20,11 +20,37 @@ layout(binding = 5, std430) writeonly buffer Indirect     { uvec3       indirect
 #if defined(PASS1)
 layout(push_constant, std430) uniform UboPush { uint pairCap; } push; // DrawCommands::vsmPairCap
 #endif
+#if defined(GEOMETRY_STATS)
+layout(binding = 6, std430) buffer Geometry { uvec4 geometry[VSM_GEOMETRY_ROWS]; }; // pairs, triangles, probe-affected pairs and triangles
+#if defined(PASS1)
+layout(binding = 7, std430) readonly buffer Offsets    { uint primitiveOffset[]; };
+layout(binding = 8, std430) readonly buffer Primitives { uint primitiveCount[];  };
+shared uvec4 geometrySum[VSM_GEOMETRY_ROWS];
+
+void sumGeometry(uint entry, uint pageId, uint bucketId, uint meshletId) {
+  const uint data  = vsm.pageList[pageId];
+  const uint light = vsmPageIsOmni(data) ? VSM_PAGE_MIPS : uint(unpackVsmPageInfo(data).z);
+  const uint row   = light*VSM_GEOMETRY_CLASSES + bitfieldExtract(entry, 16, 2);
+  const uint base  = primitiveOffset[bucketId];
+  const uint prims = base==0xFFFFFFFFu ? 0u : primitiveCount[base+meshletId];
+  atomicAdd(geometrySum[row].x, 1u);
+  atomicAdd(geometrySum[row].y, prims);
+  if((entry & VSM_GEOMETRY_PROBE)!=0u) {
+    atomicAdd(geometrySum[row].z, 1u);
+    atomicAdd(geometrySum[row].w, prims);
+    }
+  }
+#endif
+#endif
 
 shared uint partialSumm[gl_WorkGroupSize.x];
 
 void mainCmd() {
   const uint index = gl_LocalInvocationID.x;
+#if defined(GEOMETRY_STATS)
+  if(index<VSM_GEOMETRY_ROWS)
+    geometry[index] = uvec4(0);
+#endif
   const uint len   = cmd.length();
   const uint b     = ((index+0)*len)/gl_WorkGroupSize.x;
   const uint e     = ((index+1)*len)/gl_WorkGroupSize.x;
@@ -70,7 +96,12 @@ void mainClusters() {
   const uint  meshletId  = cluster.y;
   const uint  commandId  = cluster.z & 0xFFFF;
   const uint  bucketId   = cluster.z >> 16;
+#if defined(GEOMETRY_STATS)
+  const uint  pageId     = cluster.w & 0xFFFFu;
+  sumGeometry(cluster.w, pageId, bucketId, meshletId);
+#else
   const uint  pageId     = cluster.w;
+#endif
 
   uint writeOffset = cmd[commandId].writeOffset;
   uint at          = atomicAdd(cmd[commandId].instanceCount, 1);
@@ -87,7 +118,26 @@ void main() {
 #if defined(PASS0)
   mainCmd();
 #elif defined(PASS1)
+#if defined(GEOMETRY_STATS)
+  if(gl_WorkGroupID.x*gl_WorkGroupSize.x>=min(vsm.header.meshletCount, push.pairCap))
+    return;
+  const uint lane = gl_LocalInvocationIndex;
+  if(lane<VSM_GEOMETRY_ROWS)
+    geometrySum[lane] = uvec4(0);
+  barrier();
+#endif
   mainClusters();
+#if defined(GEOMETRY_STATS)
+  barrier();
+  if(lane<VSM_GEOMETRY_ROWS && geometrySum[lane].x!=0u) {
+    atomicAdd(geometry[lane].x, geometrySum[lane].x);
+    atomicAdd(geometry[lane].y, geometrySum[lane].y);
+    if(geometrySum[lane].z!=0u) {
+      atomicAdd(geometry[lane].z, geometrySum[lane].z);
+      atomicAdd(geometry[lane].w, geometrySum[lane].w);
+      }
+    }
+#endif
 #else
 #error "invalid pass-id"
 #endif

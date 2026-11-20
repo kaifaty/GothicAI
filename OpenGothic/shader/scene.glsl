@@ -139,7 +139,7 @@ Cluster shadowCluster(Cluster cluster) {
   if(cluster.shadowMeshletCount>0) {
     cluster.firstMeshlet = cluster.shadowFirstMeshlet;
     cluster.meshletCount = cluster.shadowMeshletCount;
-    cluster.bucketId_commandId = (cluster.bucketId_commandId & 0xFFFF0000u) | cluster.shadowCommandId;
+    cluster.bucketId_commandId = bitfieldInsert(cluster.bucketId_commandId, cluster.shadowCommandId, 0, 16);
     }
   return cluster;
   }

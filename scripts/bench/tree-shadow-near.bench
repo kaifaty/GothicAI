@@ -1,0 +1,118 @@
+# One window, including 90 s of GPU warm-up on the inside view. Use the step 3 forest at 2560x1440,
+# OPENGOTHIC_VSM_STATS=frames and OPENGOTHIC_SHADOW_LEVEL_PROBE_PX=600, with the normal pair cap and TAA.
+# @timeout 340
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+walkmode run
+watch player
+
+set time 12 0
+goto pos 54140 1650 -10780
+clear 3000
+cam at 54140 1760 -10780 60000 2060 -10780
+wait real 90000
+set time 12 0
+ztimer multiplyer 0
+log shadow-near inside begin
+wait real 8000
+log shadow-near inside end
+ztimer realtime
+
+goto pos 48765 6250 -3156
+clear 5000
+cam at 48765 6679 -3156 54140 2190 -10780
+wait real 16000
+set time 12 0
+ztimer multiplyer 0
+log shadow-near near-30 begin
+wait real 8000
+log shadow-near near-30 end
+ztimer realtime
+
+cam game
+goto pos 54500 1640 -12700
+clear 5000
+face 110
+wait real 12000
+set time 12 0
+press forward
+wait 500
+log shadow-near pass begin
+wait 9000
+log shadow-near pass end
+release forward
+
+# Freeze world time and the wind tick for each pair. A cut and deterministic settling reset TAA for each PNG.
+deterministic on
+set time 12 0
+goto pos 54140 1650 -10780
+clear 3000
+cam at 53990 1760 -10780 54680 1570 -11040
+wait real 3000
+ztimer multiplyer 0
+streaming wait 10000
+pos
+shot under-800
+wait real 400
+shadow near 600
+streaming wait 10000
+pos
+shot under-600
+wait real 400
+deterministic off
+ztimer realtime
+
+# Travel through the shadow boundary of tree-cost-4-7, then return, without a camera cut.
+cam at 53300 2000 -10000 54565 1950 -11009
+streaming wait 12000
+wait real 2000
+rec threshold-600
+wait 500
+cam fly 52080 2450 -9050 54565 1950 -11009 4000
+wait 4000
+wait 500
+cam fly 53300 2000 -10000 54565 1950 -11009 4000
+wait 4000
+wait 500
+stop
+
+shadow near auto
+deterministic on
+set time 19 0
+goto pos 48765 6250 -3156
+clear 5000
+cam at 48765 6679 -3156 54140 2190 -10780
+wait real 3000
+ztimer multiplyer 0
+streaming wait 10000
+pos
+shot edge-800
+wait real 400
+shadow near 600
+streaming wait 10000
+pos
+shot edge-600
+wait real 400
+ztimer realtime
+
+shadow near auto
+set time 0 0
+goto pos 54140 1650 -10780
+clear 3000
+cam at 54140 1760 -10780 53580 1650 -10450
+wait real 3000
+ztimer multiplyer 0
+streaming wait 10000
+pos
+shot lamp-800
+wait real 400
+shadow near 600
+streaming wait 10000
+pos
+shot lamp-600
+wait real 400
+shadow near auto
+ztimer realtime
