@@ -5,6 +5,7 @@
 
 #include "graphics/mesh/submesh/staticmesh.h"
 #include "graphics/mesh/submesh/animmesh.h"
+#include "graphics/drawcommands.h"
 #include "graphics/shaders.h"
 #include "frameprofile.h"
 #include "commandline.h"
@@ -233,6 +234,43 @@ void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
   desc.morph   = device.descriptors(morph);
   timing.add(FrameProfile::Amount::BindlessTextureSlots,tex.size()+normal.size()+orm.size());
   timing.add(FrameProfile::Amount::BindlessBufferSlots,vbo.size()+ibo.size()+morphId.size()+morph.size());
+  }
+
+void DrawBuckets::updatePrimitiveCounts(Encoder<CommandBuffer>& cmd) {
+  // One compact range per packed index buffer, shared by all of its materials. The diagnostic never reads
+  // back geometry and can use the same table on backends without bindless storage buffers.
+  constexpr uint32_t none = uint32_t(-1);
+  constexpr size_t meshletBytes = PackedMesh::MaxPrim*sizeof(uint32_t);
+  std::unordered_map<const StorageBuffer*, uint32_t> buffers;
+  std::vector<uint32_t> offsets(std::max<size_t>(1, bucketsCpu.size()), none);
+  size_t total = 0;
+  for(size_t i=0; i<bucketsCpu.size(); ++i) {
+    const auto& bucket = bucketsCpu[i];
+    // The compact cards of a bough only draw in the main and occluder views. The regular mesh casts the shadow.
+    if((bucket.staticMesh==nullptr && bucket.animMesh==nullptr) || bucket.boughPage!=nullptr)
+      continue;
+    const auto& ibo = bucket.iboBuffer();
+    if(ibo.isEmpty())
+      continue;
+    const auto [at, added] = buffers.try_emplace(&ibo, uint32_t(total));
+    if(added)
+      total += ibo.byteSize()/meshletBytes;
+    offsets[i] = at->second;
+    }
+
+  auto& device = Resources::device();
+  Resources::recycle(std::move(primitiveOffsets));
+  Resources::recycle(std::move(primitiveCounts));
+  primitiveOffsets = device.ssbo(offsets);
+  primitiveCounts  = device.ssbo(Uninitialized, std::max<size_t>(1, total)*sizeof(uint32_t));
+  cmd.setBinding(1, primitiveCounts);
+  cmd.setPipeline(Shaders::inst().vsmCountPrimitives);
+  for(const auto& [ibo, offset] : buffers) {
+    const uint32_t push[] = {offset, PackedMesh::MaxPrim};
+    cmd.setBinding(0, *ibo);
+    cmd.setPushData(push, sizeof(push));
+    cmd.dispatchThreads(ibo->byteSize()/meshletBytes);
+    }
   }
 
 bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
@@ -481,5 +519,7 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   treeHiZBoundsGpu.updateAsync(treeBounds.data(),0,treeBounds.size()*sizeof(treeBounds[0]));
 
   updateBindlessArrays(true,fId);
+  if(DrawCommands::vsmFrameStatsEnabled() && Shaders::isVsmSupported())
+    updatePrimitiveCounts(cmd);
   return true;
   }

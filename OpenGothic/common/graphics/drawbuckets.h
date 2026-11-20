@@ -58,6 +58,8 @@ class DrawBuckets {
     // the spheres of the meshlets of the buckets' static meshes (Bucket::meshletSpheres of scene.glsl)
     auto meshletSpheres() const -> const Tempest::StorageBuffer& { return spheres.ssbo(); }
     auto treeHiZBounds() const -> const Tempest::StorageBuffer& { return treeHiZBoundsGpu; }
+    const Tempest::StorageBuffer& primitiveOffsetTable() const { return primitiveOffsets; }
+    const Tempest::StorageBuffer& primitiveCountTable() const { return primitiveCounts; }
 
     auto& textures() const { return textureDesc[currentFrame].arrays[0]; }
     auto& normals()  const { return textureDesc[currentFrame].arrays[1]; }
@@ -72,6 +74,7 @@ class DrawBuckets {
   private:
     void updateBindlessArrays(bool updateBuffers, uint8_t fId);
     void updateTextureArrays(uint8_t fId);
+    void updatePrimitiveCounts(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     enum BucketFlg : uint32_t {
       BK_SOLID = 0x1,
@@ -165,6 +168,7 @@ class DrawBuckets {
     std::vector<Bucket>      bucketsCpu;
     Tempest::StorageBuffer   bucketsGpu;
     Tempest::StorageBuffer   treeHiZBoundsGpu;
+    Tempest::StorageBuffer   primitiveOffsets, primitiveCounts;
     MeshletSpheres           spheres;
     bool                     bucketsDurtyBit = false;
     uint64_t                 textureGeneration = 0;

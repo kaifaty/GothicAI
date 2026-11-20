@@ -119,12 +119,17 @@ void cullCandidate(const uint c) {
 
   const int  count = shadowMeshlets(cluster);
   const uint data  = vsm.pageList[entry];
+#if defined(GEOMETRY_STATS)
+  const uint payloadEntry = entry | (cluster.shadowCommandId & VSM_GEOMETRY_MASK);
+#else
+  const uint payloadEntry = entry;
+#endif
   for(int i=int(lane); i<count; i+=int(gl_WorkGroupSize.x)) {
     if(first!=VSM_NO_SPHERES && !meshletInEntry(spheres[first + uint(i)], obj, scale, pad, data))
       continue;
     const uint at = atomicAdd(sPass, 1);
     if(emit && at<cand.z)
-      payload[sBase + at] = uvec4(cluster.instanceId, cluster.firstMeshlet + uint(i), cluster.bucketId_commandId, entry);
+      payload[sBase + at] = uvec4(cluster.instanceId, cluster.firstMeshlet + uint(i), cluster.bucketId_commandId, payloadEntry);
     }
   barrier();
 

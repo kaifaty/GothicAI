@@ -9,6 +9,7 @@
 #include "graphics/foliagetree.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/meshlevels.h"
+#include "graphics/drawcommands.h"
 #include "graphics/shaders.h"
 
 struct LandscapePages::State {
@@ -219,6 +220,7 @@ StaticMesh& StaticMesh::operator=(StaticMesh&& other) {
   ownMesh=other.ownMesh;
   pageRange=std::move(other.pageRange);
   treeHiZBoxes=std::move(other.treeHiZBoxes);
+  shadowProbeTriangleEnds=std::move(other.shadowProbeTriangleEnds);
   return *this;
   }
 
@@ -298,6 +300,18 @@ void StaticMesh::initTreeHiZBoxes(const PackedMesh& mesh) {
      std::ranges::none_of(sub, [](const auto& s) { return FoliageTree::isTree(s.material.foliage); }))
     return;
 
+  if(!levels.empty() && DrawCommands::vsmFrameStatsEnabled() && MeshLevels::shadowProbePx()) {
+    constexpr size_t stride = PackedMesh::MaxPrim*4;
+    const size_t meshlets = mesh.indices8.size()/stride;
+    shadowProbeTriangleEnds.resize(meshlets+1);
+    for(size_t i=0; i<meshlets; ++i) {
+      // As in processMeshlet: the last packed triangle encodes the count when there is padding.
+      const auto* tail = &mesh.indices8[(i+1)*stride-4];
+      const uint32_t triangles = tail[0]==tail[1] ? uint32_t(tail[2]) : PackedMesh::MaxPrim;
+      shadowProbeTriangleEnds[i+1] = shadowProbeTriangleEnds[i]+triangles;
+      }
+    }
+
   const auto addBox = [&](size_t offset, size_t length) {
     constexpr float inf = std::numeric_limits<float>::infinity();
     TreeHiZBounds bounds {Tempest::Vec3(inf), uint32_t(offset/PackedMesh::MaxInd),
@@ -326,6 +340,12 @@ void StaticMesh::initTreeHiZBoxes(const PackedMesh& mesh) {
   for(const auto& level : levels)
     for(const auto& [offset,length] : level.sub)
       addBox(offset,length);
+  }
+
+uint32_t StaticMesh::shadowProbeTriangles(uint32_t first, uint32_t count) const {
+  if(shadowProbeTriangleEnds.empty())
+    return 0;
+  return shadowProbeTriangleEnds[size_t(first)+count]-shadowProbeTriangleEnds[first];
   }
 
 const StaticMesh::TreeHiZBounds* StaticMesh::treeHiZBox(uint32_t firstMeshlet, uint32_t meshletCount) const {

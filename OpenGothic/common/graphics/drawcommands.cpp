@@ -99,6 +99,14 @@ uint32_t DrawCommands::vsmPairCap() {
   return cap;
   }
 
+bool DrawCommands::vsmFrameStatsEnabled() {
+  static const bool enabled = [] {
+    const char* value = std::getenv("OPENGOTHIC_VSM_STATS");
+    return value!=nullptr && std::string_view(value)=="frames";
+    }();
+  return enabled;
+  }
+
 static void usesSsbo(StorageBuffer& b, const size_t desiredSz) {
   if(b.byteSize()<desiredSz || b.byteSize()>=2*desiredSz) {
     Resources::recycle(std::move(b));
@@ -616,7 +624,7 @@ const Tempest::StorageBuffer& DrawCommands::orderedClusters() {
   return orderSsbo;
   }
 
-void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
+void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd, const StorageBuffer* geometryStats) {
   auto& shaders = Shaders::inst();
 
   auto& view = views[SceneGlobals::V_Vsm];
@@ -659,7 +667,7 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   cmd.setBinding(7, buckets.meshletSpheres());
   cmd.setBinding(8, *scene.vsmPageList);
   cmd.setBinding(9, view.vsmClusters);
-  cmd.setPipeline(shaders.vsmCullMeshlets);
+  cmd.setPipeline(geometryStats!=nullptr ? shaders.vsmCullMeshletsStats : shaders.vsmCullMeshlets);
   for(cull.emit=0; cull.emit<2; ++cull.emit) {
     cmd.setPushData(cull);
     cmd.dispatch(VsmCullGroups);
@@ -670,7 +678,9 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   cmd.setBinding(3, view.indirectCmd);
   cmd.setBinding(4, *scene.vsmPageList);
   cmd.setBinding(5, vsmIndirectCmd);
-  cmd.setPipeline(shaders.vsmPackDraw0);
+  if(geometryStats!=nullptr)
+    cmd.setBinding(6, *geometryStats);
+  cmd.setPipeline(geometryStats!=nullptr ? shaders.vsmPackDraw0Stats : shaders.vsmPackDraw0);
   cmd.dispatch(1);
 
   cmd.setBinding(1, view.vsmClusters);
@@ -678,7 +688,12 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   cmd.setBinding(3, view.indirectCmd);
   cmd.setBinding(4, *scene.vsmPageList);
   cmd.setPushData(&cap, sizeof(cap));
-  cmd.setPipeline(shaders.vsmPackDraw1);
+  if(geometryStats!=nullptr) {
+    cmd.setBinding(6, *geometryStats);
+    cmd.setBinding(7, buckets.primitiveOffsetTable());
+    cmd.setBinding(8, buckets.primitiveCountTable());
+    }
+  cmd.setPipeline(geometryStats!=nullptr ? shaders.vsmPackDraw1Stats : shaders.vsmPackDraw1);
   cmd.dispatch((cap+127)/128); // vsm_pack_draws.comp: 128 threads; TODO: indirect
   // cmd.dispatchIndirect(vsmIndirectCmd, 0);
   }

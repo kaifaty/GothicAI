@@ -429,6 +429,12 @@ void Shaders::compileShaders() noexcept {
     vsmMergePages      = computeShader("vsm_merge_pages.comp.sprv");
     vsmPackDraw0       = computeShader("vsm_pack_draws0.comp.sprv");
     vsmPackDraw1       = computeShader("vsm_pack_draws1.comp.sprv");
+    if(DrawCommands::vsmFrameStatsEnabled()) {
+      vsmCullMeshletsStats = computeShader("vsm_cull_meshlets_stats.comp.sprv");
+      vsmPackDraw0Stats    = computeShader("vsm_pack_draws0_stats.comp.sprv");
+      vsmPackDraw1Stats    = computeShader("vsm_pack_draws1_stats.comp.sprv");
+      vsmCountPrimitives   = computeShader("vsm_count_primitives.comp.sprv");
+      }
     vsmFogPages        = computeShader("vsm_fog_mark_pages.comp.sprv");
     vsmFogShadow       = computeShader("vsm_fog_shadow.comp.sprv");
 

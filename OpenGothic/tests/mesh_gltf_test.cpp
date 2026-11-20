@@ -1610,6 +1610,13 @@ void levelCases(const Fixture& fixture) {
           MeshLevels::pickShadow(4, 4, true, 420.f, 1, true)==4 && MeshLevels::pickShadow(4, 4, true, 450.f, 1, true)==3 &&
           MeshLevels::pickShadow(2, 0, false, 390.f, 0, true)==2 && MeshLevels::pickShadow(4, 3, true, 850.f, 0, false)==0,
           "shadow LOD must match the near visual GLB and use its own thresholds and hysteresis farther away");
+  const auto probeShadow = [](uint8_t previous, float height) {
+    return MeshLevels::pickShadow(4, previous, previous!=0, height, 0, true, 600.f);
+    };
+  require(MeshLevels::parseShadowNearPx("1")==MeshLevels::ShadowFarPx && !MeshLevels::parseShadowNearPx("nan") &&
+          probeShadow(0, 599.9f)==3 && probeShadow(0, 600.f)==0 &&
+          probeShadow(3, 659.9f)==3 && probeShadow(3, 660.f)==0 && probeShadow(0, 390.f)==4,
+          "a configured near threshold must keep the return band and the far shadow step");
 
   // Spruce A, 18 m, at 1920x1080 and 67.5 degrees: 400, 200, 100 and 50 px at 36, 73, 145 and 291 m
   const float px[] = {400,200,100,50};

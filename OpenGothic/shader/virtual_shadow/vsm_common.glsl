@@ -41,6 +41,13 @@ const int  VSM_RING_WIDTH   = 2;
 const int  VSM_STRIPE_PAGES = 8;
 const int  VSM_PAIR_BINS = VSM_LAMP_BINS + VSM_PAGE_MIPS*VSM_RING_BINS;
 const int  VSM_BIN_WORDS = (VSM_PAIR_BINS+31)/32;
+// Geometry statistics order: other, visual spruce GLB and coarse spruce GLB, for each sun mip then for all lamps.
+// In the diagnostic cull/pack variants only, the high bits of the intermediate entry carry Cluster.shadowCommandId's
+// class (bits 16–17) and whether the probe selects a different GLB (bit 18). The raster payload carries just the entry.
+const uint VSM_GEOMETRY_CLASSES = 3u;
+const uint VSM_GEOMETRY_ROWS    = VSM_GEOMETRY_CLASSES*(VSM_PAGE_MIPS+1);
+const uint VSM_GEOMETRY_MASK    = 0x70000u;
+const uint VSM_GEOMETRY_PROBE   = 0x40000u;
 // No sphere of an object's meshlets (Bucket::meshletSpheres): its cluster is taken whole
 const uint VSM_NO_SPHERES = 0xFFFFFFFFu;
 // const int VSM_CUBE_TBL_SIZE = 2;
@@ -65,6 +72,13 @@ struct VsmHeader {
   uint  admitPrevBits[VSM_BIN_WORDS]; // ...and the frame before: vsm_clear.comp moves the one into the other
   uint  pairDemand[VSM_PAIR_BINS];    // pairs of each bin after the meshlets' test
   };
+
+// The final word of a packed meshlet's 8-bit index list encodes both counts when its first two indices are equal.
+uvec2 vsmMeshletCounts(uint lastIndexWord, uint maxVertices, uint maxPrimitives) {
+  if(bitfieldExtract(lastIndexWord, 0, 8)==bitfieldExtract(lastIndexWord, 8, 8))
+    return uvec2(bitfieldExtract(lastIndexWord, 24, 8), bitfieldExtract(lastIndexWord, 16, 8));
+  return uvec2(maxVertices, maxPrimitives);
+  }
 
 // A lamp's bin by its distance from the camera, cm: under 2.56 m the first, each next twice as far
 uint vsmLampBin(float dist) {
