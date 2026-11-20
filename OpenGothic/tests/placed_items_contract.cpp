@@ -2444,49 +2444,117 @@ void arrowEffects(Gothic& gothic) {
   for(size_t i=0;i<100 && !glanced && !glancing.isFinished();++i) {
     session->tick(4);
     // a finished bullet is removed on the next tick only
-    glanced=!glancing.isFinished() && glancing.itemView().level()==3 && glancing.itemView().effectKey()==hit &&
-            emitting(glancing.itemView());
+    // thrown back: no longer straight down (the stone's n.y>=.7 turns a straight down flight to y>=-.02)
+    const auto d=glancing.direction();
+    glanced=!glancing.isFinished() && d.y>-.5f*d.length() &&
+            glancing.itemView().level()==3 && glancing.itemView().effectKey()==hit && emitting(glancing.itemView());
     }
   require(glanced,"a fire arrow glancing off stone must fly on at KEY_INVEST_3");
-  // Stopped on stone (its fourth glance, DynamicWorld::moveBullet): the tip 2 cm in it, the arrow turned into the
-  // stone. Shot straight down onto flat stone it glances in place; a glance at the very start of a step leaves the
-  // arrow hanging where it is (the flight as on main), so the next shot is tried.
-  {
-    bool stopped=false;
-    for(float r=150;r<=3000 && !stopped;r+=150)
-      for(int a=0;a<12 && !stopped;++a) {
+  // flat stone by Harad, found from above as the ground: each point to `take` until it is done with one
+  const auto onFlatStone=[&](const std::function<bool(const Tempest::Vec3&)>& take) {
+    for(float r=150;r<=3000;r+=150)
+      for(int a=0;a<12;++a) {
         const float an=float(a)*float(M_PI)/6.f;
         const auto p=npc->position()+Tempest::Vec3(std::cos(an)*r,0,std::sin(an)*r);
         const auto land=world->physic()->ray(p+Tempest::Vec3(0,300,0),p-Tempest::Vec3(0,700,0));
-        if(!land.hasCol || land.mat!=asset::MaterialGroup::STONE || land.n.y<.98f)
-          continue;
-        const auto before=world->stuckArrowCount();
-        auto& b=shoot(arrow,land.v+Tempest::Vec3(0,120,0),Tempest::Vec3(0,-1,0));
-        auto last=b.position();
-        for(size_t i=0,still=0;i<3000 && still<50 && !b.isFinished();++i) {
-          session->tick(4);
-          still=(b.position()-last).length()<1.e-4f ? still+1 : 0;
-          last=b.position();
-          }
-        Tempest::Matrix4x4 m;
-        if(!b.isFinished() || world->stuckArrowCount()!=before+1 || !world->stuckArrowTransform(before,m))
-          continue;
-        const auto entry=b.impactPoint();
-        const auto d=depthOf(m,world->stuckArrowView(before)->protoMesh(),entry);
-        const auto under=world->physic()->ray(entry-d.axis*20.f,entry+d.axis*5.f);
-        std::printf("Arrow depth: stopped on material %d %.0f cm from where it was shot, tip %.2f cm past the hit, %.2f cm "
-                    "off its line, flight %.2f %.2f %.2f\n",int(under.mat),double((entry-land.v).length()),double(d.tip),
-                    double(d.off),double(d.axis.x),double(d.axis.y),double(d.axis.z));
-        if(!under.hasCol || under.mat!=asset::MaterialGroup::STONE)
-          continue;
-        // shot straight down, it came into the stone straight down: so it stands
-        require(std::abs(d.tip-2.f)<=1.f && d.off<1.f && d.axis.y<-.9999f,
-                "an arrow stopped on stone must have its tip 2 cm in it");
-        stopped=true;
+        if(land.hasCol && land.mat==asset::MaterialGroup::STONE && land.n.y>=.98f && take(land.v))
+          return true;
         }
-    require(stopped,"an arrow must stop on flat stone by Harad");
+    return false;
+    };
+  // A touch of stone at the very start of a step is a glance like any other (DynamicWorld::moveBullet): four arrows
+  // fall straight down onto one point of flat stone from 0.05 to 0.3 cm, so their first 4 ms step meets it at a
+  // fraction of a few hundredths. Each finishes its flight on the stone, neither standing still unfinished nor
+  // falling through it. Bullets do not collide with each other: shot at once.
+  {
+    struct Touch { float height; Bullet* b; Tempest::Vec3 last,end; size_t still=0,steps=0; bool done=false; };
+    std::vector<Touch> touches;
+    Tempest::Vec3 at;
+    require(onFlatStone([&](const Tempest::Vec3& p) {
+      at=p;
+      for(float h:{.05f,.1f,.2f,.3f}) {
+        auto& b=shoot(arrow,at+Tempest::Vec3(0,h,0),Tempest::Vec3(0,-1,0));
+        touches.push_back({h,&b,b.position(),{}});
+        }
+      return true;
+      }),"flat stone an arrow touches must be found by Harad");
+    for(size_t i=0;i<3000;++i) {
+      bool flying=false;
+      for(auto& t:touches)
+        flying|=!t.done;
+      if(!flying)
+        break;
+      session->tick(4);
+      for(auto& t:touches) {
+        // a finished bullet is removed on the next tick: not looked at after
+        if(t.done)
+          continue;
+        ++t.steps;
+        if(t.steps==1) {
+          // the first 4 ms step touches the stone: it glances up and flies on
+          const auto msg="an arrow shot down onto stone from "+std::to_string(t.height)+" cm must glance up at its "
+                         "first touch";
+          require(!t.b->isFinished() && t.b->direction().y>0.f,msg.c_str());
+          }
+        if(t.b->isFinished()) {
+          t.done=true;
+          t.end=t.b->position();
+          continue;
+          }
+        t.still=(t.b->position()-t.last).length()<1.e-4f ? t.still+1 : 0;
+        t.last=t.b->position();
+        if(t.still>=50) {
+          const auto msg="an arrow shot down onto stone from "+std::to_string(t.height)+" cm hung at the stone: "+
+                         std::to_string(t.still)+" steps still, unfinished after "+std::to_string(t.steps)+" steps";
+          require(false,msg.c_str());
+          }
+        }
+      }
+    for(auto& t:touches) {
+      const auto msg="an arrow shot down onto stone from "+std::to_string(t.height)+" cm hung at the stone: unfinished "
+                     "after "+std::to_string(t.steps)+" steps";
+      require(t.done,msg.c_str());
+      const auto under=world->physic()->ray(t.end+Tempest::Vec3(0,5,0),t.end-Tempest::Vec3(0,20,0));
+      std::printf("Arrow touch: from %.2f cm finished in %zu steps at %.1f %.1f %.1f on material %d\n",double(t.height),
+                  t.steps,double(t.end.x),double(t.end.y),double(t.end.z),under.hasCol ? int(under.mat) : -1);
+      const auto fell="an arrow shot down onto stone from "+std::to_string(t.height)+" cm fell through the stone: "
+                      "stopped at y "+std::to_string(t.end.y)+", the stone at y "+std::to_string(at.y);
+      require(t.end.y>=at.y-1.f && under.hasCol && under.mat==asset::MaterialGroup::STONE,fell.c_str());
+      }
   }
 
+  // Stopped on stone (its fourth glance, DynamicWorld::moveBullet): the tip 2 cm in it, the arrow turned into the
+  // stone. Shot straight down onto flat stone it glances in place until it stops; if it stopped off the stone, the
+  // next point is tried.
+  {
+    const bool stopped=onFlatStone([&](const Tempest::Vec3& at) {
+      const auto before=world->stuckArrowCount();
+      auto& b=shoot(arrow,at+Tempest::Vec3(0,120,0),Tempest::Vec3(0,-1,0));
+      auto last=b.position();
+      for(size_t i=0,still=0;i<3000 && still<50 && !b.isFinished();++i) {
+        session->tick(4);
+        still=(b.position()-last).length()<1.e-4f ? still+1 : 0;
+        last=b.position();
+        }
+      require(b.isFinished(),"an arrow shot down onto flat stone from 120 cm hung at the stone");
+      Tempest::Matrix4x4 m;
+      if(world->stuckArrowCount()!=before+1 || !world->stuckArrowTransform(before,m))
+        return false;
+      const auto entry=b.impactPoint();
+      const auto d=depthOf(m,world->stuckArrowView(before)->protoMesh(),entry);
+      const auto under=world->physic()->ray(entry-d.axis*20.f,entry+d.axis*5.f);
+      std::printf("Arrow depth: stopped on material %d %.0f cm from where it was shot, tip %.2f cm past the hit, %.2f cm "
+                  "off its line, flight %.2f %.2f %.2f\n",int(under.mat),double((entry-at).length()),double(d.tip),
+                  double(d.off),double(d.axis.x),double(d.axis.y),double(d.axis.z));
+      if(!under.hasCol || under.mat!=asset::MaterialGroup::STONE)
+        return false;
+      // shot straight down, it came into the stone straight down: so it stands
+      require(std::abs(d.tip-2.f)<=1.f && d.off<1.f && d.axis.y<-.9999f,
+              "an arrow stopped on stone must have its tip 2 cm in it");
+      return true;
+      });
+    require(stopped,"an arrow must stop on flat stone by Harad");
+  }
   // in Harad: the effect goes with the bone
   const auto inBody=npc->stuckArrowCount();
   // along a line into one of his zones: through his box's centre an arrow may pass between an arm and the trunk, then
