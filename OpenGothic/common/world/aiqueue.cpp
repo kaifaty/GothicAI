@@ -1,4 +1,5 @@
 #include "aiqueue.h"
+#include <algorithm>
 #include "npcactivityprobe.h"
 
 #include <limits>
@@ -25,6 +26,7 @@ void AiQueue::load(Serialize& fin) {
   for(auto& i:aiActions){
     i.nativeCombatTarget = nullptr;
     i.physicsNoiseState = false;
+    i.activity = false;
     fin.read(reinterpret_cast<uint32_t&>(i.act));
     fin.read(i.target,i.victim);
     fin.read(i.point,i.func,i.i0,i.i1,i.s0);
@@ -60,6 +62,11 @@ AiQueue::AiAction AiQueue::pop() {
   auto act = std::move(aiActions.front());
   aiActions.pop_front();
   return act;
+  }
+
+void AiQueue::removeActivity() {
+  aiActions.erase(std::remove_if(aiActions.begin(),aiActions.end(),[](const AiAction& a) { return a.activity; }),
+                  aiActions.end());
   }
 
 AiQueue::AiAction AiQueue::popPhysicsNoiseState() {

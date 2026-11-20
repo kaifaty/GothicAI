@@ -111,6 +111,7 @@ void Npc::GoTo::save(Serialize& fout) const {
 void Npc::GoTo::load(Serialize& fin) {
   pointDistance = 0.f;
   nativeCombatTarget = nullptr;
+  activity = false;
   fin.read(npc, reinterpret_cast<uint8_t&>(flag), wp, pos);
   //NOTE: no real need to version check
   //if(fin.version()<53) {
@@ -154,10 +155,12 @@ void Npc::GoTo::clear() {
   flag = Npc::GT_No;
   pointDistance = 0.f;
   nativeCombatTarget = nullptr;
+  activity = false;
   }
 
 void Npc::GoTo::set(Npc* to, Npc::GoToHint hnt) {
   nativeCombatTarget = nullptr;
+  activity = false;
   npc  = to;
   wp   = nullptr;
   flag = hnt;
@@ -165,6 +168,7 @@ void Npc::GoTo::set(Npc* to, Npc::GoToHint hnt) {
 
 void Npc::GoTo::set(const WayPoint* to, GoToHint hnt) {
   nativeCombatTarget = nullptr;
+  activity = false;
   npc  = nullptr;
   wp   = to;
   flag = hnt;
@@ -172,12 +176,14 @@ void Npc::GoTo::set(const WayPoint* to, GoToHint hnt) {
 
 void Npc::GoTo::set(const Item* to) {
   nativeCombatTarget = nullptr;
+  activity = false;
   pos  = to->position();
   flag = Npc::GT_Item;
   }
 
 void Npc::GoTo::set(const Vec3& to) {
   nativeCombatTarget = nullptr;
+  activity = false;
   pos  = to;
   flag = GT_Point;
   pointDistance = 0.f;
@@ -185,6 +191,7 @@ void Npc::GoTo::set(const Vec3& to) {
 
 void Npc::GoTo::setFlee() {
   nativeCombatTarget = nullptr;
+  activity = false;
   flag = GT_Flee;
   }
 
@@ -287,6 +294,7 @@ Npc::~Npc(){
   NpcKeys::forget(this);
   BodyObservations::forget(this);
   Bench::bodyForget(this);
+  stopActivityEvents(ActivityEvents::Interrupted);
   if(currentInteract)
     currentInteract->detach(*this,true);
   owner.rules().detachNpc(hnpc,*this);
@@ -1109,6 +1117,9 @@ void Npc::tick(uint64_t dt) {
 
   if(tickPhysicsInvestigation(dt))
     return;
+
+  // Ahead of the walk and the queue, which keep the routine tick out (world/activityevents.h).
+  tickActivityDeadline();
 
   if(aniWaitTime<owner.tickCount() && aniWaitTime==logicalBody.nativeWaitEnd)
     logicalBody.waitReleased(owner.tickCount());

@@ -36,13 +36,31 @@ std::unique_ptr<Checkpoint> checkpoint;
 
 bool npcDayCheckpointRunning() {return bool(checkpoint);}
 
+void npcDayCheckpointReset() {
+  if(!checkpoint) return;
+  if(NpcActivityProbe::instance==checkpoint.get()) NpcActivityProbe::instance=nullptr;
+  checkpoint.reset();
+  }
+
+void npcDayCheckpointForget(const Npc* npc) {
+  if(!checkpoint || checkpoint->npc!=npc) return;
+  npcDayCheckpointReset();
+  if(!bench.done)
+    arenaAbort("activity checkpoint: the smith left the world before the save");
+  }
+
 bool npcDayCheckpointTick(World& w) {
   if(!checkpoint) return false;
+  // By events (world/activityevents.h) the smith runs no Loop: the save point is his hold of the anvil.
+  auto* smith=checkpoint->npc;
+  if(smith->activityStage()==ActivityEvents::Stage::Hold && smith->interactive()!=nullptr &&
+     smith->interactive()->schemeName()=="BSANVIL")
+    checkpoint->ready=true;
   if(!checkpoint->ready) {
     if(w.time().toInt()>=checkpoint->deadline) {
       NpcActivityProbe::instance=nullptr;
       checkpoint.reset();
-      arenaAbort("activity checkpoint did not reach a smith anvil Loop within one game day");
+      arenaAbort("activity checkpoint did not reach a smith anvil Loop or hold within one game day");
       }
     return true;
     }

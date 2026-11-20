@@ -41,6 +41,11 @@ ActivityDefinitionRuntime::Mode ActivityDefinitionRuntime::mode() {
   return Mode::Accepted;
   }
 
+bool ActivityDefinitionRuntime::events() {
+  const auto* value = std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
+  return value==nullptr || std::strcmp(value,"0")!=0;
+  }
+
 bool ActivityDefinitionRuntime::accepted(std::string_view state) {
   for(auto name:acceptedStates)
     if(name==state)
