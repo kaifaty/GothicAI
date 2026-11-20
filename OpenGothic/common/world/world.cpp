@@ -2157,12 +2157,13 @@ void World::animationPfx(const Animation::MdsParticleEffect& p, MdlVisual& visua
       return;
     // a looped one (FIRE_HOT of the forge) emits and lives until its stop, its slot's next effect, its object's rest
     // or its visual's end; the others live their own time (docs/map/engine.md). Far a looped one starts too: it burns
-    // when the viewer comes, its emitter makes no particles out of range
+    // when the viewer comes, its emitter makes no particles out of range. Its particles' own light (particles.d
+    // "light") goes with it
     const auto* decl = GameServices::inst().loadParticleFx(p.name);
     const bool  loop = decl!=nullptr && decl->ppsIsLooping;
     if(!inPfxRange && !loop)
       return;
-    Effect e(PfxEmitter(*this,decl),p.position);
+    Effect e(*this,decl,p.position);
     e.setActive(true);
     e.setLooped(loop);
     visual.startEffect(*this,std::move(e),p.index,false,loop);

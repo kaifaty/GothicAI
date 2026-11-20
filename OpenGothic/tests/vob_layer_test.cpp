@@ -605,7 +605,7 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
   textFile(directory/"50-haze.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_HAZE","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"BLEND"},"haze":{"shift":3,"cell":5}},
     {"name":"OWN_TEST_LEAN","base":"OWN_TEST_FLIP","set":{},"lean":{"rise":1.8,"max_deg":45,"along":0.3,"grow":0.25,"grow_from":0.16},"wind":0.5},
-    {"name":"OWN_TEST_TAIL","base":"FIRE_SMOKE","set":{},"inherit":0.75,"drag":1,"wind":1,"plume":{"height":42,"rise":2.2,"wind":0.5},"light":{"range":450,"color":[255,150,60],"keys":[0.5,1,0],"fps":6}}]})");
+    {"name":"OWN_TEST_TAIL","base":"FIRE_SMOKE","set":{},"inherit":0.75,"drag":1,"wind":1,"plume":{"height":42,"rise":2.2,"wind":0.5},"light":{"range":450,"color":[255,150,60],"keys":[0.5,1,0],"colors":[[255,120,40],[255,200,120]],"fps":6,"at":[-8,77,1],"loop":true}}]})");
   textFile(directory/"60-replace.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_PUFF","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":8,"rows":8,"frames":64,"fps":10,"once":true}},
     {"name":"FIRE_SPARKS","base":"OWN_TEST_SPARKS","replaces":true,"set":{"ppsValue":7.0},"with":["OWN_TEST_PUFF","OWN_TEST_TAIL"]},
@@ -630,6 +630,9 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
   const auto& lit=loaded.motions.at("OWN_TEST_TAIL");
   require(lit.lightRange==450.f && lit.lightColor[0]==255.f && lit.lightColor[1]==150.f && lit.lightColor[2]==60.f &&
           lit.lightKeys==std::vector<float>({0.5f,1.f,0.f}) && lit.lightFps==6.f && lean.lightRange==0.f,"light is read");
+  require(lit.lightAt[0]==-8.f && lit.lightAt[1]==77.f && lit.lightAt[2]==1.f && lit.lightLoop &&
+          lit.lightColors==std::vector<std::array<float,3>>({{255.f,120.f,40.f},{255.f,200.f,120.f}}) &&
+          lean.lightAt[1]==0.f && !lean.lightLoop && lean.lightColors.empty(),"light at, loop and colors are read");
   }
   require(loaded.flipbooks.at("OWN_TEST_PUFF").once && !loaded.flipbooks.at("OWN_TEST_FLIP").once &&
           loaded.effects.at("FIRE_SPARKS")->pps_value==7.f && loaded.motions.at("FIRE_SPARKS").drag==2.f &&
@@ -675,6 +678,12 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"light-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":5,"color":[255,150,60]}})"},
     {"light-color",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150]}})"},
     {"light-fps",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150,60],"fps":6}})"},
+    {"light-at-size",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150,60],"at":[0,77]}})"},
+    {"light-at-range",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150,60],"at":[0,201,0]}})"},
+    {"light-colors-one",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150,60],"colors":[[255,150,60]],"fps":6}})"},
+    {"light-colors-many",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150,60],"colors":[[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3]],"fps":6}})"},
+    {"light-colors-value",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150,60],"colors":[[255,150,60],[256,0,0]],"fps":6}})"},
+    {"light-colors-fps",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150,60],"colors":[[255,150,60],[255,0,0]]}})"},
     {"lean-no-rise",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"lean":{"max_deg":45}})"},
     {"inherit-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"inherit":0.5})"},
     {"replaces-none",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"replaces":true})"},
@@ -762,6 +771,9 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
           lean->wind==0.5f && tail->wind==1.f && tail->plumeCm==42.f && std::abs(tail->plumeRise-0.22f)<1e-5f && tail->plumeWind==0.5f &&
           lean->plumeCm==0,
           "lean and inherit reach the particle declaration in engine units");
+  require(tail->lightAt==Tempest::Vec3(-8,77,1) && tail->lightLoop &&
+          tail->lightColors==std::vector<Tempest::Vec3>({{255,120,40},{255,200,120}}) && lean->lightColors.empty(),
+          "light at, loop and colors reach the particle declaration");
   }
   {
   const auto* replaced=gothic.loadParticleFx("FIRE_SPARKS");

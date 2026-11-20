@@ -6,6 +6,8 @@
 
 #include <Tempest/Texture2d>
 
+#include <utility>
+
 #include "graphics/visualfx.h"
 #include "graphics/material.h"
 #include "graphics/pfx/pfxmotion.h"
@@ -144,11 +146,15 @@ class ParticleFx final {
     // particles.d "haze": the shimmer of hot air, cm; hazeShift 0: off. Such an effect is Material::Ghost
     float         hazeShift = 0.f;
     float         hazeCell  = 0.f;
-    // particles.d "light" (ParticleContent::Motion): the light a spell effect of this one brings; lightRange 0: off
+    // particles.d "light" (ParticleContent::Motion): the light a spell effect or an animation event's effect of this
+    // one brings (graphics/effect); colours 0..255, lightAt in the node's axes (inAxes); lightRange 0: off
     float         lightRange = 0.f;
     Tempest::Vec3 lightColor;
     KeyList       lightKeys;
+    std::vector<Tempest::Vec3> lightColors;
     float         lightFps   = 0.f;
+    Tempest::Vec3 lightAt;
+    bool          lightLoop  = false;
 
     const Tempest::Texture2d* trlTexture = nullptr;
     float         trlFadeSpeed         = 0.f;
@@ -180,6 +186,17 @@ class ParticleFx final {
     float         maxPps() const;
     float         shpScale(uint64_t time) const;
     float         ppsScale(uint64_t time) const;
+    // the span [first, second] of the emission keys over a step of dt ms that ends at the world's time now, for an
+    // emitter born at born whose block has counted blockTime ms: a looped one with keys (ppsIsLooping, looped) counts
+    // from its birth by the world's clock, modulo the keys' period, so its pulse keeps the beat of its light and its
+    // object's animation after its block was freed far away and taken again near; another counts its block's time
+    std::pair<uint64_t,uint64_t> keySpan(bool looped, uint64_t born, uint64_t now, uint64_t dt, uint64_t blockTime) const;
+
+    // v in an emitter's own axes (the rows of its matrix, PfxSlot::setDirection) as a shift in the world:
+    // shpOffsetVec_S at shpFOR_S OBJECT and the own light's place
+    static Tempest::Vec3 inAxes(const Tempest::Vec3 (&axes)[3], const Tempest::Vec3& v) {
+      return axes[0]*v.x + axes[1]*v.y + axes[2]*v.z;
+      }
 
   private:
     uint64_t             calcPrefferedTimeSingle() const;

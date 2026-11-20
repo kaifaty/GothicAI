@@ -128,8 +128,8 @@ void LightSource::update(uint64_t time) {
       a = 0;
 
     const size_t last = rangeAniScale.size()-1;
-    float    r0    = rangeAniScale[rangeOnce ? std::min(frame,  last) : (frame  )%rangeAniScale.size()];
-    float    r1    = rangeAniScale[rangeOnce ? std::min(frame+1,last) : (frame+1)%rangeAniScale.size()];
+    float    r0    = rangeAniScale[keysOnce ? std::min(frame,  last) : (frame  )%rangeAniScale.size()];
+    float    r1    = rangeAniScale[keysOnce ? std::min(frame+1,last) : (frame+1)%rangeAniScale.size()];
     curRgn = r0+(r1-r0)*a;
     }
 
@@ -141,8 +141,9 @@ void LightSource::update(uint64_t time) {
     if(!colorSmooth)
       a = 0;
 
-    Vec3 cl0 = colorAniList[(frame  )%colorAniList.size()];
-    Vec3 cl1 = colorAniList[(frame+1)%colorAniList.size()];
+    const size_t last = colorAniList.size()-1;
+    Vec3 cl0 = colorAniList[keysOnce ? std::min(frame,  last) : (frame  )%colorAniList.size()];
+    Vec3 cl1 = colorAniList[keysOnce ? std::min(frame+1,last) : (frame+1)%colorAniList.size()];
     curClr = cl0+(cl1-cl0)*a;
     }
 

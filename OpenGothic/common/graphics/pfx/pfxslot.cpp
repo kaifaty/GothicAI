@@ -155,6 +155,13 @@ void PfxSlot::setLooped(bool loop) {
     v.next->setLooped(loop);
   }
 
+void PfxSlot::setBorn(uint64_t worldTime) {
+  if(bucket==nullptr)
+    return;
+  std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
+  bucket->get(id).born = worldTime;
+  }
+
 void PfxSlot::setMesh(const MeshObjects::Mesh* mesh, const Pose* pose, const std::vector<Tempest::Matrix4x4>* skin) {
   if(bucket==nullptr)
     return;
