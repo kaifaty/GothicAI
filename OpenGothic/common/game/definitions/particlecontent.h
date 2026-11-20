@@ -93,6 +93,9 @@ struct Result {
   // "land": the own effect put where a particle of this one meets the world's static geometry (a drop of the fire
   // rain); the particle stops there
   std::map<std::string,std::string> land;
+  // "node": an animation event's effect of this one stands on this node of its object instead of the event's
+  // (World::animationPfx), upper case as a model's nodes; not inherited
+  std::map<std::string,std::string> nodes;
   std::vector<std::string> errors;
   };
 

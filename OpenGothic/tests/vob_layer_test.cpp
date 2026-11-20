@@ -605,7 +605,7 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
   textFile(directory/"50-haze.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_HAZE","base":"FIRE_SMOKE","set":{"visAlphaFunc_S":"BLEND"},"haze":{"shift":3,"cell":5}},
     {"name":"OWN_TEST_LEAN","base":"OWN_TEST_FLIP","set":{},"lean":{"rise":1.8,"max_deg":45,"along":0.3,"grow":0.25,"grow_from":0.16},"wind":0.5},
-    {"name":"OWN_TEST_TAIL","base":"FIRE_SMOKE","set":{},"inherit":0.75,"drag":1,"wind":1,"plume":{"height":42,"rise":2.2,"wind":0.5},"light":{"range":450,"color":[255,150,60],"keys":[0.5,1,0],"colors":[[255,120,40],[255,200,120]],"fps":6,"at":[-8,77,1],"loop":true}}]})");
+    {"name":"OWN_TEST_TAIL","base":"FIRE_SMOKE","set":{},"inherit":0.75,"drag":1,"wind":1,"plume":{"height":42,"rise":2.2,"wind":0.5},"light":{"range":450,"color":[255,150,60],"keys":[0.5,1,0],"colors":[[255,120,40],[255,200,120]],"fps":6,"at":[-8,77,1],"loop":true},"node":"bip01 fplace"}]})");
   textFile(directory/"60-replace.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_PUFF","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":8,"rows":8,"frames":64,"fps":10,"once":true}},
     {"name":"FIRE_SPARKS","base":"OWN_TEST_SPARKS","replaces":true,"set":{"ppsValue":7.0},"with":["OWN_TEST_PUFF","OWN_TEST_TAIL"]},
@@ -633,6 +633,7 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
   require(lit.lightAt[0]==-8.f && lit.lightAt[1]==77.f && lit.lightAt[2]==1.f && lit.lightLoop &&
           lit.lightColors==std::vector<std::array<float,3>>({{255.f,120.f,40.f},{255.f,200.f,120.f}}) &&
           lean.lightAt[1]==0.f && !lean.lightLoop && lean.lightColors.empty(),"light at, loop and colors are read");
+  require(loaded.nodes.size()==1 && loaded.nodes.at("OWN_TEST_TAIL")=="BIP01 FPLACE","node is read in upper case");
   }
   require(loaded.flipbooks.at("OWN_TEST_PUFF").once && !loaded.flipbooks.at("OWN_TEST_FLIP").once &&
           loaded.effects.at("FIRE_SPARKS")->pps_value==7.f && loaded.motions.at("FIRE_SPARKS").drag==2.f &&
@@ -683,6 +684,8 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"light-colors-one",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150,60],"colors":[[255,150,60]],"fps":6}})"},
     {"light-colors-many",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150,60],"colors":[[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3],[1,2,3]],"fps":6}})"},
     {"light-colors-value",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150,60],"colors":[[255,150,60],[256,0,0]],"fps":6}})"},
+    {"node-type",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"node":3})"},
+    {"node-empty",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"node":""})"},
     {"light-colors-fps",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"light":{"range":450,"color":[255,150,60],"colors":[[255,150,60],[255,0,0]]}})"},
     {"lean-no-rise",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"lean":{"max_deg":45}})"},
     {"inherit-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":true},"inherit":0.5})"},
@@ -774,6 +777,7 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
   require(tail->lightAt==Tempest::Vec3(-8,77,1) && tail->lightLoop &&
           tail->lightColors==std::vector<Tempest::Vec3>({{255,120,40},{255,200,120}}) && lean->lightColors.empty(),
           "light at, loop and colors reach the particle declaration");
+  require(tail->node=="BIP01 FPLACE" && lean->node.empty(),"node reaches the particle declaration");
   }
   {
   const auto* replaced=gothic.loadParticleFx("FIRE_SPARKS");

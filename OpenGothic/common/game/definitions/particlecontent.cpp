@@ -246,8 +246,9 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
       decltype(result.motions) pendingMotions;
       decltype(result.with) pendingWith;
       decltype(result.land) pendingLand;
+      decltype(result.nodes) pendingNodes;
       for(const auto& entry:effects.GetArray()) {
-        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze","lean","inherit","wind","plume","light","replaces","with","land"});
+        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze","lean","inherit","wind","plume","light","replaces","with","land","node"});
         const auto name=text(member(entry,"name"));
         require(!name.empty() && std::all_of(name.begin(),name.end(),[](char c) {
           return (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_';
@@ -350,6 +351,13 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
           require(book==pendingFlipbooks.end() || !book->second.steady,"land: not with a steady flipbook");
           pendingLand.emplace(name,other);
           }
+        if(entry.HasMember("node")) {
+          const auto& node=entry["node"];
+          require(node.IsString(),"node: expected string");
+          const auto nodeName=uppercase(text(node));
+          require(!nodeName.empty() && nodeName.size()<=64,"node: expected 1..64 characters");
+          pendingNodes.emplace(name,nodeName);
+          }
         pending.emplace(name,std::move(definition));
         }
       result.effects.insert(pending.begin(),pending.end());
@@ -357,6 +365,7 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
       result.motions.insert(pendingMotions.begin(),pendingMotions.end());
       result.with.insert(pendingWith.begin(),pendingWith.end());
       result.land.insert(pendingLand.begin(),pendingLand.end());
+      result.nodes.insert(pendingNodes.begin(),pendingNodes.end());
       }
     catch(const std::exception& error) { result.errors.push_back(file.string()+": "+error.what()); }
     }

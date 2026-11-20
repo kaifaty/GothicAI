@@ -122,6 +122,9 @@ class ParticleFx final {
     // particles.d "land": the effect put (with its "with") where a particle meets the world's static geometry; the
     // particle stops there, its sprite goes and its trail draws in (PfxObjects::ground)
     const ParticleFx* land = nullptr;
+    // particles.d "node": an animation event's effect of this one stands on this node of its object instead of the
+    // event's (World::animationPfx); empty: the event's
+    std::string   node;
     // own motion and look (particles.d "curl", "drag", "stretch", "minPixels"; ParticleContent::Motion)
     PfxMotion::Params motion;
     float         stretchMs = 0.f;  // a velocity-oriented sprite grows by |v|*stretchMs along its path
