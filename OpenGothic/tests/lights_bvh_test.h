@@ -4,12 +4,14 @@
 // The lamps' tree of bounding boxes that the GI probes walk to find the lamps at a hit (probe_lighting.comp,
 // localLight): the engine's own lights_morton.comp, lights_topology.comp and lights_bvh.comp, run as
 // Renderer::prepareLightsBvh runs them. The lamps: five of the world, the fire bow's, three fire arrows stuck within
-// one cell of the Morton grid in slots freed before (ids 0, 1 and 4, which the sort leaves in the order 0, 4, 1) and
-// three freed slots of range 0. Every box node is reached once from the root, every lamp once, each box holds its
-// child's lamp ranges, and the bit of every box node is back at 0 after the build - two frames in a row on the same
-// bits, as the game keeps them. Before, lamps of one key were told apart by their ids: the tree took a cycle through
-// the arrows' nodes, and the walk of a probe near them never ended (Xid 109, CTX SWITCH TIMEOUT on the RTX 3080;
-// reports/render-features/2026-11-20-itemfx-rt-hang/README.md).
+// one cell of the Morton grid in slots freed before (ids 0, 1 and 4, which the sort leaves in the order 0, 4, 1), a
+// small lamp in the next cell (its key one above theirs: the places of the arrows in the sort decide the split next to
+// it, so a tie-break without the 32 of a common key fails too) and two freed slots of range 0. Every box node is
+// reached once from the root, every lamp once, each box holds its child's lamp ranges, each child names its box as the
+// parent, the build writes no parent past the lamps' nodes, and the bit of every box node is back at 0 after the
+// build - two frames in a row on the same bits, as the game keeps them. Before, lamps of one key were told apart by
+// their ids: the tree took a cycle through the arrows' nodes, and the walk of a probe near them never ended (Xid 109,
+// CTX SWITCH TIMEOUT on the RTX 3080; reports/render-features/2026-11-20-itemfx-rt-hang/README.md).
 void lightsBvhRecords(Tempest::Device& device) {
   Resources resources(device);
   Shaders   shaders;
@@ -28,6 +30,7 @@ void lightsBvhRecords(Tempest::Device& device) {
     };
   require(sizeof(Light)==shaders.lightsBvh.sizeofBuffer(0, 1), "the test's LightSource follows scene.glsl");
   require(sizeof(Node)==shaders.lightsBvh.sizeofBuffer(4, 1), "the test's BVHNode follows lights_common.glsl");
+  require(sizeof(uint32_t)==shaders.lightsBvh.sizeofBuffer(2, 1), "the test's BVHAlux follows bvh_build_common.glsl");
 
   const auto lamp = [](float x, float y, float z, float range, float r, float g, float b) {
     return Light{{x,y,z}, range, {r,g,b}, 0, 6, 0, {}};
@@ -48,17 +51,18 @@ void lightsBvhRecords(Tempest::Device& device) {
     lamp(40000,    0, 40000, 300, 0.6f, 0.7f, 0.5f),
     lamp(20000, 8000, 20000, 400, 0.5f, 0.7f, 0.5f),
     lamp(29900, 1080, 10100, 200, 1.0f, 0.4f, 0.1f), // the bow's own fire by the hero
-    freed, freed, freed,
+    lamp(30045, 1010, 10024, 100, 1.0f, 0.2f, 0.2f), // a lamp in the arrows' next cell
+    freed, freed,
     };
-  const uint32_t numLights = uint32_t(lights.size()), active = 9, internal = active-1;
+  const uint32_t numLights = uint32_t(lights.size()), active = 10, internal = active-1, NoParent = 0xFFFFFFFFu;
   uint32_t numLightsPot = 1;
   while(numLightsPot<numLights)
     numLightsPot <<= 1;
 
-  const std::vector<uint32_t> noBits((numLights+31)/32, 0);
+  const std::vector<uint32_t> noBits((numLights+31)/32, 0), noParents(numLights*2, NoParent);
   auto lightBuf = device.ssbo(lights);
   auto morton   = device.ssbo(Tempest::Uninitialized, shaders.lightsBvh.sizeofBuffer(1, numLightsPot));
-  auto alux     = device.ssbo(Tempest::Uninitialized, shaders.lightsBvh.sizeofBuffer(2, numLights*2));
+  auto alux     = device.ssbo(noParents);
   auto ctrl     = device.ssbo(noBits);
   auto bvh      = device.ssbo(Tempest::Uninitialized, shaders.lightsBvh.sizeofBuffer(4, numLights*2));
 
@@ -89,8 +93,9 @@ void lightsBvhRecords(Tempest::Device& device) {
 
     std::vector<Node> nodes(numLights*2);
     device.readBytes(bvh, nodes.data(), nodes.size()*sizeof(Node));
-    std::vector<uint32_t> bits(noBits.size());
+    std::vector<uint32_t> bits(noBits.size()), parents(noParents.size());
     device.readBytes(ctrl, bits.data(), bits.size()*sizeof(uint32_t));
+    device.readBytes(alux, parents.data(), parents.size()*sizeof(uint32_t));
 
     // the walk of localLight, every node once: a box reached twice is a cycle or a node of two parents
     constexpr uint32_t BoxNode = 0x10000000u, LightNode = 0x40000000u, Index = 0x0FFFFFFFu;
@@ -129,6 +134,8 @@ void lightsBvhRecords(Tempest::Device& device) {
       const Box  l = self(self, n.ptrL), r = self(self, n.ptrR);
       require(holds(n.lmin, n.lmax, l) && holds(n.rmin, n.rmax, r),
               "lamps' tree: a box node holds the boxes of its children's lamp ranges");
+      require(parents[n.ptrL & Index]==id && parents[n.ptrR & Index]==id,
+              "lamps' tree: the children of a box node name it as their parent");
       Box ret = {};
       for(int a=0; a<3; ++a) {
         ret.lo[a] = std::min(l.lo[a], r.lo[a]);
@@ -141,6 +148,9 @@ void lightsBvhRecords(Tempest::Device& device) {
       require(lampSeen[i]==(lights[i].range>0 ? 1u : 0u), "lamps' tree: every lamp of a range is in the tree once");
     require(std::all_of(boxSeen.begin(), boxSeen.end(), [](bool b) { return b; }),
             "lamps' tree: every box node is reached from the root");
+    require(std::all_of(parents.begin()+std::ptrdiff_t(internal+active), parents.end(),
+                        [&](uint32_t p) { return p==NoParent; }),
+            "lamps' tree: a thread per box node, none past them writes a parent past the lamps' nodes");
     require(std::all_of(bits.begin(), bits.end(), [](uint32_t b) { return b==0; }),
             "lamps' tree: both children reach every box node, its bit is back at 0 for the next frame");
     }
