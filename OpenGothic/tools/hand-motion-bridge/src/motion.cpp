@@ -77,7 +77,7 @@ void HandProcessor::updateRest(const WindowSample& s) {
   rest = false;
   if(s.tUs - window.front().tUs < RestMinSpanUs)
     return;
-  double sum[3] = {}, acc[3] = {};
+  double sum[3] = {}, acc[3] = {}, len = 0, len2 = 0;
   for(auto& w:window) {
     if(!w.accelOk)
       return;
@@ -85,8 +85,13 @@ void HandProcessor::updateRest(const WindowSample& s) {
       sum[i] += w.gyro[i];
       acc[i] += w.accel[i];
       }
+    const double l = norm3(w.accel);
+    len  += l;
+    len2 += l*l;
     }
   const double n = double(window.size());
+  if(std::sqrt(std::max(0.0, len2/n - (len/n)*(len/n)))>=RestAccelSd)
+    return;
   double var[3] = {};
   for(auto& w:window)
     for(int i=0; i<3; ++i) {
@@ -167,7 +172,7 @@ void HandProcessor::process(const Packet& p, std::vector<Processed>& out) {
       ws.gyro[k]  = r.gyro[k];
       ws.accel[k] = r.accel[k];
       }
-    ws.accelOk = std::abs(norm3(ws.accel) - Gravity)<=RestAccel;
+    ws.accelOk = std::abs(norm3(ws.accel) - Gravity)<=RestAccelBand;
     updateRest(ws);
 
     bool justEstimated = false;

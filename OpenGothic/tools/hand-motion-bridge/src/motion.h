@@ -15,12 +15,15 @@ namespace Bridge {
 inline constexpr double Gravity = 9.80665; // m/s², SDL_STANDARD_GRAVITY
 inline constexpr double Deg     = 3.14159265358979323846/180.0;
 
-// rest: over RestWindow every gyro axis spreads (standard deviation) less than RestGyroSd and every |accel| is
-// within RestAccel of Gravity
+// rest: over RestWindow every gyro axis spreads (standard deviation) less than RestGyroSd, |accel| spreads less than
+// RestAccelSd and every |accel| is within RestAccelBand of Gravity. The band is wide on purpose: an uncalibrated
+// Joy-Con reads up to ~10.6 m/s² at rest on some faces (left one on its side, 2026-11-20), so "still" is judged by
+// the spread, not by the value; at rest the spread is 0.005–0.01 m/s².
 inline constexpr int64_t RestWindowUs = 1'000'000;
 inline constexpr int64_t RestMinSpanUs = 950'000;  // the window has to cover this much to count
 inline constexpr double  RestGyroSd   = 0.5*Deg;   // rad/s
-inline constexpr double  RestAccel    = 0.3;       // m/s²
+inline constexpr double  RestAccelSd   = 0.05;      // m/s²
+inline constexpr double  RestAccelBand = 1.0;       // m/s²
 // after the first estimate the bias follows the window's mean with this time constant, only at rest
 inline constexpr double  BiasTauS     = 10.0;
 // Mahony: the gravity correction works only while |accel| is within GravityGate of 1 g
