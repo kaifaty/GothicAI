@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Write per-frame heights, impostor joint stages and hierarchy counters for a fir-bough-lod recording.
 
-    python3 scripts/content/fir_bough_frames.py <set> <bench output> <csv> --visuals NAME...
+    python3 scripts/content/fir_bough_frames.py <set> <bench output> <csv> --visuals NAME... [--name fir-bough-near]
+
+--name is the scenario and its recording when they are not fir-bough-lod: the same marks on another path.
 
 The heights follow the marked camera path as in fir_eye_frames.py. Stage 0 is the 3D crown alone, 1 the joint
 fade with the impostor (46 to 56 px for a 49 px impostor, TreeBough::impostorJointWeight) and 2 the impostor
@@ -22,7 +24,7 @@ from pathlib import Path
 from fir_eye_frames import FOV_DEGREES, camera_path, tree_bounds
 
 NAME = 'fir-bough-lod'
-SCENARIO = Path(__file__).resolve().parents[1] / 'bench' / f'{NAME}.bench'
+BENCH = Path(__file__).resolve().parents[1] / 'bench'
 GPU = ('tree_bough_nodes', 'tree_bough_source_cards', 'tree_bough_parent_cards', 'tree_bough_triangles',
        'tree_bough_height_mpx', 'tree_bough_active_bands', 'tree_bough_version_pairs', 'tree_bough_band_triangles')
 
@@ -32,15 +34,16 @@ def stage(px: float, impostor_px: float) -> int:
     return 0 if px >= 56 * scale else 1 if px > 46 * scale else 2
 
 
-def write_frames(content: Path, run: Path, output: Path, layer: str, visuals: list[str]) -> list[list[int]]:
+def write_frames(content: Path, run: Path, output: Path, layer: str, visuals: list[str],
+                 name: str = NAME) -> list[list[int]]:
     events = [json.loads(line) for line in (run / 'events.jsonl').read_text().splitlines()]
-    events = [event for event in events if event['seg'] == NAME]
+    events = [event for event in events if event['seg'] == name]
     (record,) = [event for event in events if event['kind'] == 'rec']
     (stop,) = [event for event in events if event['kind'] == 'rec_stop']
-    positions, durations, starts = camera_path(SCENARIO, events, 'fir-bough')
+    positions, durations, starts = camera_path(BENCH / f'{name}.bench', events, 'fir-bough')
     frames = int(subprocess.check_output([
         'ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=nb_frames',
-        '-of', 'csv=p=0', run / f'{NAME}.mp4']))
+        '-of', 'csv=p=0', run / f'{name}.mp4']))
     with (run / 'frameprofile.csv').open(newline='') as stream:
         rows = [row['outcome'] == '3' for row in csv.DictReader(stream)]
         stream.seek(0)
@@ -56,7 +59,7 @@ def write_frames(content: Path, run: Path, output: Path, layer: str, visuals: li
     eye = origin = positions[0]
     with (run / 'metrics.csv').open(newline='') as stream:
         for sample in csv.DictReader(stream):
-            if sample['seg'] != NAME:
+            if sample['seg'] != name:
                 continue
             time = record['t'] + int(sample['t'])
             # Commands run before the camera update, so the next fly starts at the previous frame's eye.
@@ -100,5 +103,6 @@ if __name__ == '__main__':
     parser.add_argument('output', type=Path)
     parser.add_argument('--layer', default='fir-bough-stagger')
     parser.add_argument('--visuals', nargs='+', required=True)
+    parser.add_argument('--name', default=NAME, help='the scenario and its recording')
     args = parser.parse_args()
-    write_frames(args.content, args.run, args.output, args.layer, args.visuals)
+    write_frames(args.content, args.run, args.output, args.layer, args.visuals, args.name)

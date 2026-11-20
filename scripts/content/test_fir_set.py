@@ -251,7 +251,8 @@ def test_bough_x4_adds_hierarchy_without_changing_the_spruce_or_its_fallbacks(tm
     write(tmp_path / world, base_world)
     monkeypatch.setattr(tree_glb, 'read', lambda _: [{'position': np.array([[-1, -1, 0], [1, 1, 2]])}])
     fir_set.forest(SimpleNamespace(config=config, source=control, hierarchy=content, base=tmp_path,
-                                   set='bough-x4/forest-1024', count=1024, share=1, levels=None, textures=None))
+                                   set='bough-x4/forest-1024', count=1024, share=1, levels=None, textures=None,
+                                   label='X4'))
     staged = probes / 'bough-x4/forest-1024'
     assert not (staged / layer / 'tree-cost.json').exists()
     assert (control / layer / 'tree-cost.json').exists()
@@ -272,6 +273,21 @@ def test_bough_x4_adds_hierarchy_without_changing_the_spruce_or_its_fallbacks(tm
         yaw = np.radians(place['yaw'])
         assert np.array(record['rotation'])[:, 0] == pytest.approx(scale * np.array([np.cos(yaw), 0, -np.sin(yaw)]))
         assert record['rotation'][1][1] == scale
+
+    # The same forest takes another hierarchy with its own thresholds: the world stays, the first hierarchy leaves.
+    fir_set.forest(SimpleNamespace(config=config, source=staged, hierarchy=probes / 'early/content', base=tmp_path,
+                                   set='early/forest-1024', count=1024, share=1, levels=None, textures=None,
+                                   label='S122B700G0'))
+    again = probes / 'early/forest-1024'
+    assert (again / world).read_bytes() == (staged / world).read_bytes()
+    assert json.loads((again / 'meshes/meshes.json').read_text()) == {base: meshes['OWN_TREE_FIR_A_BOUGH_S122B700G0']}
+    materials = json.loads((again / 'materials/materials.json').read_text())
+    assert 'FIR_HIERARCHY_0_2.TGA' not in materials and materials[boughs_key] == boughs
+    assert materials['FIR_HIERARCHY_S122B700G0_0_2.TGA']['albedo'] == 'trees_fir/bough-s122b700g0/color.dds'
+    for kind in ('meshes', 'materials'):
+        assert not (again / kind / 'trees_fir/bough-x4').exists() and (staged / kind / 'trees_fir/bough-x4').is_dir()
+        assert (again / kind / 'trees_fir/bough-s122b700g0/color.dds').read_bytes() == b'color.dds'
+    assert 'FIR_HIERARCHY_0_2.TGA' in json.loads((staged / 'materials/materials.json').read_text())
 
 
 def test_spruce_a_and_its_four_levels_rebuild_byte_for_byte(tmp_path, monkeypatch):

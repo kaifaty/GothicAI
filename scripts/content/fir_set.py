@@ -8,7 +8,7 @@
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
         forest tree-cost-1024 --textures WORK [--from working-34] [--count 1024] [--share 1] [--levels | --random-levels] [--no-sample]
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
-        forest bough-x4/forest-1024 --from FOREST --hierarchy BOUGH_X4_SET [--base BASE]
+        forest bough-x4/forest-1024 --from FOREST --hierarchy BOUGH_SET [--label X4] [--base BASE]
 
 `textures` reads what mesh3d/blender/fir_boughs.py and fir_bark.py baked (boughs.npz, bark.npz) and writes
 WORK/{boughs,bark}-{albedo,normal,orm}.dds, PNG previews for mesh3d/blender/fir_views.py, boughs-mask.npz (the
@@ -52,8 +52,10 @@ and spruce A alone on the hill west of it (LONE) unless `--no-sample`. The layer
 worlds/NEWWORLD/vobs.d/tree-cost.json, the numbers of the spruces are in tree-cost.json of the set. `--count 0`
 is the control: the same set without the forest. The spruces of `--share 1` are those of `probe`, byte for byte.
 `forest --hierarchy` uses the positions and yaw from the completed 1,024-tree stand in `--from`. All trees share
-spruce A, its current levels and impostor, and the hierarchy from the staged `bough-x4` set. The grid scales are applied
-to the instance matrices in the content's world override, since the additive layer only supports rotation.
+spruce A and the levels, impostor and hierarchy of the record `--label` of the staged `bough` set, with that
+record's thresholds. The grid scales are applied to the instance matrices in the content's world override, since the
+additive layer only supports rotation. `--from` may also be a forest this command staged (an absolute path): its
+world is kept and its hierarchy is replaced, so two hierarchies stand in the same forest.
 
 `eye-threshold` copies the current probe set and places the original spruce A and three relaxed cuts from
 `tree_hierarchy_probe.py --eye` in one row. All four use the same existing impostor.
@@ -583,21 +585,37 @@ def bough_forest(args) -> int:
     index = json.loads(meshes.read_text())
     visual = f'{VISUAL}_4'
     hierarchy_meshes = args.hierarchy / 'meshes'
-    entry = json.loads((hierarchy_meshes / 'meshes.json').read_text())[f'{VISUAL}_BOUGH_X4']
+    entry = json.loads((hierarchy_meshes / 'meshes.json').read_text())[f'{VISUAL}_BOUGH_{args.label}']
     config = json.loads(args.config.read_text())
     levels = entry['levels']
-    if ([level['px'] for level in levels if 'glb' in level] != [level['px'] for level in config['levels']]
-            or 'impostor' not in levels[-1]):
-        raise SystemExit('--hierarchy must carry the four current mesh levels and the impostor for spruce A')
+    if sum('glb' in level for level in levels) != len(config['levels']) or 'impostor' not in levels[-1]:
+        raise SystemExit('--hierarchy must carry the four mesh levels and the impostor for spruce A')
     world = work / 'worlds' / WORLD
     layer = world / 'vobs.d/tree-cost.json'
-    placements = json.loads(layer.read_text())['add']
-    scales = {f'tree-cost-{t["column"]}-{t["row"]}': PROBE[t['spruce'] - 1][2]
-              for t in forest_layout(args.count)}
-    if {t['key'] for t in placements} != scales.keys() or len(placements) != args.count or any(
-        t['visual'] != visual or t['collision'] != 'none' for t in placements
-    ):
-        raise SystemExit('--from must carry the completed 1,024-tree stand of spruce A')
+    vobs_path = world / 'vobs.json'
+    name = f'{visual}.3DS'
+    stand = layer.exists()
+    if stand:
+        placements = json.loads(layer.read_text())['add']
+        scales = {f'tree-cost-{t["column"]}-{t["row"]}': PROBE[t['spruce'] - 1][2]
+                  for t in forest_layout(args.count)}
+        if {t['key'] for t in placements} != scales.keys() or len(placements) != args.count or any(
+            t['visual'] != visual or t['collision'] != 'none' for t in placements
+        ):
+            raise SystemExit('--from must carry the completed 1,024-tree stand of spruce A')
+    else:   # a forest of this command: the spruces stay in its world, its hierarchy leaves the copy
+        old = Path(index.get(visual, {}).get('hierarchy', '')).parent
+        placed = vobs_path.exists() and sum(vob.get('visual_name') == name
+                                            for vob in json.loads(vobs_path.read_text())['vobs'])
+        if placed != args.count or not old.name:
+            raise SystemExit('--from must carry the 1,024-tree stand of spruce A or a forest of this command')
+        for kind in ('meshes', 'materials'):
+            shutil.rmtree(work / kind / old)
+        material_index = work / 'materials/materials.json'
+        materials = {key: value for key, value in json.loads(material_index.read_text()).items()
+                     if Path(value.get('albedo', '')).parent != old}
+        material_index.unlink()
+        material_index.write_text(json.dumps(materials, indent=2) + '\n')
 
     files = [part['glb'] for part in (entry, *levels) if 'glb' in part]
     files.extend(levels[-1]['impostor'].values())
@@ -605,14 +623,18 @@ def bough_forest(args) -> int:
         target = work / 'meshes' / file
         target.unlink(missing_ok=True)
         shutil.copyfile(hierarchy_meshes / file, target)
-    entry['hierarchy'] = stage_bough_hierarchy(work, config, (hierarchy_meshes / entry['hierarchy']).parent)
+    entry['hierarchy'] = stage_bough_hierarchy(work, config, (hierarchy_meshes / entry['hierarchy']).parent,
+                                               args.label)
     index[visual] = entry
     meshes.unlink()
     meshes.write_text(json.dumps(index, indent=2) + '\n')
+    if not stand:
+        work.rename(output)
+        print(output)
+        return 0
 
     points = np.concatenate([tree_glb.to_gltf(p['position']) for p in tree_glb.read(work / 'meshes' / entry['glb'])])
     corners = np.array(list(product(*zip(points.min(axis=0), points.max(axis=0), strict=True))))
-    vobs_path = world / 'vobs.json'
     source = vobs_path if vobs_path.exists() else (args.base or newest_base()) / 'worlds' / WORLD / 'vobs.json'
     # Use the existing world override format to retain a uniform scale in each instance matrix.
     # VOB IDs and archive object IDs are independent namespaces.
@@ -627,7 +649,6 @@ def bough_forest(args) -> int:
         return record
 
     data = json.loads(source.read_text(), object_hook=read_ids)
-    name = f'{visual}.3DS'
     for i, t in enumerate(placements):
         scale = scales[t['key']]
         yaw = math.radians(t['yaw_deg'])
@@ -755,7 +776,8 @@ def main() -> int:
     command.add_argument('--share', type=float, default=1., help="the share of a spruce's triangles kept (thin)")
     command.add_argument('--no-sample', dest='sample', action='store_false', help='without the lone spruce A')
     command.add_argument('--base', type=Path, help='the base the ground is read from (the newest in the cache)')
-    command.add_argument('--hierarchy', type=Path, help='the staged bough-x4 set to use on the completed stand in --from')
+    command.add_argument('--hierarchy', type=Path, help='the staged bough set to use on the completed stand in --from')
+    command.add_argument('--label', default='X4', help='the record of --hierarchy: OWN_TREE_FIR_A_BOUGH_<label>')
     for builder in (probe_command, command):
         levels = builder.add_mutually_exclusive_group()
         levels.add_argument('--levels', action='store_const', const='designed', dest='levels',
