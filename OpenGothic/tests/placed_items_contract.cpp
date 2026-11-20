@@ -3290,14 +3290,12 @@ void itemEffects(World& world) {
 // the smith works the bellows and goes out with his animation out or with the forge's rest without one; the anvil's
 // ANVIL_SPARKS live their own time.
 void animationEffects(Gothic& gothic) {
+  // a fresh game: the session before comes from a load of activityEventsWorld's world, where the forge's worker left it
+  // in S1 without its fire, which only T_S0_2_S1 lights
+  gothic.clearGame().reset();
+  gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
   auto& world=*gothic.world();
   auto& script=world.script();
-  // The workers go by their AI queue alone, as before activity events (world/activityevents.h): with events on, the
-  // default, a worker's routine automaton answers the cleared queue (its Init again, a dropped reservation) and takes
-  // the use over. Off for this check and the workers' automata stopped; back at its end
-  auto& activityEvents=NpcDefinitionContract::activityEventsOn(script);
-  const bool activityEventsBefore=activityEvents;
-  activityEvents=false;
   auto* session=gothic.gameSession();
   const auto step=[&](uint64_t dt) { session->tick(dt); session->updateAnimation(dt); };
   const auto* fire=GameServices::inst().loadParticleFx("FIRE_HOT");
@@ -3313,17 +3311,12 @@ void animationEffects(Gothic& gothic) {
       if(activityCandidate(*world.npcById(i)) && (point=activityRow(*world.npcById(i),init,pointName))!=nullptr)
         npc=world.npcById(i);
     require(point!=nullptr,(std::string("NEWWORLD must have an NPC with a ")+state+" row").c_str());
-    npc->stopActivityEvents(0);
     npc->setInteraction(nullptr,true);
     npc->clearAiQueue();
     npc->setExternalControl(true);
     npc->setPosition(point->position());
     auto* mob=world.availableMob(*npc,scheme);
     require(mob!=nullptr,(npcName(world,*npc)+"'s point must have a free "+scheme).c_str());
-    // the object at rest: the session comes from a load of activityEventsWorld's world, where the worker used it, and
-    // a quick detach keeps its state (a forge in S1 without its fire, which only T_S0_2_S1 lights)
-    std::printf("Animation effects: %s's %s in state %d before its rest\n",npcName(world,*npc).c_str(),scheme,mob->stateId());
-    mob->resetPositionToTA(0);
     return mob;
     };
   const auto tickUntil=[&](const std::function<bool()>& done,uint64_t ms) {
@@ -3537,7 +3530,6 @@ void animationEffects(Gothic& gothic) {
   require(!there(),"ANVIL_SPARKS must be gone right after their own time");
   std::printf("Animation effects: ANVIL_SPARKS of a blow gone in %llu ms (own time %llu ms)\n",
               (unsigned long long)(world.tickCount()-struck),(unsigned long long)sparks->effectPrefferedTime());
-  activityEvents=activityEventsBefore;
   }
 
 // Arrows (reports/engine/2026-11-19-item-effects): a shot arrow's effect at KEY_INVEST_2, at its first hit KEY_INVEST_3;
