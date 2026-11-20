@@ -234,6 +234,11 @@ BENCH_HOST=ryzen PERF_REPEAT=2 scripts/perf.sh market harbour
 Vulkan-проверка подтверждает механику стенда; диагноз Mac требует отдельного
 прогона Metal на Mac.
 
+Для `meadow` и `grass-fields` на Ryzen стенд запрашивает режим Vulkan `IMMEDIATE`
+через `TEMPEST_VULKAN_PRESENT_IMMEDIATE=1`. Он сохраняет окно и снимает зависимость
+темпа от кадровых сигналов Xwayland для скрытого окна. Если темп не выше 2 FPS
+два интервала `heartbeat.json` подряд, стенд прерывает замер с ошибкой.
+
 Перед rsync стенд считает `source_fingerprint`: SHA-256 относительных путей
 и содержимого дерева `OpenGothic/`, включая незакоммиченные файлы, без `.git`
 и папок сборки (`build*`, `cmake-build-*`). На Ryzen заявка `__build` сначала
