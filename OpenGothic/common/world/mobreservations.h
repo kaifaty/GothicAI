@@ -35,10 +35,10 @@ class MobReservations final {
     void         wait(Npc& npc, std::string_view scheme);
     void         unwait(const Npc& npc);
 
-    // Every world tick: expired reservations and reservations without a living owner.
+    // Every world tick: expired reservations; while the wakes are counted (a day journal, a contract) the audit too.
     void         tick();
     // Counts and drops reservations without a living owner. `final` (the end of a journal) only
-    // counts, and also checks that every owner is still in the world.
+    // counts, and checks first that every owner is still in the world.
     void         audit(bool final);
 
   private:

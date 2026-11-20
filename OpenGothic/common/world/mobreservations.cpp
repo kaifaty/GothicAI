@@ -111,7 +111,8 @@ void MobReservations::freed(const Interactive& mob) {
 void MobReservations::tick() {
   if(reservations.empty())
     return;
-  audit(false);
+  if(ActivityEvents::stats().counting)
+    audit(false); // the day journal's and the contract's check: the game itself runs only the expiry below
   const auto now = world.time();
   for(size_t i=0; i<reservations.size();) {
     if(now<reservations[i].until) {
@@ -132,10 +133,15 @@ void MobReservations::audit(bool final) {
       present.insert(world.npcById(i));
   auto& st = ActivityEvents::stats();
   for(size_t i=0; i<reservations.size();) {
-    const auto& r     = reservations[i];
-    const auto& state = r.owner->activityEventState();
+    const auto& r = reservations[i];
+    if(final && !present.contains(r.owner)) {
+      // the owner is gone from the world, and its memory with it: read nothing of it
+      ++st.ownerless;
+      ++i;
+      continue;
+      }
     // a reservation lives only while its owner walks to the object to use it
-    const bool held = !r.owner->isDead() && state.stage==ActivityEvents::Stage::Attach && (!final || present.contains(r.owner));
+    const bool held = !r.owner->isDead() && r.owner->activityStage()==ActivityEvents::Stage::Attach;
     if(r.mob->userCount()>0 && !r.mob->isAttached(*r.owner))
       ++st.doubled;
     if(!held)

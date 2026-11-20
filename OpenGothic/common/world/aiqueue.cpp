@@ -69,6 +69,17 @@ void AiQueue::removeActivity() {
                   aiActions.end());
   }
 
+size_t AiQueue::markActivity(std::initializer_list<Action> kinds) {
+  size_t n = 0;
+  for(auto& a:aiActions) {
+    if(std::find(kinds.begin(),kinds.end(),a.act)==kinds.end())
+      break;
+    a.activity = true;
+    ++n;
+    }
+  return n;
+  }
+
 AiQueue::AiAction AiQueue::popPhysicsNoiseState() {
   for(auto i=aiActions.begin(); i!=aiActions.end(); ++i) {
     if(i->act!=AI_StartState || !i->physicsNoiseState)

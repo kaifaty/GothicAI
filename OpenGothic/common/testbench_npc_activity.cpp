@@ -38,11 +38,16 @@ bool npcDayCheckpointRunning() {return bool(checkpoint);}
 
 bool npcDayCheckpointTick(World& w) {
   if(!checkpoint) return false;
+  // By events (world/activityevents.h) the smith runs no Loop: the save point is his hold of the anvil.
+  auto* smith=checkpoint->npc;
+  if(smith->activityStage()==ActivityEvents::Stage::Hold && smith->interactive()!=nullptr &&
+     smith->interactive()->schemeName()=="BSANVIL")
+    checkpoint->ready=true;
   if(!checkpoint->ready) {
     if(w.time().toInt()>=checkpoint->deadline) {
       NpcActivityProbe::instance=nullptr;
       checkpoint.reset();
-      arenaAbort("activity checkpoint did not reach a smith anvil Loop within one game day");
+      arenaAbort("activity checkpoint did not reach a smith anvil Loop or hold within one game day");
       }
     return true;
     }

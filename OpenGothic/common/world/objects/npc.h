@@ -404,7 +404,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      stopActivityEvents(uint16_t why);
     // MobReservations: the reservation of a use not yet attached expired or another NPC took the object.
     void      loseActivityReservation();
-    const ActivityEvents::State& activityEventState() const { return activityEvents; }
+    ActivityEvents::Stage activityStage() const { return activityEvents.stage; }
     // external AI control (ai_bridge): routines and script perceptions are paused
     void      setExternalControl(bool e) { externalCtrl = e; }
     bool      isExternalControl() const  { return externalCtrl; }
@@ -1028,6 +1028,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      armActivityEvents();
     void      tickActivityEvents();
     void      tickActivityDeadline();
+    void      takeActivityCommands();
     void      fireActivityWatchdog();
     void      dropActivityCommand();
     void      stepActivityEvents(uint16_t wakes);

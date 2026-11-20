@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <initializer_list>
 
 #include "game/scripttypes.h"
 #include "game/rpgvocabulary.h"
@@ -48,6 +49,8 @@ class AiQueue {
     AiAction pop();
     AiAction popPhysicsNoiseState();
     void     removeActivity();
+    // Marks the leading actions of these kinds as the activity's (AiAction::activity); returns how many.
+    size_t   markActivity(std::initializer_list<Action> kinds);
     int      aiOutputOrderId() const;
     bool     hasItemUse() const;
     bool     nativeCombatOnly(const Npc* target) const;
