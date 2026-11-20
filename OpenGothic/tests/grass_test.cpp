@@ -42,6 +42,10 @@
 size_t grassCoverTests();
 
 namespace {
+namespace Shader {
+#include <grass/grass_blade_limits.glsl>
+}
+
 size_t assertions = 0;
 
 void require(bool condition, const std::string& message) {
@@ -260,27 +264,17 @@ std::string at(int32_t cx, int32_t cz) {
 
 constexpr int32_t U = Grass::Unit;
 
-// CPU twins of the blade height and the cull box, with geometry generated independently at each node.
-float grassGrowth(const Grass::WasteRule& ring, uint32_t rank, float distance) {
-  const float center = (float(rank)+0.5f)/256.f;
-  return std::clamp((ring.full/std::max(distance,1.f)*ring.rankShare - center)/0.12f, 0.f, 1.f);
-  }
-
-float grassCullHeight(const Grass::WasteRule& ring, uint32_t rank, float distance, float height) {
-  const float t = std::clamp((distance-ring.fadeFrom)/(ring.radius-ring.fadeFrom), 0.f, 1.f);
-  return height*(grassGrowth(ring,rank,distance)*(1.f - t*t*(3.f-2.f*t)));
-  }
-
+// CPU cull bounds, with geometry generated independently at each node.
 void grassCull() {
   using namespace Tempest;
   const Grass::WasteRule broad{.full=1000.f, .fadeFrom=4800.f, .radius=6400.f, .rankShare=1.12f, .rootsBeyond=100.f};
   const Grass::WasteRule fine {.full=400.f,  .fadeFrom=1600.f, .radius=2000.f, .rankShare=1.12f, .rootsBeyond=100.f};
   for(const auto& ring : {broad,fine}) {
-    for(float distance : {1.f, ring.full, 1.237f*ring.full, 2.242f*ring.full, ring.fadeFrom, ring.radius}) {
+    for(float distance : {1.f, ring.full, 1.237f*ring.full, 2.242f*ring.full, ring.fadeFrom, (ring.fadeFrom+ring.radius)*0.5f}) {
       const size_t placed = ring.ranks(distance+ring.rootsBeyond);
       size_t growingRanks = 0;
       for(uint32_t rank=0; rank<256; ++rank) {
-        if(grassGrowth(ring,rank,distance)>0.f) {
+        if(ring.height(rank,distance,1.f)>0.f) {
           ++growingRanks;
           require(rank<placed, "the draw's rank cutoff must include every rank with growth");
           }
@@ -288,7 +282,7 @@ void grassCull() {
       // Placement rounds up to whole rank bins. The shader evaluates the center of each bin.
       require(placed>=growingRanks && placed-growingRanks<=1, "growth must agree with the rank cutoff to one half-bin");
       }
-    require(grassCullHeight(ring,0,ring.fadeFrom,40.f)>0.05f && grassCullHeight(ring,0,ring.radius,40.f)==0.f,
+    require(ring.height(0,ring.fadeFrom,40.f)>0.05f && ring.height(0,ring.radius,40.f)==0.f,
             "the lowest rank must still grow at the start of fade and disappear at the end of the ring");
     }
 
@@ -309,11 +303,12 @@ void grassCull() {
       const auto& ring = kind==1 ? fine : broad;
       const float widen = std::clamp(distance/ring.full, 1.f, 8.f);
       const float width = kind==1 ? 0.5f + 7.f*0.036f : 1.3f + 15.f*0.11f;
-      const float height = grassCullHeight(ring,36,distance,ear ? Grass::EarTop : (kind==1 ? 13.f : 60.f));
+      const float height = ring.height(36,distance,ear ? Grass::EarTop : (kind==1 ? 13.f : 60.f));
       if(height<=0.05f)
         continue;
-      const float halfWidth = 0.5f*std::max((ear ? 1.5f : width)*widen, thin);
-      const float reach = 0.93f*height + halfWidth;
+      const float boundWidth = ear ? std::max(Shader::GrassEarStalkWidth, Shader::GrassEarWidth) : width;
+      const float halfWidth = Shader::GrassCullHalfWidthScale*std::max(boundWidth*widen, thin);
+      const float reach = Shader::GrassCullHorizontalReach*height + halfWidth;
       const float verticalPad = ear ? halfWidth : 0.f;
       const auto min = root - Vec3(reach, verticalPad, reach);
       const auto max = root + Vec3(reach, height+verticalPad, reach);
@@ -362,7 +357,8 @@ void grassCull() {
               center += direction(0.5f*(node(k-1)+t))*(height*(t-node(k-1)));
             const Vec3 axis = ear ? Vec3::normalize(Vec3::crossProduct(direction(t),Vec3::normalize(camera-center)) + horizontal*1e-3f)
                                  : horizontal;
-            const float vertexWidth = ear ? std::max((t>0.87f ? 1.5f : 0.45f)*widen, thin) : std::max(width*widen,thin)*(1.f-0.7f*t);
+            const float vertexWidth = ear ? std::max((t>0.87f ? Shader::GrassEarWidth : Shader::GrassEarStalkWidth)*widen, thin)
+                                          : std::max(width*widen,thin)*(1.f-0.7f*t);
             const bool tip = ear && links==1 ? k==0 : k==links;
             const Vec3 off = axis*(tip ? 0.f : 0.5f*vertexWidth);
             for(const Vec3& vertex : {center-off,center+off}) {

@@ -2,6 +2,7 @@
 
 #include <Tempest/Vec>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -61,6 +62,14 @@ struct WasteRule final {
 
   size_t  ranks(float dist) const;
   uint8_t links(float dist) const;
+
+  // The CPU counterpart of grassBladeHeight in grass_blade.glsl.
+  float height(uint32_t rankByte, float dist, float baseHeight) const {
+    const float rank = (float(rankByte)+0.5f)/256.f;
+    const float grow = std::clamp((full/std::max(dist,1.f)*rankShare - rank)/0.12f, 0.f, 1.f);
+    const float t    = std::clamp((dist-fadeFrom)/(radius-fadeFrom), 0.f, 1.f);
+    return baseHeight*(grow*(1.f - t*t*(3.f-2.f*t)));
+    }
   };
 
 struct WasteCell final {

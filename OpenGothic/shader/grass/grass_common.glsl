@@ -1,6 +1,8 @@
 #ifndef GRASS_COMMON_GLSL
 #define GRASS_COMMON_GLSL
 
+#include "grass/grass_blade_limits.glsl"
+
 // The grass system (reports/engine/2026-11-14-grass-system): what the blades (grass.vert, grass.frag) and the
 // ground under them (grass_ground.glsl) share. The patches and the spots of bare earth are the processor's
 // (common/graphics/grass/grasspatch.cpp): the same whole numbers, so the ground knows where the grass stands
@@ -91,8 +93,6 @@ const vec3  GrassEarStalk      = vec3(0.95);
 const vec3  GrassEarGold       = vec3(1.22, 1.06, 0.62);
 const vec3  GrassEarPale       = vec3(1.36, 1.24, 0.84);
 const float GrassEarDepth      = 1.6;                    // the power of the height the tone rises by: the stand is deep
-const float GrassEarStalkWidth = 0.45;                   // cm
-const float GrassEarWidth      = 1.5;
 const float GrassEarDroopMin   = 1.0;                    // the ear hangs over by 45 to 65 degrees, by the stalk: tangents
 const float GrassEarDroopMax   = 2.1445;
 // The ground. Seen from above it lies between the blades in their shade. Seen along the meadow it stands for the

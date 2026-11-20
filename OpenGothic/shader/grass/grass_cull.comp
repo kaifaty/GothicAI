@@ -96,10 +96,10 @@ uint classifyBlade(const Draw draw, const uvec4 b) {
   const float widen = grassBladeWiden(d, ring.x);
   const float thin = grassBladeThin(rootW, scene.project[1][1], scene.screenRes.y);
   const float width = ear ? max(GrassEarStalkWidth, GrassEarWidth) : grassBladeWidth(b, draw.shape);
-  const float halfWidth = 0.5*max(width*widen, thin);
+  const float halfWidth = GrassCullHalfWidthScale*max(width*widen, thin);
   // All links, including those of an ear, clamp the tilt tangent to 2.4. Their total horizontal
-  // reach is below 0.93*height, under any wind. Only an ear's strip can extend vertically.
-  const float reach = 0.93*height + halfWidth;
+  // reach is bounded under any wind. Only an ear's strip can extend vertically.
+  const float reach = GrassCullHorizontalReach*height + halfWidth;
   const vec3 extent = vec3(reach, ear ? halfWidth : 0.0, reach);
   vec3 lo = root - extent;
   vec3 hi = root + extent + vec3(0.0, height, 0.0);
