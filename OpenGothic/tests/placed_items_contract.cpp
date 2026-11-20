@@ -2338,22 +2338,27 @@ void animationEffects(Gothic& gothic) {
               (unsigned long long)aliveFor);
   // the smith goes: the stop at its frame of T_S1_2_S0 puts FIRE_HOT out while the transition still plays
   const auto stopFrame=std::find_if(out->data->pfx.begin(),out->data->pfx.end(),[&](const auto& e) { return e.pfxStop && e.index==fireSlot; });
-  // an event fires once the frame after its own begins (Sequence::extractFrames)
+  // an event fires once the frame after its own begins, a reversed sequence counts from its end (Sequence::extractFrames)
   const auto stopFrom=std::max(0,stopFrame->frame-int32_t(out->data->firstFrame));
-  const auto stopAt=uint64_t(float(stopFrom+1)*1000.f/out->data->fpsRate);
+  const auto stopFrames=out->reverse ? int32_t(out->data->numFrames)-stopFrom : stopFrom+1;
+  const auto stopAt=uint64_t(float(stopFrames)*1000.f/out->data->fpsRate);
   useMob(*smith,"BSFIRE",-1);
   uint64_t outFrom=0,outGone=0;
+  bool outPlays=false;
   for(uint64_t t=0;t<20000 && outGone==0;t+=10) {
     session->tick(10);
     session->updateAnimation(10);
     if(outFrom==0 && inAnim("T_S1_2_S0"))
       outFrom=world.tickCount();
-    if(outFrom!=0 && slot(*forge,fireSlot)==nullptr)
+    if(outFrom!=0 && slot(*forge,fireSlot)==nullptr) {
       outGone=world.tickCount();
+      outPlays=inAnim("T_S1_2_S0");
+      }
     }
-  std::printf("Animation effects: FIRE_HOT out %llu ms into T_S1_2_S0, its stop at frame %d is at %llu ms\n",
-              (unsigned long long)(outGone-outFrom),stopFrame->frame,(unsigned long long)stopAt);
-  require(outFrom!=0 && outGone!=0 && inAnim("T_S1_2_S0") && outGone+10>=outFrom+stopAt && outGone<=outFrom+stopAt+50,
+  std::printf("Animation effects: FIRE_HOT out %llu ms into T_S1_2_S0 (%s), its stop at frame %d of %u from %u%s is at %llu ms\n",
+              (unsigned long long)(outGone-outFrom),outPlays ? "playing" : "over",stopFrame->frame,out->data->numFrames,
+              out->data->firstFrame,out->reverse ? " reversed" : "",(unsigned long long)stopAt);
+  require(outFrom!=0 && outGone!=0 && outPlays && outGone+10>=outFrom+stopAt && outGone<=outFrom+stopAt+50,
           "T_S1_2_S0's stop must put FIRE_HOT out at its frame while the transition plays");
   require(tickUntil([&] { return smith->interactive()==nullptr && forge->stateId()<=0; },20000) && slot(*forge,fireSlot)==nullptr,
           "the smith must leave the forge at rest without FIRE_HOT");
