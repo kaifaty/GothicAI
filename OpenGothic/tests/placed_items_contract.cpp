@@ -2823,6 +2823,9 @@ void activityEventsWorld(Gothic& gothic) {
   // Watchdog: the attach event is lost, so the activity restarts once WatchdogMs later and holds.
   test.start(anvil,at);
   test.stepUntil(600,[&] { return ActivityEventsWorld::stage(harad)==Stage::Attach; },"watchdog: reserve");
+  // The wait for the attach began on the tick the stage changed, at that tick's clock: its watchdog is WatchdogMs later.
+  auto attachEnd=test.world().time();
+  attachEnd.addMilis(ActivityEvents::WatchdogMs);
   test.stepUntil(600,[&] { return harad.interactive()==mob && harad.isAiQueueEmpty(); },"watchdog: attach unseen",[&] {
     NpcDefinitionContract::activityEvents(harad).pending&=uint16_t(~ActivityEvents::Attached);
     });
@@ -2831,7 +2834,6 @@ void activityEventsWorld(Gothic& gothic) {
   require(ActivityEventsWorld::stage(harad)==Stage::Attach && ActivityEventsWorld::quiet(unseen,test.stats(state)),
           "a lost event must leave the activity waiting");
   const auto watchdogs=stats.watchdog;
-  const auto attachEnd=NpcDefinitionContract::activityEvents(harad).deadline;
   shortOf(attachEnd);
   test.step();
   require(test.world().time()<attachEnd && stats.watchdog==watchdogs && ActivityEventsWorld::stage(harad)==Stage::Attach,
