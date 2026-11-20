@@ -8,11 +8,11 @@
 
 #include "frameprofile.h"
 #include "graphics/drawclusters.h"
-#include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/mesh/submesh/staticmesh.h"
 #include "graphics/shaders.h"
 #include "graphics/treeboughasset.h"
 #include "graphics/treeboughdraw.h"
+#include "graphics/treeboughgroups.h"
 #include "graphics/visualobjects.h"
 #include "shader.h"
 
@@ -45,12 +45,6 @@ void putVec(std::vector<uint32_t>& words, Vec3 v) {
   words.push_back(std::bit_cast<uint32_t>(v.x));
   words.push_back(std::bit_cast<uint32_t>(v.y));
   words.push_back(std::bit_cast<uint32_t>(v.z));
-  }
-
-// Nodes of one class share a mesh workgroup: as many as fit its vertices and primitives.
-uint32_t groupSize(const TreeBough::Range& range) {
-  const uint32_t size = std::max({range.vertexCount, range.indexCount/3u, 8u});
-  return std::bit_floor(uint32_t(PackedMesh::MaxVert)/size);
   }
 
 void demandProxyTextures(const TreeBough::Asset& asset, bool add) {
@@ -105,7 +99,7 @@ void TreeBoughRender::registerAsset(const StaticMesh& mesh, Asset& asset) {
     auto pos = perClass.lower_bound({range.primitive,0});
     if(pos==perClass.end() || pos->first.first!=range.primitive)
       bucket = owner.buckets.alloc(page.material,mesh,&page);
-    const uint32_t count = Shaders::options().doMeshShading ? groupSize(range) :
+    const uint32_t count = Shaders::options().doMeshShading ? TreeBough::groupSize(range) :
       *std::lower_bound(TreeBough::indexClasses.begin(), TreeBough::indexClasses.end(), range.indexCount);
     auto [at, newClass] = perClass.try_emplace({range.primitive,count},0);
     if(newClass)
@@ -256,7 +250,7 @@ void TreeBoughRender::uploadData() {
     const bool mesh = c.draw.isMeshShader();
     c.draw.firstPayload = uint32_t(capacity);
     // The last mesh workgroup of a command is padded to whole c.unit nodes.
-    capacity += mesh ? (c.draw.maxPayload+c.unit-1u)/c.unit*c.unit : c.draw.maxPayload;
+    capacity += mesh ? TreeBough::groupSlots(c.draw.maxPayload,c.unit) : c.draw.maxPayload;
     draws.push_back({c.unit,0,mesh ? 1u : 0u,mesh ? 1u : 0u,c.draw.firstPayload});
     }
   Resources::recycle(std::move(indirect));
