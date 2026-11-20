@@ -20,16 +20,17 @@ FOV_DEGREES = 67.5
 HYSTERESIS = 1.1
 
 
-def camera_path(scenario: Path, events: list[dict]) -> tuple[list[tuple[float, ...]], list[int], list[int]]:
+def camera_path(scenario: Path, events: list[dict], mark: str = 'fir-eye') -> tuple[list[tuple[float, ...]], list[int], list[int]]:
     """Use the bench's game-time marks to match each linear cam fly to recorded frames."""
-    commands = [line.split() for line in scenario.read_text().splitlines()
-                if line.startswith(('cam at ', 'cam fly '))]
+    # Stills after the recording's stop are not part of the path.
+    recorded = scenario.read_text().split('\nstop\n')[0]
+    commands = [line.split() for line in recorded.splitlines() if line.startswith(('cam at ', 'cam fly '))]
     positions = [tuple(map(float, command[2:5])) for command in commands]
     durations = [int(command[8]) for command in commands[1:]]
     starts = [event['t'] for event in events if event['kind'] == 'mark'
-              and event['text'] == 'fir-eye-leg']
+              and event['text'] == f'{mark}-leg']
     returned = [event['t'] for event in events if event['kind'] == 'mark'
-                and event['text'] == 'fir-eye-returned']
+                and event['text'] == f'{mark}-returned']
     if not starts or len(starts) != len(durations) or returned != [starts[-1] + durations[-1]]:
         raise ValueError('Recording did not complete the marked round trip')
     if positions != positions[::-1]:
@@ -37,13 +38,13 @@ def camera_path(scenario: Path, events: list[dict]) -> tuple[list[tuple[float, .
     return positions, durations, starts
 
 
-def tree_bounds(content: Path) -> list[tuple[tuple, float, list[float]]]:
-    placements = json.loads((content / 'worlds/NEWWORLD/vobs.d' / f'{NAME}.json').read_text())
+def tree_bounds(content: Path, layer: str = NAME, visuals=VISUALS) -> list[tuple[tuple, float, list[float]]]:
+    placements = json.loads((content / 'worlds/NEWWORLD/vobs.d' / f'{layer}.json').read_text())
     by_visual = {tree['visual']: tree for tree in placements['add']}
     mesh_dir = content / 'meshes'
     records = json.loads((mesh_dir / 'meshes.json').read_text())
     bounds = []
-    for visual in VISUALS:
+    for visual in visuals:
         tree, record = by_visual[visual], records[visual]
         if tree['yaw_deg'] != 0:
             raise ValueError(f'{visual}: this camera fixture uses yaw 0')

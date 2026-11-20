@@ -288,8 +288,8 @@ def hierarchy_curve(merges, ends, census, levels, heights):
                 local_merges=len(merges), root_transitions=len(ends))
 
 
-def progressive_curve(nodes, height_m, parents, wood, level_wood, heights):
-    """Measure the saved 3D bands, retaining both geometry ranges during a fade."""
+def progressive_merges(nodes, height_m, parents):
+    """Whole-tree bands of the saved hierarchy and the cost of its original cards."""
     settled = {}
     merges = []
     cards, triangles = 0, 0
@@ -308,7 +308,23 @@ def progressive_curve(nodes, height_m, parents, wood, level_wood, heights):
             scale = height_m / node.diameter
             merges.append(CutMerge(node.high_px * scale, node.low_px * scale, before, after, node.leaf_count))
             settled[node.id] = after
+    return merges, (cards, triangles)
 
+
+def turnover_steps(merges, cards, start, end):
+    """Weighted share of the original cards changing over each full 1% step from start down to end."""
+    steps = math.floor(math.log(end / start) / math.log(.99))
+    grid = np.r_[start * .99 ** np.arange(steps + 1), end / .99, end]
+    _, _, turnover, _ = _merge_curve(merges, grid, (cards, 0))
+    turnover[-2] = 0.  # The jump from the regular grid to the end interval is not a sample.
+    if end / .99 > start:
+        turnover[-1] = 0.
+    return turnover, grid
+
+
+def progressive_curve(nodes, height_m, parents, wood, level_wood, heights):
+    """Measure the saved 3D bands, retaining both geometry ranges during a fade."""
+    merges, (cards, triangles) = progressive_merges(nodes, height_m, parents)
     heights = np.asarray(heights)
     full_cost = (cards, triangles + wood)
     effective, submitted, _, _ = _merge_curve(merges, heights, full_cost)
@@ -318,13 +334,7 @@ def progressive_curve(nodes, height_m, parents, wood, level_wood, heights):
     delta = np.column_stack((np.zeros(len(heights), dtype=int), wood_delta))
 
     # Use full 1% intervals independently of the requested cost samples.
-    start, end = heights.max(), heights.min()
-    steps = math.floor(math.log(end / start) / math.log(.99))
-    grid = np.r_[start * .99 ** np.arange(steps + 1), end / .99, end]
-    _, _, turnover, _ = _merge_curve(merges, grid, full_cost)
-    turnover[-2] = 0.  # The jump from the regular grid to the end interval is not a sample.
-    if end / .99 > start:
-        turnover[-1] = 0.
+    turnover, grid = turnover_steps(merges, cards, heights.max(), heights.min())
     peak = int(np.argmax(turnover))
     return dict(samples_px=heights.tolist(), effective=effective.round(6).tolist(), submitted=submitted.tolist(),
                 effective_level_wood=(effective + delta).round(6).tolist(),
