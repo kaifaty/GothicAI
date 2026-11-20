@@ -15,10 +15,12 @@
 #include "game/playercontrol.h"
 #include "gothic.h"
 #include "settings.h"
+#include "graphics/clusterlodrender.h"
 #include "graphics/drawcommands.h"
 #include "graphics/renderer.h"
 #include "graphics/mesh/footik.h"
 #include "graphics/mesh/skeleton.h"
+#include "world/chunkresidency.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 
@@ -166,6 +168,21 @@ void updateCamera(const CameraContext& ctx,World& w, Npc& pl) {
       ctx.camera.camHeldAngles=angles;
       if(progress>=1.f)ctx.camera.cam=C_Hold;
       }
+    return;
+    }
+  if(ctx.camera.cam==C_Fly) {
+    // cam fly: the position and the target go along straight lines in game time; TAA keeps its history
+    float elapsed = float(ctx.time-ctx.camera.flyStart);
+    // Pair mask frames by camera pose despite the 33/34 ms phase of the fixed-step clock.
+    if(Renderer::benchClusterLodMask)
+      elapsed = std::round(elapsed*Fps/1000.f)*1000.f/Fps;
+    const float t   = std::min(1.f,elapsed/float(std::max<uint64_t>(ctx.camera.flyDuration,1)));
+    const Vec3  org = ctx.camera.flyFrom      +(ctx.camera.flyTo      -ctx.camera.flyFrom      )*t;
+    const Vec3  tgt = ctx.camera.flyFromTarget+(ctx.camera.flyToTarget-ctx.camera.flyFromTarget)*t;
+    lookFrom(ctx,org,tgt);
+    ctx.camera.camTarget = tgt;
+    if(t>=1.f)
+      ctx.camera.cam = C_Hold;
     return;
     }
   if(ctx.camera.cam==C_Water) {
@@ -734,6 +751,20 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
       ",\"minute\":"+std::to_string(w.time().minute())+",\"hero_cm\":"+ragdollVector(ctx.monster.monsterCharacterHeroStart)+",\"actors\":"+actors+"]");
     monsterCharacterRenderProof(ctx,w,*watched,"followed");
     }
+  else if(c=="cluster-lod") {
+    if(a.size()==3 && a[1]=="mask" && (a[2]=="on" || a[2]=="off" || a[2]=="meshes")) {
+      Renderer::benchClusterLodMask = a[2]!="off";
+      ClusterLodRender::setBenchOwnMeshMask(a[2]=="meshes");
+      } else if(a.size()==3 && a[1]=="source" && (a[2]=="on" || a[2]=="off")) {
+      // Streaming picks its geometry at world load. The environment override
+      // keeps precedence, as it does for ordinary launches.
+      Settings::setI("INTERNAL","clusterLod",a[2]=="on" ? 1 : 0);
+      } else if(a.size()==2 && (a[1]=="base" || a[1]=="normal" || a[1]=="levels")) {
+      ClusterLodRender::setBenchView(a[1]);
+      } else {
+      arenaAbort("cluster-lod expects base, normal, levels, mask on/off/meshes or source on/off");
+      }
+    }
   else if(c=="cam") {
     const std::string m = a.size()>1 ? a[1] : "";
     ctx.camera.camAuto = false;
@@ -775,7 +806,19 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
       // cam at <x y z> <tx ty tz>: from a point of the world at another, then held; a cut
       ctx.camera.cam        = C_Hold;
       ctx.camera.cutPending = true;
-      lookFrom(ctx, Vec3(num(a,2,0),num(a,3,0),num(a,4,0)), Vec3(num(a,5,0),num(a,6,0),num(a,7,0)));
+      ctx.camera.camTarget  = Vec3(num(a,5,0),num(a,6,0),num(a,7,0));
+      lookFrom(ctx, Vec3(num(a,2,0),num(a,3,0),num(a,4,0)), ctx.camera.camTarget);
+      }
+    else if(m=="fly" && a.size()>8) {
+      // cam fly <x y z> <tx ty tz> <ms>: from where `cam at` or the last fly left the camera, along straight lines to
+      // a point and its target in that many ms of game time, then held; no cut, so a clip of the way has no jump
+      ctx.camera.flyFrom       = ctx.camera.camPos;
+      ctx.camera.flyFromTarget = ctx.camera.camTarget;
+      ctx.camera.flyTo         = Vec3(num(a,2,0),num(a,3,0),num(a,4,0));
+      ctx.camera.flyToTarget   = Vec3(num(a,5,0),num(a,6,0),num(a,7,0));
+      ctx.camera.flyStart      = ctx.time;
+      ctx.camera.flyDuration   = uint64_t(std::max(1.f,num(a,8,1000)));
+      ctx.camera.cam           = C_Fly;
       }
     else if(m=="shoulder" || m=="two" || (m=="face" && a.size()>2 && !isNumber(a[2]))) {
       // cam shoulder <npc> [dist 120] [height 15] [shoulder 1|-1]
@@ -867,8 +910,8 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
     // vsm study <bits>: the shadow test on a mesh's facets, for shots of one frame
     // (reports/render-features/2026-11-11-facet-shards): 1 the sun takes the facet's plane over one pixel and 2 the
     // lamps keep it on facets edge-on to them, both as before 2026-11-11; 4 the facets' classes and 8 the change of
-    // the sun's shadow as colours; 16 the lamps' first search as before 2026-11-14 (2026-11-14-lamp-stipple); 0 the game's
-    Renderer::benchVsmStudy = uint32_t(std::clamp(int(num(a,2,0)), 0, 31));
+    // the sun's shadow as colours; 16 the lamps' first search as before 2026-11-14 (2026-11-14-lamp-stipple); 32 the lamps without their screen ray; 0 the game's
+    Renderer::benchVsmStudy = uint32_t(std::clamp(int(num(a,2,0)), 0, 63));
     }
   else if(c=="ssao" && a.size()>2 && a[1]=="study") {
     // ssao study <bits>: for shots of one frame (reports/engine/2026-11-13-ssao-behind-camera): 1 the samples behind
@@ -1067,6 +1110,32 @@ bool cameraCommand(const CameraContext& ctx,const std::string& line,const std::v
   }
 
 void capture(const CameraContext& ctx,Pixmap& frame, float uiScale) {
+  if(Renderer::benchClusterLodMask && ctx.camera.rec && ctx.camera.recVideo) {
+    if(frame.isEmpty()) {
+      arenaAbort("cluster-lod mask capture returned no pixels");
+      return;
+      }
+    const auto dir = std::filesystem::path(outDir)/ctx.camera.recName;
+    if(ctx.camera.recFrame==0)
+      std::filesystem::create_directories(dir);
+    const auto name = (dir/(std::to_string(ctx.camera.recFrame)+".png")).string();
+    frame.save(name.c_str());
+    std::string residency;
+    size_t pending = 0;
+    if(const auto* cells = Gothic::inst().world()->chunkResidency()) {
+      const auto count = cells->table().entries.size();
+      residency.reserve(count);
+      for(size_t i=0; i<count; ++i)
+        residency.push_back(char('0' + int(cells->desired(i))));
+      pending = cells->stats().pending;
+      }
+    event("cluster_lod_mask", "\"camera_cm\":"+ragdollVector(ctx.camera.camPos)+
+          ",\"view_projection\":"+ragdollMatrix(Gothic::inst().camera()->viewProj())+
+          ",\"residency\":"+jsonStr(residency)+",\"pending\":"+std::to_string(pending)+
+          ",\"geometry\":"+jsonStr(ClusterLodRender::benchOwnMeshMask() ? "meshes" : "terrain"));
+    ++ctx.camera.recFrame;
+    return;
+    }
   const auto waterFilmFraming=ctx.waterFilmFraming;
   ctx.overlay.uiScale = uiScale;
   Pixmap pm;

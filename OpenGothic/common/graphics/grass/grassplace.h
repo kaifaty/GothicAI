@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -21,6 +22,8 @@ constexpr int32_t Unit       = 16;               // units per cm
 constexpr int32_t NodeStep   = 4*Unit;           // the lattice of candidates: 625 nodes per m2
 constexpr int32_t CellSize   = 800*Unit;         // a cell of the world: 8 m
 constexpr int32_t CellNodes  = CellSize/NodeStep;
+constexpr int32_t SquareSize = 200*Unit;         // a square of a cell: the field draws and thins a cell by them
+constexpr int32_t CellSquares= CellSize/SquareSize;
 constexpr int32_t CellMargin = 64*Unit;          // a root lies no further out of the cell of its node
 constexpr int32_t TuftStep   = 75*Unit;          // the lattice of the tufts' centres
 constexpr int32_t NodesPerM2 = 625;
@@ -67,7 +70,7 @@ void addBeside(Summary& out, const float pos[3][3], const float normal[3][3]);
 
 // 16 bytes of a blade (shader/grass/grass_common.glsl):
 //   w0: x 14 | z 14 | lean 4          root in units from the cell's corner less CellMargin
-//   w1: y 16 | height 8 | rank 8      y in 1/8 cm over CellBlades::minY; height in 1/4 cm
+//   w1: y 16 | height 8 | rank 8      y in 1/8 cm over CellBlades::minY; height in 1/4 cm, of KindEar in 3/4 cm
 //   w2: facing 8 | phase 8 | nx 8 | nz 8
 //   w3: u 12 | v 12 | width 4 | tint 4
 struct Blade final {
@@ -76,14 +79,21 @@ struct Blade final {
 
 struct Batch final {
   uint16_t slot  = 0;
-  uint8_t  kind  = 0;          // 1: the fine blades of the short sward (Params::fine), a ring of their own
+  uint8_t  kind  = 0;          // 1: the fine blades of the short sward (Params::fine), a ring of their own;
+                               // KindEar: stalks with an ear (grassear.h)
+  uint8_t  square= 0;          // x*CellSquares+z of the square its roots are in; of the margin's the nearest one
   uint32_t first = 0;
   uint32_t count = 0;
   };
 
+struct SquareBounds final {
+  int32_t minY = 0, maxY = 0; // packed roots in world units
+  };
+
 struct CellBlades final {
-  std::vector<Blade> blades;   // by slot and kind, then by rank: a start of a batch is an even sample of it
+  std::vector<Blade> blades;   // by slot, kind and square, then by rank: a start of a batch is an even sample of it
   std::vector<Batch> batches;
+  std::array<SquareBounds, CellSquares*CellSquares> squareBounds; // indexed by Batch::square
   int32_t            minY = 0; // units
   int32_t            maxY = 0;
   };
@@ -101,6 +111,7 @@ struct CellInput final {
   uint32_t                       rankLimitFine = 256; // the same of the fine blades: their ring is shorter
   float                          density   = 1.f; // of the records' (the quality)
   int32_t                        patch     = -1;  // every tuft is of this patches' noise (a bench's measure)
+  bool                           squares   = true; // false: a batch is of the whole cell (a bench's measure)
   };
 
 CellBlades buildCell(const CellInput& in);
@@ -111,6 +122,6 @@ struct BladeInfo final {
   float   height = 0.f;         // cm
   uint8_t rank   = 0;
   };
-BladeInfo decode(const Blade& b, int32_t cx, int32_t cz, int32_t minY);
+BladeInfo decode(const Blade& b, int32_t cx, int32_t cz, int32_t minY, uint8_t kind = 0); // kind: its batch's
 
 }

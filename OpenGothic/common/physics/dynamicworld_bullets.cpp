@@ -149,13 +149,13 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
 
         float a = hit.fraction;
         b.move(pos + (to-pos)*a);
-        if(l*a>0.1f) {
-          b.setDirection(reflected);
-          b.addPathLen((to-pos).length()*a);
-          b.addHit();
-          if(b.cb!=nullptr)
-            b.cb->onCollide(matId);
-          }
+        // Every touch is a glance, also one at the very start of a step: the ray ignores back faces, so the
+        // reflected flight does not meet this face again, and hitCount()>3 stops the arrow after four glances.
+        b.setDirection(reflected);
+        b.addPathLen((to-pos).length()*a);
+        b.addHit();
+        if(b.cb!=nullptr)
+          b.cb->onCollide(matId);
         } else {
         float a = hit.fraction;
         b.move(pos + (to-pos)*a);

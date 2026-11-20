@@ -12,6 +12,7 @@
 #include <Tempest/Painter>
 #include "game/rpgvocabulary.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/landscapestart.h"
 #include "graphics/shaders.h"
 #include "commandline.h"
 #include "camera.h"
@@ -34,6 +35,7 @@
 #include "utils/string_frm.h"
 #include "settings.h"
 #include "gameservices.h"
+#include "graphics/pfx/particlefx.h"
 #include "game/gamehost.h"
 #include "focus.h"
 #include "resources.h"
@@ -176,22 +178,8 @@ World::World(GameSession& game, GameRules& rules, std::string_view file, bool st
         const auto t = LoadProbe::now();
         std::unique_ptr<WorldView> view;
         if(streamLandscape) {
-          const auto map=PackedMesh::landscapeMaterialMap(worldMesh);
-          {
-          Resources::TextureLoadScope textureLoadScope(true);
-          std::vector<bool> loaded(worldMesh.materials.size());
-          // Decode initially used materials before publishing landscape chunks.
-          for(auto id:worldMesh.polygons.material_indices) {
-            id=map[id];
-            if(!loaded[id]) {
-              Resources::loadMaterial(worldMesh.materials[id],true);
-              loaded[id]=true;
-              }
-            }
-          }
-          // worldMesh.bbox is zero for compiled worlds; the sky and fog take the
-          // observer's height from the lowest landscape vertex (SceneGlobals::setWorld).
-          view=std::make_unique<WorldView>(PackedMesh::landscapeBbox(worldMesh),wname);
+          // Initially used materials are decoded before publishing landscape chunks.
+          view=streamingWorldView(worldMesh,chunks,wname);
           }
         else {
           PackedMesh vmesh(worldMesh,PackedMesh::PK_VisualLnd);
@@ -506,7 +494,7 @@ Npc* World::npcForRagdoll(const Ragdoll* body) {
   return nullptr;
   }
 
-bool World::stickArrow(MeshObjects::Mesh&& arrow, const Tempest::Matrix4x4& worldMatrix,
+bool World::stickArrow(ItemView&& arrow, const Tempest::Matrix4x4& worldMatrix,
                       std::string_view visual, std::shared_ptr<const DynamicWorld::MovableVobPose> movable,
                       const Npc* culprit, const Tempest::Vec3* sightPoint, std::string_view surface) {
   if(arrow.isEmpty() || !Settings::physicsFlags().arrowSticking || (movable!=nullptr && movable->broken))
@@ -545,7 +533,7 @@ bool World::stickArrow(MeshObjects::Mesh&& arrow, const Tempest::Matrix4x4& worl
 bool World::stuckArrowTransform(size_t index, Tempest::Matrix4x4& out) const {
   if(index>=stuckArrows.size() || stuckArrows[index].mesh.isEmpty())
     return false;
-  out = stuckArrows[index].mesh.node(0).position();
+  out = stuckArrows[index].mesh.view().node(0).position();
   return true;
   }
 
@@ -924,8 +912,10 @@ void World::loadBodyTraces(Serialize& fin) {
     Tempest::Log::i("body traces: ",legacy," bodies of an older save; age unknown, lifetime from now");
   }
 
-void World::updateStuckArrows() {
+void World::updateStuckArrows(uint64_t dt) {
   for(auto i=stuckArrows.begin();i!=stuckArrows.end();) {
+    // the arrow's effect fades, the arrow stays (graphics/itemview)
+    i->mesh.tick(dt);
     if(!i->attached) {
       ++i;
       continue;
@@ -1006,7 +996,8 @@ void World::loadStuckArrows(Serialize& fin) {
          pin.traceId==0 || pin.traceId==UINT64_MAX || pin.culprit.size()>512 || pin.surface.size()>64 ||
          !std::isfinite(pin.sightPoint.x) || !std::isfinite(pin.sightPoint.y) || !std::isfinite(pin.sightPoint.z))
         continue;
-      pin.mesh = addView(pin.visual);
+      // a loaded arrow has no effect: the save keeps none
+      pin.mesh = ItemView(addView(pin.visual));
       if(pin.mesh.isEmpty())
         continue;
       pin.mesh.setObjMatrix(pin.local);
@@ -1111,6 +1102,12 @@ LightGroup::Light World::addLight(const asset::VLight& vob) {
   if(Resources::isHeadless())
     return LightGroup::Light();
   return view()->addLight(vob, tickCount());
+  }
+
+LightGroup::Light World::addLight(const asset::LightPreset& preset) {
+  if(Resources::isHeadless())
+    return LightGroup::Light();
+  return view()->addLight(preset, tickCount());
   }
 
 LightGroup::Light World::addLight(std::string_view preset) {
@@ -1240,7 +1237,7 @@ void World::tick(uint64_t dt) {
   if(const auto* pl=player())
     wdynamic->setFragmentObserver(pl->position());
   { FrameProfile::Scope timing(FrameProfile::Zone::Physics); wdynamic->tick(dt); }
-  updateStuckArrows();
+  updateStuckArrows(dt);
   { FrameProfile::Scope timing(FrameProfile::Zone::Sync); wobj.syncRagdolls(); }
   sweepBodies();
   FrameProfile::Scope timing(FrameProfile::Zone::WorldMisc);
@@ -2151,15 +2148,23 @@ void World::probeMemory(std::string_view stage) const {
                  rules().scriptVmMemorySize());
   }
 
-void World::animationPfx(const Animation::MdsParticleEffect& p, MdlVisual& visual) {
+void World::animationPfx(const Animation::MdsParticleEffect& p, MdlVisual& visual, bool inPfxRange) {
   if(p.pfxStop) {
     visual.stopEffect(p.index);
     }
   else if(!p.name.empty()) {
     if(p.name==visual.mutedPfx())
       return;
-    Effect e(PfxEmitter(*this,p.name),p.position);
+    // a looped one (FIRE_HOT of the forge) emits and lives until its stop, its slot's next effect, its object's rest
+    // or its visual's end; the others live their own time (docs/map/engine.md). Far a looped one starts too: it burns
+    // when the viewer comes, its emitter makes no particles out of range
+    const auto* decl = GameServices::inst().loadParticleFx(p.name);
+    const bool  loop = decl!=nullptr && decl->ppsIsLooping;
+    if(!inPfxRange && !loop)
+      return;
+    Effect e(PfxEmitter(*this,decl),p.position);
     e.setActive(true);
-    visual.startEffect(*this,std::move(e),p.index,false);
+    e.setLooped(loop);
+    visual.startEffect(*this,std::move(e),p.index,false,loop);
     }
   }

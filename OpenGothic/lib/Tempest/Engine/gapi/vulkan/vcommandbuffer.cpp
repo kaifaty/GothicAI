@@ -885,6 +885,21 @@ void VCommandBuffer::drawIndirect(const AbstractGraphicsApi::Buffer& indirect, s
   vkCmdDrawIndirect(impl, ind.impl, VkDeviceSize(offset), 1, 0);
   }
 
+void VCommandBuffer::drawIndexedIndirect(const AbstractGraphicsApi::Buffer& iibo, Detail::IndexClass cls,
+                                         const AbstractGraphicsApi::Buffer& indirect, size_t offset) {
+  const VBuffer& ibo = reinterpret_cast<const VBuffer&>(iibo);
+  const VBuffer& ind = reinterpret_cast<const VBuffer&>(indirect);
+
+  resState.onUavUsage(ind.nonUniqId, NonUniqResId::I_None, PipelineStage::S_Indirect);
+  vkCmdBindIndexBuffer(impl, ibo.impl, 0, nativeFormat(cls));
+  implSetUniforms(PipelineStage::S_Graphics);
+  implSetPushData(PipelineStage::S_Graphics);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileDraw();
+#endif
+  vkCmdDrawIndexedIndirect(impl, ind.impl, VkDeviceSize(offset), 1, sizeof(DrawIndexedIndirectCommand));
+  }
+
 void VCommandBuffer::dispatchMesh(size_t x, size_t y, size_t z) {
   implSetUniforms(PipelineStage::S_Graphics);
   implSetPushData(PipelineStage::S_Graphics);

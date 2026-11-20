@@ -1,9 +1,12 @@
 #pragma once
 
+#include <iosfwd>
+
 #include "drawbuckets.h"
 #include "drawclusters.h"
 #include "drawcommands.h"
 #include "instancestorage.h"
+#include "meshlevels.h"
 #include "texturescreendemand.h"
 
 #include <filesystem>
@@ -90,7 +93,8 @@ class VisualObjects final {
     Item   get(const AnimMesh& mesh,   const Material& mat, size_t iboOff, size_t iboLen, const InstanceStorage::Id& anim);
     // texturePosition: a landscape package's chunk; texel: its triangles' UV density and world bounds
     Item   get(const StaticMesh& mesh, const Material& mat, size_t iboOff, size_t iboLen, const PackedMesh::Cluster* cluster, DrawCommands::Type type,
-               const Tempest::Vec3* texturePosition = nullptr, const TexelDensity* texel = nullptr);
+               const Tempest::Vec3* texturePosition = nullptr, const TexelDensity* texel = nullptr,
+               std::span<const PackedMesh::ClusterLevel> levels = {});
     // All Items referencing the mesh must have been released first.
     void   invalidate(const StaticMesh& mesh);
     void   setTextureResidency(ChunkResidency* residency);
@@ -122,13 +126,22 @@ class VisualObjects final {
     void prepareGlobals (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void postFrameupdate();
 
-    void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
-    void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass, bool history = false);
+    DrawCommands& treeHistoryCommands() { return drawCmd; }
+    void visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    void writeTreeOcclusionProbe(std::ostream& out, std::ostream& decisions);
+    void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::StorageBuffer* geometryStats);
 
     void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, DrawCommands::HistoryDraw history);
+    enum class BenchImpostors { Auto, Force, Off };
+    static BenchImpostors benchImpostors;
+    enum class BenchShadowLevels { Auto, On, Off, Full };
+    static BenchShadowLevels benchShadowLevels;
+    static std::optional<float> benchShadowNearPx;
+    void logVsmShadowProbe(uint64_t frameNo) const;
     void drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int layer);
     void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -146,7 +159,18 @@ class VisualObjects final {
     void dbgClusters(Tempest::Painter& p, Tempest::Vec2 wsz);
 
   private:
-    struct InstanceDesc;
+    struct InstanceDesc {
+      void setPosition(const Tempest::Matrix4x4& m) {
+        for(int i=0; i<4; ++i)
+          for(int r=0; r<3; ++r)
+            pos[i][r] = m.at(i,r);
+        }
+      float    pos[4][3] = {};
+      float    fatness   = 0;
+      uint32_t animPtr   = 0;
+      uint32_t deformPtr = 0; // a static tree with a bough hierarchy: its level band (treelevelband.h)
+      uint32_t deformCount = 0;
+      };
     struct MorphDesc;
     struct MorphData;
 
@@ -164,6 +188,8 @@ class VisualObjects final {
       float    alpha     = 0;
       };
 
+    static constexpr uint8_t NoLevels = 0xFF;
+
     struct Object {
       bool     isEmpty() const { return cmdId==uint16_t(-1); }
 
@@ -180,7 +206,9 @@ class VisualObjects final {
       uint32_t            animPtr   = 0;
       DrawBuckets::Id     bucketId;
       uint16_t            cmdId     = uint16_t(-1);
+      uint16_t            impostorShadowCmd = uint16_t(-1);
       uint32_t            clusterId = 0;
+      uint32_t            clusterCount = 1;
       uint64_t            timeShift = 0;
 
       Material::AlphaFunc alpha = Material::Solid;
@@ -191,6 +219,20 @@ class VisualObjects final {
       uint32_t            strandMeshlets = 0;    // strands: the first meshlets of the list that are drawn now; 0: not strands
       float               strandWider    = 1;    // ...and how much wider each strand is for the ones left out
       uint8_t             strandLevel    = 0;    // ...the level: 2^(-level/8) of the list
+      bool                tree           = false; // a tree in the wind: its sphere follows the wind's fade
+      uint16_t            treeFade       = 0;     // ...the fade its sphere is grown by now (preFrameUpdateTrees)
+      uint8_t             levelSub       = NoLevels; // its submesh of a mesh with levels of detail (meshlevels.h)
+      MeshLevels::Selection level;                // ...the stage selected for this instance, 0 the mesh itself
+      uint8_t             shadowLevel    = 0;
+      uint8_t             shadowProbeLevel = 0;
+      // A tree with a bough hierarchy (treelevelband.h): the second cluster, its instance and command for the coarser
+      // side of a level band, the meshlets reserved for it, and the band word of the object's own instance
+      uint32_t            bandCluster    = uint32_t(-1);
+      InstanceStorage::Id bandInstance;
+      uint16_t            bandCmd        = uint16_t(-1);
+      uint32_t            bandReserve    = 0;
+      uint32_t            bandWord       = 0;
+      bool                clusterLod     = false;
       bool                isGhost       = false;
       bool                visible       = true;
       Resources::TextureCategory textureCategory = Resources::TextureCategory::Dynamic;
@@ -225,6 +267,17 @@ class VisualObjects final {
     void     preFrameUpdateWind();
     void     preFrameUpdateMorph();
     void     preFrameUpdateStrands();
+    void     preFrameUpdateTrees();
+    void     preFrameUpdateLevels();
+    void     setImpostorShadow(Object& obj, bool enable);
+    // The level bands of a tree with a bough hierarchy (visualobjects_levelband.cpp)
+    void     allocLevelBand(Object& obj);
+    void     freeLevelBand(Object& obj);
+    void     updateLevelBand(Object& obj, float height, float shadowHeight, bool shadowLevels, bool fullShadows,
+                             MeshLevels::Selection& level, uint8_t& shadowLevel, bool& shadowCoarse);
+    void     drawImpostors(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool history);
+    // the meshlets the object's cluster draws while visible: [first, first+count) of its bucket's mesh
+    std::pair<uint32_t,uint32_t> drawnMeshlets(Object& obj);
 
     size_t   implAlloc();
     void     free(size_t id);
@@ -249,7 +302,8 @@ class VisualObjects final {
     void     scheduleTexture(Object& object, size_t id, double expiry);
     void     unscheduleTexture(Object& object);
 
-    uint32_t clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
+    uint32_t clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId,
+                       uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels, uint32_t instanceId = uint32_t(-1));
     uint32_t clusterId(const DrawBuckets::Bucket& bucket, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
 
     void     startMMAnim(size_t i, std::string_view animName, float intensity, uint64_t timeUntil, bool freeOnly);
@@ -278,6 +332,22 @@ class VisualObjects final {
     std::unordered_set<size_t> objectsWind;
     std::unordered_set<size_t> objectsMorph;
     std::unordered_set<size_t> objectsStrand;
+    std::unordered_set<size_t> objectsTree;
+    std::unordered_set<size_t> objectsLevels;
+    struct ShadowProbe {
+      uint32_t coarseTrees = 0, changedTrees = 0;
+      uint64_t coarseMeshlets = 0, coarseTriangles = 0;
+      uint64_t oldMeshlets = 0, oldTriangles = 0, newMeshlets = 0, newTriangles = 0;
+      };
+    ShadowProbe                shadowProbe;
+    struct ImpostorInstance {
+      float    transform[16];
+      uint32_t info[4] = {};
+      };
+    static_assert(sizeof(ImpostorInstance)==80);
+    std::vector<size_t>           impostorDraws;
+    std::vector<ImpostorInstance> impostorInstances;
+    Tempest::StorageBuffer       impostorBuffer[Resources::MaxFramesInFlight];
     std::unordered_set<size_t> objectsFree;
     mutable std::recursive_mutex textureSync;
     ChunkResidency*            textureResidency = nullptr;

@@ -162,6 +162,12 @@ void layerLamp(const Json& entry, LampExtra& lamp, bool animated) {
       require(lamp.jitterCm>=0 && lamp.jitterCm<=10,"jitter_cm must be in 0..10");
       }
     } else require(!entry.HasMember("jitter_cm"),"jitter_cm without flicker_from");
+  // the trembling's own frequency, slower than the flame's tips: a lamp close over a thing sways its shadow
+  if(entry.HasMember("sway_hz")) {
+    require(lamp.jitterCm>0,"sway_hz without jitter_cm");
+    lamp.swayHz=layerFloat(entry["sway_hz"]);
+    require(lamp.swayHz>0 && lamp.swayHz<=30,"sway_hz must be in 0..30");
+    }
   }
 rapidjson::Document layerIndex(const fs::path& file) {
   const auto bytes=gothicglb::readFile(file);
@@ -352,7 +358,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
       layerFields(doc,{"format","add"});
       array(member(doc,"add"));
       } else {
-      layerFields(doc,{"format","add","remove","move","light","visual"});
+      layerFields(doc,{"format","add","remove","move","light","visual","effect"});
       }
     std::unordered_map<uint32_t,Vob> base;
     std::set<uint32_t> ids;
@@ -390,7 +396,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             v->visual=visuals.at(name);
             v->visual_name=v->visual->name; v->associated_visual_type=v->visual->type;
             } else if(kind=="emitter") {
-            layerFields(entry,{"key","kind","position","rotation","yaw_deg","pfx","flicker"});
+            layerFields(entry,{"key","kind","position","rotation","yaw_deg","pfx","flicker","up_cm"});
             auto visual=std::make_shared<VisualParticleEffect>();
             visual->type=VisualType::PARTICLE_EFFECT;
             visual->name=particleName(layerString(member(entry,"pfx")),context,baseRoot,contentRoot);
@@ -415,7 +421,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             v->visual=std::move(visual);
             v->visual_name=v->visual->name; v->associated_visual_type=v->visual->type;
             } else if(kind=="light") {
-            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie","source_cm","near","flicker_from","jitter_cm"});
+            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie","source_cm","near","flicker_from","jitter_cm","sway_hz","up_cm"});
             auto light=std::make_shared<Light>();
             light->type=VirtualObjectType::zCVobLight; light->light_type=LightType::POINT;
             light->range=layerFloat(member(entry,"range")); require(light->range>0,"range must be positive");
@@ -455,6 +461,14 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             v=std::move(light);
             } else fail("expected kind mesh, light or emitter");
           v->position=layerPosition(entry); v->rotation=layerRotation(entry);
+          // a tree's fire over a wick that turns with a hand: the entry stands this far up the world's vertical from
+          // its place in the slot, whatever the slot's tilt (the burning torch)
+          if(entry.HasMember("up_cm")) {
+            require(treeOnly,"up_cm belongs to a vob tree");
+            const float up=layerFloat(entry["up_cm"]);
+            require(up>=-200 && up<=200,"up_cm must be in -200..200");
+            dynamic_cast<Added&>(*v).upCm=up;
+            }
           dynamic_cast<Added&>(*v).key=key; v->vob_name=key; v->vob_static=true; v->cd_dynamic=v->cd_static; v->physics_enabled=false;
           uint32_t hash=2166136261u;
           for(const char c:key) hash=(hash^uint8_t(c))*16777619u;
@@ -484,7 +498,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
           const auto* lamp=dynamic_cast<const asset::VLight*>(&target);
           require(lamp!=nullptr,"class "+std::string(className(target.type))+" is not a lamp");
           require(std::none_of(relit.begin(),relit.end(),[&](const auto& r) { return r.first==id; }),"duplicate light id");
-          layerFields(entry,{"id","color","range","near","source_cm","flicker_from","jitter_cm","offset_cm"});
+          layerFields(entry,{"id","color","range","near","source_cm","flicker_from","jitter_cm","sway_hz","offset_cm"});
           require(entry.MemberCount()>1,"nothing to change");
           const auto* earlier=dynamic_cast<const BaseLight*>(lamp);
           auto edited=earlier!=nullptr ? std::make_shared<BaseLight>(*earlier) : std::make_shared<BaseLight>(*lamp);
@@ -565,6 +579,34 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
         catch(const std::exception& e) { error(entryContext,e); }
         }
       }
+    // A base vob that shows a particle effect given another effect in place, by its id ("effect"): a fire that
+    // cannot be removed, because it is a trigger (zCPFXController) or a lamp hangs under it, burns an effect of the
+    // content. The id, the class, the place and the tree stay, so a save fits
+    if(doc.HasMember("effect")) {
+      array(doc["effect"]);
+      for(const auto& entry:doc["effect"].GetArray()) {
+        std::string entryContext="effect: ";
+        try {
+          const auto& value=member(entry,"id");
+          if(value.IsInt64()) entryContext="id "+std::to_string(value.GetInt64())+": ";
+          else if(value.IsUint64()) entryContext="id "+std::to_string(value.GetUint64())+": ";
+          require(value.IsUint(),"expected unsigned base ID");
+          const auto id=value.GetUint();
+          require(base.count(id)!=0,"unknown base ID");
+          const auto& target=base.at(id);
+          layerFields(entry,{"id","pfx"});
+          require((target->type==VirtualObjectType::zCVob || target->type==VirtualObjectType::zCPFXController) &&
+                  target->visual!=nullptr && target->visual->type==VisualType::PARTICLE_EFFECT,
+                  "class "+std::string(className(target->type))+" is not a vob with a particle effect");
+          require(std::none_of(swaps.begin(),swaps.end(),[&](const Swap& s) { return s.target->id==id; }),"duplicate effect id");
+          auto visual=std::make_shared<asset::VisualParticleEffect>();
+          visual->type=VisualType::PARTICLE_EFFECT;
+          visual->name=particleName(layerString(member(entry,"pfx")),context,baseRoot,contentRoot);
+          swaps.push_back({target,visual});
+          }
+        catch(const std::exception& e) { error(entryContext,e); }
+        }
+      }
     for(const char* operation:{"remove","move"}) if(doc.HasMember(operation)) {
       array(doc[operation]);
       for(const auto& entry:doc[operation].GetArray()) {
@@ -584,7 +626,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             fail("class "+kind+" cannot "+operation+": "+affected+" has base-ID or tree-bound saved state");
             }
           require(moving || std::none_of(swaps.begin(),swaps.end(),[&](const Swap& s) { return s.target->id==id; }),
-                  "visual and remove of one id");
+                  "visual or effect and remove of one id");
           if(moving) {
             layerFields(entry,{"id","position","rotation","yaw_deg"});
             moves.push_back({base.at(id),layerPosition(entry),layerRotation(entry)});
@@ -621,6 +663,11 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
 
 bool isAdded(const asset::VirtualObject& vob) {
   return dynamic_cast<const Added*>(&vob)!=nullptr;
+  }
+
+float upCm(const asset::VirtualObject& vob) {
+  const auto* added=dynamic_cast<const Added*>(&vob);
+  return added ? added->upCm : 0.f;
   }
 
 const std::string& key(const asset::VirtualObject& vob) {

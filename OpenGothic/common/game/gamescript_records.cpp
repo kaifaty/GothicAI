@@ -14,16 +14,15 @@ auto GameScript::createNpc(Npc& owner, size_t instance, std::string_view waypoin
   npc->wp = std::string(waypoint);
   kind = npc->symbol_index();
   if(instance!=size_t(-1))
-    initializeInstanceNpc(owner.hnpc,instance);
+    initializeInstanceNpc(npc,instance);
   kind = npc->symbol_index();
   return npc;
   }
 
 uint32_t GameScript::initializeInstanceNpc(const std::shared_ptr<NpcRecord>& record, size_t instance) {
   auto npc = std::static_pointer_cast<daedalus::INpc>(record);
-  if(auto* sym = vm.find_symbol_by_index(uint32_t(instance)); sym && npc->user_ptr)
-    static_cast<Npc*>(npc->user_ptr)->npcInstanceSymbol = sym->index();
-  initializeInstanceNpc(npc,instance);
+  // Transformations reuse every field of the existing instance.
+  initializeInstanceNpc(npc,instance,false);
   return npc->symbol_index();
   }
 

@@ -1,0 +1,20 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+
+#include "virtual_shadow/vsm_common.glsl"
+
+layout(local_size_x = 128) in;
+layout(binding = 0, std430) readonly  buffer PackedIndex { uint indices[]; };
+layout(binding = 1, std430) writeonly buffer Primitives { uint counts[];  };
+layout(push_constant, std430) uniform UboPush {
+  uint offset;
+  uint maxPrimitives;
+  } push;
+
+void main() {
+  const uint meshlet = gl_GlobalInvocationID.x;
+  const uint end = (meshlet+1u)*push.maxPrimitives;
+  if(end<=indices.length())
+    counts[push.offset+meshlet] = vsmMeshletCounts(indices[end-1u], 0u, push.maxPrimitives).y;
+  }

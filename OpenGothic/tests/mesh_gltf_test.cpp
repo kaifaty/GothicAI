@@ -5,7 +5,12 @@
 #include "graphics/pfx/particlefx.h"
 #include "graphics/visualfx.h"
 #include "gltfmesh.h"
+#include "gltfmeshcolor.h"
+#include "meshclusterlod.h"
 #include "graphics/shaders.h"
+#include "graphics/meshlevels.h"
+#include "graphics/treeboughasset.h"
+#include "graphics/foliagetree.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/skeleton.h"
@@ -14,10 +19,16 @@
 #include "graphics/worldview.h"
 #include "graphics/objvisual.h"
 #include "world/chunkresidency.h"
+#include "graphics/landscapestart.h"
+#include "physics/worldcloth.h"
+#include "worldchunkcatalogue.h"
+#include "worldchunkcook.h"
 #include "loadprobe.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "physics/fracture.h"
 #include "resources.h"
+#include "settings.h"
+#include "shader.h"
 #include "asset/fromzenkit.h"
 #include "baseimport.h"
 #include "basemesh.h"
@@ -40,6 +51,9 @@
 #include <Tempest/MemReader>
 #include <Tempest/MemWriter>
 #include <Tempest/VulkanApi>
+#ifdef __APPLE__
+#include <Tempest/MetalApi>
+#endif
 #include <zenkit/Stream.hh>
 #include <zenkit/Font.hh>
 #include <zenkit/Model.hh>
@@ -66,14 +80,18 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <thread>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 #include <sys/wait.h>
 #include <unistd.h>
+
+extern char** environ;
 
 struct MeshGltfTest {
   static MdlVisual& visual(Npc& npc) { return npc.visual; }
@@ -89,7 +107,8 @@ struct MeshGltfTest {
     visual.setType(ObjVisual::M_Mesh);
     visual.mesh.proto=proto;
     visual.mesh.worldItem=worldItem;
-    visual.mesh.material=material;
+    if(worldItem)
+      visual.mesh.item=ItemView(proto,material,MeshObjects::Mesh());
     if(!worldItem) {
       visual.mesh.windMode=asset::AnimationType::WIND;
       visual.mesh.windStrength=.5f;
@@ -100,9 +119,12 @@ struct MeshGltfTest {
     view.addVob(visual,ChunkId::fromPosition(position.x,position.z));
     }
 
-  static bool drawable(const ObjVisual& visual) { return !visual.mesh.view.isEmpty(); }
-  static Tempest::Matrix4x4 matrix(const ObjVisual& visual) { return visual.mesh.view.node(0).position(); }
-  static const Material& material(const ObjVisual& visual) { return visual.mesh.view.node(0).material(); }
+  static const MeshObjects::Mesh& meshView(const ObjVisual& visual) {
+    return visual.mesh.worldItem ? visual.mesh.item.view() : visual.mesh.view;
+    }
+  static bool drawable(const ObjVisual& visual) { return !meshView(visual).isEmpty(); }
+  static Tempest::Matrix4x4 matrix(const ObjVisual& visual) { return meshView(visual).node(0).position(); }
+  static const Material& material(const ObjVisual& visual) { return meshView(visual).node(0).material(); }
 
   static void attachModel(ObjVisual& visual, WorldView& view, const ProtoMesh* proto, const Tempest::Vec3& position) {
     visual.setType(ObjVisual::M_Mdl);
@@ -121,15 +143,26 @@ struct MeshGltfTest {
   static bool modelDrawable(const ObjVisual& visual) { return !visual.mdl.view.view.isEmpty(); }
   static Tempest::Matrix4x4 modelMatrix(const ObjVisual& visual) { return visual.mdl.view.view.node(0).position(); }
   static bool modelSlotDrawable(const ObjVisual& visual) { return !visual.mdl.view.item.at(0).view.isEmpty(); }
-  static Tempest::Matrix4x4 modelSlotMatrix(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.node(0).position(); }
-  static const Tempest::Texture2d* modelSlotTexture(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.node(0).material().tex; }
-  static const ProtoMesh* modelSlotProto(const ObjVisual& visual) { return visual.mdl.view.item.at(0).deferredProto; }
+  static Tempest::Matrix4x4 modelSlotMatrix(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.view().node(0).position(); }
+  static const Tempest::Texture2d* modelSlotTexture(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.view().node(0).material().tex; }
+  static const ProtoMesh* modelSlotProto(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.protoMesh(); }
+  // a slot item with no item behind it (graphics/itemview)
+  static ItemView slotItem(MeshObjects::Mesh&& mesh, int32_t material) {
+    const auto* proto = mesh.protoMesh();
+    return ItemView(proto,material,std::move(mesh));
+    }
   static bool startModelAnimation(ObjVisual& visual, const Animation::Sequence& sequence) {
     return visual.mdl.view.pose().startAnim(visual.mdl.view.solver,&sequence,0,BS_NONE,Pose::Force,0);
     }
   };
 
 namespace {
+#ifdef __APPLE__
+using TestApi = Tempest::MetalApi;
+#else
+using TestApi = Tempest::VulkanApi;
+#endif
+
 size_t assertions = 0;
 
 void require(bool condition, std::string_view message) {
@@ -147,17 +180,8 @@ void textFile(const std::filesystem::path& path, std::string_view text) {
     throw std::runtime_error("unable to write mesh fixture");
   }
 
-void word(std::vector<uint8_t>& bytes, uint32_t value) {
-  for(size_t i=0;i<4;++i)
-    bytes.push_back(uint8_t(value>>(i*8)));
-  }
-
-void real(std::vector<uint8_t>& bytes, float value) {
-  uint32_t bits = 0;
-  static_assert(sizeof(bits)==sizeof(value));
-  std::memcpy(&bits,&value,sizeof(bits));
-  word(bytes,bits);
-  }
+#include "mesh_gltf_color.h" // word, real; colorCases
+#include "tree_bough_cut_test.h"
 
 struct GlbOptions {
   size_t positions = 3;
@@ -1436,6 +1460,478 @@ void indexCases(const Fixture& fixture) {
   resourcePaths(fixture,true);
   }
 
+void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool dxt5 = false,
+                  uint32_t side = 4, uint32_t mips = 1);
+
+std::string impostorLevel(int px = 49) {
+  return R"({"impostor":{"albedo":"test/atlas.dds","surface":"test/atlas.dds","orm":"test/atlas.dds"},"px":)"+
+         std::to_string(px)+"}";
+  }
+
+// The switches are read once, so their settings and environment cases need fresh processes.
+int levelSwitchChild(std::string_view mode) {
+  Fixture fixture;
+  const auto root=fixture.root.string();
+  const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str(),"-rt","0"};
+  CommandLine commandLine(5,args);
+  std::unique_ptr<Settings> settings;
+  if(mode.starts_with("bough-")) {
+    glbFile(fixture.root/"meshes/test/lod1.glb");
+    fixture.index(mode!="bough-legacy" ?
+      R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400}],"hierarchy":"test/missing.json"}})" :
+      R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400}]}})");
+    Resources resources;
+    if(mode!="bough-legacy") {
+      // The game indexes the content before it loads its settings.
+      textFile(fixture.root/"system.ini", "");
+      textFile(fixture.root/"user.ini", "[INTERNAL]\ntreeBoughLod=1\n");
+      settings = std::make_unique<Settings>();
+      settings->load((fixture.root/"system.ini").u16string(),(fixture.root/"user.ini").u16string());
+      }
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(TreeBough::enabled()==(mode!="bough-env-off"),"tree bough switch after settings load");
+    require(proto!=nullptr && proto->attach.size()==1 && proto->attach[0].sub.size()==1,"plain level mesh loads");
+    const auto& mesh = proto->attach[0];
+    const auto& sub = mesh.sub[0];
+    require(mesh.treeBough==nullptr && mesh.levelMeshlets(sub.iboOffset,sub.iboLength,0)==std::pair(0u,1u) &&
+            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,1)==std::pair(1u,1u) &&
+            mesh.rtSlice(sub.iboOffset,sub.iboLength)==std::pair(sub.iboOffset+sub.iboLength,sub.iboLength),
+            "missing or disabled hierarchy keeps the meshlet and ray ranges");
+    return 0;
+    }
+  if(mode.starts_with("shadow-")) {
+    textFile(fixture.root/"system.ini", "");
+    const char* ini = "";
+    float expectedNearPx = MeshLevels::ShadowNearDefaultPx;
+    if(mode=="shadow-ini") {
+      ini = "[INTERNAL]\nshadowLevels=0\nshadowLevelNearPx=600\n";
+      expectedNearPx = 600.f;
+      }
+    if(mode=="shadow-env") {
+      ini = "[INTERNAL]\nshadowLevelNearPx=600\n";
+      expectedNearPx = 650.f;
+      }
+    textFile(fixture.root/"user.ini", ini);
+    settings = std::make_unique<Settings>();
+    settings->load((fixture.root/"system.ini").u16string(), (fixture.root/"user.ini").u16string());
+    const bool  enabled = MeshLevels::shadowLevelsEnabled();
+    const float nearPx  = MeshLevels::shadowNearPx();
+    require(nearPx==expectedNearPx &&
+            MeshLevels::pickShadow(4, 0, false, 700.f, 0, true, nearPx)==(mode=="shadow-default" ? 3 : 0),
+            "the shadow selection must honor the default, INI and environment: "+std::string(mode));
+    require(enabled==(mode=="shadow-default") && MeshLevels::pickShadow(4, 0, false, 700.f, 0, enabled, nearPx)==(enabled ? 3 : 0),
+            "the shadow switch must affect only the shadow level: "+std::string(mode));
+    return 0;
+    }
+  const bool impostorOnly = mode.starts_with("impostor-");
+  if(mode.ends_with("-ini") || mode=="ini") {
+    textFile(fixture.root/"system.ini","");
+    textFile(fixture.root/"user.ini",impostorOnly ? "[INTERNAL]\nimpostors=0\n" : "[INTERNAL]\nmeshLevels=0\n");
+    settings=std::make_unique<Settings>();
+    settings->load((fixture.root/"system.ini").u16string(),(fixture.root/"user.ini").u16string());
+    }
+  glbFile(fixture.root/"meshes/test/lod1.glb");
+  alphaDdsFile(fixture.root/"meshes/test/atlas.dds",false,true,MeshLevels::ImpostorAtlasSize,MeshLevels::ImpostorMipCount);
+  fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400},)"+
+                impostorLevel()+"]}}");
+  Resources resources;
+  fixture.mount();
+  const auto* proto = Resources::loadMesh("own_mesh.3ds");
+  require(MeshLevels::enabled()==impostorOnly,"mesh levels switch has the wrong state: "+std::string(mode));
+  if(impostorOnly)
+    require(!MeshLevels::impostorsEnabled(),"the impostor switch must be off: "+std::string(mode));
+  require(proto!=nullptr && proto->attach.size()==1 && proto->attach[0].sub.size()==1,"the mesh must load");
+  const auto& mesh = proto->attach[0];
+  const auto& sub  = mesh.sub[0];
+  require(mesh.impostor.px==0.f,"the impostor must be absent when switched off");
+  const auto expected = impostorOnly ? std::pair(sub.iboOffset+sub.iboLength,sub.iboLength) :
+                                       std::pair(sub.iboOffset,sub.iboLength);
+  require(mesh.levels.size()==size_t(impostorOnly) && mesh.rtSlice(sub.iboOffset,sub.iboLength)==expected &&
+          mesh.levelMeshlets(sub.iboOffset,sub.iboLength,1)==std::pair(uint32_t(impostorOnly),1u),
+          "switching off the impostor must preserve the 3D levels and their ray geometry when enabled: "+std::string(mode));
+  std::cout << "mesh detail switch " << mode << " leaves " << mesh.levels.size() << " 3D levels\n";
+  return 0;
+  }
+
+// Runs levelSwitchChild in this test's binary anew; fork and exec only, so a thread of this process cannot hold a lock
+void levelSwitchCase(std::string_view mode) {
+  std::error_code error;
+  const auto self = std::filesystem::read_symlink("/proc/self/exe",error);
+  require(!error,"the switch's case needs this test's binary (/proc/self/exe)");
+  std::vector<std::string> env;
+  for(char** e=environ; *e!=nullptr; ++e) {
+    const std::string_view v(*e);
+    if(!v.starts_with("OPENGOTHIC_MESH_LEVELS=") && !v.starts_with("OPENGOTHIC_IMPOSTORS=") &&
+       !v.starts_with("OPENGOTHIC_SHADOW_LEVELS=") && !v.starts_with("OPENGOTHIC_SHADOW_LEVEL_NEAR_PX=") &&
+       !v.starts_with("OPENGOTHIC_TREE_BOUGH_LOD=") &&
+       !v.starts_with("GOTHIC_MESH_LEVELS_CHILD="))
+      env.emplace_back(v);
+    }
+  env.push_back("GOTHIC_MESH_LEVELS_CHILD="+std::string(mode));
+  if(mode=="env")
+    env.push_back("OPENGOTHIC_MESH_LEVELS=0");
+  if(mode=="impostor-env")
+    env.push_back("OPENGOTHIC_IMPOSTORS=0");
+  if(mode=="shadow-env") {
+    env.push_back("OPENGOTHIC_SHADOW_LEVELS=0");
+    env.push_back("OPENGOTHIC_SHADOW_LEVEL_NEAR_PX=650");
+    }
+  if(mode=="bough-env-off")
+    env.push_back("OPENGOTHIC_TREE_BOUGH_LOD=0");
+  if(mode=="bough-legacy")
+    env.push_back("OPENGOTHIC_TREE_BOUGH_LOD=1");
+  std::vector<char*> envp;
+  for(auto& v:env)
+    envp.push_back(v.data());
+  envp.push_back(nullptr);
+  const std::string path = self.string();
+  char* argv[] = {const_cast<char*>(path.c_str()),nullptr};
+  std::cout.flush();
+  const pid_t child = fork();
+  require(child>=0,"the switch's process must start");
+  if(child==0) {
+    execve(path.c_str(),argv,envp.data());
+    _exit(127);
+    }
+  int status = 0;
+  require(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0,
+          "the mesh detail switch must be respected: "+std::string(mode));
+  }
+
+// Levels of detail of an own mesh (graphics/meshlevels.h): the switch, the choice by the height on screen, the field
+// of meshes.json and the packing of the levels after the mesh
+void levelCases(const Fixture& fixture) {
+  require(MeshLevels::parse("",true) && !MeshLevels::parse("",false) && !MeshLevels::parse("0",true) &&
+          MeshLevels::parse("1",false),"OPENGOTHIC_MESH_LEVELS must win over [INTERNAL] meshLevels, 0 is off");
+  levelSwitchCase("env");
+  levelSwitchCase("ini");
+  levelSwitchCase("impostor-env");
+  levelSwitchCase("impostor-ini");
+  levelSwitchCase("shadow-default");
+  levelSwitchCase("shadow-env");
+  levelSwitchCase("shadow-ini");
+  levelSwitchCase("bough-env-off");
+  levelSwitchCase("bough-legacy");
+  levelSwitchCase("bough-ini");
+
+  const auto spruceShadow = [](uint8_t previous, float height) {
+    return MeshLevels::pickShadow(4, previous, previous!=0, height, 0, true, MeshLevels::ShadowNearDefaultPx);
+    };
+  const auto separate = spruceShadow(0, 799.9f);
+  require(spruceShadow(0, 800.f)==0 && separate==3 && spruceShadow(separate, 800.f)==3 &&
+          spruceShadow(separate, 879.9f)==3 && spruceShadow(separate, 880.f)==0 && spruceShadow(0, 879.9f)==0,
+          "the near shadow must leave the visual GLB below 800 pixels and return at 880 pixels");
+  constexpr float nearPx = MeshLevels::ShadowNearDefaultPx;
+  require(MeshLevels::pickShadow(4, 1, false, 850.f, 0, true, nearPx)==0 &&
+          MeshLevels::pickShadow(4, 0, false, 800.f, 1, true, nearPx)==1 &&
+          MeshLevels::pickShadow(4, 0, false, 390.f, 0, true, nearPx)==4 &&
+          MeshLevels::pickShadow(4, 4, true, 420.f, 1, true, nearPx)==4 &&
+          MeshLevels::pickShadow(4, 4, true, 450.f, 1, true, nearPx)==3 &&
+          MeshLevels::pickShadow(2, 0, false, 390.f, 0, true, nearPx)==2 &&
+          MeshLevels::pickShadow(4, 3, true, 850.f, 0, false, nearPx)==0,
+          "shadow LOD must match the near visual GLB and use its own thresholds and hysteresis farther away");
+  const auto probeShadow = [](uint8_t previous, float height) {
+    return MeshLevels::pickShadow(4, previous, previous!=0, height, 0, true, 600.f);
+    };
+  require(MeshLevels::parseShadowNearPx("1")==MeshLevels::ShadowFarPx && !MeshLevels::parseShadowNearPx("nan") &&
+          probeShadow(0, 599.9f)==3 && probeShadow(0, 600.f)==0 &&
+          probeShadow(3, 659.9f)==3 && probeShadow(3, 660.f)==0 && probeShadow(0, 390.f)==4,
+          "a configured near threshold must keep the return band and the far shadow step");
+
+  // Spruce A, 18 m, at 1920x1080 and 67.5 degrees: 400, 200, 100 and 50 px at 36, 73, 145 and 291 m
+  const float px[] = {400,200,100,50};
+  const auto  count = std::size(px);
+  const auto  at    = [](float metres) { return MeshLevels::screenHeight(1800,metres*100,1.f/std::tan(0.589f),1080); };
+  require(std::abs(at(36.37f)-400)<1 && std::abs(at(291.f)-50)<1,"the height on screen must go as height/distance");
+  uint8_t level = 0;
+  std::vector<uint8_t> seen;
+  for(float metres=10; metres<=400; metres+=.5f) {
+    const auto next = MeshLevels::pick(px,count,level,at(metres));
+    require(next>=level,"a farther object must never get a finer level");
+    if(next!=level)
+      seen.push_back(next);
+    level = next;
+    }
+  require(seen==std::vector<uint8_t>{1,2,3,4} && level==4,"going away the levels must come one by one, in their order");
+  seen.clear();
+  for(float metres=400; metres>=10; metres-=.5f) {
+    const auto next = MeshLevels::pick(px,count,level,at(metres));
+    require(next<=level,"a nearer object must never get a coarser level");
+    if(next!=level)
+      seen.push_back(next);
+    level = next;
+    }
+  require(seen==std::vector<uint8_t>{3,2,1,0} && level==0,"coming near the levels must go one by one back to the mesh");
+  require(MeshLevels::pick(px,count,0,399)==1 && MeshLevels::pick(px,count,0,400)==0 && MeshLevels::pick(px,count,0,420)==0,
+          "a level must come under its px, not on it");
+  for(float h:{399.f,401.f,420.f,439.f,400.f,438.f})
+    require(MeshLevels::pick(px,count,1,h)==1,"a height between px and 1.1 px must keep the level it has: no flicker");
+  require(MeshLevels::pick(px,count,1,440)==0 && MeshLevels::pick(px,count,3,109)==3 && MeshLevels::pick(px,count,3,110)==2,
+          "a level must give way to the finer one at 1.1 of its px");
+  require(MeshLevels::pick(px,count,3,50)==3 && MeshLevels::pick(px,count,4,54)==4 && MeshLevels::pick(px,count,4,55)==3,
+          "the fourth level must have a 50 to 55 px hysteresis band");
+  require(MeshLevels::pick(px,count,0,49)==4 && MeshLevels::pick(px,count,4,1000)==0,"a jump must cross every threshold at once");
+  require(MeshLevels::pick(px,0,0,1)==0 && MeshLevels::pick(px,1,0,50)==1,
+          "a record without levels must draw the mesh at any height; one level must be the last");
+  // the field
+  const auto root = fixture.root/"meshes/test";
+  glbFile(root/"own.glb");
+  glbFile(root/"lod1.glb");
+  GlbOptions bigger;
+  bigger.transformed = true;
+  glbFile(root/"lod2.glb",bigger);
+  const auto record = [&](std::string_view levels) {
+    fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":)"+std::string(levels)+"}}");
+    };
+  const std::string firstTwo = R"([{"glb":"test/lod1.glb","px":400},{"glb":"test/lod2.glb","px":200.5})";
+  const float fieldPx[] = {400,200.5f,100,50};
+  for(size_t expectedLevels:{2u,4u}) {
+    record(firstTwo+(expectedLevels==2 ? "]" : R"(,{"glb":"test/lod1.glb","px":100},{"glb":"test/lod1.glb","px":50}])"));
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1,"a mesh with levels must load");
+    const auto& mesh = proto->attach[0];
+    require(mesh.levels.size()==expectedLevels,"the mesh must keep exactly the declared levels");
+    require(mesh.impostor.px==0.f,"a GLB-only record must not have an impostor");
+    require(mesh.sub.size()==1 && mesh.sub[0].iboOffset==0,"the test mesh must begin with one submesh");
+    const auto& sub = mesh.sub[0];
+    // what VisualObjects gives the object's cluster at each level (drawnMeshlets)
+    using Range = std::pair<uint32_t,uint32_t>;
+    const auto itself = Range(uint32_t(sub.iboOffset/PackedMesh::MaxInd),uint32_t(sub.iboLength/PackedMesh::MaxInd));
+    require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,0)==itself,"level 0 must draw the mesh itself");
+    for(size_t undeclared=expectedLevels+1; undeclared<=MeshLevels::MaxLevels+1; ++undeclared)
+      require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,undeclared)==itself,
+              "an undeclared level must draw the mesh itself");
+    size_t offset = sub.iboOffset+sub.iboLength;
+    for(size_t i=0; i<mesh.levels.size(); ++i) {
+      require(mesh.levels[i].px==fieldPx[i],"the levels must keep their order and px");
+      const auto& slices = mesh.levels[i].sub;
+      require(slices.size()==1 && slices[0].first==offset && slices[0].second==PackedMesh::MaxInd,
+              "each level must have one meshlet packed after the previous one");
+      require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,i+1)==Range(uint32_t(offset/PackedMesh::MaxInd),1),
+              "a cluster must use the meshlets of its declared level");
+      offset += slices[0].second;
+      }
+    require(mesh.rtSlice(sub.iboOffset,sub.iboLength)==mesh.levels.back().sub[0],"the ray scene must take the last declared level");
+    require(close(mesh.bbox.bbox[0].x,-400.f) && close(mesh.bbox.bbox[1].y,600.f),
+            "the mesh's own box (the wind's height) must not take the levels in");
+    const auto& own = mesh.bbox.bbox;
+    const auto& all = mesh.drawn.bbox;
+    require(all[0].x<=own[0].x && all[0].y<=own[0].y && all[0].z<=own[0].z &&
+            all[1].x>=own[1].x && all[1].y>=own[1].y && all[1].z>=own[1].z,"the culling box must hold the mesh");
+    require(mesh.drawn.rConservative>mesh.bbox.rConservative+100.f,"the culling box must hold the larger level");
+    require(mesh.shape!=nullptr && mesh.hullVertices.size()==3 && !proto->points.empty(),
+            "collision and the hull must be built from the mesh alone");
+    for(const auto& point:mesh.hullVertices)
+      require(point.x<=-100.f && point.x>=-400.f && point.y<=600.f,"the hull must have no vertex of a level");
+  }
+
+  const std::string four = firstTwo+R"(,{"glb":"test/lod1.glb","px":100},{"glb":"test/lod1.glb","px":50})";
+  const auto atlas = root/"atlas.dds";
+  alphaDdsFile(atlas,false,true,MeshLevels::ImpostorAtlasSize,MeshLevels::ImpostorMipCount);
+  const auto loadImpostor = [&](std::string_view entries, size_t expectedLevels, float expectedPx) {
+    record(entries);
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1,"the impostor entry must not affect mesh loading");
+    const auto& mesh = proto->attach[0];
+    require(mesh.levels.size()==expectedLevels && mesh.impostor.px==expectedPx,
+            "the terminal impostor must be loaded independently of the GLBs");
+    if(!mesh.levels.empty()) {
+      const auto& sub = mesh.sub[0];
+      require(mesh.rtSlice(sub.iboOffset,sub.iboLength)==mesh.levels.back().sub[0],
+              "rays must still use the last 3D level");
+      }
+    if(expectedPx>0.f) {
+      const auto before = mesh.pickLevel(4,49.f,true);
+      const auto entered = mesh.pickLevel(before.stage,48.9f,true);
+      const auto held = mesh.pickLevel(entered.stage,53.8f,true);
+      const auto returned = mesh.pickLevel(held.stage,49.f * MeshLevels::Hysteresis,true);
+      require(before==MeshLevels::Selection{4,4} && !before.impostor() &&
+              entered==MeshLevels::Selection{5,4} && entered.impostor() && held==entered && returned==before,
+              "the impostor must enter below its threshold, keep level four for shadows and return after hysteresis");
+      require(mesh.pickLevel(held.stage,48.9f,false)==before,
+              "a disabled impostor must return to the last GLB");
+      }
+    };
+  const std::string tail = ","+impostorLevel()+"]";
+  loadImpostor(four+tail,4,49.f);
+  {
+    size_t rejected = 0;
+    Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+      if(mode==Tempest::Log::Error && std::string_view(text).find("px must be positive and less than the last GLB level's px")!=std::string_view::npos)
+        ++rejected;
+      });
+    struct LogReset { ~LogReset() { Tempest::Log::setOutputCallback({}); } } reset;
+    for(int px:{50,0,-1})
+      loadImpostor(four+","+impostorLevel(px)+"]",4,0.f);
+    require(rejected==3,"equal and nonpositive impostor thresholds must be rejected without discarding the GLBs");
+  }
+  loadImpostor(four+R"(,{"impostor":{"albedo":"../atlas.dds"},"px":49}])",4,0.f);
+  loadImpostor("["+impostorLevel()+R"(,{"glb":"test/lod1.glb","px":50}])",1,0.f);
+  loadImpostor("["+impostorLevel()+"]",0,0.f);
+  alphaDdsFile(atlas,false,true); // valid DDS, incompatible atlas dimensions and mip chain
+  loadImpostor(four+tail,4,0.f);
+  std::filesystem::remove(atlas);
+
+  // a wrong field: the reason in the log, the mesh drawn alone
+  const auto alone = [&](std::string_view what) {
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1 && proto->attach[0].sub.size()==1 &&
+            proto->attach[0].sub[0].texName=="OWN_TEST_BARREL_WOOD.TGA",
+            "a mesh whose levels are rejected must still load: "+std::string(what));
+    require(proto->attach[0].levels.empty() &&
+            proto->attach[0].rtSlice(proto->attach[0].sub[0].iboOffset,proto->attach[0].sub[0].iboLength).first==0,
+            "levels must be rejected: "+std::string(what));
+    };
+  fixture.index();
+  alone("no field");
+  {
+    record(R"([{"glb":"test/lod1.glb","px":400},{"glb":"test/lod1.glb","px":200},)"
+           R"({"glb":"test/lod1.glb","px":100},{"glb":"test/lod1.glb","px":50},{"glb":"test/lod1.glb","px":25}])");
+    bool tooMany = false;
+    Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+      if(mode==Tempest::Log::Error && std::string_view(text).find("5 levels, at most 4")!=std::string_view::npos)
+        tooMany = true;
+      });
+    struct LogReset { ~LogReset() { Tempest::Log::setOutputCallback({}); } } reset;
+    alone("five levels");
+    require(tooMany,"a fifth level must be rejected for exceeding the level limit");
+  }
+  for(const auto* levels:{R"({"glb":"test/lod1.glb","px":400})",
+                          R"([{"glb":"test/lod1.glb","px":200},{"glb":"test/lod2.glb","px":200}])",
+                          R"([{"glb":"test/lod1.glb","px":200},{"glb":"test/lod2.glb","px":400}])",
+                          R"([{"glb":"test/lod1.glb","px":0}])",
+                          R"([{"glb":"test/lod1.glb","px":-1}])",
+                          R"([{"glb":"test/lod1.glb","px":"400"}])",
+                          R"([{"glb":"test/lod1.glb"}])",
+                          R"([{"px":400}])",
+                          R"([{"glb":7,"px":400}])",
+                          R"(["test/lod1.glb"])",
+                          R"([{"glb":"../meshes/test/lod1.glb","px":400}])",
+                          R"([{"glb":"test/lod1.png","px":400}])",
+                          R"([{"glb":"test/missing.glb","px":400}])"}) {
+    record(levels);
+    alone(levels);
+    }
+  record(R"([{"glb":"test/lod1.glb","px":400}])");
+  GlbOptions other;
+  other.texture = "OWN_TEST_OTHER";
+  glbFile(root/"lod1.glb",other);
+  alone("a level of another material");
+  other = {};
+  other.mixedAlpha = true;
+  glbFile(root/"lod1.glb",other);
+  alone("a level with a material the mesh has not");
+  colorGlbFile(root/"lod1.glb",2);
+  alone("a level with COLOR_0 of a mesh without it");
+  textFile(root/"lod1.glb","broken glb");
+  alone("a level that does not load");
+  std::filesystem::remove(root/"lod1.glb");
+  std::filesystem::remove(root/"lod2.glb");
+  fixture.index();
+  }
+
+void clusterHierarchyCases(const Fixture& fixture) {
+  const auto dir = fixture.root/"meshes/test";
+  const auto glb = dir/"cluster.glb";
+  const auto index = [&](std::string_view fields) {
+    fixture.index(R"({"own_mesh":{"glb":"test/cluster.glb")"+std::string(fields)+"}}");
+    };
+  asset::StaticMesh grid;
+  auto& surface = grid.sub_meshes.emplace_back();
+  surface.mat.name = surface.mat.texture = "OWN_TEST_BARREL_WOOD.TGA";
+  surface.mat.group = asset::MaterialGroup::WOOD;
+  constexpr uint16_t side = 21;
+  for(uint16_t y=0; y<side; ++y)
+    for(uint16_t x=0; x<side; ++x) {
+      const auto vertex = uint16_t(grid.positions.size());
+      grid.positions.push_back({float(x)*10.f,float(y)*10.f,30.f});
+      surface.wedges.push_back({{0,0,1},{float(x)/side,float(y)/side},vertex});
+      if(x>0 && y>0) {
+        const auto left = uint16_t(vertex-1), below = uint16_t(vertex-side), corner = uint16_t(below-1);
+        surface.triangles.push_back({{corner,left,vertex}});
+        surface.triangles.push_back({{corner,vertex,below}});
+        }
+      }
+  grid.bbox = {grid.positions.front(),grid.positions.back()};
+  writeBaseMesh(grid,"CLUSTER_MESH",glb);
+  std::vector<uint8_t> bytes;
+  const auto mesh = loadGltfMesh(glb,&bytes);
+  const auto sourceCrc32 = uint32_t(mz_crc32(0,bytes.data(),bytes.size()));
+  const std::array<uint8_t,1> locked = {0};
+  const auto graph = MeshClusterLod::build(mesh,{},locked);
+  require(std::ranges::any_of(graph.clusters,[](const auto& c) { return c.level==1; }),
+          "cluster fixture must provide a simplifiable surface");
+  MeshClusterLod::write(glb,bytes.size(),sourceCrc32,graph);
+  const auto restored = MeshClusterLod::read(glb,bytes.size(),sourceCrc32,mesh,locked);
+  require(restored.has_value(),"own mesh graph must read back with the GLB key");
+  MeshClusterLod::write(dir/"reserialized.glb",bytes.size(),sourceCrc32,*restored);
+  require(gothicglb::readFile(dir/"cluster.clod")==gothicglb::readFile(dir/"reserialized.clod"),
+          "graph round trip must preserve every packed field");
+  const auto graphBytes = gothicglb::readFile(dir/"cluster.clod");
+  const auto staleGlb = dir/"stale.glb";
+  for(const size_t offset:{4u,8u,12u}) { // Format, GLB loader and cluster builder versions.
+    auto stale = graphBytes;
+    stale.at(offset) ^= 1u;
+    gothicglb::writeFile(dir/"stale.clod",stale.data(),stale.size());
+    require(!MeshClusterLod::read(staleGlb,bytes.size(),sourceCrc32,mesh,locked),
+            "a different format, loader or builder version must invalidate the graph");
+    }
+
+  const auto load = [&](bool clustered, size_t levels, float impostor) {
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1,"cluster fixture must load through Resources");
+    const auto& render = proto->attach.front();
+    require(render.clusterLevels.empty()==!clustered && render.levels.size()==levels && render.impostor.px==impostor,
+            "only rigid static replacements without discrete levels may use a current graph");
+    if(clustered) {
+      require(render.clusterLevels.size()==render.meshletSpheres.size() &&
+              render.sub.front().rtLength<render.sub.front().iboLength && render.sub.front().rtLength>0,
+              "graphics must register every meshlet while rays reference only level zero");
+      }
+    require(render.shape!=nullptr && !render.hullVertices.empty(),"clustered visuals must retain collision geometry");
+    return render.hullVertices;
+    };
+  index("");
+  const auto clusteredHull = load(true,0,0);
+  constexpr std::string_view name = "CLUSTER_MESH";
+  const auto nameAt = std::search(bytes.begin(),bytes.end(),name.begin(),name.end());
+  require(nameAt!=bytes.end(),"GLB fixture must contain its node name");
+  *nameAt = 'D';
+  gothicglb::writeFile(glb,bytes.data(),bytes.size());
+  {
+    size_t rejected = 0;
+    Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+      if(mode==Tempest::Log::Error && std::string_view(text).find("cluster hierarchy for \"OWN_MESH\"")!=std::string_view::npos)
+        ++rejected;
+      });
+    struct LogReset { ~LogReset() { Tempest::Log::setOutputCallback({}); } } reset;
+    require(load(false,0,0)==clusteredHull,"the clustered and ordinary visuals must use identical hull geometry");
+    require(rejected==1,"a stale graph must log one rejection naming its visual");
+  }
+  *nameAt = 'C';
+  gothicglb::writeFile(glb,bytes.data(),bytes.size());
+
+  glbFile(dir/"cluster-level.glb");
+  const std::string levels = R"(,"levels":[{"glb":"test/cluster-level.glb","px":80})";
+  index(levels+"]");
+  load(false,1,0);
+  const auto atlas = dir/"atlas.dds";
+  alphaDdsFile(atlas,false,true,MeshLevels::ImpostorAtlasSize,MeshLevels::ImpostorMipCount);
+  index(levels+","+impostorLevel()+"]");
+  load(false,1,49.f);
+  std::filesystem::remove(atlas);
+  fixture.index();
+  }
+
 void fractureFile(const std::filesystem::path& path, size_t version = 1, size_t sourceSize = 0, uint32_t sourceCrc32 = 0,
                   size_t pieceCount = 8) {
   // Eight independent solid tetrahedra exercise the real cache parser and
@@ -1659,7 +2155,7 @@ void fractureCache(const Fixture& fixture) {
   glbFile(glb);
   }
 
-void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool dxt5 = false) {
+void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool dxt5, uint32_t side, uint32_t mips) {
   std::array<uint8_t,144> bytes{};
   auto field = [&](size_t at, uint32_t value) {
     for(size_t i=0;i<4;++i)
@@ -1667,15 +2163,17 @@ void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool d
     };
   field(0,0x20534444); // DDS
   field(1,124);
-  field(2,0x81007);
-  field(3,4);
-  field(4,4);
-  field(5,dxt5 ? 16 : 8);
-  field(7,1);
+  const uint32_t blockBytes = dxt5 ? 16 : 8;
+  const auto levelBytes = [blockBytes](uint32_t size) { return ((size+3)/4)*((size+3)/4)*blockBytes; };
+  field(2,mips>1 ? 0xa1007 : 0x81007);
+  field(3,side);
+  field(4,side);
+  field(5,levelBytes(side));
+  field(7,mips);
   field(19,32);
   field(20,4);
   field(21,dxt5 ? 0x35545844 : 0x31545844); // DXT5 / DXT1
-  field(27,0x1000);
+  field(27,mips>1 ? 0x401008 : 0x1000);
   if(dxt5) {
     bytes[128] = 255; // Opaque alpha endpoint, all alpha indices zero.
     bytes[136] = 255;
@@ -1696,6 +2194,13 @@ void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool d
     }
   std::ofstream out(path,std::ios::binary);
   out.write(reinterpret_cast<const char*>(bytes.data()),dxt5 ? 144 : 136);
+  if(side>4 || mips>1) {
+    uint32_t length = 128;
+    for(uint32_t mip=0; mip<mips; ++mip)
+      length += levelBytes(std::max(1u,side>>mip));
+    out.seekp(length-1);
+    out.put('\0');
+    }
   if(!out)
     throw std::runtime_error("unable to write mesh alpha DDS fixture");
   }
@@ -1854,6 +2359,32 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
   require(errors==1 && view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
           "an exhausted Near retry must log once and never retry on later frames or residency changes");
   }
+  {
+  // The catalogue start (worldchunkcatalogue.h): no stitched mesh; the Near chunk comes from its .wcb into the
+  // same page range.
+  cookWorldChunks(directory);
+  ChunkTable catalogueTable;
+  auto landscape=startWorldChunks(directory,{},readWorldChunkManifest(directory),catalogueTable,true);
+  (void)WorldCloth::extract(landscape,&catalogueTable);
+  require(catalogueTable.source && catalogueTable.source->catalogue() && landscape.polygons.material_indices.empty(),
+          "a cooked world must take the catalogue start");
+  ChunkResidency residency(catalogueTable);
+  // The view as the world load makes it (graphics/landscapestart.h): the stitched landscape's bounds, as the start
+  // without the catalogue gives them (packed.bbox() also holds the meshlets' padding).
+  const auto made=streamingWorldView(landscape,catalogueTable,"CONTRACT.ZEN");
+  auto& view=*made;
+  const auto bounds=view.bbox(), expected=PackedMesh::landscapeBbox(readWorldChunks(directory));
+  require(bounds.first.x==expected.first.x && bounds.first.y==expected.first.y && bounds.first.z==expected.first.z &&
+          bounds.second.x==expected.second.x && bounds.second.y==expected.second.y && bounds.second.z==expected.second.z,
+          "the catalogue start's view must take the stitched landscape's bounds");
+  view.startLandscapeStreaming(std::move(landscape),residency,0);
+  view.prepareLandscapeWork();
+  residency.update({100,100,100},{100,100,100},1000);
+  view.finishLandscapeUpdate();
+  require(view.landscapeReady() && residency.stats().published==1 && catalogueTable.source->reads().cooked==1 &&
+          residency.stats().landscapePageUsedBytes==packed.vertices.size()*sizeof(packed.vertices[0])+packed.indices8.size(),
+          "the catalogue start must publish the Near chunk from its .wcb into the same page range");
+  }
   device.waitIdle();
   for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
     Resources::resetRecycled(frame);
@@ -1880,7 +2411,7 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
 // into the same pages and ranges, and the live buffers and structures come back to where they were. The ray scene
 // is chosen from the command line once, by Shaders, so this is the test's last case.
 void landscapeRtLifetime(const Fixture& fixture) {
-  Tempest::VulkanApi api;
+  TestApi api;
   Tempest::Device device(api);
   if(!device.properties().raytracing.rayQuery) {
     std::cout << "landscape ray scene lifetime: skipped, the GPU has no ray query\n";
@@ -2257,7 +2788,7 @@ void mobsiVobLifetime(Tempest::Device& device) {
   require(slotTexture==Resources::loadMaterialAlbedo("SLOT_V1.TGA") &&
           slotTexture!=slotProto->attach[0].sub[0].material.tex,
           "mobsi slot fixture must select a texture distinct from its prototype's default material");
-  visual.setSlotItem(std::move(slotView),"ZS_POS0",1);
+  visual.setSlotItem(MeshGltfTest::slotItem(std::move(slotView),1),"ZS_POS0");
   const std::array textures={texture,slotTexture};
   auto* pose=&MeshGltfTest::modelPose(visual);
   require(!MeshGltfTest::modelDrawable(visual) && !MeshGltfTest::modelSlotDrawable(visual) &&
@@ -2336,6 +2867,67 @@ void mobsiVobLifetime(Tempest::Device& device) {
   std::cout << "mobsi streaming lifetime: 2 Near/Outside/Near cycles, resident animated pose, texture demand released\n";
   }
 
+void treeHiZBoundsCases() {
+  using Tempest::Vec3;
+  const auto spruce = [](float crownX, float barkHeight) {
+    asset::StaticMesh mesh;
+    mesh.positions = {{10,100,20},{25,100,22},{12,barkHeight,24},
+                      {crownX,700,80},{crownX+120,600,110},{crownX+50,1000,60}};
+    mesh.bbox = {{10,100,20},{crownX+120,barkHeight,110}};
+    for(const auto* name : {"HIZ_TREE_BARK.TGA", "HIZ_TREE_CROWN.TGA"}) {
+      const auto first = uint16_t(mesh.sub_meshes.size()*3);
+      auto& part = mesh.sub_meshes.emplace_back();
+      part.mat.name = part.mat.texture = name;
+      part.wedges = {{{0,0,1},{0,0},first},{{0,0,1},{1,0},uint16_t(first+1)},{{0,0,1},{0,1},uint16_t(first+2)}};
+      part.triangles.push_back({{0,1,2}});
+      }
+    return mesh;
+    };
+
+  PackedMesh packed(spruce(220,1200),PackedMesh::PK_Visual,true);
+  packed.addLevel(spruce(160,1100),150);
+  const StaticMesh mesh(packed);
+  const auto box = [&](size_t material, uint8_t stage, float height) {
+    const auto level = mesh.pickLevel(stage,height,false);
+    const auto& sub = mesh.sub.at(material);
+    const auto [first,count] = mesh.levelMeshlets(sub.iboOffset,sub.iboLength,level.glb);
+    const auto* bounds = mesh.treeHiZBox(first,count);
+    require(bounds!=nullptr,"the HiZ box must exist for the selected material and meshlet slice");
+    return *bounds;
+    };
+  const auto bark = box(0,0,151), coarseBark = box(0,0,149);
+  const auto crown = box(1,0,151), coarseCrown = box(1,0,149);
+  require(bark.min==Vec3(10,100,20) && bark.max==Vec3(25,1200,24) &&
+          crown.min==Vec3(220,600,60) && crown.max==Vec3(340,1000,110) &&
+          coarseBark.min==bark.min && coarseBark.max==Vec3(25,1100,24) &&
+          coarseCrown.min==Vec3(160,600,60) && coarseCrown.max==Vec3(280,1000,110),
+          "the rest boxes must exclude the other material, the other level and meshlet padding");
+
+  const uint32_t bits = FoliageWind::pack(mesh.sub[1].material.foliage,FoliageWind::Both);
+  const float reach = mesh.bbox.bbox[1].y;
+  const Vec3 axes[3] = {Vec3(1,0,0),Vec3(0,1.2f,0),Vec3(0.96f,0,0.28f)};
+  const float full = FoliageTree::travel(bits,reach);
+  const auto growAt = [&](float distance, float px) {
+    return FoliageTree::travel(bits,reach,FoliageTree::fade(bits,reach,axes[1].length(),distance,px));
+    };
+  const float partial = growAt(10000,1080);
+  require(growAt(1000,1080)==full && partial>0.f && partial<full && growAt(50000,1080)==0.f &&
+          growAt(50000,0)==full,"the box must follow the vertex wind fade and keep full travel with the fade off");
+  for(const float distance : {1000.f,10000.f,50000.f}) {
+    const auto fade = FoliageTree::fade(bits,reach,axes[1].length(),distance,1080);
+    for(int i=0; i<64; ++i) {
+      const float phase = float(i)/64.f, angle = 2.f*float(M_PI)*phase;
+      FoliageWind::Scene wind;
+      wind.wind = {std::sin(angle),std::cos(angle),1,1};
+      wind.phase = {phase,phase,phase,phase};
+      wind.swing = {phase,0,0,0};
+      const auto moved = FoliageTree::bend(crown.max,0xFFB04BFFu,bits,reach,axes,Vec3(),wind,{},false,fade);
+      require((moved-crown.max).length()<=growAt(distance,1080)+0.001f,
+              "the faded box must contain the wind's travel throughout the gust");
+      }
+    }
+  }
+
 void maskBc1Policy(const Fixture& fixture) {
   std::filesystem::create_directories(fixture.root/"materials");
   alphaDdsFile(fixture.root/"materials/transparent-bc1.dds",true);
@@ -2347,7 +2939,9 @@ void maskBc1Policy(const Fixture& fixture) {
     "SLOT_V0.TGA":{"albedo":"transparent-bc1.dds"},
     "SLOT_V1.TGA":{"albedo":"opaque-bc3.dds"},
     "OPAQUE_BC1.TGA":{"albedo":"opaque-bc1.dds"},
-    "OPAQUE_BC3.TGA":{"albedo":"opaque-bc3.dds"}
+    "OPAQUE_BC3.TGA":{"albedo":"opaque-bc3.dds"},
+    "HIZ_TREE_BARK.TGA":{"albedo":"opaque-bc1.dds","foliage":{"anchor":"tree","wind":4,"flutter":0}},
+    "HIZ_TREE_CROWN.TGA":{"albedo":"opaque-bc3.dds","foliage":{"anchor":"tree","wind":4,"flutter":4}}
   })");
   for(const bool hi:{false,true}) {
     zenkit::Font font;
@@ -2367,6 +2961,8 @@ void maskBc1Policy(const Fixture& fixture) {
   options.alpha = "MASK";
   glbFile(fixture.root/"meshes/test/own.glb",options);
   glbFile(fixture.root/"meshes/test/opaque.glb");
+  const auto colorPath = fixture.root/"meshes/test/vertex-color.glb";
+  colorGlbFile(colorPath,2);
   options = {};
   options.texture = "SLOT_V0.TGA";
   glbFile(fixture.root/"meshes/test/slot.glb",options);
@@ -2384,6 +2980,7 @@ void maskBc1Policy(const Fixture& fixture) {
   fixture.index(R"({
     "OWN_MESH":{"glb":"test/own.glb"},
     "OWN_OPAQUE":{"glb":"test/opaque.glb"},
+    "OWN_COLOR":{"glb":"test/vertex-color.glb"},
     "OWN_SLOT":{"glb":"test/slot.glb"},
     "OWN_MODEL_ROTATION":{"glb":"test/opaque.glb"},
     "OWN_MODEL_MASK":{"glb":"test/own.glb"},
@@ -2391,13 +2988,15 @@ void maskBc1Policy(const Fixture& fixture) {
     "OWN_MODEL_REFLECTED":{"glb":"test/oblique.glb"}
   })");
 
-  Tempest::VulkanApi api;
+  TestApi api;
   Tempest::Device device(api);
   {
     Resources resources(device);
     Shaders shaders;
     shaders.waitCompiler();
     fixture.mount();
+    treeHiZBoundsCases();
+    resourceColorCase(device,colorPath);
     const auto& font=Resources::font("ORIGINAL.extra.tga",Resources::FontType::Normal,1.25f);
     require(font.pixelSize()==21 && font.textSize("A B")==Tempest::Size(35,21),
             "native font must retain scaled source advances and height");
@@ -2603,7 +3202,7 @@ void effectCases(const std::string& game, const std::string& base) {
   setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
   const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str()};
   CommandLine commandLine(3,args);
-  Tempest::VulkanApi api;
+  TestApi api;
   Tempest::Device device(api);
   {
     std::string censusPath=(std::filesystem::temp_directory_path()/"gothic-music-wiring-XXXXXX").string();
@@ -2766,7 +3365,7 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
   setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
   const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-nointro"};
   CommandLine commandLine(4,args);
-  Tempest::VulkanApi api;
+  TestApi api;
   Tempest::Device device(api);
   {
     Resources resources(device);
@@ -2902,6 +3501,13 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
 
 int main() {
   try {
+    if(const char* mode=std::getenv("GOTHIC_MESH_LEVELS_CHILD")) {
+      if(std::string_view(mode)!="bough-cut")
+        return levelSwitchChild(mode);
+      treeBoughCutCases();
+      std::cout << "{\"test\":\"tree_bough_cut\",\"passed\":true,\"assertions\":" << assertions << "}\n";
+      return 0;
+      }
     // The effect receipt uses the caller's installation and base: read them before the fixture
     // points the environment at its own toy installation.
     const char* gameDir = std::getenv("GOTHIC_DIR");
@@ -2922,11 +3528,15 @@ int main() {
     fixture.index();
     resourcePaths(fixture,true);
     converterCases(fixture);
+    colorCases(fixture.root/"meshes/test/color.glb");
     headConverterCases(fixture);
     headManifestCases(fixture);
     generatedBarrel(fixture);
     rejectionCases(fixture);
     indexCases(fixture);
+    levelCases(fixture);
+    clusterHierarchyCases(fixture);
+    treeBoughCutCases();
     fractureCache(fixture);
     modelCases(fixture);
     setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);

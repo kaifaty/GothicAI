@@ -75,13 +75,17 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions import/placementdefinitions placementdefinitions import/activitydefinitions activitydefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/musicrecord dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
                videodata videoimport bink/video bink/frame)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/${source}.cpp")
 endforeach()
+list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/graphics/mesh/clusterlod.cpp")
+list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/npchelperdefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/asset/npchelperdefinitions.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/common/import/npchelperdefinitions.cpp")
+list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/meshclusterlod.cpp")
 if(NOT OPENGOTHIC_ENABLE_FRAME_PROFILE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/frameprofile.cpp")
 endif()
@@ -186,6 +190,15 @@ include(cmake/BaseImport.cmake)
 # Runtime manifest reading, cooked chunks, world cloth and the MSVC flag: one list for every build with the base.
 include(cmake/BaseRuntime.cmake)
 include(cmake/VideoImport.cmake)
+# Compile the builder with a replaceable simplifier call in the CPU test only.
+add_executable(gothic-cluster-lod-test EXCLUDE_FROM_ALL tests/cluster_lod_test.cpp common/graphics/mesh/clusterlod.cpp)
+target_include_directories(gothic-cluster-lod-test PRIVATE common)
+target_link_libraries(gothic-cluster-lod-test PRIVATE meshoptimizer)
+target_compile_definitions(gothic-cluster-lod-test PRIVATE
+  meshopt_simplifyWithAbsoluteAttributes=clusterLodTestSimplifyWithAbsoluteAttributes)
+if(NOT MSVC)
+  target_compile_options(gothic-cluster-lod-test PRIVATE -Wall -Wconversion -Werror -ffp-contract=off)
+endif()
 add_subdirectory(common/daedalus)
 target_link_libraries(${PROJECT_NAME} gothic-daedalus)
 target_link_libraries(${PROJECT_NAME} gothic-base-runtime gothic-video-runtime)
@@ -304,6 +317,9 @@ if(UNIX)
   # Pure production resolver/command gates: no assets, simulation or rendering device.
   add_executable(gothic-body-resolver-test tests/body_resolver_test.cpp)
   target_link_libraries(gothic-body-resolver-test PRIVATE OpenGothic AiBridge)
+  add_executable(gothic-npc-day-contract tests/npc_day_contract.cpp)
+  target_link_libraries(gothic-npc-day-contract PRIVATE OpenGothic AiBridge)
+  target_include_directories(gothic-npc-day-contract SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   # Real NPC/world fixture for growing and shrinking the live observation subscription.
   add_executable(gothic-body-watch-test tests/body_watch_test.cpp)
   target_link_libraries(gothic-body-watch-test PRIVATE OpenGothic AiBridge)
@@ -347,7 +363,7 @@ if(UNIX)
   # wind's travelling front; CPU only, no device or game data.
   add_executable(gothic-grass-test EXCLUDE_FROM_ALL tests/grass_test.cpp tests/grass_cover_test.cpp)
   target_link_libraries(gothic-grass-test PRIVATE OpenGothic AiBridge)
-  target_include_directories(gothic-grass-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  target_include_directories(gothic-grass-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include ${PROJECT_SOURCE_DIR}/shader)
   target_compile_options(gothic-grass-test PRIVATE -Wall -Wconversion -Werror)
   # Windows that glow at night (graphics/windowglow.h) and the house they go out with (graphics/houselights.h); CPU only.
   add_executable(gothic-window-glow-test EXCLUDE_FROM_ALL tests/window_glow_test.cpp)
@@ -559,7 +575,8 @@ endif()
     tests/physics_contract_noise.cpp
     tests/physics_bonds_contract.cpp)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
-  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
+  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL
+    tests/placed_items_contract.cpp tests/npc_live_fixture.cpp)
   target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   # The society stand's world (docs/society-sim.md): runs gothic-body-runner --society-export twice on the
   # game's data (GOTHIC_DIR) and checks it against evals/npc-decisions/day_people.json and places.json.
@@ -700,6 +717,13 @@ endif()
   add_executable(gothic-wcb-source-contract EXCLUDE_FROM_ALL tests/wcb_source_contract.cpp)
   target_link_libraries(gothic-wcb-source-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-wcb-source-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  # The catalogue start (worldchunkcatalogue.h): the same table, materials, bounds, cloth, collision and cells.
+  add_executable(gothic-world-catalogue-contract EXCLUDE_FROM_ALL tests/world_catalogue_contract.cpp)
+  target_link_libraries(gothic-world-catalogue-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-world-catalogue-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  if(NOT MSVC)
+    target_compile_options(gothic-world-catalogue-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
   if(TARGET content-convert)
     add_executable(gothic-worldcloth-cooked-contract EXCLUDE_FROM_ALL tests/worldcloth_cooked_contract.cpp)
     target_link_libraries(gothic-worldcloth-cooked-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)

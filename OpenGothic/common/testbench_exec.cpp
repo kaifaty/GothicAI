@@ -2,6 +2,7 @@
 #include "testbench.h"
 #include "world/benchhooks.h"
 
+#include <charconv>
 #include <cmath>
 
 #include "ui/gamemenu.h"
@@ -30,6 +31,7 @@
 #include "graphics/mesh/animsample.h"
 #include "graphics/mesh/bowdraw.h"
 #include "graphics/mesh/flinch.h"
+#include "graphics/visualobjects.h"
 #include "physics/ragdoll_brace.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
@@ -37,6 +39,7 @@
 #include "world/aiqueue.h"
 #include "gothic.h"
 #include "marvin.h"
+#include "settings.h"
 
 using namespace Tempest;
 using namespace testbench_detail;
@@ -198,6 +201,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(itemWakeCommand(a,w,pl)) return;
   else if(placedItemsCommand(bench.placedItems,a,w,pl,ctrl)) return;
   else if(itemHullsCommand(bench.itemHulls,a,w,pl)) return;
+  else if((c=="item" || c=="itemfx") && itemEffectsCommand(a,w,pl)) return;
   else if(c=="physics" && worldCommand(worldContext(),line,a,w,pl,ctrl)) return;
   else if(c=="traces" && a.size()>=2) {
     std::string command=a[1],value,error;
@@ -213,6 +217,63 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   if(c=="water-film" && waterFilmCommand(waterFilmContext(),a,w,pl)) return;
   else if(c=="cloth" && clothCommand(clothContext(),a,w,pl)) return;
   else if(c=="foliage" && foliageCommand(a,w)) return;
+  else if(c=="hiz-verify") {
+    auto& verify = bench.historyVerify;
+    if(a.size()==2 && a[1]=="finish") {
+      verify.finish = true;
+      return;
+      }
+    const auto readNumber = [](std::string_view word, uint32_t& value) {
+      const auto end = word.data() + word.size();
+      const auto parsed = std::from_chars(word.data(), end, value);
+      return parsed.ptr==end && parsed.ec==std::errc{};
+      };
+    uint32_t frames = 0, duration = 0;
+    if((a.size()!=3 && a.size()!=4) || !readNumber(a[2], frames) || frames==0 ||
+       (a.size()==4 && (frames<2 || !readNumber(a[3], duration)))) {
+      arenaAbort("hiz-verify expects <segment> <frames> [duration in ms] or finish");
+      return;
+      }
+    verify.segment = a[1];
+    verify.frames = frames;
+    verify.next = 0;
+    verify.start = bench.time;
+    verify.duration = duration;
+    return;
+    }
+  else if(c=="impostor" && a.size()==3 && a[1]=="probe" && (a[2]=="on" || a[2]=="off")) {
+    Settings::setI("INTERNAL","treeOcclusionProbe",a[2]=="on" ? 1 : 0);
+    }
+  else if(c=="impostor" && a.size()==2) {
+    if(a[1]=="force")
+      VisualObjects::benchImpostors = VisualObjects::BenchImpostors::Force;
+    else if(a[1]=="off")
+      VisualObjects::benchImpostors = VisualObjects::BenchImpostors::Off;
+    else if(a[1]=="auto")
+      VisualObjects::benchImpostors = VisualObjects::BenchImpostors::Auto;
+    else
+      arenaAbort("impostor expects force, off, or auto");
+    }
+  else if(c=="shadow" && a.size()==3 && a[1]=="levels") {
+    if(a[2]=="on")
+      VisualObjects::benchShadowLevels = VisualObjects::BenchShadowLevels::On;
+    else if(a[2]=="off")
+      VisualObjects::benchShadowLevels = VisualObjects::BenchShadowLevels::Off;
+    else if(a[2]=="full")
+      VisualObjects::benchShadowLevels = VisualObjects::BenchShadowLevels::Full;
+    else if(a[2]=="auto")
+      VisualObjects::benchShadowLevels = VisualObjects::BenchShadowLevels::Auto;
+    else
+      arenaAbort("shadow levels expects on, off, full, or auto");
+    }
+  else if(c=="shadow" && a.size()==3 && a[1]=="near") {
+    if(a[2]=="auto")
+      VisualObjects::benchShadowNearPx.reset();
+    else if(auto px = MeshLevels::parseShadowNearPx(a[2]))
+      VisualObjects::benchShadowNearPx = px;
+    else
+      arenaAbort("shadow near expects a pixel height or auto");
+    }
   else if(c=="grass" && grassCommand(a,w)) return;
   else if(waterCommand(bench.water,waterContext(),a,w,pl,ctrl)) return;
   else if(c=="item-save" && a.size()==2 && a[1]=="initial") {
@@ -331,7 +392,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     // bowgeom: the bow and the bow hand in the arrow's frame, as posed now
     say(pl.bowDump());
     }
-  else if((c=="stats" || c=="npcday" || c=="seed") && npcCommandsCommand(npcCommandsContext(),line,a,w,pl,ctrl)) return;
+  else if((c=="stats" || c=="npcday" || c=="npcday-save" || c=="seed") && npcCommandsCommand(npcCommandsContext(),line,a,w,pl,ctrl)) return;
   else if(npcSimCommand(bench.npcDuel,bench.npcTierTest,bench.npcSpeedTest,bench.pc,bench.prog,a,w,pl)) return;
   else if(bodyCommand(bodyContext(),a,w,pl)) return;
   else if(c=="knockdown-launch-equip") {

@@ -33,6 +33,7 @@ class LightGroup final {
         void     setColor (const Tempest::Vec3& c);
         void     setColor (const std::vector<Tempest::Vec3>& c, float fps, bool smooth);
         void     setTimeOffset(uint64_t t);
+        void     setRangeOnce(bool once);
         // the yaw of the light's own axes (radians round world Y): its light mask turns with it
         void     setYaw(float yaw);
 

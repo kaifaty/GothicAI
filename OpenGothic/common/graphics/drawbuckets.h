@@ -6,9 +6,11 @@
 #include <unordered_map>
 
 #include "material.h"
+#include "graphics/meshletspheres.h"
 
 class StaticMesh;
 class AnimMesh;
+namespace TreeBough { struct Page; }
 
 class DrawBuckets {
   public:
@@ -17,7 +19,11 @@ class DrawBuckets {
     struct Bucket {
       const StaticMesh* staticMesh = nullptr;
       const AnimMesh*   animMesh   = nullptr;
+      const TreeBough::Page* boughPage = nullptr;
       Material          mat;
+
+      const Tempest::StorageBuffer& iboBuffer() const;
+      const Tempest::StorageBuffer& vboBuffer() const;
       };
 
     class Id {
@@ -41,7 +47,7 @@ class DrawBuckets {
       friend class DrawBuckets;
       };
 
-    Id   alloc(const Material& mat, const StaticMesh& mesh);
+    Id   alloc(const Material& mat, const StaticMesh& mesh, const TreeBough::Page* page = nullptr);
     Id   alloc(const Material& mat, const AnimMesh&   mesh);
     void invalidate(const StaticMesh& mesh);
 
@@ -49,6 +55,11 @@ class DrawBuckets {
 
     auto ssbo() const -> const Tempest::StorageBuffer& { return bucketsGpu; }
     auto buckets() const -> const std::vector<Bucket>&;
+    // the spheres of the meshlets of the buckets' static meshes (Bucket::meshletSpheres of scene.glsl)
+    auto meshletSpheres() const -> const Tempest::StorageBuffer& { return spheres.ssbo(); }
+    auto treeHiZBounds() const -> const Tempest::StorageBuffer& { return treeHiZBoundsGpu; }
+    const Tempest::StorageBuffer& primitiveOffsetTable() const { return primitiveOffsets; }
+    const Tempest::StorageBuffer& primitiveCountTable() const { return primitiveCounts; }
 
     auto& textures() const { return textureDesc[currentFrame].arrays[0]; }
     auto& normals()  const { return textureDesc[currentFrame].arrays[1]; }
@@ -63,6 +74,7 @@ class DrawBuckets {
   private:
     void updateBindlessArrays(bool updateBuffers, uint8_t fId);
     void updateTextureArrays(uint8_t fId);
+    void updatePrimitiveCounts(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     enum BucketFlg : uint32_t {
       BK_SOLID = 0x1,
@@ -85,6 +97,12 @@ class DrawBuckets {
       BK_WINDOW = 0x20000,
       BK_GROUND = 0x40000,
       BK_VERGE = 0x80000,
+      BK_TRACK = 0x100000,
+      BK_TWO_SIDED = 0x200000,
+      BK_TWO_SIDED_FLIP = 0x400000,
+      BK_CROWN = 0x800000,
+      BK_CANOPY = 0x1000000,
+      BK_OWN_MESH = 0x2000000,
       };
 
     struct BucketGpu final {
@@ -116,9 +134,13 @@ class DrawBuckets {
       uint32_t       foliage          = 0;   // BK_FOLIAGE: FoliageWind::pack of Material::foliage;
                                              // BK_GRASS: Grass::pack of Material::grass;
                                              // BK_WINDOW: WindowGlow::pack of Material::window
-      float          foliageReach     = 0.f; // the largest arm of its mesh at rest (FoliageWind::reach)
+      float          foliageReach     = 0.f; // its mesh at rest: the largest arm, or a tree's height (FoliageTree::reach)
+      uint32_t       meshletSpheres   = MeshletSpheres::None; // its mesh's first sphere in meshletSpheres()
+      uint32_t       treeHiZFirst     = 0;   // range of rest boxes in treeHiZBounds()
+      uint32_t       treeHiZCount     = 0;
+      uint32_t       padding          = 0;   // the stride of the GPU's array rounds up to 16 bytes
       };
-    static_assert(sizeof(BucketGpu)==128); // GPU array stride of Bucket in scene.glsl
+    static_assert(sizeof(BucketGpu)==144); // GPU array stride of Bucket in scene.glsl
 
     struct {
       Tempest::DescriptorArray vbo;
@@ -145,6 +167,9 @@ class DrawBuckets {
 
     std::vector<Bucket>      bucketsCpu;
     Tempest::StorageBuffer   bucketsGpu;
+    Tempest::StorageBuffer   treeHiZBoundsGpu;
+    Tempest::StorageBuffer   primitiveOffsets, primitiveCounts;
+    MeshletSpheres           spheres;
     bool                     bucketsDurtyBit = false;
     uint64_t                 textureGeneration = 0;
   };

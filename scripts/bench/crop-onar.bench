@@ -1,0 +1,37 @@
+# The crops on Onar's north field for the eye (reports/content/2026-11-19-crop-fields, «Поле Онара»): four views
+# of a set built by scripts/content/crop_field_set.py with --field '…;578.1,-75.3;639.3,-76.4'. No time:
+#   TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_CONTENT=<set> scripts/bench.sh crop-onar <out>
+# The time of the same field is perf-crops-onar.bench.
+# @timeout 600
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+goto pos 57094 1850 -11100
+# view 1: on a strip of stubble, the eye's height, along the strips: walls of rye to either side
+cam at 57800 2190 -10600 57800 2030 -7000
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot strip
+wait 300
+# view 2: from the stubble at a wall of rye, close
+cam at 57600 2160 -9800 58600 2060 -8600
+wait 6000
+shot edge
+wait 300
+# view 3: from 6 m over the west corner across the plot
+cam at 55400 2300 -10000 59000 2050 -8000
+wait 6000
+shot corner
+wait 300
+# view 4: from 30 m over the south side: both plots
+cam at 61400 5100 -12500 61400 2100 -7600
+wait 8000
+shot over
+wait 300

@@ -41,12 +41,17 @@ int32_t units(float cm) {
   return int32_t(std::lround(double(cm)*Unit));
   }
 
+int32_t rootHeight(int32_t packedY, int32_t minY) {
+  return minY + packedY*2;
+  }
+
 using Segment = OpenEdge;
 
 struct Raw final { // a blade before it is packed
   int32_t  x = 0, y = 0, z = 0;
   uint16_t slot = 0;
   uint8_t  kind = 0;
+  uint8_t  square = 0;
   uint8_t  rank = 0, height = 0, facing = 0, phase = 0, lean = 0, width = 0, tint = 0, nx = 0, nz = 0;
   uint16_t u = 0, v = 0;
   };
@@ -106,12 +111,12 @@ void addBeside(Summary& out, const float pos[3][3], const float normal[3][3]) {
   out.beside.push_back(t);
   }
 
-BladeInfo decode(const Blade& b, int32_t cx, int32_t cz, int32_t minY) {
+BladeInfo decode(const Blade& b, int32_t cx, int32_t cz, int32_t minY, uint8_t kind) {
   BladeInfo r;
   r.x      = cx*CellSize - CellMargin + int32_t(b.w[0] & 0x3FFFu);
   r.z      = cz*CellSize - CellMargin + int32_t((b.w[0] >> 14) & 0x3FFFu);
-  r.y      = minY + int32_t(b.w[1] & 0xFFFFu)*2;
-  r.height = float((b.w[1] >> 16) & 0xFFu)*0.25f;
+  r.y      = rootHeight(int32_t(b.w[1] & 0xFFFFu),minY);
+  r.height = float((b.w[1] >> 16) & 0xFFu)*heightStep(kind);
   r.rank   = uint8_t(b.w[1] >> 24);
   return r;
   }
@@ -131,7 +136,7 @@ CellBlades buildCell(const CellInput& in) {
     };
   std::vector<Slot> slots(in.params.size());
   int32_t maxEdge = 0, maxDensity = 0;
-  bool    anyFine = false, anyBroad = false;
+  bool    anyFine = false, anyBroad = false, anyEar = false;
   for(size_t i=0; i<slots.size(); ++i) {
     const auto& p = in.params[i];
     if(!p.on)
@@ -142,6 +147,7 @@ CellBlades buildCell(const CellInput& in) {
     slots[i].edgeCm    = int32_t(std::lround(p.edge));
     anyFine            = anyFine || (p.cover && p.fine);
     anyBroad           = anyBroad || (p.cover && p.fine && p.broad>0.f);
+    anyEar             = anyEar || p.kind==KindEar;
     maxEdge    = std::max(maxEdge,slots[i].edgeCm);
     maxDensity = std::max(maxDensity,slots[i].densityQ8);
     }
@@ -461,8 +467,8 @@ CellBlades buildCell(const CellInput& in) {
       // keep by the patch: `roll` of 1024 against the share of the lattice's nodes the density asks for
       const auto roll = int64_t((h >> 20) & 1023u);
       // a fine blade is of the lattice's every node: the patch's count is not asked
-      const bool kept = roll*NodesPerM2*256*256 < int64_t(tuft->densityQ8)*maxDensity*int64_t(BladesPerM2)*1024;
-      if(!kept && !(anyFine && (tuft->sward || anyVerge)))
+      bool kept = roll*NodesPerM2*256*256 < int64_t(tuft->densityQ8)*maxDensity*int64_t(BladesPerM2)*1024;
+      if(!kept && !(anyFine && (tuft->sward || anyVerge)) && !anyEar)
         continue;
 
       int64_t w[3];
@@ -484,6 +490,14 @@ CellBlades buildCell(const CellInput& in) {
         continue;
       const Slot&   slot = slots[at->t->slot];
       const Params& par  = in.params[at->t->slot];
+      // a stalk with an ear is of an even stand (grassear.h): the record's count alone decides
+      const bool    ear  = par.kind==KindEar;
+      Tuft          even;
+      if(ear) {
+        even = evenTuft(*tuft);
+        tuft = &even;
+        kept = true;
+        }
       const bool    sward = par.cover && par.fine && (tuft->sward || onVerge>=0);
       if(!sward && (!kept || rank>=in.rankLimit))
         continue;
@@ -514,7 +528,7 @@ CellBlades buildCell(const CellInput& in) {
         }
       // a spot of bare earth in the sward: no blade in it, fewer and lower ones on its rim. With the cover that
       // is asked at the root below
-      const int32_t bare  = (in.patch<0 && !par.cover) ? patchBare(px,pz) : 0;
+      const int32_t bare  = (in.patch<0 && !par.cover && !ear) ? patchBare(px,pz) : 0;
       // of 2^40, the patch's count
       const int64_t shareBroad = int64_t(tuft->densityQ8)*slot.densityQ8*slopeQ8*edgeDensity*(256-bare);
       // gathered towards the tuft's centre, as far as this
@@ -564,8 +578,8 @@ CellBlades buildCell(const CellInput& in) {
         fz   = pz + int32_t(int64_t(tuft->z-pz)*pull/256);
         at   = locate(fx,fz,w,y);
         }
-      if(at==nullptr || underWater(fx,fz,y))
-        continue;
+      if(at==nullptr || underWater(fx,fz,y) || (in.params[at->t->slot].kind==KindEar)!=ear)
+        continue; // nor does a blade of the meadow gather onto the ground of the stalks
       const Tri&    t  = *at->t;
       const Params& fp = in.params[t.slot];
       // the cover at the root (grasscover.h): the spots, the border with a verge
@@ -598,9 +612,12 @@ CellBlades buildCell(const CellInput& in) {
       const float fromCentre = float(std::sqrt(double(near)/65536.0))*(1.f-float(pull)/256.f)/float(TuftStep);
       float height = fp.height*tuft->height*(0.9f + tuft->spread*(float((h >> 35) & 0xFFu)/255.f - 0.5f));
       height *= 1.f - tuft->fall*std::min(fromCentre*1.6f,1.f);
+      if(ear)
+        height = fp.height*earHeight(h,fx,fz);
       height *= 1.f - 0.5f*float(bare)/256.f;
       height *= 0.55f + 0.45f*float(stand)/256.f;
-      height *= 0.5f + 0.5f*edgeShare;
+      // a stand of stalks is thinner at its edge, not half as tall
+      height *= ear ? 1.f - EarEdgeLower*(1.f-edgeShare) : 0.5f + 0.5f*edgeShare;
       height *= 0.5f + 0.5f*slopeShare;
       if(past>=0)
         height = std::min(height*(1.f - 0.5f*float(past)/float(PastEdge)),PastHeight);
@@ -612,7 +629,7 @@ CellBlades buildCell(const CellInput& in) {
         if(r<80.0)
           height = std::min(height, float(8.0 + (double(height)-8.0)*std::clamp((r-35.0)/45.0,0.0,1.0)));
         }
-      height = std::clamp(height,2.f,63.f);
+      height = std::clamp(height,2.f,ear ? EarTop : 63.f);
 
       // leans out of its tuft and to the tuft's own side, and over an open edge
       float dirX = float(fx-tuft->x), dirZ = float(fz-tuft->z);
@@ -627,12 +644,14 @@ CellBlades buildCell(const CellInput& in) {
         angle = float((h >> 43) & 0xFFu)*(6.2831853f/256.f);
         lean  = 8.f + 12.f*float((h >> 51) & 0x3Fu)/63.f;
         }
+      if(ear)
+        earLean(h,fx,fz,angle,lean);
       if(edge!=nullptr && edgeShare<1.f) {
         const float out = std::atan2(edge->outZ,edge->outX);
         float d = angle-out;
         d -= 6.2831853f*std::floor(d/6.2831853f + 0.5f);
         angle = out + d*edgeShare;
-        lean  = lean + (45.f-lean)*(1.f-edgeShare)*0.8f;
+        lean  = lean + ((ear ? EarEdgeLean : 45.f)-lean)*(1.f-edgeShare)*0.8f;
         }
       const float turn = angle/6.2831853f;
 
@@ -641,9 +660,12 @@ CellBlades buildCell(const CellInput& in) {
       r.y      = y;
       r.z      = fz;
       r.slot   = t.slot;
-      r.kind   = fine ? 1 : 0;
+      r.kind   = ear ? KindEar : (fine ? 1 : 0);
+      if(in.squares)
+        r.square = uint8_t(std::clamp(floorDiv(fx-x0,SquareSize),0,CellSquares-1)*CellSquares +
+                           std::clamp(floorDiv(fz-z0,SquareSize),0,CellSquares-1));
       r.rank   = uint8_t(rank);
-      r.height = uint8_t(std::clamp(int(std::lround(height*4.f)),1,255));
+      r.height = uint8_t(std::clamp(int(std::lround(height/heightStep(r.kind))),1,255));
       r.facing = uint8_t(int(std::floor((turn-std::floor(turn))*256.f)) & 0xFF);
       r.phase  = tuft->phase;
       r.lean   = uint8_t(std::clamp(int(std::lround((lean-8.f)*15.f/40.f)),0,15));
@@ -669,22 +691,29 @@ CellBlades buildCell(const CellInput& in) {
   if(raw.empty())
     return ret;
 
-  // by slot, then by rank; the lattice's order within a rank
+  // by slot and square, then by rank; the lattice's order within a rank
   std::stable_sort(raw.begin(),raw.end(),[](const Raw& a, const Raw& b) {
-    return std::tie(a.slot,a.kind,a.rank)<std::tie(b.slot,b.kind,b.rank);
+    return std::tie(a.slot,a.kind,a.square,a.rank)<std::tie(b.slot,b.kind,b.square,b.rank);
     });
   ret.minY = minY;
   ret.maxY = maxY;
+  ret.squareBounds.fill({maxY,minY});
   ret.blades.resize(raw.size());
   for(size_t i=0; i<raw.size(); ++i) {
     const Raw& r = raw[i];
     Blade& b = ret.blades[i];
+    const int32_t packedY = std::min((r.y-minY)/2,0xFFFF);
     b.w[0] = uint32_t(r.x-lo[0]) | (uint32_t(r.z-lo[1]) << 14) | (uint32_t(r.lean) << 28);
-    b.w[1] = uint32_t(std::min((r.y-minY)/2,0xFFFF)) | (uint32_t(r.height) << 16) | (uint32_t(r.rank) << 24);
+    b.w[1] = uint32_t(packedY) | (uint32_t(r.height) << 16) | (uint32_t(r.rank) << 24);
     b.w[2] = uint32_t(r.facing) | (uint32_t(r.phase) << 8) | (uint32_t(r.nx) << 16) | (uint32_t(r.nz) << 24);
     b.w[3] = uint32_t(r.u) | (uint32_t(r.v) << 12) | (uint32_t(r.width) << 24) | (uint32_t(r.tint) << 28);
-    if(ret.batches.empty() || ret.batches.back().slot!=r.slot || ret.batches.back().kind!=r.kind)
-      ret.batches.push_back(Batch{r.slot,r.kind,uint32_t(i),0});
+    auto& bounds = ret.squareBounds[r.square];
+    const int32_t y = rootHeight(packedY,minY);
+    bounds.minY = std::min(bounds.minY,y);
+    bounds.maxY = std::max(bounds.maxY,y);
+    if(ret.batches.empty() || ret.batches.back().slot!=r.slot || ret.batches.back().kind!=r.kind ||
+       ret.batches.back().square!=r.square)
+      ret.batches.push_back(Batch{r.slot,r.kind,r.square,uint32_t(i),0});
     ++ret.batches.back().count;
     }
   return ret;

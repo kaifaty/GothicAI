@@ -1,0 +1,67 @@
+# The 400 px level switch of the three spruces of fir-bough-lod.bench, out and back, twice in one game: first with
+# the usual shadow scale, then with `shadow levels full` (every shadow from the full GLB), so the second segment keeps
+# only the main view's wood level switch. Legs 2-3 of fir-bough-lod.bench: 466 -> 362 px for the left spruce.
+# BASE=~/.local/share/gothic-ai/remaster/trees-fir/bough-stagger
+# RYZEN_TASK="$(ssh ryzen 'printenv HOME')/gothic-ai/tree-level-pop"
+# WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT="$BASE/content" OPENGOTHIC_TEXTURES= \
+#   OPENGOTHIC_TREE_BOUGH_LOD=1 OPENGOTHIC_MESH_LEVELS=1 OPENGOTHIC_IMPOSTORS=1 \
+#   OPENGOTHIC_FRAME_PROFILE="$BASE/level-pop-diag/frameprofile.csv" OPENGOTHIC_BENCH_REALTIME=1 \
+#   OPENGOTHIC_BENCH_ENCODER='-c:v h264_nvenc -preset p4 -b:v 24M' TEMPEST_WINDOW_SIZE=1920x1080 \
+#   BENCH_HOST=ryzen RYZEN_WORKTREE=tree-level-pop RYZEN_BENCH_WINDOW=1 RYZEN_LOCK_WAIT=1200 \
+#   RYZEN_BENCH_ARCHIVE="$RYZEN_TASK/diag-$(date -u +%Y%m%dT%H%M%SZ)" \
+#   scripts/bench.sh fir-level-pop "$BASE/level-pop-diag"
+# @timeout 600
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+set time 12 0
+
+goto pos 42700 3517 -2230
+clear 3000
+streaming wait
+grass wait
+cam at 45399.17 7928.77 -1522.55 47854.16 7003.70 -864.74
+wait 5000
+
+rec level-pop-normal
+wait 1000
+cam fly 44963.27 8093.02 -1639.35 47854.16 7003.70 -864.74 3600
+mark level-pop-leg
+wait 3600
+cam fly 44449.97 8286.43 -1776.89 47854.16 7003.70 -864.74 3600
+mark level-pop-leg
+wait 3600
+wait 1000
+cam fly 44963.27 8093.02 -1639.35 47854.16 7003.70 -864.74 3600
+mark level-pop-leg
+wait 3600
+cam fly 45399.17 7928.77 -1522.55 47854.16 7003.70 -864.74 3600
+mark level-pop-leg
+wait 3600
+wait 1000
+stop
+wait 500
+
+shadow levels full
+set time 12 0
+wait 2000
+rec level-pop-full
+wait 1000
+cam fly 44963.27 8093.02 -1639.35 47854.16 7003.70 -864.74 3600
+mark level-pop-leg
+wait 3600
+cam fly 44449.97 8286.43 -1776.89 47854.16 7003.70 -864.74 3600
+mark level-pop-leg
+wait 3600
+wait 1000
+cam fly 44963.27 8093.02 -1639.35 47854.16 7003.70 -864.74 3600
+mark level-pop-leg
+wait 3600
+cam fly 45399.17 7928.77 -1522.55 47854.16 7003.70 -864.74 3600
+mark level-pop-leg
+wait 3600
+wait 1000
+stop
+shadow levels auto

@@ -11,6 +11,14 @@ position error (p50/p95/max, metres), the offset of matched ZS starts (game minu
 alive/dead, HP and inventory differences, a per-hour divergence curve, the NPCs that
 diverge most, and the same metrics split by run B's simulation tier. With tolerances
 the exit code is 1 when a check fails; without them the report is informational.
+Routine activity metrics use A's nonempty TA samples, grouped by A's ZS: state,
+MOB scheme and waypoint agreement, occupancy ratio, first-MOB arrival delay and
+NPCs with no MOB sample in a reference TA segment. --activity-states limits their
+totals and checks, while the complete state table remains visible.
+The activity health checks read run B's own counters of the activities by events
+(npc-day.json "activity_events", common/world/activityevents.h): watchdog restarts,
+expired reservations, reservations without a living owner, two NPCs on one place. A run
+without these counters fails an enabled health check.
 
 The completeness gates fail a pair whose runs did not both finish (`end_reason`), stop
 early or at different times, have samples present in only one run, or end with an NPC
@@ -53,7 +61,23 @@ CHECKS = {
     "max_stationary_pos_p95": ("max", "position error p95 when stationary in both runs, m"),
     "min_same_inventory": ("min", "same inventory, share of NPC-samples"),
     "min_same_hp": ("min", "same HP, share of NPC-samples"),
+    "min_activity_same_mob": ("min", "activity: same MOB scheme when A occupies a MOB, share"),
+    "max_activity_mob_mismatch": ("max", "activity: samples where A occupies a MOB and B another or none"),
+    "min_activity_same_wp": ("min", "activity: same waypoint, share"),
+    "min_activity_mob_time_ratio": ("min", "activity: B/A occupied MOB samples"),
+    "max_activity_mob_time_ratio": ("max", "activity: B/A occupied MOB samples"),
+    "max_activity_arrival_p95": ("max", "activity: arrival delay p95, game min"),
+    "max_activity_arrival_max": ("max", "activity: maximum arrival delay, game min"),
+    "max_activity_stuck": ("max", "activity: NPCs missing every MOB sample in a routine segment"),
+    "max_activity_watchdog": ("max", "activity events in B: watchdog restarts"),
+    "max_activity_reservation_expired": ("max", "activity events in B: reservations expired without an attach"),
+    "max_activity_reservation_ownerless": ("max", "activity events in B: reservations without a living owner"),
+    "max_activity_double_occupancy": ("max", "activity events in B: two NPCs on one place"),
 }
+# Health check -> run B's counter in npc-day.json "activity_events".
+HEALTH = {"max_activity_watchdog": "watchdog", "max_activity_reservation_expired": "reservation_expired",
+          "max_activity_reservation_ownerless": "reservation_ownerless",
+          "max_activity_double_occupancy": "double_occupancy"}
 
 
 def opener(path):
@@ -92,7 +116,8 @@ def load(run):
                                             sort_keys=True).encode() + b"\n")
             rows[(t, row["key"])] = (
                 row["alive"] == "1", int(row["hp"]), row["ta"], row["zs"],
-                float(row["x"]), float(row["y"]), float(row["z"]), row["inv_hash"], row["tier"], row["head"], int(row["body"]))
+                float(row["x"]), float(row["y"]), float(row["z"]), row["inv_hash"], row["tier"], row["head"], int(row["body"]),
+                row["mob"], row["wp"])
             keys[row["key"]] = row["symbol"]
     events = {}
     path = find(run, "npc-day-events.csv")
@@ -265,7 +290,91 @@ def end_differences(a, b):
     return missing, alive, inventory, hp
 
 
-def compare(a, b, window=60.0, min_hero_distance=0.0):
+def activity_metrics(a, b, common, states):
+    """Reference-TA samples and first occupied samples within reference TA segments.
+
+    Arrival offsets are signed (B minus A). A segment belongs to the reference
+    ZS at its first occupied sample; its boundaries come only from A's TA changes.
+    """
+    by_state = {}
+
+    def tally(state):
+        return by_state.setdefault(state, {"samples": 0, "same_zs": 0, "same_wp": 0,
+                                           "mob_a": 0, "mob_b": 0, "same_mob": 0, "extra_mob": 0,
+                                           "arrivals": [], "stuck": []})
+
+    selected_samples = set(common)
+    for sample in common:
+        ra, rb = a["rows"][sample], b["rows"][sample]
+        if ra[2] == "-":
+            continue
+        item = tally(ra[3])
+        item["samples"] += 1
+        item["same_zs"] += ra[3] == rb[3]
+        item["same_wp"] += ra[12] == rb[12]
+        item["mob_a"] += ra[11] != "-"
+        item["mob_b"] += rb[11] != "-"
+        item["same_mob"] += ra[11] != "-" and ra[11] == rb[11]
+        item["extra_mob"] += ra[11] == "-" and rb[11] != "-"
+
+    def segment(key, samples):
+        occupied_a = [t for t, ra in samples if (t, key) in selected_samples and ra[11] != "-"]
+        if not occupied_a:
+            return
+        first_a = occupied_a[0]
+        state = a["rows"][(first_a, key)][3]
+        occupied_b = [t for t, _ in samples if (t, key) in selected_samples and b["rows"][(t, key)][11] != "-"]
+        first_b = occupied_b[0] if occupied_b else None
+        entry = {"key": key, "state": state, "ta": samples[0][1][2],
+                 "start_min": samples[0][0], "end_min": samples[-1][0],
+                 "arrival_a_min": first_a - samples[0][0],
+                 "arrival_b_min": first_b - samples[0][0] if first_b is not None else None,
+                 "delay_min": first_b - first_a if first_b is not None else None}
+        tally(state)["stuck" if first_b is None else "arrivals"].append(entry)
+
+    key, previous_ta, samples = None, None, []
+    for (t, npc), ra in sorted(a["rows"].items(), key=lambda item: (item[0][1], item[0][0])):
+        if npc != key or ra[2] != previous_ta:
+            if samples:
+                segment(key, samples)
+            samples = []
+        key, previous_ta = npc, ra[2]
+        if ra[2] != "-":
+            samples.append((t, ra))
+    if samples:
+        segment(key, samples)
+
+    def summary(items):
+        counts = {name: sum(item[name] for item in items)
+                  for name in ("samples", "same_zs", "same_wp", "mob_a", "mob_b", "same_mob", "extra_mob")}
+        arrivals = [entry for item in items for entry in item["arrivals"]]
+        stuck = [entry for item in items for entry in item["stuck"]]
+        delays = [entry["delay_min"] for entry in arrivals]
+        return {"samples": counts["samples"],
+                "same_zs": share(counts["same_zs"], counts["samples"]),
+                "same_wp": share(counts["same_wp"], counts["samples"]),
+                "mob_samples_a": counts["mob_a"], "mob_samples_b": counts["mob_b"],
+                "same_mob": share(counts["same_mob"], counts["mob_a"]),
+                # A count, not a share: a share of one state set's few samples admits no mismatch at all.
+                # Undefined only for an empty selection; samples without any occupied MOB in A give 0.
+                "mob_mismatch": counts["mob_a"] - counts["same_mob"] if counts["samples"] else None,
+                "extra_mob": share(counts["extra_mob"], counts["samples"] - counts["mob_a"]),
+                "mob_time_ratio": share(counts["mob_b"], counts["mob_a"]),
+                "arrival_segments": len(arrivals),
+                "arrival_p50": percentile(delays, 0.5), "arrival_p95": percentile(delays, 0.95),
+                "arrival_max": max(delays) if delays else None,
+                "stuck_npcs": len({entry["key"] for entry in stuck}), "stuck": stuck}
+
+    included = [item for state, item in by_state.items() if states is None or state in states]
+    return {"states": sorted(states) if states is not None else None,
+            "period_min_a": a["header"].get("period_min"), "period_min_b": b["header"].get("period_min"),
+            "total": summary(included),
+            "by_state": {state: summary([item]) for state, item in sorted(by_state.items())},
+            "arrivals": sorted((entry for item in by_state.values() for entry in item["arrivals"]),
+                               key=lambda entry: (-entry["delay_min"], entry["key"], entry["start_min"]))}
+
+
+def compare(a, b, window=60.0, min_hero_distance=0.0, activity_states=None):
     common = sorted(set(a["rows"]) & set(b["rows"]))
     excluded = 0
     if min_hero_distance > 0:
@@ -319,6 +428,8 @@ def compare(a, b, window=60.0, min_hero_distance=0.0):
         "npcs": len({key for _, key in common}),
         "last_t_min": last,
         "total": total.summary(),
+        "activity": activity_metrics(a, b, common, activity_states),
+        "activity_events": b["header"].get("activity_events"),
         "by_tier": {tier: tally.summary() for tier, tally in sorted(by_tier.items())},
         "by_hour": {int(hour): tally.summary() for hour, tally in sorted(by_hour.items())},
         "by_movement": {name: tally.summary() for name, tally in sorted(by_movement.items())},
@@ -345,6 +456,7 @@ def compare(a, b, window=60.0, min_hero_distance=0.0):
 
 def check_values(result, inventory_evidence=()):
     total = result["total"]
+    activity = result["activity"]["total"]
     ca, cb = result["complete_a"], result["complete_b"]
     attested = {(item["key"], item["reference_hash"], item["candidate_hash"]) for item in inventory_evidence
                 if item.get("cause") in {"script_random_draw", "extra_script_iterations"} and item.get("item")
@@ -368,6 +480,15 @@ def check_values(result, inventory_evidence=()):
         "min_deaths_matched": result["deaths"]["matched"],
         "max_stationary_pos_p95": result["by_movement"].get("stationary_both", {}).get("pos_p95"),
         "min_same_hp": total["same_hp"],
+        "min_activity_same_mob": activity["same_mob"],
+        "max_activity_mob_mismatch": activity["mob_mismatch"],
+        "min_activity_same_wp": activity["same_wp"],
+        "min_activity_mob_time_ratio": activity["mob_time_ratio"],
+        "max_activity_mob_time_ratio": activity["mob_time_ratio"],
+        "max_activity_arrival_p95": activity["arrival_p95"],
+        "max_activity_arrival_max": activity["arrival_max"],
+        "max_activity_stuck": activity["stuck_npcs"],
+        **{name: (result["activity_events"] or {}).get(counter) for name, counter in HEALTH.items()},
     }
 
 
@@ -448,6 +569,50 @@ def markdown(result, checks, label_a, label_b):
                 value, limit = fmt(check["value"], 4), f"{sign} {fmt(check['limit'], 4)}"
             lines.append(f"| {check['label']} | {value} | {limit} | {'pass' if check['pass'] else '**FAIL**'} |")
         lines.append("")
+    activity = result["activity"]
+    lines += ["## Routine activities (reference TA is not `-`)", "",
+              "Samples are grouped by A's ZS. Extra MOB is the share of A's unoccupied samples where B occupies a MOB.",
+              "Arrival is the first occupied sample within each continuous A-TA segment, regardless of B's TA or MOB scheme;",
+              "the segment is grouped by A's ZS at its first occupied sample. Delay is signed B minus A.",
+              f"Arrival resolution is the journal step: A {fmt(activity['period_min_a'])}, B {fmt(activity['period_min_b'])} game minutes "
+              "(5 minutes in npc-day-parity). Segment bounds are the first/last observed samples, including day edges.",
+              "Undefined ratios or arrivals are shown as — and fail an enabled numeric check.",
+              f"Summary states: {', '.join(activity['states']) if activity['states'] is not None else 'all'}; the state table always includes all states.", "",
+              "| State | Samples | Same ZS | Same MOB | MOB mismatches | Extra MOB | Same WP | MOB samples A / B | MOB time B/A | Arrival p50 / p95 / max, min | Stuck NPCs |",
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
+    for state, item in [("**Selected total**", activity["total"]), *activity["by_state"].items()]:
+        lines.append(f"| {state} | {item['samples']} | {pct(item['same_zs'])} | {pct(item['same_mob'])} | "
+                     f"{fmt(item['mob_mismatch'])} | {pct(item['extra_mob'])} | {pct(item['same_wp'])} | {item['mob_samples_a']} / {item['mob_samples_b']} | "
+                     f"{fmt(item['mob_time_ratio'], 4)} | {fmt(item['arrival_p50'])} / {fmt(item['arrival_p95'])} / "
+                     f"{fmt(item['arrival_max'])} | {item['stuck_npcs']} |")
+    lines += ["", "### Stuck routine segments (all states)", "",
+              "| NPC | Reference state | TA | Segment samples, min | First MOB in A, min from start |",
+              "|---|---|---|---|---|"]
+    for state, item in activity["by_state"].items():
+        for entry in item["stuck"]:
+            lines.append(f"| `{entry['key']}` | {state} | `{entry['ta']}` | {entry['start_min']}–{entry['end_min']} | "
+                         f"{entry['arrival_a_min']} |")
+    lines += ["", "### Later MOB arrivals (all states)", "",
+              "| NPC | Reference state | TA | Segment samples, min | First MOB A / B, min from start | Delay, min |",
+              "|---|---|---|---|---|---|"]
+    for entry in activity["arrivals"]:
+        if entry["delay_min"] > 0:
+            lines.append(f"| `{entry['key']}` | {entry['state']} | `{entry['ta']}` | {entry['start_min']}–{entry['end_min']} | "
+                         f"{entry['arrival_a_min']} / {entry['arrival_b_min']} | {entry['delay_min']} |")
+    lines.append("")
+    events = result["activity_events"]
+    lines += [f"## Activities by events in {label_b}", ""]
+    if events is None:
+        lines += ["No `activity_events` counters in the run.", ""]
+    else:
+        lines += [f"Watchdog restarts {events.get('watchdog')}, expired reservations {events.get('reservation_expired')}, "
+                  f"reservations without a living owner {events.get('reservation_ownerless')}, two NPCs on one place "
+                  f"{events.get('double_occupancy')}.", "",
+                  "| State | Place checks | Wakes |", "|---|---|---|"]
+        for state, item in events.get("states", {}).items():
+            wakes = ", ".join(f"{name} {count}" for name, count in item.get("wakes", {}).items() if count)
+            lines.append(f"| {state} | {item.get('steps', 0)} | {wakes or '—'} |")
+        lines.append("")
     lines += [f"## By tier in {label_b}", "", "| Tier | Samples | Same ZS | Same TA | Position p50 / p95 / max, m |",
               "|---|---|---|---|---|"]
     for tier, item in result["by_tier"].items():
@@ -508,6 +673,7 @@ def main(argv=None):
     parser.add_argument("--min-hero-distance", type=float, default=0.0,
                         help="leave out NPC-samples closer to the hero than this many metres in either run")
     parser.add_argument("--tolerances", help="JSON file of tolerances (keys as the options below, without --)")
+    parser.add_argument("--activity-states", help="comma-separated reference ZS states for activity totals and checks; table remains complete")
     for name, (kind, label) in CHECKS.items():
         if kind == "flag":
             parser.add_argument("--" + name.replace("_", "-"), dest=name, type=lambda v: v.lower() in ("1", "true", "yes"),
@@ -517,7 +683,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     policy = json.loads(Path(args.tolerances).read_text()) if args.tolerances else {}
     tolerances = tolerances_from(args, policy)
-    result = compare(load(args.run_a), load(args.run_b), args.window, args.min_hero_distance)
+    states = set(args.activity_states.split(",")) if args.activity_states is not None else None
+    result = compare(load(args.run_a), load(args.run_b), args.window, args.min_hero_distance, states)
     checks = evaluate(result, tolerances, policy.get("inventory_script_evidence", ()))
     report = markdown(result, checks, args.label_a, args.label_b)
     if args.out:

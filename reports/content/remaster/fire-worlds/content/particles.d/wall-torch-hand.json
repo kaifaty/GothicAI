@@ -1,0 +1,1 @@
+{"format": 1, "effects": [{"name": "OWN_HAND_FLAME", "base": "OWN_TORCH_FLAME", "set": {}, "lean": {"rise": 1.8, "max_deg": 70, "response": 0.12}}, {"name": "OWN_HAND_FLAME_SIDE", "base": "OWN_TORCH_FLAME_SIDE", "set": {}, "lean": {"rise": 1.8, "max_deg": 70, "response": 0.12}}, {"name": "OWN_HAND_LICKS", "base": "OWN_TORCH_LICKS", "set": {}, "inherit": 0.75}]}

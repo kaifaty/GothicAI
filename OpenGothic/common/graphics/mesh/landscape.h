@@ -16,6 +16,7 @@ class Landscape final {
     ~Landscape();
 
     void setVisible(bool visible);
+    size_t levelRecordCount() const { return levelRecords; }
 
   private:
     void init(const PackedMesh& packed, bool wholeWorld, const Tempest::Vec3* texturePosition = nullptr);
@@ -36,5 +37,6 @@ class Landscape final {
     StaticMesh             mesh;
     Tempest::StorageBuffer meshletDesc;
     std::vector<Block>     blocks;
+    size_t                 levelRecords = 0;
     RtPart                 rt[2];
   };

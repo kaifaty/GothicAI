@@ -19,21 +19,31 @@ layout(binding = 1, std430) readonly buffer Blades { uvec4 blade[]; };
 layout(binding = 2) uniform sampler2D ground;
 // of a ground with its own layers the sward's map, by the world's x and z (grass_layers.glsl); else the same texture
 layout(binding = 3) uniform sampler2D sward;
+#if defined(GRASS_GPU_CULL)
+layout(binding = 4, std430) readonly buffer Compacted { uint compact[]; };
+layout(binding = 5, std430) readonly buffer Windows { uvec2 windows[]; };
+#else
+// the frame's table of the draws' spans
+layout(binding = 4, std430) readonly buffer Spans { uint span[]; };
+#endif
 
 layout(push_constant, std430) uniform Push {
   vec4  origin;       // cm: the corner of the cell less its margin, its lowest root in y
   float wind;         // the record's
   float translucency;
-  uint  first;        // the batch's first blade in the buffer
+  uint  table;        // of the draw's spans, or the draw index with GRASS_GPU_CULL
   uint  segments;     // links of a blade in this cell: 4, 3, 2 or 1
   // The fine blades of the short sward (GrassField): x the width at the root, cm, y per step of the blade's bits;
   // z their own ring's full count to here, w into the ground from here to a quarter further. 0: a blade of the
   // scene's ring and widths
   vec4  shape;
   float swardK;       // repeats of the sward's map in a cm; 0: a ground without its own layers
+  uint  pack;         // blades per instance
+  uint  kind;         // GrassKindEar: stalks with an ear (grass_ear.glsl); 0: blades of grass
   } push;
 
-layout(location = 0) out vec4 outColor;      // the painted ground under the root; w: 1 on a ground with its own layers
+layout(location = 0) out vec4 outColor;      // the painted ground under the root; w: 1 on a ground with its own layers,
+                                             // 2 a stalk with an ear
 layout(location = 1) out vec3 outNormal;
 layout(location = 2) out vec4 outShade;      // the share of the blade's length, of the sun through, the dryness, the sheen
 layout(location = 3) out vec3 outPrevStatic; // as Varyings of materials_common.glsl
@@ -108,49 +118,94 @@ vec3 bladePoint(Tilt tilt, int k, int n, float height) {
   return p*(height*step);
   }
 
-void main() {
-  const uvec4 b = blade[push.first + uint(gl_InstanceIndex)];
+#define GRASS_EAR_SHAPE 1
+#include "grass/grass_ear.glsl"
+#include "grass/grass_blade.glsl"
 
-  const vec3  root   = push.origin.xyz + vec3(float(b.x & 0x3FFFu), float((b.y & 0xFFFFu)*2u), float((b.x >> 14) & 0x3FFFu))*(1.0/16.0);
+void hideBlade() {
+  gl_Position   = vec4(uintBitsToFloat(0x7fc00000));
+  outColor      = vec4(0);
+  outNormal     = vec3(0,1,0);
+  outShade      = vec4(0);
+  outPrevStatic = vec3(0,0,1);
+  outPrevDelta  = vec3(0);
+  outRoot       = vec3(0);
+  }
+
+void main() {
+  const uint inst     = uint(gl_InstanceIndex);
+  const bool isPacked = push.pack!=1u;
+  const int n = int(push.segments);
+  int vertex = gl_VertexIndex;
+  uint bladeIndex;
+#if defined(GRASS_GPU_CULL)
+  const uvec2 window = windows[push.table];
+  uint at = inst*push.pack;
+  if(isPacked) {
+    const int verts = 2*n+1;
+    const int copy  = vertex/verts;
+    vertex -= copy*verts;
+    at += uint(copy);
+    if(at>=window.y) {
+      hideBlade();
+      return;
+      }
+    }
+  bladeIndex = compact[window.x+at];
+#else
+  // Each of the draw's 16 spans stores the exclusive instance end and the blade offset.
+  // Packed spans also store the exclusive blade end, so the last pack cannot read past it.
+  const uint stride   = isPacked ? 3u : 2u;
+  uint       at       = push.table;
+  if(inst>=span[at + stride*7u]) at += stride*8u;
+  if(inst>=span[at + stride*3u]) at += stride*4u;
+  if(inst>=span[at + stride])    at += stride*2u;
+  if(inst>=span[at])             at += stride;
+
+  const uint bladeOffset = span[at+1u];
+  bladeIndex = inst + bladeOffset;
+  if(isPacked) {
+    const int verts = 2*n+1;
+    const int copy  = vertex/verts;
+    vertex -= copy*verts;
+    bladeIndex = inst*push.pack + uint(copy) + bladeOffset;
+    if(bladeIndex>=span[at+2u]) {
+      hideBlade();
+      return;
+      }
+    }
+#endif
+  const uvec4 b = blade[bladeIndex];
+
+  const vec3  root   = grassBladeRoot(b, push.origin.xyz);
   const float lean0  = radians(8.0 + float(b.x >> 28)*(40.0/15.0));
-  const float rank   = (float(b.y >> 24) + 0.5)/256.0;
+  const float rank   = grassBladeRank(b);
   const float facing = float(b.z & 0xFFu)*(6.2831853/256.0);
   const float tuft   = float((b.z >> 8) & 0xFFu)/256.0;
   const vec2  gxz    = vec2(float((b.z >> 16) & 0xFFu) - 128.0, float(b.z >> 24) - 128.0)/127.0;
   const vec3  gn     = vec3(gxz.x, sqrt(max(1.0 - dot(gxz,gxz), 0.04)), gxz.y);
   const vec2  uv     = vec2(float(b.w & 0xFFFu), float((b.w >> 12) & 0xFFFu))/4096.0;
   const float dry    = float(b.w >> 28)/15.0;
-  const bool  fine   = push.shape.x>0.0;
-  float       width  = fine ? push.shape.x + float((b.w >> 24) & 0xFu)*push.shape.y
-                            : GrassWidth   + float((b.w >> 24) & 0xFu)*GrassWidthStep;
-  float       height = float((b.y >> 16) & 0xFFu)*0.25;
+  const bool  ear    = push.kind==GrassKindEar;
 
-  // The ring: past `full` a share full/d of the blades is left, each d/full wider; a blade of a rank over the
-  // share has shrunk into the ground before it is dropped, so nothing pops while walking
-  const vec4  ring = fine ? vec4(push.shape.z, push.shape.w, push.shape.w*1.25, scene.grassRing.w) : scene.grassRing;
+  const vec4  ring = grassBladeRing(push.shape, scene.grassRing);
   const float d    = distance(root, scene.camPos);
-  const float grow = clamp((ring.x/max(d,1.0)*1.12 - rank)/0.12, 0.0, 1.0);
-  height *= grow*(1.0 - smoothstep(ring.y, ring.z, d));
+  const float height = grassBladeHeight(b, ear, rank, ring, d);
   const uint  partsOff = grassPartsOff(ring.w);
-  if(height<=0.05 || ring.w<0.75 || (partsOff & GrassPartHide)!=0u) {
-    gl_Position   = vec4(uintBitsToFloat(0x7fc00000));
-    outColor      = vec4(0);
-    outNormal     = vec3(0,1,0);
-    outShade      = vec4(0);
-    outPrevStatic = vec3(0,0,1);
-    outPrevDelta  = vec3(0);
-    outRoot       = vec3(0);
+#if !defined(GRASS_GPU_CULL)
+  if(!grassBladeGrown(height, ring, partsOff)) {
+    hideBlade();
     return;
     }
+#endif
   const float depth = (scene.viewProject*vec4(root,1.0)).w;
-  const float pixel = 2.0*max(depth,1.0)/(abs(scene.project[1][1])*float(scene.screenRes.y));
-  width = max(width*clamp(d/ring.x, 1.0, 8.0), 1.3*pixel);
+  const float widen = grassBladeWiden(d, ring.x), thin = grassBladeThin(depth, scene.project[1][1], scene.screenRes.y);
+  const float width = max(grassBladeWidth(b, push.shape)*widen, thin);
 
   // the vertex: two at each link, one at the tip
-  const int   n    = int(push.segments);
-  const int   k    = min(gl_VertexIndex >> 1, n);
-  const float t    = float(k)/float(n);
-  const float side = k==n ? 0.0 : ((gl_VertexIndex & 1)==0 ? -0.5 : 0.5);
+  int   k    = min(vertex >> 1, n);
+  float t    = float(k)/float(n);
+  float side = k==n ? 0.0 : ((vertex & 1)==0 ? -0.5 : 0.5);
 
   // the strip's width is never edge-on to the eye
   const vec2  fwd   = vec2(cos(facing), sin(facing));
@@ -159,14 +214,29 @@ void main() {
   const vec2  s0    = vec2(-fwd.y, fwd.x);
   const float sp    = dot(s0,perp);
   const vec2  s1    = normalize(eye*(dot(s0,eye)*0.3) + perp*((sp>=0.0 ? 1.0 : -1.0)*max(abs(sp),0.35)));
-  const vec3  sideV = vec3(s1.x, 0.0, s1.y);
+  vec3        sideV = vec3(s1.x, 0.0, s1.y);
 
   const float still = 1.0 - smoothstep(GrassStillFrom, GrassStillTo, d);
   const vec3  loc   = foliageFrontAt(root.z, scene.foliageFront.xy, scene.foliageFrontK, scene.foliageWind, scene.foliageSwing);
   const Tilt  tilt  = bladeTilt(fwd, lean0, height, tuft, rank, still, scene.foliageWind, scene.foliagePhase,
                                 scene.foliageSwing, loc, root);
-  const vec3  off   = sideV*(side*width*(1.0 - GrassTaper*t));
-  const vec3  pos   = root + bladePoint(tilt, k, n, height) + off;
+  // a stalk with an ear: its own nodes and widths, the ear hangs over by the blade's three bits
+  const float droop = mix(GrassEarDroopMin, GrassEarDroopMax, float((b.w >> 24) & 0xFu)/7.0);
+  vec3        dir   = bladeDir(tilt, t);
+  vec3        stem  = bladePoint(tilt, k, n, height);
+  float       across= width*(1.0 - GrassTaper*t); // cm: the strip at the vertex
+  if(ear) {
+    const GrassEarVertex e = grassEarVertex(vertex, n, max(vec2(GrassEarStalkWidth,GrassEarWidth)*widen, vec2(thin)));
+    k     = e.k;
+    t     = e.t;
+    side  = e.side;
+    dir   = grassEarDir(tilt, fwd, droop, t);
+    stem  = grassEarPoint(tilt, fwd, droop, k, n, height);
+    across= e.width;
+    sideV = grassEarAxis(dir, scene.camPos - (root+stem), sideV);
+    }
+  const vec3  off   = sideV*(side*across);
+  const vec3  pos   = root + stem + off;
 
   const vec4 clip = scene.viewProject*vec4(pos,1.0);
   gl_Position = clip;
@@ -176,7 +246,7 @@ void main() {
                                       scene.foliageSwingPrev);
     const Tilt tiltP = bladeTilt(fwd, lean0, height, tuft, rank, still, scene.foliageWindPrev, scene.foliagePhasePrev,
                                  scene.foliageSwingPrev, locP, root);
-    const vec3 prev  = root + bladePoint(tiltP, k, n, height) + off;
+    const vec3 prev  = root + (ear ? grassEarPoint(tiltP, fwd, droop, k, n, height) : bladePoint(tiltP, k, n, height)) + off;
     outPrevStatic = (scene.reprojectClip*clip).xyw;
     outPrevDelta  = (scene.viewProjectPrev*vec4(prev - pos,0.0)).xyw;
     } else {
@@ -190,18 +260,21 @@ void main() {
   // the sward it stands in
   const bool  own  = push.swardK>0.0 && (partsOff & GrassPartLayers)==0u;
   const float lean = length(tilt.lean);
-  outColor = vec4(textureLod(ground, uv, max(float(textureQueryLevels(ground)) - 6.0, 0.0)).rgb, own ? 1.0 : 0.0);
+  outColor = vec4(textureLod(ground, uv, max(float(textureQueryLevels(ground)) - 6.0, 0.0)).rgb, ear ? 2.0 : (own ? 1.0 : 0.0));
   outRoot  = own ? textureLod(sward, root.xz*push.swardK, max(float(textureQueryLevels(sward)) - 6.0, 0.0)).rgb : outColor.rgb;
   outShade = vec4(t, push.translucency, dry, GrassLeanSheen*min(lean/(0.5*GrassLeanMaxTan), 1.0));
 
   // Three quarters the ground's normal, a quarter the blade's own, rounded across it; the lean turns it against
   // the wind, as the faces of the blades that lie over turn up: grass under a gust differs in tone from grass
   // that stands, also where the lean is under a pixel
-  vec3 face = cross(sideV, bladeDir(tilt, t));
+  vec3 face = cross(sideV, dir);
   if(face.y<0.0)
     face = -face;
   face = normalize(face + sideV*(side*1.2));
   outNormal = normalize(gn*0.75 + face*0.25 - vec3(tilt.lean.x, 0.0, tilt.lean.y)*(t*GrassNormalLean*0.5));
   if((partsOff & GrassPartNormal)!=0u)
     outNormal = gn;
+  // the vertex stage's cost by difference: everything above is done, and the vertex leaves by the right plane
+  if((partsOff & GrassPartOffscreen)!=0u)
+    gl_Position = vec4(4.0*(abs(clip.w)+1.0), clip.y, clip.z, abs(clip.w)+1.0);
   }

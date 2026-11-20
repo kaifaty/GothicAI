@@ -3,8 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <string_view>
+
+#include "graphics/grass/grassear.h"
 
 // The grass system (reports/engine/2026-11-14-grass-system): the `grass` field of a ground texture's record in
 // materials.json, the switch and the numbers of the ring round the camera. The blades are placed by
@@ -21,6 +24,7 @@ struct Params final {
   bool  on           = false;
   float density      = 1.f;   // 0..2 of BladesPerM2
   float height       = 20.f;  // 5..60 cm: the main grass; the short one and the clumps are counted from it
+  uint8_t kind       = 0;     // KindEar: stalks with an ear (grassear.h), of a height of 5..160 cm
   float clumps       = 1.f;   // 0..1: how much of the tall clumps and of the gathering into tufts
   float slope        = 35.f;  // 0..60 degrees: none over it, thinner on the last 10
   float edge         = 150.f; // 0..400 cm: the band at an open edge where the grass is lower and thinner
@@ -58,7 +62,9 @@ bool parse(const Value& v, Params& out) {
     dst = float(x);
     return true;
     };
-  if(!number("density",p.density,0,MaxDensity) || !number("height",p.height,5,MaxHeight) ||
+  if(!parseKind(v,p.kind))
+    return false;
+  if(!number("density",p.density,0,MaxDensity) || !number("height",p.height,5,p.kind==KindEar ? EarMaxHeight : MaxHeight) ||
      !number("clumps",p.clumps,0,1) || !number("slope",p.slope,0,60) || !number("edge",p.edge,0,400) ||
      !number("wind",p.wind,0,MaxWind) || !number("translucency",p.translucency,0,1) || !number("broad",p.broad,0,1))
     return false;
@@ -136,10 +142,18 @@ struct Ring final {
   float density  = 1.f; // of the record's
   };
 
+// OPENGOTHIC_GRASS_RING=<from>,<to> (cm) moves where the blades go into the ground, for a bench: what the far blades
+// cost (a ring cut short) or how a longer ring looks and costs (reports/engine/2026-11-18-grass-volume). The ground
+// takes the far look from half of <from>, as always
 inline Ring ring(uint8_t mode) {
-  if(mode==Low)
-    return Ring{800.f, 3000.f, 4000.f, 0.625f};
-  return Ring{};
+  Ring r = mode==Low ? Ring{800.f, 3000.f, 4000.f, 0.625f} : Ring{};
+  static const char* const env = std::getenv("OPENGOTHIC_GRASS_RING");
+  float from = 0, to = 0;
+  if(env!=nullptr && std::sscanf(env, "%f,%f", &from, &to)==2 && from>r.full && to>from) {
+    r.fadeFrom = from;
+    r.radius   = to;
+    }
+  return r;
   }
 
 }

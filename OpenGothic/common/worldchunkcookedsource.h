@@ -19,12 +19,17 @@
 // one line per world load, none when it is missing; a cell whose .wcb is there
 // but cannot be used logs one line and reads its GLB from then on. A missing
 // .wcb is not logged. OPENGOTHIC_WCB=0 at world load turns the cooked path off.
-// The game writes no cooked file and hashes no GLB: a GLB changed at the same
-// length after the cook is not noticed. The cook removes the index before it
+// OPENGOTHIC_CLUSTER_LOD=0 skips the hierarchy sections even on the cooked path.
+// The game writes no cooked file. A healthy cooked read does not hash the GLB,
+// so it does not notice a same-length edit. The cook removes the index before it
 // writes cells and writes it last (worldchunkcook.h), so an interrupted cook
 // leaves no index; an older index put back by hand beside newer cells is
-// outside this contract, and content-convert verify-cooked-world finds it (it
-// compares each cell's hash with the index).
+// outside this contract. content-convert verify-cooked-world compares the GLB
+// hashes in the cells and the index, then checks the rebuilt geometry and graph.
+// After a catalogue start (worldchunkcatalogue.h) there are no totals of
+// readWorldChunks to compare: the start loads the index it validated itself
+// (loadCatalogue), every GLB had its entry's length. A cell that falls back uses
+// the index directly if its GLB still matches, otherwise it reads through the catalogue.
 
 #include "worldchunkindex.h"
 #include "worldchunksruntime.h"
@@ -35,6 +40,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -67,17 +73,29 @@ class CookedChunkSource {
       const WorldChunkFile&               glb;
       const std::vector<asset::Material>& materials;
       size_t                              vertices = 0, features = 0;
+      const WorldCatalogue*               catalogue = nullptr;
       };
 
     // Called once by readWorldChunks with its result: finds and validates the
     // index, opens no .wcb. files are the cells' GLBs in world.json order.
     void load(const std::filesystem::path& dir, const std::filesystem::path& overrideDir,
               const WorldCellManifest& manifest, std::span<const WorldChunkFile> files, const asset::WorldMesh& mesh);
+    // The catalogue start's load: the index and set it validated, every cell on the cooked path. Logs nothing.
+    void loadCatalogue(CookedIndex validated, CookedSet loaded, const WorldCellManifest& manifest);
+    // Set at world load, before reads. A recognized environment value takes precedence over the INI.
+    void configureClusterLod(bool enabled) const;
+    void setResident(size_t cell, bool resident) const;
+    std::shared_ptr<const CookedChunk> clusterHierarchy(size_t cell) const;
     // Cell i from its .wcb, or from glb() when the cooked path cannot be taken
     // or currentFile is set. Throws, naming the file, for a source ordinal past
     // the cell's triangles. Safe to call from several threads at once.
     WorldChunkMesh read(size_t cell, std::span<const uint32_t> sources, bool currentFile, const World& world,
                         const std::function<WorldChunkMesh()>& glb) const;
+    // Cell i's landscape after world cloth from its .wcb: its triangles in stitched order (by the index's ranks)
+    // without the ascending exclusions, which must leave kept; or glb() when the cooked path cannot be taken, the
+    // .wcb disagrees with the index or the exclusions, or currentFile is set. Counts as read() does.
+    WorldChunkMesh readLandscape(size_t cell, std::span<const uint32_t> exclusions, uint32_t kept, bool currentFile,
+                                 const World& world, const std::function<WorldChunkMesh()>& glb) const;
     bool            active() const { return index.has_value(); }
     // The set the index in use came from, and that index as the load read it; null without one.
     const CookedSet*   cookedSet() const { return index ? &set : nullptr; }
@@ -94,6 +112,24 @@ class CookedChunkSource {
     std::vector<ChunkId>                       cells;
     std::unique_ptr<std::atomic<uint8_t>[]>    states;
     mutable std::atomic<uint64_t>              cookedReads {0}, glbReads {0}, cookedNs {0}, glbNs {0};
+    mutable bool                               readHierarchy = true;
+    mutable std::atomic_flag                   loggedHierarchy {};
 
-    std::optional<WorldChunkMesh> readCooked(size_t cell, std::span<const uint32_t> sources, const World& world) const;
+    struct ResidentHierarchy {
+      uint64_t generation = 0; // odd while the cell is in Near or Far
+      std::shared_ptr<const CookedChunk> chunk;
+      };
+    mutable std::mutex                         residencyMutex;
+    mutable std::vector<ResidentHierarchy>     residentHierarchies;
+
+    struct Landscape {
+      std::span<const uint32_t> exclusions;
+      uint32_t                  kept = 0;
+      };
+    WorldChunkMesh readMesh(const CookedChunk& chunk, size_t cell, std::span<const uint32_t> sources,
+                            const Landscape* landscape, const World& world, const std::string& name) const;
+    std::optional<WorldChunkMesh> readCooked(size_t cell, std::span<const uint32_t> sources, const Landscape* landscape,
+                                             const World& world) const;
+    WorldChunkMesh readCell(size_t cell, std::span<const uint32_t> sources, const Landscape* landscape,
+                            bool currentFile, const World& world, const std::function<WorldChunkMesh()>& glb) const;
   };

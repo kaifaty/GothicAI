@@ -1,0 +1,50 @@
+# The fire arrow (reports/content/remaster/magic-fire/weapon.md): two real shots of the fire bow at the ground by the
+# tavern at night. hand: the drawn arrow and the shot; flight: the second shot from the side, 5 times slower; stuck: the
+# arrow in the ground; faded: 20 s after the hit, without its effect. The cameras are set on the hits this seed gives
+# (41521 3354 -707 and 41649 3325 -605); a change of the aim or of the place moves them.
+seed 73013
+cheat god
+set time 22 0
+view clean
+overlay off
+ui off
+goto NW_TAVERNE_TROLLAREA_03
+clear 3000
+wait 2000
+set time 22 0
+give ItRw_Addon_FireBow
+equip ItRw_Addon_FireBow
+give ItRw_Addon_FireArrow 30
+stats str 150 dex 150 bow 100
+tap bow
+wait 2500
+sticking world
+wait 300
+itemfx
+watch player
+cam follow 200 150 90
+cam look 140
+wait 300
+rec hand
+volley 1 300
+wait 300
+stop
+cam at 41918 3440 -759 41732 3390 -486
+wait 300
+slowmo 5
+rec flight
+volley 1 300
+wait 300
+stop
+slowmo 1
+cam at 41736 3385 -522 41649 3330 -605
+wait 200
+rec stuck
+wait 5000
+stop
+itemfx
+wait 13000
+rec faded
+wait 2500
+stop
+itemfx

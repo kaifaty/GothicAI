@@ -26,11 +26,13 @@
 #include "physics/dynamicworld.h"
 #include "physics/collisionworld.h"
 #include "physics/ragdoll.h"
+#include "world/activityevents.h"
 #include "world/aiqueue.h"
 #include "world/npclogicalstate.h"
 #include "world/npcsimtick.h"
 #include "world/objects/attention.h"
 #include "world/objects/archer.h"
+#include "world/objects/npcroutinetable.h"
 #include "world/fplock.h"
 #include "world/waypath.h"
 #include "world/wayheights.h"
@@ -257,13 +259,13 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
                               std::string_view body, std::string_view head);
     void       updateArmor   ();
     std::string bodyVisual   () const;
-    void       setSword      (MeshObjects::Mesh&& sword);
-    void       setRangedWeapon(MeshObjects::Mesh&& bow);
-    void       setShield     (MeshObjects::Mesh&& shield);
+    void       setSword      (ItemView&& sword);
+    void       setRangedWeapon(ItemView&& bow);
+    void       setShield     (ItemView&& shield);
     void       setMagicWeapon(Effect&& spell);
-    void       setSlotItem   (MeshObjects::Mesh&& itm, std::string_view slot);
-    void       setStateItem  (MeshObjects::Mesh&& itm, std::string_view slot);
-    void       setAmmoItem   (MeshObjects::Mesh&& itm, std::string_view slot);
+    void       setSlotItem   (ItemView&& itm, std::string_view slot);
+    void       setStateItem  (ItemView&& itm, std::string_view slot);
+    void       setAmmoItem   (ItemView&& itm, std::string_view slot);
     void       clearSlotItem (std::string_view slot);
     // the quiver on the right hip while a bow (not a crossbow) is equipped, with the carried arrows in it
     // by steps (graphics/mesh/quiver); cheap when nothing changed: called every tick and on the view's update
@@ -400,6 +402,13 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     void      aiPush(AiQueue::AiAction&& a);
     void      resumeAiRoutine();
+    // A routine activity run by events (world/activityevents.h): a wake for its automaton, ignored
+    // when the state polls its Loop; stopping it gives its object's reservation up.
+    void      wakeActivity(uint16_t wakes);
+    void      stopActivityEvents(uint16_t why);
+    // MobReservations: the reservation of a use not yet attached expired or another NPC took the object.
+    void      loseActivityReservation();
+    ActivityEvents::Stage activityStage() const { return activityEvents.stage; }
     // external AI control (ai_bridge): routines and script perceptions are paused
     void      setExternalControl(bool e) { externalCtrl = e; }
     bool      isExternalControl() const  { return externalCtrl; }
@@ -717,8 +726,9 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     using ArrowPinProbe = MdlVisual::ArrowPinProbe;
     size_t stuckArrowCount() const { return visual.stuckArrowCount(); }
     bool stuckArrowProbe(size_t index, ArrowPinProbe& out) const { return visual.stuckArrowProbe(index,out); }
-    bool stickArrow(MeshObjects::Mesh&& arrow, size_t bone, const Tempest::Matrix4x4& worldMatrix,
-                    std::string_view visualName={});
+    // an unknown bone is the one closest to `boneAt`, else to the matrix's origin
+    bool stickArrow(ItemView&& arrow, size_t bone, const Tempest::Matrix4x4& worldMatrix,
+                    std::string_view visualName={}, const Tempest::Vec3* boneAt=nullptr);
     void addCorpseArrowImpulse(const Bullet& bullet);
     const RagdollSave::QuestReturn& ragdollQuestReturnState() const { return ragdollQuestReturn; }
     uint32_t ragdollQuestReturnCount() const { return ragdollQuestReturns; }
@@ -912,15 +922,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      runEffect  (Effect&& e);
 
   private:
-    struct Routine final {
-      gtime            start;
-      gtime            end;
-      ScriptFn         callback;
-      const WayPoint*  point = nullptr;
-      std::string      fallbackName;
-
-      std::string_view wayPointName() const;
-      };
+    using Routine = NpcRoutineTable::Row;
 
     enum TransformBit : uint8_t {
       TR_Pos  =1,
@@ -950,6 +952,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
       Tempest::Vec3    pos  = {};
       float            pointDistance = 0.f; // transient bench precision; zero keeps normal tolerance
       Npc*             nativeCombatTarget = nullptr; // transient provenance; not a script goto
+      bool             activity = false; // transient provenance: the walk of an activity's own command
 
       void             save(Serialize& fout) const;
       void             load(Serialize&  fin);
@@ -1009,6 +1012,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     friend struct NpcLogicalState;
     friend struct MeshGltfTest;
     friend class NpcLogicalStateContract;
+    friend struct NpcDefinitionContract;
     void      traceCombatGate(std::string_view reason);
     void      traceCombatAttempt(Anim requested, bool accepted, const std::string& before, std::string_view hook);
     std::string combatPoseIdentity() const;
@@ -1024,6 +1028,15 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     bool      isPlayerEnabledState(const ::AiState& st) const;
     void      tickRoutine();
+    void      runStateInit();
+    void      startActivityEvents(const ActivityDefinitions::MobActivity* activity);
+    bool      armActivityEvents();
+    void      tickActivityEvents();
+    void      tickActivityDeadline();
+    void      fireActivityWatchdog();
+    void      dropActivityCommand();
+    void      stepActivityEvents(uint16_t wakes);
+    void      seekActivityPlace();
     int       invokeRoutine(ScriptFn function);
     void      nextAiAction(AiQueue& queue, uint64_t dt);
     bool      startQueuedState(const AiQueue::AiAction& act);
@@ -1381,6 +1394,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     std::optional<NpcSimTier>       simTierOverrideValue; // bench-only, not serialized
     NpcLogicalState                logicalBody;
     AiState                        aiState;
+    ActivityEvents::State          activityEvents; // transient, not serialized
+    bool                           activityCommands=false; // transient: the commands queued now are the activity's
     ScriptFn                       aiPrevState;
     AiQueue                        aiQueue;
     AiQueue                        aiQueueOverlay;

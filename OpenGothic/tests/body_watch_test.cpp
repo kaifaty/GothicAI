@@ -13,6 +13,7 @@
 #include "game/bodyobservations.h"
 #include "game/bodyenginepolicy.h"
 #include "game/gamescript.h"
+#include "game/gothicguildtraits.h"
 #include "game/definitions/fightaidefinitions.h"
 #include "game/playercontrol.h"
 #include "game/serialize.h"
@@ -88,6 +89,53 @@ void expect(bool condition,std::string_view message) {
   if(!condition) {
     std::cerr << "body-watch-test failure: " << message << '\n';
     throw std::runtime_error(std::string(message));
+    }
+  }
+
+void guildTraitsConsumers(World& world,const Npc& hero) {
+  ++cases;
+  GameRules& rules=world.script();
+  expect(&rules.guildTraits()==&gothicGuildTraits(),"GameScript exposes the Gothic guild traits");
+  const auto* waypoint=world.findWayPoint(hero.position());
+  expect(waypoint!=nullptr,"guild fixture has a routine waypoint");
+  const auto instance=rules.findSymbolIndex("BDT_1003_BANDIT_M");
+  expect(instance!=size_t(-1),"guild fixture has a scripted NPC instance");
+  const auto deadState=rules.findFunction("ZS_DEAD");
+
+  struct GuildCase {
+    int32_t guild;
+    bool human, monster, orc, undead, sinks, dragon;
+    };
+  constexpr GuildCase guilds[]={
+    {GIL_OUT,        true,  false, false, false, false, false},
+    {GIL_WOLF,       false, true,  false, false, false, false},
+    {GIL_ORC,        false, false, true,  false, false, false},
+    {GIL_SKELETON,   false, true,  false, true,  true,  false},
+    {GIL_STONEGOLEM, false, true,  false, false, true,  false},
+    {GIL_DRAGON,     false, true,  false, false, false, true },
+    {-1,             false, false, false, false, false, false},
+    {GIL_MAX+5,      false, false, true,  false, false, false},
+    };
+  for(const auto& row:guilds) {
+    auto* actor=world.addNpc(instance,hero.position()+Tempest::Vec3(150,0,0));
+    expect(actor!=nullptr,"guild fixture spawned an NPC");
+    auto& npc=*actor;
+    npc.handle().guild=row.guild;
+    npc.setTrueGuild(row.guild);
+    const auto check=[&](bool ok,std::string_view consumer) {
+      expect(ok,std::string(consumer)+" for guild "+std::to_string(row.guild));
+      };
+    check(npc.isHuman()==row.human,"Npc::isHuman");
+    check(npc.isMonster()==row.monster,"Npc::isMonster");
+    check(npc.isTargetableBySpell(TARGET_TYPE_HUMANS)==row.human,"Npc spell target: humans");
+    check(npc.isTargetableBySpell(TARGET_TYPE_ORCS)==row.orc,"Npc spell target: orcs");
+    check(npc.isTargetableBySpell(TARGET_TYPE_UNDEAD)==row.undead,"Npc spell target: undead");
+    check(world.npcBodySinks(npc)==row.sinks,"World::npcBodySinks");
+    check(world.bodyRule(npc,nullptr).dragon==row.dragon,"World::bodyRule dragon");
+    npc.clearRoutine();
+    check(npc.startState(deadState,waypoint->name) && npc.isDead(),"guild fixture enters ZS_DEAD");
+    check(npc.resetPositionToTA()==row.dragon,"Npc::resetPositionToTA for a corpse");
+    world.removeNpc(npc);
     }
   }
 
@@ -2222,6 +2270,7 @@ int main(int argc,const char** argv) {
       gothic.setGame(std::make_unique<GameSession>(serialized));
       }
     expect(gothic.world()!=nullptr && gothic.player()!=nullptr,"playable headless world");
+    if(!missingNetwork) guildTraitsConsumers(*gothic.world(),*gothic.player());
     PlayerControl player;
     player.clearInput();
     gothic.gameSession()->setTimeMultiplyer(1.f);

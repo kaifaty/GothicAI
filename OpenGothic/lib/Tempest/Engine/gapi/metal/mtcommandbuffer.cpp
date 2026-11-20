@@ -55,8 +55,8 @@ struct MtCommandBuffer::GpuProfile {
   size_t samples=0;
 
   explicit GpuProfile(MtDevice& device) {
-    // Apple Silicon exposes stage-boundary timestamps. Do not
-    // emulate them with extra encoders, draw barriers, or command submissions.
+    // Apple Silicon exposes timestamps at stage boundaries, including the
+    // start and end of compute encoders.
     if(!device.impl->supportsCounterSampling(MTL::CounterSamplingPointAtStageBoundary))
       return;
     auto sets=device.impl->counterSets();
@@ -107,6 +107,16 @@ void MtCommandBuffer::profileCommand(bool dispatch) {
   FrameProfile::add(dispatch ? FrameProfile::Amount::DispatchCalls : FrameProfile::Amount::DrawCalls,1);
   if(!gpuProfile || profilePass==size_t(-1))
     return;
+  if(dispatch && gpuProfile->buffer!=nullptr) {
+    const auto& previous = gpuProfile->passes[profilePass].lastLabel;
+    // Isolate the two visibility dispatch groups from their neighbours for
+    // stage-boundary timing. Split only before actual dispatches, so a marker
+    // followed by a render pass does not create an empty compute encoder.
+    if(!previous.empty() && previous!=activeLabel && (previous=="Visibility" || activeLabel=="Visibility")) {
+      setEncoder(E_None,nullptr);
+      setComputePipeline(*curCompPipeline);
+      }
+    }
   auto& pass=gpuProfile->passes[profilePass];
   if(dispatch)
     ++pass.data.dispatchCalls;
@@ -865,6 +875,17 @@ void MtCommandBuffer::drawIndirect(const AbstractGraphicsApi::Buffer& indirect, 
   encDraw->drawPrimitives(topology, ind.impl.get(), offset);
   }
 
+void MtCommandBuffer::drawIndexedIndirect(const AbstractGraphicsApi::Buffer& iibo, Detail::IndexClass cls,
+                                          const AbstractGraphicsApi::Buffer& indirect, size_t offset) {
+  T_SKIP_PASS();
+  auto& ibo = reinterpret_cast<const MtBuffer&>(iibo);
+  auto& ind = reinterpret_cast<const MtBuffer&>(indirect);
+  implSetUniforms(S_Graphics);
+  implSetPushData(S_Graphics);
+  T_PROFILE_DRAW();
+  encDraw->drawIndexedPrimitives(topology, nativeFormat(cls), ibo.impl.get(), 0, ind.impl.get(), offset);
+  }
+
 void MtCommandBuffer::dispatchMesh(size_t x, size_t y, size_t z) {
   T_SKIP_PASS();
   if(x==0 || y==0 || z==0)
@@ -889,18 +910,18 @@ void MtCommandBuffer::dispatch(size_t x, size_t y, size_t z) {
   T_SKIP_PASS();
   if(x==0 || y==0 || z==0)
     return; // validation warning
+  T_PROFILE_DISPATCH();
   implSetUniforms(S_Compute);
   implSetPushData(S_Compute);
-  T_PROFILE_DISPATCH();
   encComp->dispatchThreadgroups(MTL::Size(x,y,z), localSize);
   }
 
 void MtCommandBuffer::dispatchIndirect(const AbstractGraphicsApi::Buffer& indirect, size_t offset) {
   T_SKIP_PASS();
+  T_PROFILE_DISPATCH();
   implSetUniforms(S_Compute);
   implSetPushData(S_Compute);
   auto& ind = reinterpret_cast<const MtBuffer&>(indirect);
-  T_PROFILE_DISPATCH();
   encComp->dispatchThreadgroups(ind.impl.get(), offset, localSize);
   }
 

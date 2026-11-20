@@ -16,7 +16,8 @@ using namespace Tempest::Detail;
 namespace fs = std::filesystem;
 
 // Bump when the way pipelines are put into the archive changes.
-static constexpr const char* MetalArchiveFormat = "tempest-metal-archive-1";
+// Invariant position shaders now use preserveInvariance when the library is compiled.
+static constexpr const char* MetalArchiveFormat = "tempest-metal-archive-2";
 // Safety net: a larger file is dropped and the archive starts over. Writes rebuild a fresh archive
 // (see save()), which keeps the file at the size of the pipelines actually used.
 static constexpr uintmax_t   MaxArchiveSize     = 64u*1024u*1024u;

@@ -1,9 +1,12 @@
 #include "worldbase.h"
 
+#include "worldchunkcatalogue.h"
+#include "worldchunkcookedsource.h"
 #include "worldchunksruntime.h"
 #include "world/voblayer.h"
 #include "loadprobe.h"
 #include "resources.h"
+#include "settings.h"
 #include "contentcensus.h"
 
 #include <Tempest/Log>
@@ -23,7 +26,7 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
                             const std::filesystem::path& overrideDir,
                             const std::vector<std::pair<std::string,uintmax_t>>& baseArchives,
                             const std::map<std::string,std::filesystem::path>* ownMeshes,
-                            ChunkTable* chunks) {
+                            ChunkTable* chunks, bool catalogue) {
   WorldBaseResult result;
   const auto started = std::chrono::steady_clock::now();
   try {
@@ -79,13 +82,18 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
       LoadProbe::mark("voblayer",LoadProbe::msSince(probeT));
     ChunkTable chunkTable;
     probeT = LoadProbe::now();
-    auto mesh = readWorldChunks(dir,overrideDir,chunks==nullptr ? nullptr : &chunkTable);
+    auto mesh = chunks==nullptr ? readWorldChunks(dir,overrideDir) :
+                                  startWorldChunks(dir,overrideDir,manifest,chunkTable,catalogue);
+    if(chunkTable.source)
+      chunkTable.source->cooked().configureClusterLod(!Settings::has("INTERNAL","clusterLod") ||
+                                                      Settings::getI("INTERNAL","clusterLod")!=0);
     if(LoadProbe::enabled())
       LoadProbe::mark("mesh_chunks_read",LoadProbe::msSince(probeT),
-                      "chunks="+std::to_string(manifest.chunks.size())+" tris="+std::to_string(mesh.polygons.material_indices.size()));
+                      "chunks="+std::to_string(manifest.chunks.size())+" tris="+std::to_string(loadedWorldTriangles(mesh,chunkTable))+
+                      " start="+(chunkTable.source && chunkTable.source->catalogue() ? "catalogue" : "stitched"));
     mesh.name = data.name;
     mesh.bbox = data.bbox;
-    result.triangles = mesh.polygons.material_indices.size();
+    result.triangles = loadedWorldTriangles(mesh,chunkTable);
     result.chunks = manifest.chunks.size();
     worldMesh = std::move(mesh);
     world = std::move(data);
@@ -103,7 +111,11 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
 void loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name, ChunkTable* chunks) {
   const auto dir = Resources::worldBaseDir(name);
   const auto ownMeshes = Resources::meshReplacementFiles();
-  const auto result = tryWorldData(world,worldMesh,name,dir,Resources::worldOverrideDir(name),Resources::baseArchiveFiles(),&ownMeshes,chunks);
+  // The catalogue start serves the streaming landscape; the built-in benchmark's whole landscape still comes from
+  // the stitched mesh (docs/landscape-plan.md, Д3, task 9), as without streaming (startWorldChunks).
+  const bool catalogue = chunks!=nullptr && !GameHost::inst().isBenchmarkMode();
+  const auto result = tryWorldData(world,worldMesh,name,dir,Resources::worldOverrideDir(name),Resources::baseArchiveFiles(),
+                                   &ownMeshes,chunks,catalogue);
   if(result.replaced) {
     if(Resources::contentCensus())
       Resources::contentCensus()->replaced(name,(Resources::worldContentDir("base",name)/"world.json").generic_string());

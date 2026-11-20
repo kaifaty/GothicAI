@@ -9,6 +9,7 @@
 #include "graphics/grass/grasspatch.h"
 #include "graphics/grass/grassplace.h"
 
+#include <Tempest/Vec>
 #include <rapidjson/document.h>
 
 #include <algorithm>
@@ -21,6 +22,41 @@
 #include <vector>
 
 namespace {
+namespace Shader {
+// Compile the coverage shader's formulas on the host. Only GLSL types and built-ins are adapted here.
+using uint = uint32_t;
+using vec3 = Tempest::Vec3;
+using std::abs;
+using std::clamp;
+using std::exp;
+using std::max;
+using std::min;
+using std::pow;
+using std::sqrt;
+
+struct ivec2 : Tempest::IVec2 {
+  using Tempest::IVec2::IVec2;
+  ivec2(Tempest::IVec2 p) : Tempest::IVec2(p) {}
+  explicit ivec2(Tempest::Vec2 p) : Tempest::IVec2(int32_t(p.x),int32_t(p.y)) {}
+  };
+
+struct vec2 : Tempest::Vec2 {
+  explicit vec2(Tempest::IVec2 p) : Tempest::Vec2(float(p.x),float(p.y)) {}
+  };
+
+Tempest::Vec2 floor(Tempest::Vec2 p) { return {std::floor(p.x),std::floor(p.y)}; }
+float dot(vec2 a, vec2 b) { return vec2::dotProduct(a,b); }
+float length(vec2 p) { return p.length(); }
+float clamp(float value, float lo, float hi) { return std::clamp(value,lo,hi); }
+float max(float value, double lo) { return std::max(value,float(lo)); }
+float mix(float a, float b, float t) { return a*(1.f-t)+b*t; }
+
+// The cover level uses its local bare value. Its output is tested via grassCoverBare.
+#define out
+#include <grass/grass_cover.glsl>
+#undef out
+}
+
 size_t assertions = 0;
 
 void require(bool condition, const std::string& message) {
@@ -79,6 +115,53 @@ void records() {
   }
 
 // ---- the rule of the cover ----
+
+void shaderParity() {
+#define CHECK_COVER_CONSTANT(name) \
+  require(Grass::Cover##name==Shader::GrassCover##name, "GrassCover" #name " differs between CPU and GLSL")
+  CHECK_COVER_CONSTANT(Notch);
+  CHECK_COVER_CONSTANT(Span);
+  CHECK_COVER_CONSTANT(Ripple);
+  CHECK_COVER_CONSTANT(Soft);
+  CHECK_COVER_CONSTANT(Inside);
+  CHECK_COVER_CONSTANT(Reach);
+  CHECK_COVER_CONSTANT(Sward);
+  CHECK_COVER_CONSTANT(Tuft);
+  CHECK_COVER_CONSTANT(SpotSoft);
+  CHECK_COVER_CONSTANT(Isles);
+  CHECK_COVER_CONSTANT(IslesFade);
+  CHECK_COVER_CONSTANT(Breaks);
+#undef CHECK_COVER_CONSTANT
+
+  const int32_t main0 = int32_t(Shader::GrassPatchMain0), main1 = int32_t(Shader::GrassPatchMain1);
+  require(float(main0)==Shader::GrassPatchMain0 && Grass::patchSward(main0-1) && !Grass::patchSward(main0),
+          "GrassPatchMain0 differs between CPU and GLSL");
+  require(float(main1)==Shader::GrassPatchMain1 && Grass::patchDensity(main1-1)>256 && Grass::patchDensity(main1)==256,
+          "GrassPatchMain1 differs between CPU and GLSL");
+  for(const int32_t reach:{0,90,120})
+    require(Grass::coverBeyond(reach)==Shader::grassCoverBeyond(reach), "coverBeyond differs between CPU and GLSL");
+
+  // Sample both sides of the origin off the noise grids, through spots, thinning sward and the verge.
+  for(int32_t z=-100; z<=100; ++z)
+    for(int32_t x=-100; x<=100; ++x) {
+      const Shader::ivec2 p(x*719+511,z*463-31);
+      const int32_t reach = x<0 ? 90 : 120;
+      const int32_t dist = (x-z)*13;
+      const int32_t border = Grass::coverBorder(p.x,p.y,dist,reach);
+      const auto compare = [&](bool same, const char* function) {
+        ++assertions;
+        if(!same)
+          throw std::runtime_error(std::string(function)+" differs between CPU and GLSL at ("+
+                                   std::to_string(p.x)+", "+std::to_string(p.y)+")");
+        };
+      compare(Grass::patchNoise(p.x,p.y)==Shader::grassPatch(p), "patchNoise");
+      compare(border==Shader::grassCoverBorder(p,dist,reach), "coverBorder");
+      compare(Grass::coverBare(p.x,p.y)==Shader::grassCoverBare(p), "coverBare");
+      compare(Grass::coverLevel(p.x,p.y,border)==Shader::grassCoverLevel(p,border,Shader::grassCoverBare(p),false), "coverLevel");
+      // The legacy CPU spot truncates the distance, bend and final 1/256 share. GLSL keeps them as floats.
+      compare(std::abs(float(Grass::patchBare(p.x,p.y))-Shader::grassBare(p)*256.f)<=2.1f, "patchBare");
+      }
+  }
 
 // The spots of bare earth over a hectare: about a hundredth of the ground, outlines no circle
 void spots() {
@@ -560,6 +643,7 @@ void borders() {
 
 size_t grassCoverTests() {
   records();
+  shaderParity();
   spots();
   borderLine();
   placement();

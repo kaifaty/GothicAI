@@ -1,4 +1,5 @@
 #include "gamescript.h"
+#include "world/npcactivityprobe.h"
 
 #include <Tempest/Log>
 #include <Tempest/SoundEffect>
@@ -82,7 +83,7 @@ bool GameScript::GlobalOutput::isFinished() {
   }
 
 GameScript::GameScript(GameSession &owner)
-    :owner(owner), vm(createVm(Gothic::inst())) {
+    :owner(owner), vm(createVm(Gothic::inst(),itemDefinitions,routineDefinitions,npcDefinitions,placementDefinitions,activityDefinitions)) {
   if (vm.global_self() == nullptr || vm.global_other() == nullptr || vm.global_item() == nullptr ||
       vm.global_victim() == nullptr || vm.global_hero() == nullptr)
     throw std::runtime_error("Cannot find script symbol SELF, OTHER, ITEM, VICTIM, or HERO! Cannot proceed!");
@@ -344,8 +345,7 @@ void GameScript::initCommon() {
   auto* currency = vm.find_symbol_by_name("TRADE_CURRENCY_INSTANCE");
   itMi_Gold      = currency!=nullptr ? vm.find_symbol_by_name(currency->get_string()) : nullptr;
   if(itMi_Gold!=nullptr){ // FIXME
-    auto item = vm.init_instance<daedalus::IItem>(itMi_Gold);
-    goldTxt = item->name;
+    goldTxt = createItemForQuery(itMi_Gold->index())->name;
     }
   auto* tradeMul = vm.find_symbol_by_name("TRADE_VALUE_MULTIPLIER");
   tradeValMult   = tradeMul != nullptr ? tradeMul->get_float() : 1.0f;
@@ -444,7 +444,7 @@ void GameScript::loadDialogOU() {
   Log::e("none of Zen-files for OU could be loaded");
   }
 
-void GameScript::initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance) {
+void GameScript::initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords) {
   LoadProbe::Startup::Detail::Scope detail("npc_init",[&]{
     const auto* symbol=vm.find_symbol_by_index(uint32_t(instance));
     return symbol!=nullptr ? symbol->name() : std::to_string(instance);
@@ -464,30 +464,16 @@ void GameScript::initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& np
   if(auto* like = own.likeOf(sym->index()))
     mine.emplace(*like,npc);
 
-  vm.init_instance(npc, sym);
+  initializeNpcDefinition(npc,sym,useRecords);
 
   if(npc->daily_routine!=0) {
     ScopeVar self(*vm.global_self(), npc);
     auto* daily_routine = vm.find_symbol_by_index(uint32_t(npc->daily_routine));
-
     if(daily_routine != nullptr) {
       LoadProbe::Startup::Detail::Scope routine("daily_routine",[&]{return daily_routine->name();});
-      vm.call_function(daily_routine);
+      initializeRoutine(npc,daily_routine);
       }
     }
-  }
-
-void GameScript::initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance) {
-  LoadProbe::Vobs::Scope probe("script_item");
-  LoadProbe::Startup::Scope itemProbe(LoadProbe::Startup::Script,false,"placed-items");
-  auto sym = vm.find_symbol_by_index(uint32_t(instance));
-
-  if(sym == nullptr) {
-    Tempest::Log::e("Cannot initialize item ", instance, ": Symbol not found.");
-    return;
-    }
-
-  vm.init_instance(item, sym);
   }
 
 void GameScript::saveQuests(Serialize &fout) {
@@ -1091,6 +1077,7 @@ void GameScript::invokeState(const std::shared_ptr<NpcRecord>& hnpc, const std::
 
   ScopeVar self (*vm.global_self(),  hnpc);
   ScopeVar other(*vm.global_other(), oth);
+  NpcActivityProbe::Phase phase(findNpc(hnpc.get()),id->name());
   vm.call_function<void>(id);
   }
 
@@ -1115,17 +1102,22 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
   ScopeVar self  (*vm.global_self(),   npc != nullptr ? npc->handlePtr() : nullptr);
   ScopeVar other (*vm.global_other(),  oth != nullptr ? oth->handlePtr() : nullptr);
   ScopeVar victim(*vm.global_victim(), vic != nullptr ? vic->handlePtr() : nullptr);
-
   auto* sym = vm.find_symbol_by_index(uint32_t(fn.ptr));
-  int   ret = 0;
-  if(sym!=nullptr && sym->rtype() == daedalus::DaedalusDataType::INT) {
+  NpcActivityProbe::Phase phase(npc,sym ? std::string_view(sym->name()) : std::string_view{});
+  int& ret = phase.result;
+  if(sym!=nullptr && sym->name().starts_with("RTN_")) {
+    ret = initializeRoutine(npc!=nullptr ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr,sym);
+    }
+  else if(sym!=nullptr && npc!=nullptr && invokeActivity(*npc,sym->index(),phase)) {
+    // a routine activity from its record (D4.1)
+    }
+  else if(sym!=nullptr && sym->rtype() == daedalus::DaedalusDataType::INT) {
     ret = vm.call_function<int>(sym);
     }
   else if(sym!=nullptr) {
     vm.call_function<void>(sym);
     ret = 0;
     }
-
   if(vm.global_other()->is_instance_of<daedalus::INpc>()){
     auto oth2 = reinterpret_cast<daedalus::INpc*>(vm.global_other()->get_instance().get());
     if(oth!=nullptr && oth2!=&oth->handle()) {
@@ -1525,13 +1517,6 @@ bool GameScript::searchScheme(std::string_view sc, std::string_view listName) {
   return false;
   }
 
-daedalus::DaedalusVm GameScript::createVm(Gothic& gothic) {
-  auto lang   = Settings::getI("GAME", "language");
-  auto script = gothic.loadScript(gothic.defaultGameDatFile(), ScriptLang(lang));
-  auto exef   = daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
-  return daedalus::DaedalusVm(std::move(script), exef);
-  }
-
 bool GameScript::hasSymbolName(std::string_view name) {
   return vm.find_symbol_by_name(name)!=nullptr;
   }
@@ -1541,15 +1526,6 @@ uint64_t GameScript::tickCount() const {
   }
 
 void GameScript::tick(uint64_t) {
-  }
-
-uint32_t GameScript::rand(uint32_t max, const Npc* actor) {
-  if(actor!=nullptr && !isolatedRandom.empty()) {
-    auto it = isolatedRandom.find(actor);
-    if(it!=isolatedRandom.end())
-      return uint32_t(it->second())%max;
-    }
-  return uint32_t(randGen())%max;
   }
 
 void GameScript::isolateRandom(const Npc& actor, uint32_t seed, uint32_t stream) {

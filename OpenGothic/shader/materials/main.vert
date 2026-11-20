@@ -13,8 +13,22 @@
 
 #if !defined(GL_VERTEX_SHADER)
 #extension GL_EXT_mesh_shader : enable
+#endif
+#if defined(TREE_BOUGH_CARDS)
+#include "tree_bough_cards.glsl"
+#elif !defined(GL_VERTEX_SHADER)
 layout(local_size_x = 64) in;
 layout(triangles, max_vertices = MaxVert, max_primitives = MaxPrim) out;
+#endif
+#if defined(TREE_BOUGH_JOINT)
+#include "tree_bough_dissolve.glsl"
+#endif
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY) && defined(GL_VERTEX_SHADER)
+layout(location = 9) out vec2 boughBandCellOut;
+layout(location = 10) flat out uvec2 boughBandOut;
+#elif defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+layout(location = 9) out vec2 boughBandCellOut[];
+layout(location = 10) flat out uvec2 boughBandOut[];
 #endif
 
 #if defined(VIRTUAL_SHADOW)
@@ -37,16 +51,30 @@ layout(push_constant, std430) uniform Push {
 #endif
 #endif
 
+// These passes share the main depth buffer. Keep their position invariant
+// across specializations with and without material and motion varyings.
+#if defined(GBUFFER_MOTION) || defined(LANDSCAPE_GBUFFER) || defined(HIZ_OCCLUDER) || defined(HISTORY_PAYLOAD)
+#define INVARIANT_MAIN_POSITION
+#endif
+
 #if defined(GL_VERTEX_SHADER)
 out gl_PerVertex {
+#if defined(INVARIANT_MAIN_POSITION)
+  invariant vec4 gl_Position;
+#else
   vec4  gl_Position;
+#endif
 #if defined(VIRTUAL_SHADOW)
   float gl_ClipDistance[VSM_CLIP_COUNT];
 #endif
   };
 #else
 out gl_MeshPerVertexEXT {
+#if defined(INVARIANT_MAIN_POSITION)
+  invariant vec4 gl_Position;
+#else
   vec4  gl_Position;
+#endif
 #if defined(VIRTUAL_SHADOW)
   float gl_ClipDistance[VSM_CLIP_COUNT];
 #endif
@@ -182,6 +210,28 @@ void initVsm(uvec4 task) {
   }
 #endif
 
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+// The shadow side of a level band (tree_bough_dissolve.glsl): the instance's word and seed, and the vertex's cell
+// across the light of the view: the sun, or a lamp of the virtual shadow map's page
+uvec2 boughBandShadow(uint instanceId, uint bucketId, vec3 pos, out vec2 cell) {
+  const Instance obj  = pullInstance(instanceId);
+  const uint     word = boughBandWord(obj);
+  cell = vec2(0);
+  if(!boughBandActive(word))
+    return uvec2(0);
+  vec3 toLight = scene.sunDir;
+#if defined(VIRTUAL_SHADOW)
+  const uint data = vsm.pageList[shadowPageId];
+  if(vsmPageIsOmni(data))
+    toLight = normalize(lights[unpackLightId(data).x].pos - obj.mat[3]);
+#endif
+  const float height = (bucket[bucketId].bbox[1].y - bucket[bucketId].bbox[0].y)*length(obj.mat[1]);
+  cell = boughBandShadowCell(pos, obj.mat[3], toLight, height);
+  return uvec2(word, boughJointSeed(obj.mat[3]));
+  }
+#endif
+
+#if !defined(TREE_BOUGH_CARDS)
 uvec2 processMeshlet(const uint meshletId, const uint bucketId) {
 #if defined(BINDLESS)
   nonuniformEXT uint bId = bucketId;
@@ -223,9 +273,14 @@ uvec3 processPrimitive(const uint meshletId, const uint bucketId, const uint out
   prim.z = ((bits >> 16) & 0xFF);
   return prim;
   }
+#endif
 
 vec4  processVertex(out Varyings var, uint instanceOffset, const uint meshletId, const uint bucketId, const uint laneID) {
+#if defined(TREE_BOUGH_CARDS)
+  const uint vboOffset = boughFirstVertex(meshletId, bucketId) + laneID;
+#else
   const uint vboOffset = meshletId * MaxVert + laneID;
+#endif
 #if (MESH_TYPE==T_PFX)
   const Vertex vert = pullVertex(instanceOffset);
 #else
@@ -238,8 +293,10 @@ vec4  processVertex(out Varyings var, uint instanceOffset, const uint meshletId,
 #endif
   }
 
-#if defined(GL_VERTEX_SHADER)
-void vertexShader(const uvec4 task) {
+#if defined(GL_VERTEX_SHADER) && defined(TREE_BOUGH_CARDS)
+#include "tree_bough_vertex.glsl"
+#elif defined(GL_VERTEX_SHADER)
+void vertexShader(const uvec4 task, const uint materialRef) {
   const uint  instanceId = task.x;
   const uint  meshletId  = task.y;
   const uint  bucketId   = task.z;
@@ -250,14 +307,13 @@ void vertexShader(const uvec4 task) {
 
   const uint  laneID     = gl_VertexIndex/3;
   if(laneID>=primCount) {
-    gl_Position = vec4(uintBitsToFloat(0x7fc00000));
+    gl_Position = MeshletPaddingPosition;
     return;
     }
 
 #if defined(MAT_VARYINGS)
-  bucketIdOut = bucketId;
+  bucketIdOut = materialRef;
 #endif
-
   Varyings var;
   uint idx = processPrimitive(meshletId, bucketId, laneID)[gl_VertexIndex%3];
   vec4 pos = processVertex(var, instanceId, meshletId, bucketId, idx);
@@ -265,14 +321,22 @@ void vertexShader(const uvec4 task) {
 #if defined(MAT_VARYINGS)
   shOut       = var;
 #endif
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+  boughBandOut = boughBandShadow(instanceId, bucketId, var.pos, boughBandCellOut);
+#endif
   }
 #else
-void meshShader(const uvec4 task) {
+void meshShader(const uvec4 task, const uint materialRef) {
   const uint  instanceId = task.x;
   const uint  meshletId  = task.y;
-  const uint  bucketId   = task.z;
 
+#if defined(TREE_BOUGH_CARDS)
+  const uint  bucketId   = boughBucket(task);
+  const uvec2 mesh       = boughMeshlet(task, bucketId);
+#else
+  const uint  bucketId   = task.z;
   const uvec2 mesh       = processMeshlet(meshletId, bucketId);
+#endif
   const uint  vertCount  = mesh.x;
   const uint  primCount  = mesh.y;
 
@@ -281,10 +345,6 @@ void meshShader(const uvec4 task) {
   // Alloc outputs
   SetMeshOutputsEXT(vertCount, primCount);
 
-#if defined(MAT_VARYINGS)
-  bucketIdOut[laneID] = bucketId;
-#endif
-
   Varyings var;
   uvec3 prim = uvec3(0);
   if(laneID<primCount) {
@@ -292,8 +352,19 @@ void meshShader(const uvec4 task) {
     gl_PrimitiveTriangleIndicesEXT[laneID] = prim;
     }
   if(laneID<vertCount) {
+#if defined(MAT_VARYINGS)
+    bucketIdOut[laneID] = materialRef;
+#endif
     vec4 pos = processVertex(var, instanceId, meshletId, bucketId, laneID);
     gl_MeshVerticesEXT[laneID].gl_Position = pos;
+#if defined(TREE_BOUGH_CARDS)
+    boughFadeOut[laneID] = boughFade(task, boughMaskOut[laneID]);
+#endif
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+    vec2 bandCell;
+    boughBandOut[laneID] = boughBandShadow(instanceId, bucketId, var.pos, bandCell);
+    boughBandCellOut[laneID] = bandCell;
+#endif
 #if defined(VIRTUAL_SHADOW)
     vsmClip[laneID] = pos.xyw;
 #endif
@@ -346,7 +417,13 @@ void meshShader(const uvec4 task) {
 #else
     const bool twoSided = scene.vsmLampSides>=2u;
 #endif
-    gl_MeshPrimitivesEXT[laneID].gl_CullPrimitiveEXT = det>0.0 && (!omni || !twoSided);
+#if (MESH_TYPE==T_OBJ)
+    // a material of two sides (materials.json "two_sided") is in every page with both, as its pipelines draw it
+    const bool bothSides = (bucket[bucketId].flags & BK_TWO_SIDED)!=0u;
+#else
+    const bool bothSides = false;
+#endif
+    gl_MeshPrimitivesEXT[laneID].gl_CullPrimitiveEXT = det>0.0 && (!omni || !twoSided) && !bothSides;
     }
 #endif
   }
@@ -365,15 +442,45 @@ void main() {
   const uint firstMeshlet = push.firstMeshlet;
 #endif
 
-  const uvec4 task = payload[workIndex + firstMeshlet];
+  const uint payloadId = workIndex + firstMeshlet;
+  const uvec4 task     = payload[payloadId];
+#if defined(TREE_BOUGH_CARDS)
+  const uint materialRef = boughBucket(task);
+#elif defined(HISTORY_PAYLOAD)
+  // Both history phases use this same vertex shader and carry the unchanged payload index.
+#if defined(TREE_BOUGH_JOINT)
+  uint materialRef = payloadId;
+#else
+  const uint materialRef = payloadId;
+#endif
+#else
+  uint materialRef     = task.z;
+#if defined(MAT_CLUSTER_LEVEL)
+  materialRef |= task.w << 16u;
+#endif
+#if defined(MAT_MOTION) || (MESH_TYPE==T_LANDSCAPE && defined(MAT_CLUSTER_LEVEL))
+  // The probe uses the existing flat output to recover both the bucket and cluster.
+  if((scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u)
+    materialRef = payloadId;
+#endif
+#endif
+
+#if defined(TREE_BOUGH_JOINT) && !defined(DEPTH_ONLY)
+  {
+    // the impostor joint or a level band: the fragment stage masks the instance's side
+    const Instance obj = pullInstance(task.x);
+    if((obj.animPtr & BoughJointTag)!=0u || boughBandActive(boughBandWord(obj)))
+      materialRef = payloadId | BoughJointTag;
+  }
+#endif
 
 #if defined(VIRTUAL_SHADOW)
   initVsm(task);
 #endif
 
 #if defined(GL_VERTEX_SHADER)
-  vertexShader(task);
+  vertexShader(task, materialRef);
 #else
-  meshShader(task);
+  meshShader(task, materialRef);
 #endif
   }

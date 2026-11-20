@@ -137,7 +137,7 @@ def test_remote_perf_uses_setup_cache_unless_caller_overrides(monkeypatch, cache
         monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", cache)
     harness = r'''
 set -euo pipefail
-for name in PERF_VID_RES PERF_INI PERF_WINDOW PERF_REPEAT PERF_WAIT PERF_ARGS PERF_ENV PERF_COMMIT PERF_DIRTY PERF_SOURCE_FINGERPRINT; do
+for name in PERF_VID_RES PERF_INI PERF_WINDOW PERF_REPEAT PERF_WAIT PERF_WARMUP PERF_WARMUP_MAX PERF_ARGS PERF_ENV PERF_COMMIT PERF_DIRTY PERF_SOURCE_FINGERPRINT; do
   printf -v "$name" '%s' fixture
 done
 TASK=/remote/task
@@ -145,6 +145,48 @@ TASK=/remote/task
     result = subprocess.run(["bash", "-c", harness], check=True, capture_output=True)
     environment = dict(value.decode().split("=", 1) for value in result.stdout.split(b"\0") if value)
     assert environment.get("OPENGOTHIC_BASE_CACHE") == cache
+
+
+@pytest.mark.parametrize("frames_per_interval", (20, 21))
+def test_perf_stall_guard(tmp_path, frames_per_interval):
+    source = (Path(__file__).parents[1] / "perf.sh").read_text()
+    run_game = source[source.index("\nrun_game() {"):source.index("\n# The GPU clock journal runs")]
+    scripts = tmp_path / "scripts"
+    scenario = scripts / "bench/perf-market.bench"
+    scenario.parent.mkdir(parents=True)
+    (scripts / "base-ensure.sh").touch()
+    metadata = tmp_path / "metadata.json"
+    metadata.write_text(json.dumps({"requested_window": "2560x1440", "game_args": [], "game_env": {}}))
+    game = tmp_path / "game"
+    game.write_text(f"#!{sys.executable}\n" + r'''
+import json, os, time
+from pathlib import Path
+
+leaf = Path(os.environ["OPENGOTHIC_BENCH_OUT"])
+step = int(os.environ["FAKE_FRAME_STEP"])
+for interval in range(3):
+    temp = leaf / "heartbeat.tmp"
+    temp.write_text(json.dumps({"elapsed_seconds": 10 * interval, "frame": step * interval}))
+    temp.replace(leaf / "heartbeat.json")
+    time.sleep(1)
+''')
+    game.chmod(0o755)
+    leaf = tmp_path / "repeat-1"
+    environment = dict(os.environ, GAME_BIN=str(game), GOTHIC_DIR=str(tmp_path),
+                       PERF_GPU_STAMP=str(tmp_path / "stamp"), FAKE_FRAME_STEP=str(frames_per_interval),
+                       PERF_VID_RES="0", PERF_INI="")
+    environment.pop("PERF_REMOTE", None)
+    result = subprocess.run(
+        ["bash", "-c", run_game + '\nOUT="$1"\nrun_game measure "$2" "$3" market 1',
+         "bash", str(tmp_path), str(scenario), str(leaf)],
+        env=environment, capture_output=True, text=True, timeout=10)
+
+    assert json.loads((leaf / "heartbeat.json").read_text())["elapsed_seconds"] == 20
+    if frames_per_interval == 20:
+        assert result.returncode == 1
+        assert "stand failure: market stayed at or below 2 FPS for two heartbeat intervals" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("converter", (True, False))
@@ -240,6 +282,18 @@ def test_perf_content_arguments_and_abba(monkeypatch, tmp_path):
     assert all(env["PERF_REPEAT"] == "1" and env["NO_BUILD"] == "1" and "/wrong" not in env["PERF_ENV"]
                for _, env in calls)
     assert reports == [(tmp_path, 1, 3)]
+    calls.clear()
+    monkeypatch.setenv("PERF_ENV_A", "OPENGOTHIC_ITEM_EFFECTS=0")
+    content.run_attempts(tmp_path, tmp_path / "content", content.parse_args(["working-8", "working-8", "itemfx"]))
+    assert ["OPENGOTHIC_ITEM_EFFECTS=0" in env["PERF_ENV"].split() for _, env in calls] == [True, False, False, True]
+    assert all(env["PERF_ENV"].split()[-1] == "OPENGOTHIC_CONTENT=" + str(tmp_path / "content/working-8")
+               for _, env in calls)
+    for invalid in ("OPENGOTHIC_CONTENT=/other", "rm -rf"):
+        monkeypatch.setenv("PERF_ENV_B", invalid)
+        with pytest.raises(ValueError, match="PERF_ENV_B"):
+            content.run_attempts(tmp_path, tmp_path / "content", args)
+    assert content.sides_label({"a": "s", "b": "s", "settings": {"PERF_ENV_A": "X=0", "PERF_ENV_B": ""}}) == \
+        "A: `s` + `X=0`; B: `s`"
 
 
 def test_perf_content_base_follows_stand_engine_format(monkeypatch, tmp_path):
@@ -772,3 +826,99 @@ def test_series_requires_at_least_two_runs_per_side(tmp_path, capsys, short_side
         report.main(args)
     assert error.value.code == 2
     assert "at least two" in capsys.readouterr().err
+
+
+def test_segment_takes_a_fifth_view_and_a_view_measured_again():
+    assert report.segment_parts("perf-meadow/view-4") == ("meadow", "view-4")
+    assert report.segment_parts("perf-meadow/view-5") == ("meadow", "view-5")
+    assert report.segment_parts("perf-meadow/view-5-noroad") == ("meadow", "view-5-noroad")
+    assert report.segment_parts("perf-meadow/view-0") is None
+    assert report.segment_parts("perf-meadow/view-5-") is None
+    assert report.segment_parts("perf-meadow/view-5-No Road") is None
+    assert report.segment_parts("meadow/view-5") is None
+
+
+def gpu_journal(directory, samples):
+    lines = ["mono_ns,temp_c,sm_mhz,mem_mhz,power_w,pstate,fan_pct,util_pct,reasons"]
+    lines += [f"{stamp},{temp},{sm},9501,{power},P2,50,99,0x0" for stamp, temp, sm, power in samples]
+    (directory / "gpu.csv").write_text("\n".join(lines) + "\n")
+
+
+def two_views(directory, offset):
+    """view-1 frames at offset+0..40 ms, view-2 at offset+100..140 ms."""
+    return profile(directory, [{"begin_ns": offset + index * 10_000_000} for index in range(5)]
+                   + [{"begin_ns": offset + 100_000_000 + index * 10_000_000, "segment": "perf-market/view-2"}
+                      for index in range(5)])
+
+
+def test_gpu_clocks_by_view_skip_warmup_and_compare_warns(tmp_path, capsys):
+    a = tmp_path / "a"
+    for repeat in (1, 2):
+        two_views(a / "market" / f"repeat-{repeat}", (repeat - 1) * 1_000_000_000)
+    # Rows inside view-1 and view-2 of each repeat; [N/A] is skipped; the last row is outside every view.
+    # 35 ms lies between view-1's last two frames (30 and 40 ms).
+    gpu_journal(a, [(35_000_000, 60, 1900, 300), (120_000_000, 62, 1800, 280),
+                    (1_000_000_000, 70, 1920, "[N/A]"), (1_030_000_000, "[N/A]", 1940, 310),
+                    (1_120_000_000, 72, 1700, 260), (5_000_000_000, 99, 999, 999)])
+    # The warm-up games are not measurements, even with a profile.
+    for run in (1, 2):
+        profile(a / f"warmup/run-{run}", cadence_rows(1))
+    (a / "warmup.json").write_text(json.dumps({"mode": "auto", "reason": "stable", "seconds": 121.4, "runs": 2,
+                                               "temp_start_c": 55, "temp_end_c": 70, "sm_start_mhz": 1995,
+                                               "sm_end_mhz": 1905, "last_game_age_s": None}))
+    assert report.main(["run", str(a)]) == 0
+    result = json.loads((a / "report.json").read_text())
+    assert result["schema_version"] == 1 and not any("журнал GPU" in warning for warning in result["warnings"])
+    assert [source["directory"] for source in result["sources"]] == ["market/repeat-1", "market/repeat-2"]
+    first, second = (repeat["views"] for repeat in result["places"]["market"]["repeats"])
+    assert first["view-1"]["gpu_clock"] == {"sm_mhz": 1900, "mem_mhz": 9501, "temp_c": 60, "power_w": 300, "samples": 1}
+    assert first["view-2"]["gpu_clock"] == {"sm_mhz": 1800, "mem_mhz": 9501, "temp_c": 62, "power_w": 280, "samples": 1}
+    assert second["view-1"]["gpu_clock"] == {"sm_mhz": 1930, "mem_mhz": 9501, "temp_c": 70, "power_w": 310, "samples": 2}
+    assert second["view-2"]["gpu_clock"]["sm_mhz"] == 1700
+    views = result["places"]["market"]["views"]
+    assert (views["view-1"]["gpu_clock"]["sm_mhz"], views["view-2"]["gpu_clock"]["sm_mhz"]) == (
+        pytest.approx(1920), pytest.approx(1750))
+    # The place's mean is over all its rows, not its first view's.
+    assert result["places"]["market"]["summary"]["gpu_clock"]["sm_mhz"] == pytest.approx(1852)
+    assert result["places"]["market"]["summary"]["gpu_clock"]["samples"] == 5
+    markdown = (a / "report.md").read_text()
+    assert "| market/view-1 | 1920 | 9501 | 65.0 | 305.0 |" in markdown
+    assert "Прогрев GPU (auto): stable за 121 с, запусков 2; 55 → 70 °C, SM 1995 → 1905 МГц." in markdown
+
+    # The 1 % threshold, both ways: 0.9 % and 1.0 % are quiet, 1.1 % below or above warns.
+    flat = report.build_report(a)
+    for sm, warned in ((1982, None), (2018, None), (1980, None), (2022, "1.1"), (1978, "1.1")):
+        b = tmp_path / f"b-{sm}"
+        for repeat in (1, 2):
+            two_views(b / "market" / f"repeat-{repeat}", (repeat - 1) * 1_000_000_000)
+        # view-1 (20 ms, 1020 ms) runs 40 MHz below the place's mean, view-2 (120 ms, 1120 ms) 40 MHz above.
+        for root, mean in ((a, 2000), (b, sm)):
+            gpu_journal(root, [(stamp, 60, mean + shift, 300) for stamp, shift in
+                               ((20_000_000, -40), (120_000_000, 40), (1_020_000_000, -40), (1_120_000_000, 40))])
+        comparison = report.compare_reports(report.build_report(a), report.build_report(b))
+        assert comparison["schema_version"] == 1
+        assert (comparison["places"]["market"]["gpu_sm_mhz"]["a"], comparison["places"]["market"]["gpu_sm_mhz"]["b"]) == (2000, sm)
+        warnings = [warning for warning in comparison["warnings"] if "частоты SM" in warning]
+        assert warnings == ([f"market: частоты SM расходятся на {warned} %: в разнице времени есть разница частоты GPU"]
+                            if warned else [])
+    assert report.main(["compare", str(a), str(b)]) == 0
+    printed = capsys.readouterr().out
+    assert "| market | 2000 → 1978 | -1.1 |" in printed
+    assert "частоты SM расходятся на 1.1 %: в разнице времени есть разница частоты GPU" in printed
+    # Compared leaves find the journal of their run two folders up.
+    leaves = report.compare_reports(report.build_report(a / "market/repeat-1"), report.build_report(b / "market/repeat-2"))
+    assert (leaves["places"]["market"]["gpu_sm_mhz"]["a"], leaves["places"]["market"]["gpu_sm_mhz"]["b"]) == (2000, 1978)
+    # A journal that covers view-1 but not view-2 of the same repeats warns about view-2 alone.
+    gpu_journal(a, [(20_000_000, 60, 2000, 300), (1_020_000_000, 60, 2000, 300)])
+    assert [warning for warning in report.build_report(a)["warnings"] if "журнал GPU" in warning] == [
+        "журнал GPU не покрывает market/view-2"]
+    # Without journals the report is as before, warm-up line included; a gpu.csv beside the run is not its journal.
+    for root in (a, b):
+        (root / "gpu.csv").unlink()
+    gpu_journal(tmp_path, [(35_000_000, 60, 1900, 300)])
+    comparison = report.compare_reports(report.build_report(a), report.build_report(b))
+    assert "gpu_sm_mhz" not in comparison["places"]["market"]
+    assert not any("частоты SM" in warning for warning in comparison["warnings"])
+    plain = report.build_report(a)
+    assert "gpu_clock" not in plain["places"]["market"]["summary"] and "warmup" not in plain
+    assert flat["warmup"]["reason"] == "stable"

@@ -40,6 +40,12 @@ const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_cal
   "npc_logic_wait_early","npc_logic_wait_late","npc_logic_reanchored","npc_logic_body_samples","npc_logic_weapon_samples",
   "npc_anim_deferred","npc_anim_catchup","npc_anim_sync_on_read","npc_tail_shadow","npc_tail_logic","npc_tail_full",
   "rt_tlas_builds","rt_dirty_slots","gi_probes_live","gi_probes_traced","gi_probes_from_hits","gi_probes_freed",
+  "main_clusters","main_meshlets","main_canopy_clusters","main_canopy_meshlets",
+  "mesh_level0","mesh_level1","mesh_level2","mesh_level3","mesh_level4","mesh_impostors",
+  "hiz_history_early_clusters","hiz_history_early_meshlets","hiz_history_tested_clusters",
+  "hiz_history_rejected_clusters","hiz_history_rejected_meshlets",
+  "tree_bough_nodes","tree_bough_source_cards","tree_bough_parent_cards","tree_bough_triangles","tree_bough_height_mpx",
+  "tree_bough_active_bands","tree_bough_version_pairs","tree_bough_band_triangles","tree_level_bands","tree_shadow_bands",
   "npc_simplified_ticked","npc_simplified_deferred","npc_simplified_native"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());

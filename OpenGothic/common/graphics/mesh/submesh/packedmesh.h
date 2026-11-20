@@ -13,6 +13,8 @@
 #include "graphics/mesh/texeldensity.h"
 
 class Bounds;
+struct WorldChunkMesh;
+namespace ClusterLod { struct Graph; }
 
 class PackedMesh {
   public:
@@ -40,12 +42,21 @@ class PackedMesh {
       bool             alphaTest = true;
       bool             alphaTestRequired = false;
       TexelDensity     texel;  // its triangles' lowest UV density and bounds, for the texture's mip level
+      size_t           clusterL0Length = 0; // prefix of a cluster hierarchy's index slice used by rays
       };
 
     struct Cluster final {
       Tempest::Vec3 pos;
       float         r = 0;
       };
+
+    // std430. Errors and both transition spheres share the coordinate space of the mesh.
+    struct ClusterLevel final {
+      Tempest::Vec4 bounds {}, parentBounds {};
+      float         errorCm = 0.f, parentErrorCm = 0.f;
+      uint32_t      level = 0, flags = 0; // bit 0 marks a record with a hierarchy
+      };
+    static_assert(sizeof(ClusterLevel)==48);
 
     std::vector<Vertex>   vertices;
     std::vector<VertexA>  verticesA;
@@ -54,12 +65,27 @@ class PackedMesh {
 
     std::vector<SubMesh>  subMeshes;
     std::vector<Cluster>  meshletBounds;
+    std::vector<ClusterLevel> clusterLevels; // empty without a hierarchy, else one per meshlet
+    size_t legacyLandscapeMeshlets = 0; // counted while profiling the cooked landscape
+
+    // Levels of detail of an own static mesh (graphics/meshlevels.h), coarser one after another: packed after the
+    // mesh into the same buffers, so subMeshes, bbox() and everything before mainEnd are the mesh's own
+    struct Level final {
+      float                                px = 0;   // drawn while the object is under this many pixels high
+      std::vector<std::pair<size_t,size_t>> sub;     // a slice of indices (offset, length) for each of subMeshes
+      Tempest::Vec3                        bbox[2];  // of the level's own vertices
+      };
+    std::vector<Level>    levels;
 
     std::vector<uint32_t> verticesId; // only for morph meshes
     bool                  isUsingAlphaTest = true;
     float                 strandWidth      = 0;    // strands (groommesh.cpp): the mean width of a hair, cm; 0: not strands
 
-    PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest = false);
+    // colors: the vertex colour of each wedge of each sub-mesh (gltfmeshcolor.h); without them, and for a list that
+    // is not of the sub-mesh's size, the vertices are drawn with ones
+    PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest = false,
+               const std::vector<std::vector<uint32_t>>* colors = nullptr);
+    PackedMesh(const asset::StaticMesh& mesh, const ClusterLod::Graph& graph);
     PackedMesh(const asset::WorldMesh& mesh, PkgType type);
     // Triangle IDs address the unchanged source polygon arrays. Materials and
     // vertex/feature IDs remain global to mesh, including unused materials.
@@ -68,6 +94,8 @@ class PackedMesh {
     PackedMesh(const asset::WorldMesh& mesh, std::span<const uint32_t> triangles,
                std::span<const uint32_t> materialMap = {},
                std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
+    // A cooked landscape visual, with the source triangles extracted into cloth left out.
+    PackedMesh(const WorldChunkMesh& chunk, std::span<const uint32_t> materialMap);
     PackedMesh(const asset::SoftSkinMesh& mesh);
     // Strands of a head as ribbons (graphics/mesh/groommesh.cpp): the file of groom_export.py; share<1 keeps that
     // share of the strands, wider. Throws std::runtime_error on a broken file.
@@ -82,8 +110,16 @@ class PackedMesh {
 
     std::pair<Tempest::Vec3,Tempest::Vec3> bbox() const;
 
+    // Packs `level` (a mesh with the materials of this one, its submeshes in the order of subMeshes) after the mesh
+    // and the levels before it; colors: its COLOR_0 as for the constructor
+    void addLevel(const asset::StaticMesh& level, float px, const std::vector<std::vector<uint32_t>>* colors = nullptr);
+    // The mesh alone again: what collision and the hit zones are built from
+    void dropLevels();
+
   private:
     Tempest::Vec3 mBbox[2];
+    // where the mesh's own vertices, indices, 8-bit indices and meshlet bounds end once levels follow them
+    size_t        mainEnd[4] = {};
 
     struct Prim {
       uint32_t primId = 0;
@@ -121,7 +157,8 @@ class PackedMesh {
                     std::vector<uint32_t>* verticesId, const std::vector<asset::Vec3>& vbo,
                     const std::vector<asset::MeshWedge>& wedgeList,
                     const std::vector<SkeletalData>* skeletal,
-                    const std::vector<SkinRest>* rest);
+                    const std::vector<SkinRest>* rest,
+                    const std::vector<uint32_t>* colors = nullptr);
       bool    validate() const;
 
       bool    insert(const Vert& a, const Vert& b, const Vert& c);
@@ -146,7 +183,8 @@ class PackedMesh {
                           std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
     void   packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
                            const std::vector<SkeletalData>* skeletal,
-                           const std::vector<SkinRest>* rest = nullptr);
+                           const std::vector<SkinRest>* rest = nullptr,
+                           const std::vector<std::vector<uint32_t>>* colors = nullptr);
 
     std::vector<Meshlet> buildMeshlets(const asset::WorldMesh* mesh, const asset::SubMesh* proto_mesh,
                                        PrimitiveHeap& heap, std::vector<bool>& used,

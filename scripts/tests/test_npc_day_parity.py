@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 import npc_day_parity  # noqa: E402
@@ -13,16 +15,17 @@ import npc_day_parity  # noqa: E402
 SCRIPT = Path(__file__).parents[1] / "npc_day_parity.py"
 STRICT = Path(__file__).parents[1] / "bench" / "npc-day-parity.tolerances.json"
 SIX_C = Path(__file__).parents[1] / "bench" / "npc-day-parity.tolerances-6c.json"
+ACTIVITY = Path(__file__).parents[2] / "scripts/bench/npc-day-parity.tolerances-activity.json"
 DONE = {"seed": 7, "isolate": True, "minutes": 90, "period_min": 30, "end_reason": "done"}
 HEADER = ("t_min,at_min,key,symbol,alive,hp,hp_max,ta,zs,zs_ms,x,y,z,wp,wp_dist,queue,head,body,"
           "inv_hash,inv_items,mob,tier,policy,hero").split(",")
 
 
 def row(t, key, *, alive=1, hp=100, ta="0 08:00-20:00 ZS_STAND NW_A", zs="ZS_STAND", x=0.0, inv="00ff",
-        tier="full", hero="-", body=0):
+        tier="full", hero="-", body=0, mob="-", wp="NW_A"):
     return {"t_min": t, "at_min": t + 0.004, "key": key, "symbol": key.split("#")[0], "alive": alive, "hp": hp,
-            "hp_max": 100, "ta": ta, "zs": zs, "zs_ms": 0, "x": x, "y": 0, "z": 0, "wp": "NW_A", "wp_dist": 0,
-            "queue": 0, "head": "-", "body": body, "inv_hash": inv, "inv_items": 1, "mob": "-", "tier": tier,
+            "hp_max": 100, "ta": ta, "zs": zs, "zs_ms": 0, "x": x, "y": 0, "z": 0, "wp": wp, "wp_dist": 0,
+            "queue": 0, "head": "-", "body": body, "inv_hash": inv, "inv_items": 1, "mob": mob, "tier": tier,
             "policy": "far2", "hero": hero}
 
 
@@ -274,3 +277,146 @@ def test_strict_profile_checks_queue_and_events_outside_sample_window(tmp_path):
     with (b / "npc-day-events.csv").open("a", newline="") as stream:
         csv.writer(stream).writerow((90.001, "MIL_1#0", "zs_start", "ZS_STAND", 0, 0, 0))
     assert gates(a, b)[1] == {"require_journal_identical"}
+
+
+def test_activity_metrics_checks_and_state_filter(tmp_path):
+    a_rows, b_rows = [], []
+    for t in range(0, 45, 5):
+        ta = "first" if t <= 20 else "second"
+        a_rows.append(row(t, "SMITH#0", ta=ta, zs="ZS_SMITH", mob="ANVIL" if t in (5, 10, 15, 20, 25, 30) else "-"))
+        b_rows.append(row(t, "SMITH#0", ta="different", zs="ZS_OTHER" if t == 20 else "ZS_SMITH",
+                          wp="NW_B" if t == 15 else "NW_A",
+                          mob={10: "ANVIL", 15: "ORE", 20: "ANVIL"}.get(t, "-")))
+        a_rows.append(row(t, "READER#0", ta="read", zs="ZS_READ", mob="LECTERN" if t >= 5 else "-"))
+        b_rows.append(row(t, "READER#0", ta="read", zs="ZS_READ", mob="LECTERN"))
+        # Neither a non-routine animal nor the hero contributes to activities.
+        for key, hero in (("WOLF#0", "-"), ("PC_HERO#0", "hero")):
+            a_rows.append(row(t, key, ta="-" if hero == "-" else "hero", hero=hero, mob="OTHER"))
+            b_rows.append(row(t, key, ta="-", hero=hero))
+    a, b = tmp_path / "a", tmp_path / "b"
+    header = {**DONE, "minutes": 40, "period_min": 5}
+    journal(a, a_rows, [], header)
+    journal(b, b_rows, [], header)
+    aa, bb = npc_day_parity.load(a), npc_day_parity.load(b)
+    result = npc_day_parity.compare(aa, bb)
+    activity = result["activity"]
+    total = activity["total"]
+    assert set(activity["by_state"]) == {"ZS_SMITH", "ZS_READ"}
+    assert total["samples"] == 18
+    assert total["same_zs"] == total["same_wp"] == 17 / 18
+    assert total["same_mob"] == 10 / 14 and total["extra_mob"] == 1 / 4
+    assert total["mob_mismatch"] == 4
+    assert total["mob_samples_a"] == 14 and total["mob_samples_b"] == 12
+    assert total["mob_time_ratio"] == 12 / 14
+    assert total["arrival_segments"] == 2
+    assert total["arrival_p50"] == 0 and total["arrival_p95"] == pytest.approx(4.5)
+    assert total["arrival_max"] == 5 and total["stuck_npcs"] == 1
+    assert total["stuck"] == [{"key": "SMITH#0", "state": "ZS_SMITH", "ta": "second", "start_min": 25,
+                                "end_min": 40, "arrival_a_min": 0, "arrival_b_min": None, "delay_min": None}]
+    smith = activity["by_state"]["ZS_SMITH"]
+    assert smith["samples"] == 9 and smith["same_mob"] == 2 / 6 and smith["mob_mismatch"] == 4
+    assert smith["extra_mob"] == 0 and smith["same_wp"] == smith["same_zs"] == 8 / 9
+    assert smith["mob_time_ratio"] == 3 / 6 and smith["arrival_p95"] == 5
+
+    # Every new bound passes on its boundary and fails just outside it.
+    limits = {"min_activity_same_mob": 10 / 14, "max_activity_mob_mismatch": 4, "min_activity_same_wp": 17 / 18,
+              "min_activity_mob_time_ratio": 12 / 14, "max_activity_mob_time_ratio": 12 / 14,
+              "max_activity_arrival_p95": total["arrival_p95"], "max_activity_arrival_max": 5,
+              "max_activity_stuck": 1}
+    assert all(check["pass"] for check in npc_day_parity.evaluate(result, limits))
+    outside = {name: limit + (0.01 if name.startswith("min_") else -0.01) for name, limit in limits.items()}
+    assert all(not check["pass"] for check in npc_day_parity.evaluate(result, outside))
+    filtered = npc_day_parity.compare(aa, bb, activity_states={"ZS_READ"})
+    assert filtered["activity"]["total"] == activity["by_state"]["ZS_READ"]
+    assert filtered["activity"]["by_state"] == activity["by_state"]
+    assert filtered["activity"]["total"]["mob_mismatch"] == 0
+    assert {check["name"] for check in npc_day_parity.evaluate(filtered, outside) if not check["pass"]} == {
+        "max_activity_mob_time_ratio"}
+    # The profile's own bound: these 4 mismatches pass it, a fifth (the reader without its lectern) fails it.
+    profile = {"max_activity_mob_mismatch": json.loads(ACTIVITY.read_text())["tolerances"]["max_activity_mob_mismatch"]}
+    assert [check["pass"] for check in npc_day_parity.evaluate(result, profile)] == [True]
+    fifth = [dict(r, mob="-") if (r["key"], r["t_min"]) == ("READER#0", 10) else r for r in b_rows]
+    journal(tmp_path / "b5", fifth, [], header)
+    five = npc_day_parity.compare(aa, npc_day_parity.load(tmp_path / "b5"))
+    assert five["activity"]["total"]["mob_mismatch"] == 5
+    assert [check["pass"] for check in npc_day_parity.evaluate(five, profile)] == [False]
+
+    out, data = tmp_path / "report.md", tmp_path / "report.json"
+    assert npc_day_parity.main([str(a), str(b), "--activity-states", "ZS_SMITH,ZS_READ", "--out", str(out),
+                               "--json", str(data), "--max-activity-stuck", "0"]) == 1
+    assert json.loads(data.read_text())["result"]["activity"]["total"] == total
+    report = out.read_text()
+    assert "ZS_SMITH" in report and "ZS_READ" in report and "`SMITH#0`" in report and "25–40" in report
+    assert "5 minutes" in report and "**FAIL**" in report
+    assert npc_day_parity.main([str(a), str(b), "--activity-states", "ZS_READ", "--out", str(out),
+                               "--json", str(data), "--max-activity-stuck", "0",
+                               "--max-activity-arrival-max", "-5"]) == 0
+    assert json.loads(data.read_text())["result"]["activity"]["total"] == activity["by_state"]["ZS_READ"]
+    assert "ZS_SMITH" in out.read_text()
+    # The activity profile also needs run B's own health counters of the activities by events.
+    health = {"watchdog": "max_activity_watchdog", "reservation_expired": "max_activity_reservation_expired",
+              "reservation_ownerless": "max_activity_reservation_ownerless",
+              "double_occupancy": "max_activity_double_occupancy"}
+    assert npc_day_parity.main([str(a), str(a), "--tolerances", str(ACTIVITY), "--out", str(out),
+                                "--json", str(data)]) == 1
+    assert {c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]} == set(health.values())
+    healthy = {"watchdog": 0, "reservation_expired": 0, "reservation_ownerless": 0, "double_occupancy": 0,
+               "states": {"ZS_SMITH": {"steps": 4, "wakes": {"entered": 2, "queue": 2}}}}
+    (a / "npc-day.json").write_text(json.dumps({**header, "activity_events": healthy}))
+    assert npc_day_parity.main([str(a), str(a), "--tolerances", str(ACTIVITY), "--out", str(out)]) == 0
+    assert "| ZS_SMITH | 4 | entered 2, queue 2 |" in out.read_text()
+    assert npc_day_parity.main([str(a), str(b), "--tolerances", str(ACTIVITY), "--out", str(out)]) == 1
+    # The counters are run B's: the same samples with healthy counters only in A fail every health check...
+    bare = tmp_path / "bare"
+    journal(bare, a_rows, [], header)
+    assert npc_day_parity.main([str(a), str(bare), "--tolerances", str(ACTIVITY), "--out", str(out),
+                                "--json", str(data)]) == 1
+    assert {c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]} == set(health.values())
+    # ...one counter missing in B fails exactly its own check...
+    partial = tmp_path / "partial"
+    journal(partial, a_rows, [], {**header, "activity_events": {k: v for k, v in healthy.items() if k != "reservation_expired"}})
+    assert npc_day_parity.main([str(a), str(partial), "--tolerances", str(ACTIVITY), "--out", str(out),
+                                "--json", str(data)]) == 1
+    assert [c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]] == ["max_activity_reservation_expired"]
+    # ...one bad counter in B, with A healthy, fails exactly its own check...
+    for counter, check in health.items():
+        c = tmp_path / ("c-" + counter)
+        journal(c, a_rows, [], {**header, "activity_events": {**healthy, counter: 1}})
+        assert npc_day_parity.main([str(a), str(c), "--tolerances", str(ACTIVITY), "--out", str(out),
+                                    "--json", str(data)]) == 1
+        assert [c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]] == [check]
+        # ...and the same bad counter in A alone, with B healthy, fails nothing: the check shows B's 0.
+        assert npc_day_parity.main([str(c), str(a), "--tolerances", str(ACTIVITY), "--out", str(out),
+                                    "--json", str(data)]) == 0
+        assert {c["name"]: c["value"] for c in json.loads(data.read_text())["checks"]}[check] == 0
+
+
+def test_mob_mismatch_is_zero_without_occupied_samples(tmp_path):
+    rows = [row(t, "GUARD#0", ta="guard", zs="ZS_GUARD") for t in (0, 5, 10)]
+    a, b = tmp_path / "a", tmp_path / "b"
+    journal(a, rows, [], DONE)
+    journal(b, rows, [], DONE)
+    result = npc_day_parity.compare(npc_day_parity.load(a), npc_day_parity.load(b), activity_states={"ZS_GUARD"})
+    assert result["activity"]["total"]["samples"] == 3 and result["activity"]["total"]["mob_mismatch"] == 0
+    assert [check["pass"] for check in npc_day_parity.evaluate(result, {"max_activity_mob_mismatch": 4})] == [True]
+
+
+def test_activity_segments_repeat_after_no_routine_and_empty_metrics_fail(tmp_path):
+    a_rows, b_rows = [], []
+    for t in range(0, 25, 5):
+        ta = "-" if t == 10 else "same entry"
+        a_rows.append(row(t, "SMITH#0", ta=ta, mob="ANVIL" if t in (5, 15) else "-"))
+        b_rows.append(row(t, "SMITH#0", ta=ta, mob="ANVIL" if t == 5 else "-"))
+    a, b = tmp_path / "a", tmp_path / "b"
+    journal(a, a_rows, [], DONE)
+    journal(b, b_rows, [], DONE)
+    aa, bb = npc_day_parity.load(a), npc_day_parity.load(b)
+    result = npc_day_parity.compare(aa, bb)
+    total = result["activity"]["total"]
+    assert total["samples"] == 4 and total["arrival_segments"] == 1
+    assert total["arrival_p95"] == 0 and total["stuck_npcs"] == 1
+    assert total["stuck"][0]["start_min"] == 15
+    missing = npc_day_parity.compare(aa, bb, activity_states={"ZS_ABSENT"})
+    checks = npc_day_parity.evaluate(missing, {"min_activity_same_mob": 0, "max_activity_mob_mismatch": 4,
+                                               "max_activity_arrival_p95": 5})
+    assert all(not check["pass"] for check in checks)

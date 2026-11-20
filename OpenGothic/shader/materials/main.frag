@@ -13,20 +13,39 @@
 // FLAT_NORMAL: the landscape's variants (a fragment shader is not told MESH_TYPE)
 #if defined(GBUFFER) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
 #include "grass/grass_ground.glsl"
+#if defined(BINDLESS) && !defined(HISTORY_DEPTH) && !defined(ATEST)
+#define GRASS_PAINT_PROBE
+#endif
 #endif
 #include "water/gerstner_wave.glsl"
 #include "lighting/shadow_sampling.glsl"
 #include "lighting/tonemapping.glsl"
 #include "lighting/material_brdf.glsl"
+#include "lighting/crown_light.glsl"
 #if defined(MAT_SUN_SHADOW)
 #include "virtual_shadow/vsm_sun_shadow.glsl"
 #endif
 
-#if defined(MAT_VARYINGS)
+#if defined(MAT_MOTION) || defined(MAT_CLUSTER_LEVEL)
+layout(location = 0) in flat uint materialRef;
+uint bucketId;
+#elif defined(MAT_VARYINGS)
 layout(location = 0) in flat uint bucketId;
+#endif
+#if defined(MAT_VARYINGS)
 layout(location = 1) in Varyings  shInp;
 #endif
-
+#if defined(TREE_BOUGH_CARDS) || defined(TREE_BOUGH_JOINT)
+#include "tree_bough_dissolve.glsl"
+#endif
+#if defined(TREE_BOUGH_CARDS)
+layout(location = 7) in flat uvec3 boughFadeIn;
+layout(location = 8) in flat vec3 boughMaskIn;
+#endif
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+layout(location = 9) in vec2 boughBandCellIn;
+layout(location = 10) in flat uvec2 boughBandIn;
+#endif
 #if defined(VIRTUAL_SHADOW)
 layout(location = 3) in flat uint vsmMipId;
 #endif
@@ -35,14 +54,24 @@ layout(location = 3) in flat uint vsmMipId;
 layout(location = DEBUG_DRAW_LOC) in flat uint debugId;
 #endif
 
-#if defined(GBUFFER)
+#if defined(HISTORY_DEPTH)
+#if defined(HISTORY_OWNER)
+layout(location = 0) out uint outHistoryOwner;
+#endif
+#elif defined(GBUFFER)
 layout(location = 0) out vec4 outDiffuse;
 layout(location = 1) out uint outNormal;
 #if defined(MATERIAL_MAPS)
 layout(location = 2) out vec4 outOrm;
 layout(location = 3) out vec2 outMotion; // Renderer::gbufMotion: after the material maps
+#if defined(HISTORY_OWNER)
+layout(location = 4) out uint outHistoryOwner;
+#endif
 #else
 layout(location = 2) out vec2 outMotion;
+#if defined(HISTORY_OWNER)
+layout(location = 3) out uint outHistoryOwner;
+#endif
 #endif
 #elif defined(WATER)
 layout(location = 0) out vec4 outColor;
@@ -58,11 +87,12 @@ layout(location = 0) out vec4 outColor;
     !defined(GBUFFER) && !defined(WATER)
 #define TAA_REACTIVE
 layout(location = 1) out vec4 outReactive;
-#if (MESH_TYPE==T_PFX) && !defined(GHOST)
+#if (MESH_TYPE==T_PFX)
 layout(push_constant, std430) uniform PushPfx {
   float reactive;    // ParticleFx::taaReactive: 1 for particles, 0 for rain and snow
   float hdrFrom;     // particles.d "hdr" (mainEmissive): the night's gain over a texel's brightness
-  float hdrInvRange; // 1/(to - from); 0: off
+                     // of a haze (GHOST, mainHaze): its largest shift, cm
+  float hdrInvRange; // 1/(to - from); 0: off. Of a haze: one over its noise cell, 1/cm
   float hdrEdge;
   } pushPfx;
 #endif
@@ -119,6 +149,18 @@ float encodeHintBits() {
   }
 
 #if defined(GBUFFER)
+// The vertex normal of the side the pixel shows. A material of two sides (materials.json "two_sided": "flip") turns
+// it to the eye on the side away from the winding: Tempest's front face is clockwise and the pipelines cull it, so
+// the side every material shows is the back one, and the other side is gl_FrontFacing. A fragment shader is not told
+// MESH_TYPE: the bit is set for objects' meshes alone (DrawBuckets::commit)
+vec3 sideNormal() {
+#if (MESH_TYPE!=T_PFX)
+  if(gl_FrontFacing && (bucket[bucketId].flags & BK_TWO_SIDED_FLIP)!=0u)
+    return -shInp.normal;
+#endif
+  return shInp.normal;
+  }
+
 vec3 flatNormal() {
 #if defined(FLAT_NORMAL)
   vec3 pos   = shInp.pos;
@@ -307,7 +349,11 @@ vec4 strandTexel() {
 
 #if defined(MAT_UV)
 #if defined(ANTITILE_MATERIAL)
-vec4 diffuseTex(out MaterialSampling maps) {
+vec4 diffuseTex(out MaterialSampling maps
+#if defined(GRASS_PAINT_PROBE)
+                , bool probePaint, bool skipPaint
+#endif
+                ) {
 #else
 vec4 diffuseTex() {
 #endif
@@ -321,6 +367,10 @@ vec4 diffuseTex() {
   maps.dpdy = dFdy(shInp.pos);
 #endif
   projectionPlanes(maps.proj);
+#if defined(GRASS_PAINT_PROBE)
+  if(skipPaint)
+    return vec4(0);
+#endif
 #endif
 #if !defined(SIMPLE_MAT) && (MESH_TYPE!=T_PFX)
   ivec2 texAniMapDirPeriod = bucket[bucketId].texAniMapDirPeriod;
@@ -373,6 +423,13 @@ vec4 diffuseTex() {
     tex = antitileDiffuse(maps, tId);
   else if(maps.proj.on)
     tex = projectionAlbedo(maps.proj, tId);
+#if defined(GRASS_PAINT_PROBE)
+  else if(probePaint) {
+    // At a partial layer, the skip can differ across a quad. Use the gradients taken above.
+    tex = textureGrad(sampler2D(textureMain[tId], samplerMain), uv,
+                      maps.duvdx*scene.mipGradScale, maps.duvdy*scene.mipGradScale);
+    }
+#endif
   else
     // The material flag is uniform within the primitive (flat bucketId).
     tex = texture(sampler2D(textureMain[tId], samplerMain),uv,scene.mipBias);
@@ -393,7 +450,7 @@ vec4 diffuseTex() {
   }
 #endif
 
-#if defined(GBUFFER)
+#if defined(GBUFFER) && !defined(HISTORY_DEPTH)
 #if defined(MATERIAL_MAPS) && (MESH_TYPE!=T_PFX)
 vec3 mappedNormal(vec3 normal, vec3 dpdx, vec3 dpdy, vec2 duvdx, vec2 duvdy, vec3 tangentNormal) {
   // Cotangent frame: Gothic meshes have no stored tangents. This also follows
@@ -452,17 +509,26 @@ float emberBreath(vec3 pos) {
 #endif
 
 #if defined(BINDLESS) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
-#include "grass/grass_layers.glsl"
+#include "grass/grass_track.glsl"
 #endif
 
 #if defined(ANTITILE_MATERIAL)
-void mainGBuffer(vec4 t, MaterialSampling maps) {
+void mainGBuffer(vec4 t, MaterialSampling maps
+#if defined(GRASS_PAINT_PROBE)
+                 , bool skipPaint
+#endif
+                 ) {
 #else
 void mainGBuffer(vec4 t) {
 #endif
-  outDiffuse.rgb = t.rgb;
   outDiffuse.a   = encodeHintBits();
-  outNormal      = encodeNormal(shInp.normal);
+#if defined(GRASS_PAINT_PROBE)
+  if(skipPaint)
+    return; // The layer writes every other material channel.
+#endif
+  outDiffuse.rgb = t.rgb;
+  const vec3 normal = sideNormal();
+  outNormal      = encodeNormal(normal);
 #if defined(MATERIAL_MAPS)
   outOrm = vec4(1,1,0,0);
 #if (MESH_TYPE!=T_PFX)
@@ -511,7 +577,7 @@ void mainGBuffer(vec4 t) {
               weights.z * antitileOrm(tId, maps.c);
       }
     if(hasNormal)
-      outNormal = encodeNormal(mappedNormal(shInp.normal, dpdx, dpdy, duvdx, duvdy,
+      outNormal = encodeNormal(mappedNormal(normal, dpdx, dpdy, duvdx, duvdy,
                                            vec3(slope,1)));
     if(hasOrm)
       outOrm.rgb = orm;
@@ -520,7 +586,7 @@ void mainGBuffer(vec4 t) {
     } else {
     if((bucket[bucketId].flags & BK_NORMAL)!=0) {
       vec4 nm = textureGrad(sampler2D(textureNormal[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale);
-      outNormal = encodeNormal(mappedNormal(shInp.normal, dpdx, dpdy, duvdx, duvdy, nm));
+      outNormal = encodeNormal(mappedNormal(normal, dpdx, dpdy, duvdx, duvdy, nm));
       }
     if((bucket[bucketId].flags & BK_ORM)!=0)
       outOrm.rgb = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).rgb;
@@ -615,6 +681,18 @@ void mainGBuffer(vec4 t) {
     if(through>0.0) {
       outOrm.b     = through;
       outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufFoliageBit)/255.0;
+      }
+    }
+  if((bucket[bucketId].flags & BK_CROWN)!=0u) {
+    // A tree's crown (crown_light.glsl): the shade of its depth goes to the light passes in the ORM alpha, under the
+    // crown bit (common.glsl, gbufCrownShade); a material without its own maps has no such alpha and no crown
+    const float openness = crownOpenness(shInp.normal);
+    if((scene.viewFlags & VF_CROWN_MASK)!=0u) {
+      outDiffuse.rgb = crownMask(openness, outOrm.b);
+      }
+    else if(outOrm.a>0.5) {
+      outOrm.a     = gbufCrownShadeCode(crownShade(openness));
+      outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufCrownBit)/255.0;
       }
     }
   const float glow = bucket[bucketId].emissive;
@@ -778,7 +856,65 @@ void mainEmissive(vec4 t) {
   }
 #endif
 
-#if defined(GHOST)
+#if defined(GHOST) && (MESH_TYPE==T_PFX)
+// The shimmer of hot air over a fire (particles.d "haze"). The sprite has no colour: it shows the finished frame
+// behind it (sceneColor is the copy Renderer::drawHaze makes after everything translucent) shifted by a noise that
+// rises and changes. The shift is in cm of the world at the sprite's distance, so it shrinks with distance as the
+// real one does; it fades to the sprite's rim and with the particle's alpha. A sample that would land on something
+// in front of the sprite (a man before the fire) is not shifted, or his outline would smear into the air.
+float hazeHash(vec3 p) {
+  p = fract(p*vec3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return fract((p.x + p.y)*p.z);
+  }
+
+float hazeNoise(vec3 p) {
+  const vec3 i = floor(p);
+  vec3       f = fract(p);
+  f = f*f*(3.0-2.0*f);
+  const float a = mix(mix(hazeHash(i),               hazeHash(i+vec3(1,0,0)), f.x),
+                      mix(hazeHash(i+vec3(0,1,0)),   hazeHash(i+vec3(1,1,0)), f.x), f.y);
+  const float b = mix(mix(hazeHash(i+vec3(0,0,1)),   hazeHash(i+vec3(1,0,1)), f.x),
+                      mix(hazeHash(i+vec3(0,1,1)),   hazeHash(i+vec3(1,1,1)), f.x), f.y);
+  return mix(a, b, f.z);
+  }
+
+void mainGhost(vec4 t) {
+  const vec2  uv   = gl_FragCoord.xy*scene.screenResInv;
+  const vec2  c    = shInp.uv*2.0 - vec2(1.0);
+  const float rim  = clamp(1.0 - dot(c,c), 0.0, 1.0);
+  const float k    = rim*rim*shInp.color.a;
+
+  const float own  = linearDepth(gl_FragCoord.z, scene.clipInfo);
+  vec4        wpos = scene.viewProjectInv*vec4(uv*2.0-vec2(1.0), gl_FragCoord.z, 1.0);
+  wpos.xyz /= wpos.w;
+
+  // hot air rises at about 1 m/s and its cells live for a fraction of a second
+  const float time = float(scene.tickCount32 % 1000000u)*0.001;
+  vec3        q    = wpos.xyz*pushPfx.hdrInvRange;
+  q.y -= time*100.0*pushPfx.hdrInvRange;
+  const vec3  morph = vec3(0.0, 0.0, time*1.7);
+  // two octaves; the shift is mostly sideways, as of rising streams
+  vec2 n = vec2(hazeNoise(q + morph), hazeNoise(q.zyx + vec3(17.3, 5.1, 9.7) - morph)) - vec2(0.5);
+  n     += (vec2(hazeNoise(q*2.3 - morph), hazeNoise(q.zyx*2.3 + vec3(3.1, 11.9, 1.3) + morph)) - vec2(0.5))*0.5;
+  n     *= vec2(1.0, 0.6);
+
+  // cm of the world to the screen by the size of a pixel at the sprite
+  const float cmPerPx = max(length(dFdx(wpos.xyz)), 1e-3);
+  vec2 shift = n*(2.0*k*pushPfx.hdrFrom/cmPerPx)*scene.screenResInv;
+  const float behind = linearDepth(textureLod(gbufferDepth, uv+shift, 0).r, scene.clipInfo);
+  if(behind<own)
+    shift = vec2(0.0);
+
+  outColor = vec4(textureLod(sceneColor, uv+shift, 0).rgb, 1.0);
+#if defined(TAA_REACTIVE)
+  // The frame under a haze changes every frame with no motion vector: the temporal resolve would average the shimmer
+  // into a blur with a stipple, so the mask goes up with the shift. Blended over the mask of the flames and smoke
+  // under it, which stays where the haze is weak
+  outReactive = vec4(1.0, 0, 0, smoothstep(0.0, 0.25, k));
+#endif
+  }
+#elif defined(GHOST)
 void mainGhost(vec4 t) {
   vec3  color  = textureAlbedo(t.rgb) * 5.0;
   vec3  normal = normalize(shInp.normal);
@@ -964,10 +1100,71 @@ float alphaThreshold() {
   }
 
 void main() {
-#if defined(MAT_UV)
+#if defined(GBUFFER) && !defined(HISTORY_DEPTH)
+  const bool treeProbe = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u;
+#endif
+#if defined(TREE_BOUGH_JOINT) && defined(GBUFFER)
+  const bool treeJoint = (materialRef & BoughJointTag)!=0u;
+  const uint taskRef = materialRef & ~BoughJointTag;
+#endif
+#if defined(TREE_BOUGH_CARDS)
+  bucketId = materialRef;
+#elif defined(HISTORY_PAYLOAD)
+#if defined(TREE_BOUGH_JOINT)
+  const uvec4 historyTask = payload[taskRef];
+#else
+  const uvec4 historyTask = payload[materialRef];
+#endif
+  const uint historyOwner = historyTask.w & 0x00FFFFFFu;
+  bucketId = historyTask.z;
+  uint clusterLevel = historyTask.w >> 24u;
+#elif defined(MAT_CLUSTER_LEVEL)
+  bucketId = materialRef & 0xffffu;
+  uint clusterLevel = materialRef >> 16u;
+#elif defined(MAT_MOTION)
+  bucketId = materialRef;
+#endif
+#if defined(GBUFFER) && defined(MAT_CLUSTER_LEVEL) && !defined(HISTORY_PAYLOAD) && !defined(TREE_BOUGH_CARDS)
+  uint probeCluster = 0u;
+#if defined(TREE_BOUGH_JOINT)
+  if(treeProbe || treeJoint) {
+    const uvec4 task = payload[taskRef];
+#else
+  if(treeProbe) {
+    const uvec4 task = payload[materialRef];
+#endif
+    bucketId = task.z;
+    const bool historyReference = (scene.viewFlags & VF_HIZ_HISTORY_REFERENCE)!=0u;
+    probeCluster = historyReference ? ((task.w & 0x00FFFFFFu) - 1u) : task.w;
+    clusterLevel = 0u;
+    }
+#endif
+
+#if defined(GBUFFER) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL) && defined(BINDLESS) && !defined(HISTORY_DEPTH)
+  const Bucket material = bucket[bucketId];
+  GrassLayer layer;
+  float sward = -1.0, strip = 0.0;
+#endif
+#if defined(GRASS_PAINT_PROBE)
+  // Keep the base path when coverage or G-buffer hints can depend on the painted material.
+  const uint extraHints = BK_HAIR | BK_STRAND | BK_EYE | BK_FOLIAGE | BK_CROWN | BK_PROJECTION;
+  const bool probePaint = (scene.viewFlags & GrassPartGroundPaint)!=0u &&
+                         (material.flags & (BK_GROUND | BK_VERGE))!=0u &&
+                         (material.flags & extraHints)==0u && material.emissive<=0.0;
+  const vec3 grassDpdx = dFdx(shInp.pos), grassDpdy = dFdy(shInp.pos);
+  if(probePaint)
+    sward = grassOwnLayers(material, shInp.pos, shInp.normal, grassDpdx, grassDpdy, layer, strip);
+  const bool skipPaint = probePaint && sward>=0.0 && layer.share==1.0;
+#endif
+
+#if defined(MAT_UV) && (!defined(HISTORY_DEPTH) || defined(ATEST))
 #if defined(ANTITILE_MATERIAL)
   MaterialSampling maps;
-  vec4 t = diffuseTex(maps);
+  vec4 t = diffuseTex(maps
+#if defined(GRASS_PAINT_PROBE)
+                      , probePaint, skipPaint
+#endif
+                      );
 #else
   vec4 t = diffuseTex();
 #endif
@@ -981,6 +1178,11 @@ void main() {
 #  endif
 #endif
 
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+  if(!boughBandCovers(boughBandIn.x, true, uvec2(ivec2(floor(boughBandCellIn))), boughBandIn.y))
+    discard;
+#endif
+
 #if defined(ATEST) && defined(GBUFFER) && defined(MATERIAL_MAPS)
   const float alphaTest = t.a;
 #endif
@@ -989,8 +1191,13 @@ void main() {
 #endif
 
 #if defined(GBUFFER)
+#if !defined(HISTORY_DEPTH)
 #if defined(ANTITILE_MATERIAL)
-  mainGBuffer(t, maps);
+  mainGBuffer(t, maps
+#if defined(GRASS_PAINT_PROBE)
+              , skipPaint
+#endif
+              );
 #else
   mainGBuffer(t);
 #endif
@@ -998,21 +1205,66 @@ void main() {
 #if defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
   {
   const uint ground = bucket[bucketId].flags;
-  float sward = -1.0;
 #if defined(BINDLESS)
-  // the meadow's own two layers, and the strip of them along a road (grass/grass_layers.glsl)
-  if((ground & (BK_GROUND | BK_VERGE))!=0u)
-    sward = grassLayers(ground, bucket[bucketId].fringeTex, bucket[bucketId].fringeScale, bucket[bucketId].fringeTop0,
-                        bucket[bucketId].fringeTop1, shInp.pos, shInp.normal, maps.dpdx, maps.dpdy,
-                        outDiffuse, outNormal, outOrm);
+  if((ground & (BK_GROUND | BK_VERGE | BK_TRACK))!=0u) {
+#if defined(GRASS_PAINT_PROBE)
+    if(!probePaint)
+#endif
+      sward = grassOwnLayers(material, shInp.pos, shInp.normal, maps.dpdx, maps.dpdy, layer, strip);
+    grassOwnGround(material, sward, layer, strip, shInp.uv*material.uvScale, maps.duvdx, maps.duvdy,
+                   shInp.pos, shInp.normal, maps.dpdx, maps.dpdy, outDiffuse, outNormal, outOrm);
+    }
+#else
+  const float sward = -1.0;
 #endif
   if(sward>-1.5 && ((ground & BK_GRASS)!=0u || sward>0.0))
     grassGround(bucket[bucketId].foliage, shInp.pos, shInp.normal, sward, outDiffuse, outNormal, outOrm);
   }
 #endif
+#endif
 #if defined(ATEST) && defined(MATERIAL_MAPS)
+  // The history depth pass uses exactly the G-buffer coverage, including hashed TAA alpha.
   if(alphaTest<alphaThreshold())
     discard;
+#endif
+#if defined(TREE_BOUGH_CARDS)
+  const uint joint = boughFadeIn.z;
+  const vec3 mask = joint!=0u ? boughMaskCoordinates(boughMaskIn, scene) : boughMaskIn;
+  const vec2 boughSample = boughSampleOffset(gl_FragCoord.xy, mask);
+  if(joint!=0u && !boughCovers(joint ^ BoughFadeChild, boughJointSeed(boughMaskIn), boughSample))
+    discard;
+  if(!boughCovers(boughFadeIn.x, boughFadeIn.y, boughSample))
+    discard;
+#elif defined(TREE_BOUGH_JOINT)
+  if(treeJoint) {
+    // the impostor joint's 3D side, then the side of a level band, at independent ranks of the same sample
+    const Instance instance = pullInstance(payload[taskRef].x);
+    const uint fade = boughJointFade(instance.animPtr) ^ BoughFadeChild;
+    const uint seed = boughJointSeed(instance.mat[3]);
+    const vec2 sampleOffset = boughSampleOffset(gl_FragCoord.xy, boughMaskCoordinates(instance.mat[3], scene));
+    if(!boughCovers(fade, seed, sampleOffset) ||
+       !boughBandCovers(boughBandWord(instance), false, uvec2(ivec2(floor(sampleOffset))), seed))
+      discard;
+    }
+#endif
+#if !defined(HISTORY_DEPTH)
+  if(treeProbe) {
+#if defined(HISTORY_PAYLOAD)
+    outNormal = historyOwner == 0u ? 0u : (0x80000000u | (historyOwner - 1u));
+#elif defined(MAT_CLUSTER_LEVEL) && !defined(TREE_BOUGH_CARDS)
+    outNormal = 0x80000000u | probeCluster;
+#else
+    outNormal = 0u;
+#endif
+    }
+#endif
+#if defined(HISTORY_OWNER)
+#if defined(HISTORY_PAYLOAD)
+  outHistoryOwner = historyOwner;
+#else
+  // Opaque particles can win the pixel after a mesh and must clear its owner.
+  outHistoryOwner = 0u;
+#endif
 #endif
 #elif defined(WATER)
   mainWater(t);
@@ -1022,6 +1274,20 @@ void main() {
   mainEmissive(t);
 #elif defined(GHOST) && !defined(DEPTH_ONLY)
   mainGhost(t);
+#endif
+
+#if defined(MAT_CLUSTER_LEVEL) && !defined(HISTORY_DEPTH) && !defined(TREE_BOUGH_CARDS)
+  if(clusterLevel != 0u) {
+    const vec3 color = debugColors[(clusterLevel - 1u) % uint(debugColors.length())];
+#if defined(GBUFFER)
+    outDiffuse.rgb = color;
+#else
+    outColor.rgb = color * scene.exposure;
+#if defined(WATER)
+    outDiffuse.rgb = color;
+#endif
+#endif
+    }
 #endif
 
 #if DEBUG_DRAW && !defined(GBUFFER) && !defined(DEPTH_ONLY)

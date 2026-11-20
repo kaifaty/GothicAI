@@ -1,0 +1,39 @@
+# The temple in the trolls' land at midnight, 48 wall torches whose only light is a static lamp of 700-900 cm: what
+# the torch's own model and fire cost where the torches are many (reports/content/remaster/wall-torch-model). Four
+# held views: a hall across 13 m, a torch at 3 m, a wall torch with two more through a doorway, a torch on a carved
+# frieze. Compare sets with scripts/perf-content.sh A B temple. Animated draws are hidden on both sides.
+seed 73013
+cheat god
+set time 0 0
+cadence normal
+overlay off
+ui off
+view full
+view hide animated morph
+cam lift off
+goto pos 83000 3660 24616
+cam at 83000 3830 24616 81715 3770 24616
+# Ten real seconds after the first teleport for loading and native simulation, five after the next ones.
+wait 10000
+set time 0 0
+perf sample perf-temple/view-1
+wait 8000
+perf stop
+goto pos 82026 3613 24235
+cam at 82026 3783 24235 81732 3773 24335
+wait 5000
+perf sample perf-temple/view-2
+wait 8000
+perf stop
+goto pos 79153 4045 20341
+cam at 79153 4215 20341 79482 4205 20442
+wait 5000
+perf sample perf-temple/view-3
+wait 8000
+perf stop
+goto pos 83806 3757 28731
+cam at 83806 3927 28731 84049 3917 28546
+wait 5000
+perf sample perf-temple/view-4
+wait 8000
+perf stop

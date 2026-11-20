@@ -18,11 +18,28 @@ import perf_report
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLACES = ("harbour", "harbour-night", "market", "forest", "interior", "combat", "xardas")
+PLACES = ("harbour", "harbour-night", "market", "forest", "interior", "combat", "xardas", "temple", "fires", "firerain", "crops", "crops-onar", "itemfx")
 ORDER = ("A", "B", "B", "A")
 NOISE_PCT = 2.0
 THRESHOLD_PCT = 5.0
 SHARED = Path("/mnt/shared/gothic-ai")
+
+
+def side_env(side, environ=os.environ):
+    """PERF_ENV_A / PERF_ENV_B: assignments for one side only, to price a switch in one content set."""
+    values = shlex.split(environ.get(f"PERF_ENV_{side}", ""))
+    for value in values:
+        name, sep, _ = value.partition("=")
+        if not sep or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) or name == "OPENGOTHIC_CONTENT":
+            raise ValueError(f"PERF_ENV_{side} expects NAME=value assignments other than OPENGOTHIC_CONTENT: {value!r}")
+    return values
+
+
+def sides_label(meta):
+    settings = meta.get("settings", {})
+    return "; ".join(f"{side}: `{meta[side.lower()]}`" + (f" + `{settings[f'PERF_ENV_{side}']}`"
+                                                          if settings.get(f"PERF_ENV_{side}") else "")
+                     for side in ("A", "B"))
 
 
 def content_name(value):
@@ -79,8 +96,10 @@ def comparison(directory, noise_pct=NOISE_PCT, threshold_pct=THRESHOLD_PCT):
     places = {}
     drawables = set()
     for side, report in sides.items():
-        if report["warnings"]:
-            raise ValueError("; ".join(report["warnings"]))
+        # A gap in the GPU clock journal is reported, never a reason to drop the measurement.
+        issues = [warning for warning in report["warnings"] if not warning.startswith(perf_report.GPU_GAP)]
+        if issues:
+            raise ValueError("; ".join(issues))
         if set(report["places"]) != set(metadata["places"]):
             raise ValueError(f"{side}: incomplete places")
         for source in report["sources"]:
@@ -159,7 +178,8 @@ def write_report(directory, noise_pct=NOISE_PCT, threshold_pct=THRESHOLD_PCT, ou
     report = comparison(directory, noise_pct, threshold_pct)
     meta = report["metadata"]
     report["conclusions"] = []
-    if meta["a"] != meta["b"]:
+    settings = meta.get("settings", {})
+    if meta["a"] != meta["b"] or settings.get("PERF_ENV_A") != settings.get("PERF_ENV_B"):
         for place, data in report["places"].items():
             a, b = (data["counters"][side] for side in ("A", "B"))
             triangles = b["triangles"] - a["triangles"]
@@ -168,7 +188,7 @@ def write_report(directory, noise_pct=NOISE_PCT, threshold_pct=THRESHOLD_PCT, ou
                 f"({triangles * 100 / a['triangles']:+.1f}%) и "
                 f"{b['draw_calls'] - a['draw_calls']:+.1f} вызова отрисовки на кадр; "
                 f"время кадра — {data['p95_verdict']} (Δ p95 {data['p95']['delta_pct']:+.2f}%).")
-    markdown = (f"# Цена контента квартала\n\nA: `{meta['a']}`; B: `{meta['b']}`. "
+    markdown = (f"# Цена контента квартала\n\n{sides_label(meta)}. "
                 f"Ryzen, Vulkan, drawable {report['drawable'][0]}×{report['drawable'][1]}.\n\n"
                 f"Commit: `{meta['git_commit']}`; dirty files: {meta['dirty_files']}. "
                 f"Порядок каждого места: A B B A, одна сборка и одна заявка `gq quiet`.\n\n"
@@ -196,6 +216,7 @@ def run_attempts(directory, content, args):
     extra = shlex.split(base_env.get("PERF_ENV", ""))
     # Every attempt explicitly selects its content, including the empty none case.
     extra = [value for value in extra if not value.startswith("OPENGOTHIC_CONTENT=")]
+    own = {side: side_env(side, base_env) for side in ("A", "B")}
     for place in args.places:
         counts = {"A": 0, "B": 0}
         for side in ORDER:
@@ -204,8 +225,8 @@ def run_attempts(directory, content, args):
             selected = "" if name == "none" else str(content / name)
             env = {**base_env, "PERF_REPEAT": "1", "NO_BUILD": "1", "PERF_REMOTE": "1",
                    "OPENGOTHIC_CONTENT": selected,
-                   "PERF_ENV": shlex.join([*extra, "OPENGOTHIC_CONTENT=" + selected])}
-            out = directory / side / f"attempt-{counts[side]}"
+                   "PERF_ENV": shlex.join([*extra, *own[side], "OPENGOTHIC_CONTENT=" + selected])}
+            out = directory / side / place / f"attempt-{counts[side]}"
             print(f"perf-content: {place} {side}={name}, repeat {counts[side]}/2", flush=True)
             subprocess.run(["bash", str(ROOT / "scripts/perf.sh"), "__run", str(out), place], env=env, check=True)
     write_report(directory, args.noise_pct, args.threshold_pct)
@@ -214,6 +235,8 @@ def run_attempts(directory, content, args):
 def launch(args):
     if os.environ.get("BENCH_HOST", "ryzen") != "ryzen":
         raise ValueError("perf-content requires BENCH_HOST=ryzen; no local fallback")
+    for side in ("A", "B"):
+        side_env(side)
     host = os.environ.get("RYZEN_HOST", "ryzen")
     def remote(*command, **kwargs):
         return subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host,
@@ -235,8 +258,8 @@ def launch(args):
         subprocess.run(["rsync", "-a", *flags, str(local), f"{host}:{destination}"], check=True)
     sync(str(ROOT / "OpenGothic") + "/", source + "/OpenGothic/", "--delete", "--exclude=/build*/", "--exclude=.git")
     sync(str(ROOT / "scripts/convert") + "/", source + "/scripts/convert/", "--delete", "--exclude=/build*/")
-    for name in ("perf-content.sh", "perf_content.py", "perf.sh", "perf_report.py", "ryzen_game.py", "base-ensure.sh",
-                 "ryzen-build.sh"):
+    for name in ("perf-content.sh", "perf_content.py", "perf.sh", "perf_report.py", "perf_gpu_log.py", "ryzen_game.py",
+                 "base-ensure.sh", "ryzen-build.sh"):
         sync(ROOT / "scripts" / name, source + "/scripts/")
     for scenario in (ROOT / "scripts/bench").glob("perf-*.bench"):
         sync(scenario, source + "/scripts/bench/")
@@ -254,7 +277,9 @@ def launch(args):
     dirty = len(subprocess.check_output(["git", "-C", str(ROOT), "status", "--porcelain"], text=True).splitlines())
     settings = {key: os.environ.get(key, default) for key, default in
                 (("PERF_WINDOW", "1728x1117"), ("PERF_VID_RES", "0"),
-                 ("PERF_ARGS", ""), ("PERF_ENV", ""), ("PERF_INI", ""))}
+                 ("PERF_ARGS", ""), ("PERF_ENV", ""), ("PERF_ENV_A", ""), ("PERF_ENV_B", ""),
+                 ("PERF_INI", ""), ("PERF_WARMUP", ""), ("PERF_WARMUP_MAX", "300"),
+                 ("PERF_GPU_STAMP", ""))}
     environment = ["PERF_REMOTE=1", "OPENGOTHIC_BASE=", f"OPENGOTHIC_BASE_CACHE={task}/base-cache",
                    f"OPENGOTHIC_BASE_STORE={task}/base-store", "OPENGOTHIC_VIDEOS_FINGERPRINT=",
                    f"PERF_COMMIT={commit}", f"PERF_DIRTY={dirty}"]
@@ -278,7 +303,7 @@ def launch(args):
     (out / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     sync(out / "metadata.json", remote_out + "/")
     result = subprocess.run([*queue, "--class", "quiet", "--threads", "4", "--mem", "5G", "--gpu-mem", "4G",
-                             "--display", "--max", f"{5 + len(args.places) * 20}m", "--wait-max",
+                             "--display", "--max", f"{10 + len(args.places) * 20}m", "--wait-max",
                              os.environ.get("RYZEN_LOCK_WAIT", "3600"), "--name", "content perf ABBA",
                              "--archive", remote_out, "--", "env", *environment,
                              f"OPENGOTHIC_BASE_FINGERPRINT={base}", "python3",

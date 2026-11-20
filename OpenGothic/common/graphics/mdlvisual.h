@@ -23,6 +23,7 @@
 #include "game/rpgvocabulary.h"
 #include "meshobjects.h"
 #include "effect.h"
+#include "itemview.h"
 
 class Serialize;
 class ObjVisual;
@@ -75,16 +76,17 @@ class MdlVisual final {
 
     void                           setArmor      (Npc& npc, MeshObjects::Mesh&& armor);
     void                           setBody       (Npc& npc, MeshObjects::Mesh&& body, const int32_t version);
-    void                           setSword      (MeshObjects::Mesh&& sword);
-    void                           setRangedWeapon(MeshObjects::Mesh&& bow);
-    void                           setShield     (MeshObjects::Mesh&& shield);
-    void                           setAmmoItem   (MeshObjects::Mesh&& ammo, std::string_view bone);
+    // the item slots take an item's view (graphics/itemview): its mesh with its effect
+    void                           setSword      (ItemView&& sword);
+    void                           setRangedWeapon(ItemView&& bow);
+    void                           setShield     (ItemView&& shield);
+    void                           setAmmoItem   (ItemView&& ammo, std::string_view bone);
     // the arrow (the bolt) has left: not shown in the hand till the next one is placed (the slot is kept:
     // the shot leaves from there)
     void                           dropAmmo();
     bool                           hasAmmoShown() const { return !ammunition.view.isEmpty(); }
-    void                           setSlotItem   (MeshObjects::Mesh&& itm,  std::string_view bone, int32_t material = 0);
-    void                           setStateItem  (MeshObjects::Mesh&& itm,  std::string_view bone);
+    void                           setSlotItem   (ItemView&& itm,  std::string_view bone);
+    void                           setStateItem  (ItemView&& itm,  std::string_view bone);
     void                           clearSlotItem (std::string_view bone);
     // the quiver on the right hip (graphics/mesh/quiver): Npc::updateQuiver decides what it shows
     const Quiver&                  quiver() const { return quiv; }
@@ -116,9 +118,12 @@ class MdlVisual final {
     void                           setMagicWeapon(Effect&& spell, World& owner);
     void                           setMagicWeaponKey(World& owner, SpellFxKey key, int32_t keyLvl=0);
 
-    void                           startEffect (World& owner, Effect&& pfx, int32_t slot, bool noSlot);
+    // untilStop: an animation event's looped effect, it lives until stopEffect(slot), a new effect in its slot,
+    // stopLoopedEffects or the visual's end instead of its own time
+    void                           startEffect (World& owner, Effect&& pfx, int32_t slot, bool noSlot, bool untilStop = false);
     void                           stopEffect  (const VisualFx& vfx);
     void                           stopEffect  (int32_t slot);
+    void                           stopLoopedEffects();
     // an effect of the animations' events that does not start (the native PEE while an aimed one plays)
     void                           setMutedPfx(std::string_view name) { muted = name; }
     std::string_view               mutedPfx() const { return muted; }
@@ -148,7 +153,7 @@ class MdlVisual final {
       size_t             bone=size_t(-1);
       Tempest::Matrix4x4 local, world;
       };
-    bool                           stickArrow(MeshObjects::Mesh&& arrow, size_t bone,
+    bool                           stickArrow(ItemView&& arrow, size_t bone,
                                               const Tempest::Matrix4x4& worldMatrix, std::string_view visualName={});
     void                           saveStuckArrows(Serialize& fout) const;
     bool                           loadStuckArrows(Serialize& fin, World& world);
@@ -300,10 +305,9 @@ class MdlVisual final {
       View             view;
       std::string_view bone;
       };
-    struct MeshAttach : Attach<MeshObjects::Mesh> {
-      const ProtoMesh* deferredProto = nullptr;
-      int32_t deferredMaterial = 0;
-      };
+    using MeshAttach = Attach<MeshObjects::Mesh>;
+    // an item on the body: a released view (clearVisualBody) keeps the item, setVisualBody restores it
+    using ItemAttach = Attach<ItemView>;
     using PfxAttach  = Attach<Effect>;
 
     struct PfxSlot {
@@ -311,6 +315,7 @@ class MdlVisual final {
       uint64_t    timeUntil=0;
       int         id=0;
       bool        noSlot = false;
+      bool        untilStop = false;
       };
 
     struct TorchSlot {
@@ -319,7 +324,7 @@ class MdlVisual final {
       };
 
     struct ArrowPin {
-      MeshObjects::Mesh  view;
+      ItemView           view; // with the arrow's effect while it fades (graphics/itemview)
       std::string        visual;
       size_t             bone=size_t(-1);
       Tempest::Matrix4x4 local;
@@ -343,6 +348,7 @@ class MdlVisual final {
     void setSlotAttachment(MeshObjects::Mesh&& itm, std::string_view bone);
 
     void bind(MeshAttach& slot, MeshObjects::Mesh&&   itm, std::string_view bone);
+    void bind(ItemAttach& slot, ItemView&&            itm, std::string_view bone);
     void bind(PfxAttach&  slot, Effect&& itm, std::string_view bone);
 
     template<class View>
@@ -353,7 +359,7 @@ class MdlVisual final {
     template<class View>
     void rebindAttaches(Attach<View>& mesh, const Skeleton& to);
     void rebindAttaches(const Skeleton& to);
-    std::vector<Tempest::Vec3> carriedPoints(const MeshAttach& att, std::string_view slot) const;
+    std::vector<Tempest::Vec3> carriedPoints(const ItemAttach& att, std::string_view slot) const;
     // the ground under the quiver: the plane the rays found round the pelvis (where they were cast from)
     struct QuiverGround {
       bool           valid = false;
@@ -394,7 +400,8 @@ class MdlVisual final {
     MeshObjects::Mesh              view;
     bool                           bodyDetached = false;
 
-    MeshAttach                     head, sword, bow, shield;
+    MeshAttach                     head;
+    ItemAttach                     sword, bow, shield;
     MeshAttach                     groom;                 // strands of an own head (characters.json "groom"), on the head's bone
     LipSync                        mouth;
     TalkGestures                   gestures;
@@ -425,8 +432,8 @@ class MdlVisual final {
     static constexpr uint64_t      ManualLeakMs = 2000;   // a leak started by hand: the line it makes, ms
     uint32_t                       cueCount = 0;          // gestures started by hand: the seed of their side
     float                          faceUploadUs = 0;      // the last setDeformation of the face, µs (test bench)
-    MeshAttach                     ammunition, stateItm;
-    std::vector<MeshAttach>        item;
+    ItemAttach                     ammunition, stateItm;
+    std::vector<ItemAttach>        item;
     std::vector<MeshAttach>        attach;
     std::vector<ArrowPin>          stuckArrows;
     Quiver                         quiv;
@@ -463,5 +470,6 @@ class MdlVisual final {
     std::vector<Tempest::Matrix4x4> rigPalette;
     friend bool TestBench::ragdollBodyDrawable(const Npc& npc);
     friend struct MeshGltfTest;
+    friend struct NpcDefinitionContract;
   };
 

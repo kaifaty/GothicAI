@@ -19,6 +19,9 @@
 #include "loadprobe.h"
 #include "frameprofile.h"
 #include "utils/workers.h"
+#include "gameservices.h"
+#include "physics/dynamicworld.h"
+#include "physics/worldwind.h"
 
 using namespace Tempest;
 
@@ -179,6 +182,7 @@ struct WorldView::LandscapeStreaming {
   struct Chunk {
     std::unique_ptr<Landscape> gpu;
     std::unique_ptr<PackedMesh> ready;
+    size_t meshlets=0, legacyMeshlets=0;
     std::exception_ptr error;
     bool failed=false;
     bool nearFailed=false;
@@ -200,24 +204,21 @@ struct WorldView::LandscapeStreaming {
   size_t releasedSourceBytes=0;
   bool stopping=false;
   bool firstUpdate=true;
+  bool wasPending=true;
   double preloadMs=0;
   double initialPackMs=0;
+  double initialReadMs=0; // the Near cells' reads within initialPackMs
   double initialUploadMs=0;
   uint64_t subscription=0;
   std::thread worker;
 
   LandscapeStreaming(WorldView& view, asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs)
     :view(view),residency(residency),source(residency.table().source),
-     triangles(residency.table().entries.size()),materials(PackedMesh::landscapeMaterialMap(mesh)),
-     chunks(triangles.size()),preloadMs(preloadMs) {
+     triangles(chunkSourceLists(residency.table())),materials(PackedMesh::landscapeMaterialMap(mesh)),
+     chunks(residency.table().entries.size()),preloadMs(preloadMs) {
     if(!source)
       throw std::runtime_error("Landscape streaming requires a file-backed chunk source");
-    const auto& table=residency.table();
-    for(size_t i=0;i<triangles.size();++i)
-      triangles[i].reserve(table.entries[i].triangleCount);
-    for(size_t i=0;i<table.triangleChunks.size();++i)
-      triangles.at(table.triangleChunks[i]).push_back(table.triangleSources.at(i));
-    // Physics and cloth have consumed the stitched mesh. Repacking reads only
+    // Physics and cloth have consumed the stitched mesh (a catalogue start has none). Repacking reads only
     // the selected chunk; no dense world geometry survives on the CPU.
     releasedSourceBytes=mesh.vertices.capacity()*sizeof(mesh.vertices[0])+
                         mesh.features.capacity()*sizeof(mesh.features[0])+
@@ -267,7 +268,7 @@ struct WorldView::LandscapeStreaming {
               }
             else {
               try {
-                packed=pack(i);
+                packed=pack(i,false,firstUpdate ? &initialReadMs : nullptr);
                 }
               catch(...) {
                 packed=pack(i,true);
@@ -400,13 +401,31 @@ struct WorldView::LandscapeStreaming {
       }
     }
 
-  std::unique_ptr<PackedMesh> pack(size_t i, bool currentFile=false) const {
-    auto chunk=source->read(i,triangles[i],currentFile);
+  std::unique_ptr<PackedMesh> pack(size_t i, bool currentFile=false, double* readMs=nullptr) const {
+    const auto t=ChunkResidency::Clock::now();
+    auto chunk=source->catalogue() ? source->readLandscape(i,currentFile) : source->read(i,triangles[i],currentFile);
+    if(readMs!=nullptr)
+      *readMs+=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
     if(view.grass)
       view.grass->addChunk(residency.table().entries[i].id,chunk.mesh);
-    std::vector<uint32_t> selected(chunk.mesh.polygons.material_indices.size());
-    std::iota(selected.begin(),selected.end(),uint32_t(0));
-    return std::make_unique<PackedMesh>(chunk.mesh,selected,materials,chunk.vertexIds,chunk.featureIds);
+    const auto packLegacy = [&]() {
+      std::vector<uint32_t> selected(chunk.mesh.polygons.material_indices.size());
+      std::iota(selected.begin(),selected.end(),uint32_t(0));
+      return std::make_unique<PackedMesh>(chunk.mesh,selected,materials,chunk.vertexIds,chunk.featureIds);
+      };
+    if(chunk.clusterHierarchy) {
+      try {
+        auto packed = std::make_unique<PackedMesh>(chunk,materials);
+        if(LoadProbe::enabled())
+          packed->legacyLandscapeMeshlets = packLegacy()->meshletBounds.size();
+        return packed;
+        }
+      catch(const std::runtime_error& e) {
+        const auto& cell = residency.table().entries[i];
+        Log::e("[cluster-lod] ",cell.file," uses ordinary meshlets: ",e.what());
+        }
+      }
+    return packLegacy();
     }
 
   void publish(size_t i, const PackedMesh& packed) {
@@ -415,6 +434,8 @@ struct WorldView::LandscapeStreaming {
     const Vec3 texturePosition((float(id.x)+0.5f)*ChunkId::Size,0,(float(id.z)+0.5f)*ChunkId::Size);
     Resources::TextureLoadScope textureLoadScope(true);
     chunks[i].gpu=std::make_unique<Landscape>(view.visuals,packed,pages,texturePosition);
+    chunks[i].meshlets=packed.meshletBounds.size();
+    chunks[i].legacyMeshlets=packed.clusterLevels.empty() ? packed.meshletBounds.size() : packed.legacyLandscapeMeshlets;
     const auto ms=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
     residency.recordPublication(ms,residency.desired(i)==ChunkResidency::State::Far);
     if(firstUpdate)
@@ -471,19 +492,47 @@ struct WorldView::LandscapeStreaming {
         readyBytes+=packed.vertices.capacity()*sizeof(packed.vertices[0])+
                     packed.indices.capacity()*sizeof(packed.indices[0])+
                     packed.indices8.capacity()*sizeof(packed.indices8[0])+
-                    packed.meshletBounds.capacity()*sizeof(packed.meshletBounds[0]);
+                    packed.meshletBounds.capacity()*sizeof(packed.meshletBounds[0])+
+                    packed.clusterLevels.capacity()*sizeof(packed.clusterLevels[0]);
         }
       }
     }
     residency.setPending(pending);
     const auto pageStats=pages.stats();
     residency.setLandscapePages(pageStats.occupiedBytes,pageStats.freeBytes,pageStats.retiredBytes,pageStats.pageCount);
+    if((firstUpdate || (wasPending && pending==0)) && LoadProbe::enabled()) {
+      size_t nearMeshlets=0, nearLevels=0, nearLegacy=0, meshlets=0, levels=0, legacy=0;
+      for(size_t i=0; i<chunks.size(); ++i) {
+        const auto& cell = chunks[i];
+        if(!cell.gpu)
+          continue;
+        meshlets += cell.meshlets;
+        levels += cell.gpu->levelRecordCount();
+        legacy += cell.legacyMeshlets;
+        if(residency.desired(i)==ChunkResidency::State::Near) {
+          nearMeshlets += cell.meshlets;
+          nearLevels += cell.gpu->levelRecordCount();
+          nearLegacy += cell.legacyMeshlets;
+          }
+        }
+      const size_t geometryStride = PackedMesh::MaxVert*sizeof(PackedMesh::Vertex)+PackedMesh::MaxPrim*4+
+                                    (Shaders::options().doRtScene ? PackedMesh::MaxInd*sizeof(uint32_t) : 0);
+      Log::i("[cluster-lod] near pending=",pending," near_geom_bytes=",nearMeshlets*geometryStride,
+             " near_meshlets=",nearMeshlets," near_level_records=",nearLevels,
+             " near_legacy_geom_bytes=",nearLegacy*geometryStride," near_legacy_meshlets=",nearLegacy);
+      Log::i("[cluster-lod] live_geom_bytes=",pageStats.occupiedBytes," live_meshlets=",meshlets,
+             " live_level_records=",levels," live_legacy_geom_bytes=",legacy*geometryStride,
+             " live_legacy_meshlets=",legacy," level_record_bytes=",sizeof(PackedMesh::ClusterLevel));
+      Log::i("[cluster-lod] level_buffer_bytes_prior_frame=",view.visuals.clusters().levelBufferBytes(),
+             " reserved_geom_bytes=",pageStats.occupiedBytes+pageStats.freeBytes+pageStats.retiredBytes);
+      }
+    wasPending = pending!=0;
     if(firstUpdate) {
       if(LoadProbe::enabled()) {
         size_t sourceBytes=source->memoryBytes()+materials.capacity()*sizeof(materials[0]);
         for(const auto& list:triangles)
           sourceBytes+=list.capacity()*sizeof(list[0]);
-        LoadProbe::mark("landscape_pack",initialPackMs,"near_chunks="+std::to_string(residency.stats().near));
+        LoadProbe::mark("landscape_pack",initialPackMs,"near_chunks="+std::to_string(residency.stats().near)+" read_ms="+std::to_string(initialReadMs));
         LoadProbe::mark("landscape_view",preloadMs+initialPackMs+initialUploadMs,
                         "streaming=1 published="+std::to_string(residency.stats().published)+
                         " source_geometry_bytes="+std::to_string(sourceBytes)+
@@ -502,8 +551,36 @@ WorldView::WorldView(const PackedMesh& wmesh, std::string_view skyPreset)
 
 WorldView::WorldView(std::pair<Vec3,Vec3> bounds, std::string_view skyPreset)
     : aabb(bounds), gSky(skyPreset), gLights(sGlobal), houses(Resources::worldOverrideDir(skyPreset)),
-    visuals(sGlobal,bounds), objGroup(visuals), pfxGroup(*this,sGlobal,visuals) {
+    visuals(sGlobal,bounds), objGroup(visuals), pfxGroup(*this,sGlobal,visuals),
+    worldContent(Resources::worldOverrideDir(skyPreset)) {
   pfxGroup.resetTicks();
+  // how open a fire's place is to the wind (particles.d "wind"): none under a roof within 30 m, a third behind a
+  // wall within 6 m upwind. Static geometry only; without a physics world every place is open
+  pfxGroup.setShelter([](const Vec3& at, const Vec3& wind) {
+    const auto* physics = GameServices::inst().physicsWorld();
+    if(physics==nullptr)
+      return 1.f;
+    const Vec3 from = at+Vec3(0,30,0);
+    if(physics->rayStatic(from, from+Vec3(0,3000,0)).hasCol)
+      return 0.f;
+    const Vec3  flat = Vec3(wind.x,0,wind.z);
+    const float len  = flat.length();
+    if(len>0 && physics->rayStatic(from, from-flat*(600.f/len)).hasCol)
+      return 0.35f;
+    return 1.f;
+    });
+  // particles.d "land": a falling drop meets the ground, a wall or a roof, not a man (static geometry only)
+  pfxGroup.setGround([](const Vec3& from, const Vec3& to, Vec3& hit) {
+    const auto* physics = GameServices::inst().physicsWorld();
+    if(physics==nullptr || from==to)
+      return false;
+    const auto r = physics->rayStatic(from, to);
+    if(!r.hasCol)
+      return false;
+    // a hair off the surface, so the landing effect is not born inside it
+    hit = r.v + r.n*2.f;
+    return true;
+    });
   sGlobal.setHouses(houses.houses());
   // A scene without a single lamp still binds the (empty) light buffer: VSM visibility reads it unconditionally
   sGlobal.lights = &gLights.lightsSsbo();
@@ -523,7 +600,7 @@ void WorldView::startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency&
     for(auto& e:residency.table().entries)
       if(e.triangleCount!=0)
         ids.push_back(e.id);
-    grass=std::make_unique<GrassField>(sGlobal,std::move(ids));
+    grass=std::make_unique<GrassField>(sGlobal,std::move(ids),worldContent);
     }
   streaming=std::make_unique<LandscapeStreaming>(*this,std::move(mesh),residency,preloadMs);
   }
@@ -639,6 +716,8 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   houses.tick(gSky.dayHour());
 
   pfxGroup.setViewerPos(camera.originLwc());
+  // the same wind as the cloth's and the vegetation's, m/s -> cm/ms
+  pfxGroup.setWind(WorldWind::sample(tickCount, sGlobal.windPeriod, sGlobal.zWindEnabled, sGlobal.windScale)*0.1f);
   pfxGroup.tick(tickCount);
   gLights.tick(tickCount);
   sGlobal.setTime(tickCount);
@@ -734,13 +813,17 @@ void WorldView::updateFrustrum(const Frustrum fr[]) {
     sGlobal.frustrum[i] = fr[i];
   }
 
-void WorldView::visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass) {
+void WorldView::visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass, bool history) {
   cmd.setDebugMarker("Visibility");
-  visuals.visibilityPass(cmd, pass);
+  visuals.visibilityPass(cmd, pass, history);
   }
 
-void WorldView::visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
-  visuals.visibilityVsm(cmd);
+void WorldView::visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  visuals.visibilityStats(cmd, fId);
+  }
+
+void WorldView::visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::StorageBuffer* geometryStats) {
+  visuals.visibilityVsm(cmd, geometryStats);
   }
 
 void WorldView::drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
@@ -756,11 +839,25 @@ void WorldView::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   visuals.drawVsm(cmd);
   }
 
-void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
-  visuals.drawGBuffer(cmd);
-  if(grass)
-    grass->draw(cmd);
-  pfxGroup.drawGBuffer(cmd, fId);
+void WorldView::prepareGrass(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, const Texture2d& hiZ, float depthRoundoff) {
+  if(grass) {
+    grass->prepare(fId);
+    grass->cull(cmd, fId, hiZ, depthRoundoff);
+    }
+  }
+
+void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, bool landscapeOnly,
+                            DrawCommands::HistoryDraw history) {
+  // The blades go first: the ground under them then fails the depth test before its layers are shaded
+  // (reports/engine/2026-11-17-grass-cost). Their own marker gives them a row of their own in the pass timings
+  if(grass && !landscapeOnly) {
+    cmd.setDebugMarker("Grass");
+    grass->draw(cmd,fId,history!=DrawCommands::HistoryDraw::Off);
+    cmd.setDebugMarker("GBuffer");
+    }
+  visuals.drawGBuffer(cmd, fId, history);
+  if(!landscapeOnly)
+    pfxGroup.drawGBuffer(cmd, fId, history!=DrawCommands::HistoryDraw::Off);
   }
 
 void WorldView::drawWater(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
@@ -770,6 +867,18 @@ void WorldView::drawWater(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
 void WorldView::drawMultiply(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
   visuals.drawMultiply(cmd);
   pfxGroup.drawMultiply(cmd, fId);
+  }
+
+bool WorldView::hasHaze(uint8_t fId) const {
+  return pfxGroup.hasHaze(fId);
+  }
+
+void WorldView::setHazeImage(const Tempest::Texture2d& frame) {
+  sGlobal.sceneHaze = &frame;
+  }
+
+void WorldView::drawHaze(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  pfxGroup.drawHaze(cmd, fId);
   }
 
 void WorldView::drawTranslucent(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
@@ -824,6 +933,12 @@ MeshObjects::Mesh WorldView::addDecalView(const asset::VisualDecal& vob) {
 
 LightGroup::Light WorldView::addLight(const asset::VLight& vob, const uint64_t timeOffset) {
   auto l = gLights.add(vob);
+  l.setTimeOffset(timeOffset);
+  return l;
+  }
+
+LightGroup::Light WorldView::addLight(const asset::LightPreset& preset, const uint64_t timeOffset) {
+  auto l = gLights.add(preset);
   l.setTimeOffset(timeOffset);
   return l;
   }

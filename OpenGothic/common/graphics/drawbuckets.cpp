@@ -5,11 +5,15 @@
 
 #include "graphics/mesh/submesh/staticmesh.h"
 #include "graphics/mesh/submesh/animmesh.h"
+#include "graphics/meshlevels.h"
 #include "graphics/shaders.h"
 #include "frameprofile.h"
 #include "commandline.h"
+#include "graphics/crownlight.h"
 #include "graphics/eyeshader.h"
-#include "graphics/foliagewind.h"
+#include "graphics/foliagetree.h"
+#include "graphics/hizoccluders.h"
+#include "graphics/treeboughasset.h"
 
 using namespace Tempest;
 
@@ -41,15 +45,28 @@ DrawBuckets::Id::~Id() {
 DrawBuckets::DrawBuckets():textureDesc(Resources::MaxFramesInFlight) {
   }
 
-DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh) {
+const Tempest::StorageBuffer& DrawBuckets::Bucket::iboBuffer() const {
+  if(boughPage!=nullptr)
+    return boughPage->ibo;
+  return staticMesh!=nullptr ? staticMesh->ibo8Buffer() : animMesh->ibo8;
+  }
+
+const Tempest::StorageBuffer& DrawBuckets::Bucket::vboBuffer() const {
+  if(boughPage!=nullptr)
+    return boughPage->vbo;
+  return staticMesh!=nullptr ? staticMesh->vboBuffer() : animMesh->vbo;
+  }
+
+DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh, const TreeBough::Page* page) {
   for(size_t i=0; i<bucketsCpu.size(); ++i) {
     auto& b = bucketsCpu[i];
-    if(b.staticMesh==&mesh && b.mat==mat)
+    if(b.staticMesh==&mesh && b.boughPage==page && b.mat==mat)
       return Id(this, i);
     }
 
   Bucket bx;
   bx.staticMesh = &mesh;
+  bx.boughPage  = page;
   bx.mat        = mat;
 
   bucketsDurtyBit = true;
@@ -79,6 +96,7 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const AnimMesh& mesh) {
   }
 
 void DrawBuckets::invalidate(const StaticMesh& mesh) {
+  spheres.forget(mesh);
   for(auto& bucket:bucketsCpu)
     if(bucket.staticMesh==&mesh) {
       bucket = Bucket();
@@ -151,8 +169,8 @@ void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
       orm.push_back(i.mat.orm!=nullptr ? i.mat.orm : &Resources::fallbackTexture());
       }
     if(i.staticMesh!=nullptr) {
-      ibo    .push_back(&i.staticMesh->ibo8Buffer());
-      vbo    .push_back(&i.staticMesh->vboBuffer());
+      ibo    .push_back(&i.iboBuffer());
+      vbo    .push_back(&i.vboBuffer());
       morphId.push_back(i.staticMesh->morph.index);
       morph  .push_back(i.staticMesh->morph.samples);
       } else if(i.animMesh!=nullptr) {
@@ -218,8 +236,46 @@ void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
   timing.add(FrameProfile::Amount::BindlessBufferSlots,vbo.size()+ibo.size()+morphId.size()+morph.size());
   }
 
+void DrawBuckets::updatePrimitiveCounts(Encoder<CommandBuffer>& cmd) {
+  // One compact range per packed index buffer, shared by its materials. With per-material IBO bindings
+  // (DrawCommands::drawVsm), the pair packer has no bindless array of all buckets to read.
+  constexpr uint32_t none = uint32_t(-1);
+  constexpr size_t meshletBytes = PackedMesh::MaxPrim*sizeof(uint32_t);
+  std::unordered_map<const StorageBuffer*, uint32_t> buffers;
+  std::vector<uint32_t> offsets(std::max<size_t>(1, bucketsCpu.size()), none);
+  size_t total = 0;
+  for(size_t i=0; i<bucketsCpu.size(); ++i) {
+    const auto& bucket = bucketsCpu[i];
+    // The compact cards of a bough only draw in the main and occluder views. The regular mesh casts the shadow.
+    if((bucket.staticMesh==nullptr && bucket.animMesh==nullptr) || bucket.boughPage!=nullptr)
+      continue;
+    const auto& ibo = bucket.iboBuffer();
+    if(ibo.isEmpty())
+      continue;
+    const auto [at, added] = buffers.try_emplace(&ibo, uint32_t(total));
+    if(added)
+      total += ibo.byteSize()/meshletBytes;
+    offsets[i] = at->second;
+    }
+
+  auto& device = Resources::device();
+  Resources::recycle(std::move(primitiveOffsets));
+  Resources::recycle(std::move(primitiveCounts));
+  primitiveOffsets = device.ssbo(offsets);
+  primitiveCounts  = device.ssbo(Uninitialized, std::max<size_t>(1, total)*sizeof(uint32_t));
+  cmd.setBinding(1, primitiveCounts);
+  cmd.setPipeline(Shaders::inst().vsmCountPrimitives);
+  for(const auto& [ibo, offset] : buffers) {
+    const uint32_t push[] = {offset, PackedMesh::MaxPrim};
+    cmd.setBinding(0, *ibo);
+    cmd.setPushData(push, sizeof(push));
+    cmd.dispatchThreads(ibo->byteSize()/meshletBytes);
+    }
+  }
+
 bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   currentFrame=fId;
+  spheres.commit(cmd,fId);
   const auto generation=Resources::textureGeneration();
   if(!bucketsDurtyBit) {
     const auto& bank=textureDesc[fId];
@@ -234,6 +290,7 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   textureGeneration=generation;
 
   std::vector<BucketGpu> bucket;
+  std::vector<StaticMesh::TreeHiZBounds> treeBounds;
   uint32_t diffuseFrames=uint32_t(bucketsCpu.size());
   for(auto& i:bucketsCpu)
     if(i.mat.hasFrameAnimation())
@@ -258,10 +315,19 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     bx.alphaWeight        = i.mat.alphaWeight;
     bx.envMapping         = i.mat.envMapping;
     if(i.staticMesh!=nullptr) {
+      if(i.staticMesh->ownMesh)
+        bx.flags |= BK_OWN_MESH;
+      // the box the culling tests holds every level of detail of the mesh (meshlevels.h); its own is the wind's
       auto& bbox    = i.staticMesh->bbox.bbox;
-      bx.bboxRadius = i.staticMesh->bbox.rConservative;
-      bx.bbox[0]    = Vec4(bbox[0].x,bbox[0].y,bbox[0].z,0.f);
-      bx.bbox[1]    = Vec4(bbox[1].x,bbox[1].y,bbox[1].z,0.f);
+      auto& drawn   = i.staticMesh->drawn.bbox;
+      bx.bboxRadius = i.staticMesh->drawn.rConservative;
+      bx.bbox[0]    = Vec4(drawn[0].x,drawn[0].y,drawn[0].z,0.f);
+      bx.bbox[1]    = Vec4(drawn[1].x,drawn[1].y,drawn[1].z,0.f);
+      // what the shadow pages draw (DrawCommands::drawVsm) takes its object's meshlets by their spheres
+      // The hierarchy has already registered one world sphere per meshlet with DrawClusters.
+      if(i.boughPage==nullptr && i.staticMesh->clusterLevels.empty() &&
+         (i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest))
+        bx.meshletSpheres = spheres.place(*i.staticMesh);
       if(i.staticMesh->morph.anim!=nullptr)
         bx.flags |= BK_MORPH;
       else if(i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest) {
@@ -307,14 +373,17 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
           if((bits & 0xFFFFFFu)!=0) {
             // the box the culling tests is the one the leaves stay in (visibility_pass.comp); the shader takes the
             // arm of the mesh at rest
-            const float reach = FoliageWind::reach(bbox[0],bbox[1]);
-            const float grow  = FoliageWind::travel(bits,reach);
+            const float reach = FoliageTree::reach(i.mat.foliage,bbox[0],bbox[1]);
+            const float grow  = FoliageTree::travel(bits,reach);
             bx.foliage      = bits;
             bx.foliageReach = reach;
             bx.bbox[0]     -= Vec4(grow,grow,grow,0.f);
             bx.bbox[1]     += Vec4(grow,grow,grow,0.f);
             bx.flags       |= BK_FOLIAGE;
             }
+          // a tree's crown (graphics/crownlight.h): with the foliage's light, whatever the material lets through
+          if(CrownLight::lit(i.mat.foliage, FoliageWind::enabled(), CrownLight::enabled(), i.mat.emissive))
+            bx.flags |= BK_CROWN;
           }
         // A ground that grows grass (graphics/grass/grassfield.h): its look under the blades and beyond them, in
         // the landscape's G-buffer pass. The record excludes `foliage`, so the slot of its bits is free
@@ -324,30 +393,53 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
           }
         // Its own two layers by world position, and the strip of them on the ground beside it (shader/grass/
         // grass_layers.glsl): their maps after the buckets in the bindless arrays, as a fringe's - the records
-        // exclude `projection`, so the fringe's slots are free. Bindless only: without it the ground is as before
-        if(i.mat.layers.present() && Shaders::options().doMaterialMaps && Shaders::options().doBindless &&
+        // exclude `projection`, so the fringe's slots are free. Bindless only: without it the ground is as before.
+        // A meadow's `ground.border` is the third triple; a road's `track` (shader/grass/grass_track.glsl) adds
+        // its crust, loose earth and ribbon after the verge's two, or stands alone
+        const bool layered = i.mat.layers.present() || i.mat.layers.hasTrack();
+        if(layered && Shaders::options().doMaterialMaps && Shaders::options().doBindless &&
            Grass::enabled().mode!=Grass::Off && i.mat.projectionUvScale()<=0) {
-          const auto& l = i.mat.layers;
-          const std::array<const Tempest::Texture2d*,3> sward = {l.sward[0],l.sward[1],l.sward[2]};
-          const std::array<const Tempest::Texture2d*,3> earth = {l.earth[0],l.earth[1],l.earth[2]};
+          const auto& l      = i.mat.layers;
+          const bool  ground = l.present(), track = l.hasTrack() && !i.mat.grass.on;
+          std::vector<std::array<const Tempest::Texture2d*,3>> run;
+          if(ground) {
+            run.push_back({l.sward[0],l.sward[1],l.sward[2]});
+            run.push_back({l.earth[0],l.earth[1],l.earth[2]});
+            }
+          if(ground && !l.verge.on && l.hasBorder())
+            run.push_back(l.border);
+          if(track) {
+            run.push_back(l.crust);
+            run.push_back(l.loose);
+            run.push_back(l.ribbon);
+            }
           size_t at = 0;
-          while(at+1<fringeMaps.size() && !(fringeMaps[at]==sward && fringeMaps[at+1]==earth))
+          while(at+run.size()<=fringeMaps.size() && !std::equal(run.begin(),run.end(),fringeMaps.begin()+ptrdiff_t(at)))
             ++at;
-          if(at+1>=fringeMaps.size()) {
+          if(at+run.size()>fringeMaps.size()) {
             at = fringeMaps.size();
-            fringeMaps.push_back(sward);
-            fringeMaps.push_back(earth);
+            fringeMaps.insert(fringeMaps.end(),run.begin(),run.end());
             }
-          bx.fringeTex   = fringeBase+uint32_t(at);
-          bx.fringeScale = 1.f/(l.ground.swardTile*100.f);
-          bx.fringeTop0  = 1.f/(l.ground.earthTile*100.f);
-          bx.fringeTop1  = l.ground.far;
-          if(l.verge.on) {
-            bx.foliage = l.grassBits;
-            bx.flags  |= BK_VERGE;
+          bx.fringeTex = fringeBase+uint32_t(at);
+          if(ground) {
+            bx.fringeScale = 1.f/(l.ground.swardTile*100.f);
+            bx.fringeTop0  = 1.f/(l.ground.earthTile*100.f);
+            bx.fringeTop1  = l.ground.far;
+            if(l.verge.on) {
+              bx.foliage = l.grassBits;
+              bx.flags  |= BK_VERGE;
+              }
+            else if(i.mat.grass.on) {
+              bx.flags  |= BK_GROUND;
+              if(l.hasBorder())
+                bx.fringeBottom0 = 1.f/(l.borderTile*100.f);
+              }
             }
-          else if(i.mat.grass.on) {
-            bx.flags  |= BK_GROUND;
+          if(track) {
+            bx.fringeBottom0 = 1.f/(l.track.crustTile*100.f);
+            bx.fringeBottom1 = 1.f/(l.track.looseTile*100.f);
+            bx.foliageReach  = Grass::pack(l.track);
+            bx.flags        |= BK_TRACK;
             }
           }
         // A window lit of an evening (graphics/windowglow.h): its hours in the same slot; the record excludes
@@ -355,6 +447,13 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
         if(i.mat.window.on && i.mat.emissive>0.f && (bx.flags & (BK_FOLIAGE|BK_GRASS|BK_VERGE))==0) {
           bx.foliage = WindowGlow::pack(i.mat.window);
           bx.flags  |= BK_WINDOW;
+          }
+        // Both sides of an object's mesh: the pipelines do not cull it (Shaders::materialPipeline); the bits are for
+        // the mesh shader of the shadow pages, which culls by itself, and for the normal of the other side
+        if(i.mat.twoSided!=Material::TwoSided::Off) {
+          bx.flags |= BK_TWO_SIDED;
+          if(i.mat.twoSided==Material::TwoSided::Flip)
+            bx.flags |= BK_TWO_SIDED_FLIP;
           }
         }
       }
@@ -377,6 +476,10 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       }
     if(i.mat.alpha==Material::Solid)
       bx.flags |= BK_SOLID;
+    // A tree's alpha-tested leaves (graphics/hizoccluders.h): the occluder pass leaves them out while its switch is
+    // on; the counters of the main view tell them by this either way
+    if(i.staticMesh!=nullptr && HiZOccluders::canopy(i.mat.foliage, i.mat.alpha==Material::AlphaTest))
+      bx.flags |= BK_CANOPY;
     // Our glTF MASK (brows, lashes, hair cards): under TAA its edge averages to the texel's coverage. The original's
     // alpha test (foliage) keeps the fixed threshold
     if(i.mat.alpha==Material::AlphaTest && i.mat.isAlphaTestRequired() && CommandLine::inst().doHashedAlpha())
@@ -392,14 +495,31 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       bx.flags |= BK_EYE;
     if(i.mat.alpha==Material::Water)
       bx.flags |= BK_WATER;
+    if(i.staticMesh!=nullptr && i.boughPage==nullptr && (i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest) &&
+       (bx.flags & (BK_MORPH|BK_STRAND|BK_GRASS|BK_VERGE|BK_TRACK))==0 && FoliageTree::isTree(i.mat.foliage)) {
+      const auto bounds = i.staticMesh->treeHiZBounds();
+      bx.treeHiZFirst = uint32_t(treeBounds.size());
+      bx.treeHiZCount = uint32_t(bounds.size());
+      treeBounds.insert(treeBounds.end(),bounds.begin(),bounds.end());
+      }
     bucket.push_back(bx);
     }
+
+  // the spheres of the meshes placed above, in this frame's commands before its shadow pages
+  spheres.commit(cmd,fId);
 
   auto& device = Resources::device();
   Resources::recycle(std::move(bucketsGpu));
   bucketsGpu = device.ssbo(Uninitialized,bucket.size()*sizeof(bucket[0]));
   bucketsGpu.updateAsync(bucket.data(),0,bucket.size()*sizeof(bucket[0]));
+  if(treeBounds.empty())
+    treeBounds.emplace_back(); // binding for views without trees
+  Resources::recycle(std::move(treeHiZBoundsGpu));
+  treeHiZBoundsGpu = device.ssbo(Uninitialized,treeBounds.size()*sizeof(treeBounds[0]));
+  treeHiZBoundsGpu.updateAsync(treeBounds.data(),0,treeBounds.size()*sizeof(treeBounds[0]));
 
   updateBindlessArrays(true,fId);
+  if(MeshLevels::vsmFrameStatsEnabled() && Shaders::isVsmSupported())
+    updatePrimitiveCounts(cmd);
   return true;
   }

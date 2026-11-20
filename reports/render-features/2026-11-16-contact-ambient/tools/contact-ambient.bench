@@ -1,0 +1,182 @@
+# The short occlusion over the light of the GI probes (../README.md): what stands on a surface where no direct light
+# comes. The market in the evening shade and in the morning, a table and a cup in the houses, a room with a bed,
+# the meadow, the forest. Runs of the same shots, all with OPENGOTHIC_RT=1 OPENGOTHIC_LIGHT_FREEZE=1
+# TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<the working content>:
+#   without   OPENGOTHIC_GI_CONTACT_AO=0
+#   with      (the default)
+#   layer     OPENGOTHIC_SSAO_STUDY=2   the frame is the occlusion alone
+# scripts/bench.sh reports/render-features/2026-11-16-contact-ambient/tools/contact-ambient.bench <out>
+# Sheets: tools/contact_ambient_sheets.py <without> <with> <out dir>
+# @timeout 900
+seed 73013
+cheat god
+blink off
+overlay off
+ui off
+view full
+# 1. The market's cobbles in the evening shade (the sun is behind the houses), then in the morning
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+watch player
+set time 20 30
+wait 4000
+cam lift off
+cam cut
+cam look 12
+cam world 110 30 90
+wait 300
+cam hold
+wait 2500
+shot shade-feet
+wait 400
+cam look 60
+cam world 320 120 45
+wait 300
+cam hold
+wait 2500
+shot shade-wide
+wait 400
+cam look 100
+cam world 220 150 200
+wait 300
+cam hold
+wait 2500
+shot shade-body
+wait 400
+cam look 150
+cam world 90 165 20
+wait 300
+cam hold
+wait 2500
+shot shade-face
+wait 400
+cam game
+wait 2500
+shot shade-game
+wait 400
+set time 9 0
+wait 3000
+cam look 12
+cam world 110 30 90
+wait 300
+cam hold
+wait 2500
+shot morning-feet
+wait 400
+cam look 60
+cam world 320 120 45
+wait 300
+cam hold
+wait 2500
+shot morning-wide
+wait 400
+cam game
+wait 2500
+shot morning-game
+wait 400
+# 2. A table of the upper city: by day (the window's light alone) and at night by its candle
+set time 12 0
+goto NW_CITY_UPTOWN_HUT_01_COOK
+clear 3000
+wait 6000
+cam at 11778 1030 -5048 11739 1000 -5112
+wait 2500
+shot table-day
+wait 400
+cam at 11798 1100 -4960 11760 995 -5150
+wait 2500
+shot table-day-wide
+wait 400
+cam at 11900 1150 -4900 11700 1000 -5200
+wait 2500
+shot room-day
+wait 400
+set time 22 0
+wait 3000
+cam at 11778 1030 -5048 11739 1000 -5112
+wait 2500
+shot table-night
+wait 400
+# 3. A rich house: a silver cup by day
+set time 12 0
+goto NW_CITY_REICH03_BED_02
+clear 3000
+wait 6000
+cam at 12515 1480 -4409 12473 1450 -4465
+wait 2500
+shot cup-day
+wait 400
+cam at 12600 1520 -4640 12473 1450 -4465
+wait 2500
+shot cup-day-wide
+wait 400
+# 4. Meant as Xardas' tower; `place` after a `goto` lands in a room of the rich house instead: the hero by a bed
+set time 12 0
+place 110 0
+clear 3000
+wait 4000
+watch player
+cam cut
+cam look 12
+cam world 110 30 0
+wait 300
+cam hold
+wait 2500
+shot tower-feet
+wait 400
+cam look 90
+cam world 300 140 30
+wait 300
+cam hold
+wait 2500
+shot tower-wide
+wait 400
+# 5. The meadow at noon and in the evening
+cloth wind calm
+set time 12 0
+goto pos 41001 3440 -507
+clear 3000
+streaming wait
+grass wait
+wait 4000
+cam look 10
+cam world 110 35 0
+wait 300
+cam hold
+wait 2500
+shot grass-noon
+wait 400
+cam look 60
+cam world 300 130 40
+wait 300
+cam hold
+wait 2500
+shot grass-noon-wide
+wait 400
+set time 20 30
+wait 3000
+cam look 10
+cam world 110 35 0
+wait 300
+cam hold
+wait 2500
+shot grass-low
+wait 400
+# 6. The forest by day
+set time 12 0
+goto NW_FOREST_PATH_16
+clear 3000
+streaming wait
+grass wait
+wait 5000
+cam look 60
+cam world 320 120 45
+wait 300
+cam hold
+wait 2500
+shot forest-wide
+wait 400
+cam game
+wait 2500
+shot forest-game
+wait 400

@@ -1,0 +1,79 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+
+#include "scene.glsl"
+
+// The frame profile's counters of the main view's culling (DrawCommands::visibilityStats): the clusters and meshlets
+// the visibility pass let through, and of them those of the crowns of trees (BK_CANOPY, graphics/hizoccluders.h).
+// A cluster's meshlets lie together in the payload of its command (visibility_pass.comp), the commands' ranges one
+// after the other in their order; an object has one cluster per instance and bucket, the landscape one per meshlet.
+// Phase 0 zeroes the counters, 1 counts (a thread per place of the payload), 2 copies them into the frame slot's
+// host-visible buffer.
+layout(local_size_x = 256) in;
+
+layout(binding = 0, std430) readonly buffer SsboGlob { uvec4       payload[];  };
+layout(binding = 1, std430) readonly buffer Ind      { IndirectCmd cmd[];      };
+layout(binding = 2, std140) readonly buffer Bbo      { Bucket      bucket[];   };
+layout(binding = 3, std430) buffer Counters          { uint        counter[4]; };
+layout(binding = 4, std430) buffer Result            { uint        result[4];  };
+
+layout(push_constant, std430) uniform UboPush {
+  uint phase;
+  uint count; // places of the payload
+  } push;
+
+shared uint sum[4];
+
+// the last command whose range starts at or before the place: ranges of empty commands start where the next does
+uint commandOf(uint i) {
+  uint lo = 0, hi = cmd.length();
+  while(hi-lo>1) {
+    const uint mid = (lo+hi)/2;
+    if(cmd[mid].writeOffset<=i)
+      lo = mid; else
+      hi = mid;
+    }
+  return lo;
+  }
+
+void main() {
+  const uint lane = gl_LocalInvocationIndex;
+  if(push.phase==0u) {
+    if(gl_GlobalInvocationID.x<4u)
+      counter[gl_GlobalInvocationID.x] = 0;
+    return;
+    }
+  if(push.phase==2u) {
+    if(gl_GlobalInvocationID.x<4u)
+      result[gl_GlobalInvocationID.x] = counter[gl_GlobalInvocationID.x];
+    return;
+    }
+
+  if(lane<4u)
+    sum[lane] = 0;
+  barrier();
+
+  const uint i = gl_GlobalInvocationID.x;
+  if(i<push.count && cmd.length()>0) {
+    const uint c     = commandOf(i);
+    const uint first = cmd[c].writeOffset;
+    if(i-first<cmd[c].instanceCount) {
+      const uvec4 p      = payload[i];
+      const bool  land   = p.x==0xFFFFFFFFu;
+      const bool  start  = land || i==first || payload[i-1].x!=p.x || payload[i-1].z!=p.z;
+      const bool  canopy = !land && (bucket[p.z].flags & BK_CANOPY)!=0u;
+      atomicAdd(sum[1], 1u);
+      if(start)
+        atomicAdd(sum[0], 1u);
+      if(canopy)
+        atomicAdd(sum[3], 1u);
+      if(canopy && start)
+        atomicAdd(sum[2], 1u);
+      }
+    }
+  barrier();
+
+  if(lane<4u && sum[lane]>0u)
+    atomicAdd(counter[lane], sum[lane]);
+  }

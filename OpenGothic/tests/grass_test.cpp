@@ -5,29 +5,47 @@
 // and the processor's mirror of the wind's travelling front against the scene's wind. CPU only: no device, no game
 // data.
 #include "graphics/foliagefront.h"
+#include "graphics/grass/grassdiag.h"
+#include "graphics/grass/grassfield.h"
+#include "graphics/grass/grasspack.h"
 #include "graphics/grass/grassparams.h"
 #include "graphics/grass/grassplace.h"
+#include "graphics/grass/grassplots.h"
+#include "graphics/grass/grasswaste.h"
 
+#include <Tempest/Log>
+#include <Tempest/Matrix4x4>
 #include <rapidjson/document.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
+
+#include <sys/wait.h>
+#include <unistd.h>
 
 // the meadow's own ground: grass_cover_test.cpp
 size_t grassCoverTests();
 
 namespace {
+namespace Shader {
+#include <grass/grass_blade_limits.glsl>
+}
+
 size_t assertions = 0;
 
 void require(bool condition, const std::string& message) {
@@ -129,6 +147,21 @@ void switches() {
   require(full.full<full.fadeFrom && full.fadeFrom<full.radius && low.full<low.fadeFrom && low.fadeFrom<low.radius &&
           low.radius<full.radius && low.density<full.density && full.density==1.f,
           "the ring of the low quality is smaller and thinner");
+
+  setenv("OPENGOTHIC_GRASS_LINKS","1000,2500,4500",1);
+  const Grass::WasteRule waste;
+  require(Grass::broadLinks(999.f)==4 && Grass::broadLinks(1000.f)==3 &&
+          Grass::broadLinks(2500.f)==2 && Grass::broadLinks(4500.f)==1 && waste.links(2500.f)==2,
+          "drawing and waste counting use the configured grass link thresholds");
+  unsetenv("OPENGOTHIC_GRASS_LINKS");
+  require(Grass::broadLinks(999.f)==4, "grass link thresholds are read once");
+
+  require(Grass::wasteBand(999.f)==0 && Grass::wasteBand(1000.f)==1 && Grass::wasteBand(2399.f)==1 &&
+          Grass::wasteBand(2400.f)==2 && Grass::wasteBand(4800.f)==3 && Grass::wasteBand(9000.f)==3,
+          "the waste count's bands of distance are 0-10, 10-24, 24-48 m and beyond");
+  require(Grass::wasteLinks(0,999.f)==4 && Grass::wasteLinks(0,2400.f)==3 && Grass::wasteLinks(0,4500.f)==1 &&
+          Grass::wasteLinks(1,1100.f)==3 && Grass::wasteLinks(1,2400.f)==1 && Grass::wasteLinks(2,900.f)==2,
+          "the waste count weighs each set of link bounds of step 1b");
   }
 
 // ---- the ground of the tests ----
@@ -177,6 +210,7 @@ struct Build final {
   uint32_t                     rankLimit = 256;
   float                        density   = 1.f;
   std::vector<Grass::Disc>     items;
+  bool                         squares   = true;
   };
 
 Grass::CellBlades build(std::span<const Grass::Summary*const> ground, int32_t cx, int32_t cz,
@@ -189,6 +223,7 @@ Grass::CellBlades build(std::span<const Grass::Summary*const> ground, int32_t cx
   in.items     = b.items;
   in.rankLimit = b.rankLimit;
   in.density   = b.density;
+  in.squares   = b.squares;
   return Grass::buildCell(in);
   }
 
@@ -229,6 +264,245 @@ std::string at(int32_t cx, int32_t cz) {
 
 constexpr int32_t U = Grass::Unit;
 
+// CPU cull bounds, with geometry generated independently at each node.
+void grassCull() {
+  using namespace Tempest;
+  const Grass::WasteRule broad{.full=1000.f, .fadeFrom=4800.f, .radius=6400.f, .rankShare=1.12f, .rootsBeyond=100.f};
+  const Grass::WasteRule fine {.full=400.f,  .fadeFrom=1600.f, .radius=2000.f, .rankShare=1.12f, .rootsBeyond=100.f};
+  for(const auto& ring : {broad,fine}) {
+    for(float distance : {1.f, ring.full, 1.237f*ring.full, 2.242f*ring.full, ring.fadeFrom, (ring.fadeFrom+ring.radius)*0.5f}) {
+      const size_t placed = ring.ranks(distance+ring.rootsBeyond);
+      size_t growingRanks = 0;
+      for(uint32_t rank=0; rank<256; ++rank) {
+        if(ring.height(rank,distance,1.f)>0.f) {
+          ++growingRanks;
+          require(rank<placed, "the draw's rank cutoff must include every rank with growth");
+          }
+        }
+      // Placement rounds up to whole rank bins. The shader evaluates the center of each bin.
+      require(placed>=growingRanks && placed-growingRanks<=1, "growth must agree with the rank cutoff to one half-bin");
+      }
+    require(ring.height(0,ring.fadeFrom,40.f)>0.05f && ring.height(0,ring.radius,40.f)==0.f,
+            "the lowest rank must still grow at the start of fade and disappear at the end of the ring");
+    }
+
+  const Vec3 root(123.f, 45.f, -180.f);
+  Matrix4x4 projection;
+  projection.perspective(67.5f, 16.f/9.f, 10.f, 100000.f);
+  size_t nearBoxes = 0, distantBoxes = 0;
+  for(const Vec3& offset : {Vec3(0,2,-12), Vec3(25,80,-250), Vec3(-425,120,-1300), Vec3(800,350,-5100)}) {
+    const Vec3 camera = root + offset;
+    const float distance = offset.length();
+    auto view = Matrix4x4::mkIdentity();
+    view.translate(-camera);
+    const auto project = projection*view;
+    const float thin = 1.3f*2.f*std::max((project*Vec4(root.x,root.y,root.z,1.f)).w,1.f)/(std::abs(projection.at(1,1))*1440.f);
+    const Vec3 horizontal = Vec3::normalize({-offset.z,0.f,offset.x});
+    for(int kind=0; kind<3; ++kind) {
+      const bool ear = kind==2;
+      const auto& ring = kind==1 ? fine : broad;
+      const float widen = std::clamp(distance/ring.full, 1.f, 8.f);
+      const float width = kind==1 ? 0.5f + 7.f*0.036f : 1.3f + 15.f*0.11f;
+      const float height = ring.height(36,distance,ear ? Grass::EarTop : (kind==1 ? 13.f : 60.f));
+      if(height<=0.05f)
+        continue;
+      const float boundWidth = ear ? std::max(Shader::GrassEarStalkWidth, Shader::GrassEarWidth) : width;
+      const float halfWidth = Shader::GrassCullHalfWidthScale*std::max(boundWidth*widen, thin);
+      const float reach = Shader::GrassCullHorizontalReach*height + halfWidth;
+      const float verticalPad = ear ? halfWidth : 0.f;
+      const auto min = root - Vec3(reach, verticalPad, reach);
+      const auto max = root + Vec3(reach, height+verticalPad, reach);
+
+      // Perspective preserves these extrema when the entire box lies beyond the near plane.
+      bool crossesNear = false;
+      Vec3 ndcMin(1e6f), ndcMax(-1e6f);
+      for(const float x : {min.x,max.x})
+        for(const float y : {min.y,max.y})
+          for(const float z : {min.z,max.z}) {
+            const auto c = project*Vec4(x,y,z,1.f);
+            crossesNear |= c.w<=0.f || c.z<=0.f;
+            if(crossesNear)
+              continue;
+            ndcMin = {std::min(ndcMin.x,c.x/c.w), std::min(ndcMin.y,c.y/c.w), std::min(ndcMin.z,c.z/c.w)};
+            ndcMax = {std::max(ndcMax.x,c.x/c.w), std::max(ndcMax.y,c.y/c.w), std::max(ndcMax.z,c.z/c.w)};
+            }
+      nearBoxes += size_t(crossesNear);
+      distantBoxes += size_t(!crossesNear);
+      const auto contains = [](const Vec3& lo, const Vec3& hi, const Vec3& p) {
+        constexpr float Eps = 1e-5f;
+        return lo.x-Eps<=p.x && p.x<=hi.x+Eps && lo.y-Eps<=p.y && p.y<=hi.y+Eps && lo.z-Eps<=p.z && p.z<=hi.z+Eps;
+        };
+
+      for(int links=1; links<=4; ++links) {
+        const auto node = [&](int k) {
+          constexpr float EarNodes[] = {0.45f,0.86f,0.90f};
+          if(ear && k>0 && k<links)
+            return links==2 ? EarNodes[1] : EarNodes[k+3-links];
+          return float(k)/float(links);
+          };
+        // Exercise the link's tilt clamp in each horizontal direction, independent of the wind phase.
+        for(const Vec2& wind : {Vec2(0), Vec2(8,0), Vec2(-8,0), Vec2(0,8), Vec2(0,-8)}) {
+          const auto direction = [&](float t) {
+            Vec2 tilt = Vec2(0.8f,0.6f)*(0.35f + 0.9f*t) + wind*t;
+            if(ear)
+              tilt += Vec2(0.8f,0.6f)*(2.1445f*std::clamp((t-0.78f)/0.22f,0.f,1.f));
+            if(tilt.length()>2.4f)
+              tilt *= 2.4f/tilt.length();
+            return Vec3::normalize({tilt.x,1.f,tilt.y});
+            };
+          Vec3 center = root;
+          for(int k=0; k<=links; ++k) {
+            const float t = node(k);
+            if(k>0)
+              center += direction(0.5f*(node(k-1)+t))*(height*(t-node(k-1)));
+            const Vec3 axis = ear ? Vec3::normalize(Vec3::crossProduct(direction(t),Vec3::normalize(camera-center)) + horizontal*1e-3f)
+                                 : horizontal;
+            const float vertexWidth = ear ? std::max((t>0.87f ? Shader::GrassEarWidth : Shader::GrassEarStalkWidth)*widen, thin)
+                                          : std::max(width*widen,thin)*(1.f-0.7f*t);
+            const bool tip = ear && links==1 ? k==0 : k==links;
+            const Vec3 off = axis*(tip ? 0.f : 0.5f*vertexWidth);
+            for(const Vec3& vertex : {center-off,center+off}) {
+              require(contains(min,max,vertex), "the grass cull box must cover each vertex under extreme tilt");
+              if(!crossesNear) {
+                const auto c = project*Vec4(vertex.x,vertex.y,vertex.z,1.f);
+                require(c.w>0.f && c.z>0.f && contains(ndcMin,ndcMax,Vec3(c.x,c.y,c.z)/c.w),
+                        "the projected grass cull box must cover each vertex and its depth");
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  require(nearBoxes>0 && distantBoxes>0, "grass cull views must include boxes crossing and beyond the near plane");
+  }
+
+void drawOrder(bool disabled) {
+  struct Cell final {
+    float dist;
+    };
+  struct Draw final {
+    const Cell* cell;
+    uint32_t table;
+    bool operator==(const Draw&) const = default;
+    };
+  const Cell farther{2500.f}, closer{300.f}, tied{300.f};
+  std::vector<Draw> draws = {{&farther,0}, {&farther,32}, {&closer,64}, {&closer,96}};
+  // Forty draws at the same distance exercise ties beyond std::sort's small-range insertion sort.
+  for(uint32_t i=0; i<38; ++i)
+    draws.push_back({&tied,(i+4)*32});
+  auto expected = draws;
+  Grass::orderDraws(draws);
+  if(disabled) {
+    require(draws==expected, "OPENGOTHIC_GRASS_ORDER=0 must keep cell traversal order");
+    } else {
+    std::rotate(expected.begin(), expected.begin()+2, expected.end());
+    require(draws==expected, "grass draws must be near first, preserving batch order and span offsets");
+    }
+  }
+
+void packSpans() {
+  for(const uint32_t pack:Grass::PackSizes) {
+    std::vector<uint32_t> table = {17, 29};
+    Grass::PackSpans spans(table, pack);
+    spans.reset();
+    spans.add(1, pack);
+    spans.add(pack+1, 1); // contiguous with the first range
+    const uint32_t next = pack+3;
+    spans.add(next, pack); // one blade skipped in the cell buffer
+    require(spans.finish()==3, "only a discontinuity in the blade buffer starts a new packed span");
+
+    std::vector<uint32_t> expected = {17, 29};
+    if(pack==1) {
+      expected.insert(expected.end(), {2, 1, 3, next-2});
+      expected.resize(2+16*2, UINT32_MAX);
+      } else {
+      // The last instance of the first span has one blade. The next instance starts at the next span's first blade.
+      expected.insert(expected.end(), {2, 1, pack+2, 3, next-2*pack, next+pack});
+      expected.resize(2+16*3, UINT32_MAX);
+      }
+    require(table==expected, "grass span boundaries and physical blade ends must match the shader's table");
+
+    const size_t   drawOffset = expected.size();
+    const uint32_t first = next+pack; // adjacent in the blade buffer, but in a new draw
+    spans.reset();
+    spans.add(first, 1);
+    require(spans.finish()==1, "each grass draw must count its instances from zero");
+    expected.insert(expected.end(), {1, first});
+    if(pack!=1)
+      expected.push_back(first+1);
+    expected.resize(drawOffset+16*(pack==1 ? 2u : 3u), UINT32_MAX);
+    require(table==expected, "a new grass draw must append its own spans after the previous draw's table");
+    }
+  }
+
+void packIndices() {
+  const std::vector<uint16_t> legacy = {
+    0,1,2, 1,3,2, 2,3,4, 3,5,4, 4,5,6, 5,7,6, 6,7,8,
+    0,1,2, 1,3,2, 2,3,4, 3,5,4, 4,5,6,
+    0,1,2, 1,3,2, 2,3,4,
+    0,1,2,
+    };
+  require(Grass::packIndices(1)==legacy, "single-blade indices must keep the original topology and order");
+  for(const uint32_t pack:Grass::PackSizes) {
+    const auto indices = Grass::packIndices(pack);
+    require(indices.size()==legacy.size()*pack, "the index buffer must have one strip per blade in each pack");
+    size_t base = 0;
+    for(uint8_t links=Grass::MaxSegments; links>0; --links) {
+      const size_t vertices = 2u*links+1;
+      const size_t count    = (2u*links-1)*3;
+      const size_t start    = Grass::packIndexOffset(links, pack);
+      require(start==base*pack,
+              "packed strips must follow the same link order as the original index buffer");
+      for(uint32_t copy=0; copy<pack; ++copy) {
+        const size_t offset = copy*vertices;
+        const auto   first  = indices.begin()+static_cast<std::ptrdiff_t>(start+copy*count);
+        const auto   last   = first+static_cast<std::ptrdiff_t>(count);
+        const auto   source = legacy.begin()+static_cast<std::ptrdiff_t>(base);
+        require(offset+vertices-1<=UINT16_MAX &&
+                std::equal(first, last, source, [&](uint16_t index, uint16_t original) {
+                  return index==original+offset;
+                  }), "each copy must keep the blade topology with its own uint16 vertex indices");
+        }
+      base += count;
+      }
+    }
+  }
+
+void environmentFallbacks() {
+  // Each child sets its environment before the first use of the cached switches.
+  for(const char* links:std::array<const char*,3>{nullptr, "3000,1750,750", "750,1750,3000x"}) {
+    const auto child = fork();
+    require(child>=0, "cannot fork grass environment test");
+    if(child==0) {
+      try {
+        require(setenv("OPENGOTHIC_GRASS_ORDER","0",1)==0, "cannot set grass order switch");
+        drawOrder(true);
+        const int result = links==nullptr ? unsetenv("OPENGOTHIC_GRASS_LINKS") : setenv("OPENGOTHIC_GRASS_LINKS",links,1);
+        require(result==0, "cannot configure grass link thresholds");
+        size_t errors = 0;
+        Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+          if(mode==Tempest::Log::Error && std::string_view(text).find("OPENGOTHIC_GRASS_LINKS")!=std::string_view::npos)
+            ++errors;
+          });
+        require(Grass::broadLinks(799.f)==4 && Grass::broadLinks(800.f)==3 &&
+                Grass::broadLinks(1199.f)==3 && Grass::broadLinks(1200.f)==2 &&
+                Grass::broadLinks(2399.f)==2 && Grass::broadLinks(2400.f)==1,
+                "unset or invalid grass link thresholds must use defaults");
+        require(errors==size_t(links!=nullptr), "only invalid grass link thresholds must be logged once");
+        _exit(0);
+        }
+      catch(const std::exception& e) {
+        std::cerr << "grass environment test failed: " << e.what() << '\n';
+        _exit(1);
+        }
+      }
+    int status = 0;
+    require(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0,
+            std::string("grass environment test failed for ")+(links==nullptr ? "unset thresholds" : links));
+    }
+  }
+
 // ---- the placement ----
 
 // A flat meadow of 64 m with 25 cells of 8 m in it, some on the far side of the world's zero
@@ -256,15 +530,41 @@ void placementRepeats() {
       if(w.empty())
         continue;
       require(cell.minY==0 && cell.maxY==0, "blades of a flat ground stand at its height"+at(cx,cz));
-      require(cell.batches.size()==1 && cell.batches[0].slot==0 && cell.batches[0].first==0 &&
-              cell.batches[0].count==w.size(), "one material: one batch of all the blades"+at(cx,cz));
+      // one material: a batch per square of 2 m with a blade in it, one after another; a root of the margin is of
+      // the nearest square
+      size_t  next = 0;
+      int32_t last = -1;
+      for(const auto& bt:cell.batches) {
+        require(bt.slot==0 && bt.kind==0 && bt.first==next && bt.count>0 && int32_t(bt.square)>last &&
+                bt.square<Grass::CellSquares*Grass::CellSquares, "one material: a batch per square, in their order"+at(cx,cz));
+        next += bt.count;
+        last  = int32_t(bt.square);
+        const int32_t qx = bt.square/Grass::CellSquares, qz = bt.square%Grass::CellSquares;
+        const int32_t x0 = cx*Grass::CellSize + qx*Grass::SquareSize, z0 = cz*Grass::CellSize + qz*Grass::SquareSize;
+        for(uint32_t k=0; k<bt.count; ++k) {
+          const auto b = Grass::decode(cell.blades[bt.first+k],cx,cz,cell.minY);
+          require((b.x>=x0 || qx==0) && (b.x<x0+Grass::SquareSize || qx==Grass::CellSquares-1) &&
+                  (b.z>=z0 || qz==0) && (b.z<z0+Grass::SquareSize || qz==Grass::CellSquares-1),
+                  "a root lies in the square of its batch"+at(cx,cz));
+          require(k==0 || rankOf(w[bt.first+k-1])<=rankOf(w[bt.first+k]),
+                  "the blades of a batch are in the order of their ranks"+at(cx,cz));
+          }
+        }
+      require(next==w.size(), "the batches hold all the blades"+at(cx,cz));
+      Build uncut;
+      uncut.squares = false;
+      const auto one = build(flat,cx,cz,par,uncut);
+      require(one.batches.size()==1 && one.batches[0].count==w.size() && sorted(words(one))==sorted(w),
+              "without the squares: one batch of the same blades"+at(cx,cz));
+      const auto ow = words(one);
+      for(size_t i=1; i<ow.size(); ++i)
+        require(rankOf(ow[i-1])<=rankOf(ow[i]), "and in the order of their ranks"+at(cx,cz));
       for(size_t i=0; i<w.size(); ++i) {
         const auto b = Grass::decode(cell.blades[i],cx,cz,cell.minY);
         require(b.x>=cx*Grass::CellSize-Grass::CellMargin && b.x<(cx+1)*Grass::CellSize+Grass::CellMargin &&
                 b.z>=cz*Grass::CellSize-Grass::CellMargin && b.z<(cz+1)*Grass::CellSize+Grass::CellMargin,
                 "a root lies in its cell or on its margin"+at(cx,cz));
         require(b.height>=2.f && b.height<=63.f && b.y==0, "a blade is 2 to 63 cm and stands on the ground"+at(cx,cz));
-        require(i==0 || rankOf(w[i-1])<=rankOf(w[i]), "the blades of a batch are in the order of their ranks"+at(cx,cz));
         if(rankOf(w[i])<64)
           ++low;
         }
@@ -359,8 +659,9 @@ void placementGround() {
       uint32_t next = 0;
       for(size_t i=0; i<pair.batches.size(); ++i) {
         const auto& batch = pair.batches[i];
-        require(batch.first==next && batch.count>0 && (i==0 || pair.batches[i-1].slot<batch.slot),
-                "the batches follow one another by material"+at(cx,cz));
+        require(batch.first==next && batch.count>0 && (i==0 || pair.batches[i-1].slot<batch.slot ||
+                (pair.batches[i-1].slot==batch.slot && pair.batches[i-1].square<batch.square)),
+                "the batches follow one another by material, then by square"+at(cx,cz));
         for(uint32_t k=batch.first; k<batch.first+batch.count; ++k) {
           const int32_t x = Grass::decode(pair.blades[k],cx,cz,pair.minY).x;
           require(batch.slot==0 ? x<=border : x>=border, "a blade is of the material it stands on"+at(cx,cz));
@@ -386,9 +687,16 @@ void placementGround() {
   require(onLevel>1000, "the test's cell has grass: "+std::to_string(onLevel));
   const auto onGentle = build(gentle,0,0,par);
   require(onGentle.blades.size()==onLevel, "a slope 10 degrees under the limit keeps every blade");
-  for(const auto& b:onGentle.blades) {
-    const auto i = Grass::decode(b,0,0,onGentle.minY);
-    require(std::abs(double(i.y)-double(i.x)*double(tanOf(20)))<=8.0, "a root stands on the slope");
+  for(const auto& batch:onGentle.batches) {
+    const auto& bounds = onGentle.squareBounds[batch.square];
+    require(bounds.minY>=onGentle.minY && bounds.maxY<=onGentle.maxY &&
+            (bounds.minY>onGentle.minY || bounds.maxY<onGentle.maxY),
+            "a square on a slope has a narrower height range than its cell");
+    for(uint32_t k=batch.first; k<batch.first+batch.count; ++k) {
+      const auto i = Grass::decode(onGentle.blades[k],0,0,onGentle.minY);
+      require(std::abs(double(i.y)-double(i.x)*double(tanOf(20)))<=8.0, "a root stands on the slope");
+      require(bounds.minY<=i.y && i.y<=bounds.maxY, "the square's height range covers its root");
+      }
     }
   // by the share of the way to the limit left: 0.525 at 30 degrees of 25 to 35. The level meadow keeps every node
   // the patches ask for, so the share is the only place where the count shows the node's final roll
@@ -726,19 +1034,242 @@ void windFront() {
   require(now.pressure==before.pressure && now.swing==before.swing, "a new front has no motion behind it");
   }
 
+// ---- stalks with an ear, and the ground the content gives (grassear.h, grassplots.h) ----
+
+void earRecords() {
+  Grass::Params p;
+  require(parsed("{}",p) && p.kind==0, "a record without `kind` is of the grass's own blades");
+  require(parsed(R"({"kind":"ear","height":120})",p) && p.on && p.kind==Grass::KindEar && p.height==120.f,
+          "`kind` `ear` makes the record's blades stalks with an ear");
+  require(parsed(R"({"kind":"ear","height":160})",p) && parsed(R"({"kind":"ear","height":5})",p),
+          "a stalk with an ear is of 5 to 160 cm");
+  const Grass::Params kept = p;
+  for(const char* bad:{R"({"kind":"ear","height":161})", R"({"kind":"ear","height":4})", R"({"height":120})",
+                       R"({"kind":"rye"})", R"({"kind":2})", R"({"kind":null})"}) {
+    Grass::Params out = kept;
+    require(!parsed(bad,out) && out==kept, std::string("a kind that is not `ear` or a height out of its kind's range must be refused: ")+bad);
+    }
+  }
+
+// The meadow of placementRepeats stands as it stood before the stalks and the content's ground: every field of the
+// blades of its 25 cells and their batches, against origin/main. The facing and the map's u and v come of
+// arithmetic that another machine rounds the other way for a blade in some thousands (GCC on x86 against clang on
+// ARM: the facing of one blade of these, the u or the v of a hundred, by a step): they go by their sums. The rest
+// is the same on both and goes by its digest
+void placementKept() {
+  Grass::Summary flat;
+  addField(flat,-1600.f,-1600.f,4800.f,4800.f,0.f,0);
+  const Grass::Params par = meadow();
+  uint64_t digest = 1469598103934665603ull;
+  size_t   count  = 0;
+  int64_t  facing = 0, u = 0, v = 0;
+  const auto mix = [&](uint32_t x) { digest = (digest ^ x)*1099511628211ull; };
+  for(int32_t cz=-1; cz<4; ++cz)
+    for(int32_t cx=-1; cx<4; ++cx) {
+      const auto cell = build(flat,cx,cz,par);
+      count += cell.blades.size();
+      for(const auto& b:cell.blades) {
+        mix(b.w[0]);
+        mix(b.w[1]);
+        mix(b.w[2] & 0xFFFFFF00u);
+        mix(b.w[3] & 0xFF000000u);
+        facing += b.w[2] & 0xFFu;
+        u      += b.w[3] & 0xFFFu;
+        v      += (b.w[3] >> 12) & 0xFFFu;
+        }
+      for(const auto& bt:cell.batches)
+        for(uint32_t x:{uint32_t(bt.slot),uint32_t(bt.kind),uint32_t(bt.square),bt.first,bt.count})
+          mix(x);
+      }
+  require(count==563245u && digest==0x6664a824bcb2023full && std::abs(facing-71779365)<=1024 && std::abs(u-1156697106)<=16384 &&
+          std::abs(v-1149493537)<=16384,
+          "a meadow without `kind` and without the content's ground must keep its blades: "+std::to_string(count)+" "+
+          std::to_string(digest)+" "+std::to_string(facing)+" "+std::to_string(u)+" "+std::to_string(v));
+  }
+
+// 16 m of stalks (slot 1) beside 16 m of meadow (slot 0)
+void placementEar() {
+  Grass::Params par[2] = {meadow(),meadow()};
+  par[1].kind    = Grass::KindEar;
+  par[1].height  = 120.f;
+  par[1].density = 1.25f;
+  Grass::Summary ground;
+  addField(ground,0.f,0.f,1600.f,1600.f,0.f,1);
+  addField(ground,1600.f,0.f,3200.f,1600.f,0.f,0);
+  const Grass::Summary* list[1] = {&ground};
+
+  size_t stalks = 0, grass = 0;
+  float  low = 1e9f, high = 0.f;
+  for(int32_t cz=0; cz<2; ++cz)
+    for(int32_t cx=0; cx<4; ++cx) {
+      const auto cell = build(list,cx,cz,par);
+      require(same(cell,build(list,cx,cz,par)), "two builds of a cell of stalks must give the same blades"+at(cx,cz));
+      for(const auto& bt:cell.batches) {
+        require(bt.kind==(bt.slot==1 ? Grass::KindEar : 0), "the stalks are a kind of their own, the meadow beside keeps its"+at(cx,cz));
+        // an even stand: every square of 2 m has the record's count, 400 a m2
+        require(bt.slot!=1 || cx>1 || (bt.count>1440 && bt.count<1760), "stalks stand evenly, without tufts or bare spots"+at(cx,cz));
+        for(uint32_t i=bt.first; i<bt.first+bt.count; ++i) {
+          const auto& b    = cell.blades[i];
+          const auto  info = Grass::decode(b,cx,cz,cell.minY,bt.kind);
+          // a root on the line between the two is of either
+          require((bt.slot==1 ? info.x<=1600*U : info.x>=1600*U) && info.y==0, "each kind roots on its own ground"+at(cx,cz));
+          if(bt.slot!=1) {
+            ++grass;
+            continue;
+            }
+          ++stalks;
+          low  = std::min(low,info.height);
+          high = std::max(high,info.height);
+          require((b.w[0] >> 28)<=14u, "a stalk leans by 8 to 18 degrees, to 46 in a lodged spot"+at(cx,cz));
+          }
+        }
+      }
+  // 0.9..1.1 of the record's 120 cm, and up to a fifth lower by spots: 86..132 cm, to a step of the byte
+  require(low>=86.f && high<=132.4f && low<96.f && high>124.f,
+          "stalks are of the record's height: "+std::to_string(low)+".."+std::to_string(high));
+  require(stalks>100000 && stalks<104800 && grass>0, "256 m2 of stalks at 400 a m2: "+std::to_string(stalks));
+
+  // the spots that lower the stand are of 6 to 10 m: along 640 m the height turns between falling and rising at
+  // some two in three of the spots' corners and nowhere between them. 52 times with the spots of 8 m; spots of 6 m
+  // would give 73 and of 10 m 38, of 4 m 112 and of 16 m 23
+  int   turns = 0, dir = 0;
+  float prev  = Grass::earHeight(0,0,0);
+  for(int32_t x=50*U; x<=64000*U; x+=50*U) {
+    const float now = Grass::earHeight(0,x,0);
+    const int   to  = now>prev ? 1 : (now<prev ? -1 : 0);
+    if(to!=0 && dir!=0 && to!=dir)
+      ++turns;
+    if(to!=0)
+      dir = to;
+    prev = now;
+    }
+  require(turns>=36 && turns<=76, "the stalks are lower by spots of 6 to 10 m: "+std::to_string(turns));
+
+  // a lodged spot: the stand lies over, to no more than EarLodgeLean, at a part of the places and upright at the rest
+  int   lodged = 0, places = 0;
+  float most   = 0.f;
+  for(int32_t z=0; z<=6400*U; z+=160*U)
+    for(int32_t x=0; x<=6400*U; x+=160*U) {
+      float angle = 0.f, lean = 0.f;
+      Grass::earLean(0,x,z,angle,lean);
+      require(lean>=8.f, "a stalk leans by 8 degrees at the least");
+      most = std::max(most,lean);
+      ++places;
+      if(lean>18.f)
+        ++lodged;
+      }
+  require(most>30.f && most<=Grass::EarLodgeLean && lodged*50>places && lodged*3<places,
+          "the stand lies over in spots: "+std::to_string(lodged)+" of "+std::to_string(places)+", "+std::to_string(most));
+  }
+
+// A file of worlds/<WORLD>/grass.d
+void plots() {
+  const auto slotOf = [](std::string_view material) { return material=="OWN_CROP_STAND.TGA" ? uint16_t(1) : uint16_t(-1); };
+  // a patch over the cell (1,2) of the chunk (0,0), y = 250 + (x-800)/10, its triangles wound either way; one of
+  // the chunk (1,0)
+  const char* file = R"({"format": 1, "patches": [
+    {"material": "OWN_CROP_STAND.TGA",
+     "positions": [800,250,1600, 1600,330,1600, 1600,330,2400, 800,250,2400],
+     "uvs": [0,0, 1,0, 1,1, 0,1], "triangles": [0,1,2, 0,3,2]},
+    {"material": "OWN_CROP_STAND.TGA",
+     "positions": [6500,0,100, 7300,0,100, 7300,0,900], "uvs": [0,0, 1,0, 1,1], "triangles": [0,1,2]}]})";
+  Grass::Plots plots;
+  std::string  error;
+  require(plots.empty(), "no file: no ground of the content");
+  require(plots.parse(file,slotOf,error) && error.empty() && !plots.empty(), "a file of patches must be taken: "+error);
+  Grass::Summary ground, next, none;
+  plots.addTo(ground,ChunkId::fromPosition(1200.f,2000.f));
+  plots.addTo(next,  ChunkId{1,0});
+  plots.addTo(none,  ChunkId{0,1});
+  require(ground.grass.size()==2 && next.grass.size()==1 && none.empty(), "a patch's triangle is of the chunk its centre is in");
+  for(const auto& t:ground.grass)
+    require(t.slot==1 && t.ny[0]>0.99f && t.nx[0]<0.f && t.nx[0]>-0.11f, "a patch's triangle faces up whatever its winding");
+
+  // its stalks stand on it and nowhere else
+  Grass::Params par[2] = {meadow(),meadow()};
+  par[1].kind   = Grass::KindEar;
+  par[1].height = 120.f;
+  const Grass::Summary* list[1] = {&ground};
+  size_t stalks = 0;
+  for(int32_t cz=0; cz<5; ++cz)
+    for(int32_t cx=-1; cx<4; ++cx) {
+      const auto cell = build(list,cx,cz,par);
+      stalks += cell.blades.size();
+      for(const auto& bt:cell.batches)
+        for(uint32_t i=bt.first; i<bt.first+bt.count; ++i) {
+          const auto info = Grass::decode(cell.blades[i],cx,cz,cell.minY,bt.kind);
+          require(bt.slot==1 && bt.kind==Grass::KindEar && info.x>=800*U && info.x<=1600*U && info.z>=1600*U && info.z<=2400*U &&
+                  std::abs(info.y - (250*U + (info.x-800*U)/10))<=3, "a stalk stands on its patch, at the patch's height"+at(cx,cz));
+          require(info.height>=86.f && info.height<=132.4f, "a stalk of a patch is of the record's height"+at(cx,cz));
+          }
+      }
+  // 64 m2 at the record's 320 a m2
+  require(stalks>19400 && stalks<21500, "stalks grow on the content's ground: "+std::to_string(stalks));
+
+  // a broken file is refused whole
+  for(const char* bad:{"", "{", "[]", R"({"format":2,"patches":[]})", R"({"format":1})", R"({"format":1,"patches":{}})",
+        R"({"format":1,"patches":[{"positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,2]}]})",
+        R"({"format":1,"patches":[{"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,2]}]})",
+        R"({"format":1,"patches":[{"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,"1"],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,2]}]})",
+        R"({"format":1,"patches":[{"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0],"triangles":[0,1,2]}]})",
+        R"({"format":1,"patches":[{"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1]}]})",
+        R"({"format":1,"patches":[{"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,3]}]})",
+        R"({"format":1,"patches":[{"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,2]},
+                                 {"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,-2]}]})"}) {
+    Grass::Plots broken;
+    require(!broken.parse(bad,slotOf,error) && !error.empty() && broken.empty(), std::string("a broken file of patches must be refused whole: ")+bad);
+    }
+
+  // a patch of a material without `grass` is left out and named; the file's other patches are taken
+  Grass::Plots   part;
+  Grass::Summary taken;
+  require(part.parse(R"({"format":1,"patches":[
+      {"material":"NO_SUCH.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,2]},
+      {"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,2]}]})",slotOf,error) &&
+          error.find("NO_SUCH.TGA")!=std::string::npos, "a patch of an unknown material must be named");
+  part.addTo(taken,ChunkId{0,0});
+  require(taken.grass.size()==1 && taken.grass[0].slot==1, "a patch of an unknown material alone is left out");
+
+  // the folder: its *.json, a broken one among them; none without the folder
+  const auto dir = std::filesystem::temp_directory_path()/("gothic-grass-test-"+std::to_string(getpid()));
+  std::filesystem::remove_all(dir);
+  Grass::Plots absent, read;
+  absent.load(dir,slotOf);
+  require(absent.empty(), "a world without grass.d has no ground of the content");
+  std::filesystem::create_directories(dir/"grass.d");
+  std::ofstream(dir/"grass.d"/"a-broken.json") << "{";
+  std::ofstream(dir/"grass.d"/"b-field.json")  << file;
+  std::ofstream(dir/"grass.d"/"c-notes.txt")   << file;
+  read.load(dir,slotOf);
+  std::filesystem::remove_all(dir);
+  Grass::Summary fromDir;
+  read.addTo(fromDir,ChunkId{0,0});
+  require(fromDir.grass.size()==2, "the files of grass.d are read, a broken one among them is passed by");
+  }
+
 }
 
 int main() {
   try {
+    environmentFallbacks();
     records();
     bucketBits();
     switches();
     patches();
     tufts();
+    require(unsetenv("OPENGOTHIC_GRASS_ORDER")==0, "cannot clear grass order switch");
+    drawOrder(false);
+    packSpans();
+    packIndices();
+    grassCull();
     placementRepeats();
     placementGround();
     placementEdge();
     placementItems();
+    earRecords();
+    placementKept();
+    placementEar();
+    plots();
     windFront();
     assertions += grassCoverTests();
     std::cout << "{\"test\":\"grass\",\"passed\":true,\"assertions\":" << assertions << "}\n";

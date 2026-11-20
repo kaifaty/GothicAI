@@ -81,7 +81,9 @@ const uint L_VsmLights  = L_Shadow1;
 #define MAT_NORMAL 1
 #endif
 
-#if ((defined(FLAT_NORMAL) || defined(MATERIAL_MAPS)) && !defined(DEPTH_ONLY)) || defined(FORWARD) || defined(WATER)
+// TREE_BOUGH_JOINT && DEPTH_ONLY: the shadow cell of a level band (tree_bough_dissolve.glsl)
+#if ((defined(FLAT_NORMAL) || defined(MATERIAL_MAPS)) && !defined(DEPTH_ONLY)) || defined(FORWARD) || defined(WATER) || \
+    (defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY))
 #define MAT_POSITION 1
 #endif
 
@@ -95,6 +97,13 @@ const uint L_VsmLights  = L_Shadow1;
 #if defined(GBUFFER_MOTION)
 #define MAT_MOTION 1
 #endif
+
+// The main-view payload packs level + 1 above the 16-bit material bucket.
+#if (MESH_TYPE!=T_PFX) && !defined(DEPTH_ONLY)
+#define MAT_CLUSTER_LEVEL
+#endif
+
+const vec4 MeshletPaddingPosition = vec4(0.0, 0.0, 2.0, 1.0);
 
 #if defined(MAT_UV) || defined(MAT_NORMAL) || defined(MAT_POSITION) || defined(MAT_COLOR) || defined(MAT_MOTION)
 #define MAT_VARYINGS 1

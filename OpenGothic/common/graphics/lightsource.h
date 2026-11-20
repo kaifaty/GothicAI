@@ -38,9 +38,11 @@ class LightSource final {
 
     // the brightness follows a flame's signal at the world time and the position trembles by jitterCm
     // (vobs.d "flicker_from", "jitter_cm"): the same signal as the emitter's particles
-    void                 setFlicker(const PfxMotion::Flicker& f, float jitterCm);
+    // swayHz: the trembling's own frequency ("sway_hz"), 0: the signal's
+    void                 setFlicker(const PfxMotion::Flicker& f, float jitterCm, float swayHz = 0);
 
     void                 setTimeOffset(uint64_t t);
+    void                 setRangeOnce(bool once) { rangeOnce = once; }
 
     uint64_t             effectPrefferedTime() const;
 
@@ -62,6 +64,7 @@ class LightSource final {
     std::vector<float> rangeAniScale;
     uint64_t           rangeAniFPSInv = 0;
     bool               rangeSmooth = false;
+    bool               rangeOnce   = false; // the range keys play once and hold the last one (an own effect's fire)
 
     std::vector<Tempest::Vec3> colorAniList;
     uint64_t                   colorAniListFpsInv = 0;
@@ -73,6 +76,7 @@ class LightSource final {
 
     PfxMotion::Flicker flicker;
     float              flickerJitterCm = 0;
+    float              flickerSwayHz   = 0;
 
     bool               enable = true;
   };

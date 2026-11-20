@@ -4,6 +4,7 @@
 #include <cassert>
 
 #include "gamebasecontent.h"
+#include "graphics/meshlevels.h"
 #include "resources.h"
 #include "utils/inifile.h"
 
@@ -128,6 +129,7 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   defaults->set("GAME", "food_over_time",        1);
   defaults->set("GAME", "melee_ai_dodge",        1);
   defaults->set("GAME", "melee_ai_charge",       1);
+  defaults->set("GAME", "itemEffects",           1); // C_ITEM.effect of items in the world, as Gothic (graphics/itemview)
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);
@@ -180,9 +182,27 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   // costs ~11 ms GPU indoors on an M1 Pro
 #if defined(__APPLE__)
   defaults->set("INTERNAL",     "vsmLampSoft", 0);
+  defaults->set("INTERNAL",     "lampContact", 0); // graphics/lampcontact.h
+  defaults->set("INTERNAL",     "grassContact", 0); // graphics/grasscontact.h
 #else
   defaults->set("INTERNAL",     "vsmLampSoft", 1);
+  defaults->set("INTERNAL",     "lampContact", 1);
+  defaults->set("INTERNAL",     "grassContact", 1);
 #endif
+
+  defaults->set("INTERNAL",     "giContactAo", 1); // graphics/contactao.h
+  defaults->set("INTERNAL",     "crownLight", 1); // graphics/crownlight.h
+  defaults->set("INTERNAL",     "hizSkipCrowns", 1); // graphics/hizoccluders.h
+  defaults->set("INTERNAL",     "hizPrecise", 1);
+  defaults->set("INTERNAL",     "hizHistory", 1);
+  defaults->set("INTERNAL",     "hizHistoryMinWins", 16);
+  defaults->set("INTERNAL",     "treeWindFade", 1); // graphics/treewindfade.h
+  defaults->set("INTERNAL",     "meshLevels", 1); // graphics/meshlevels.h
+  defaults->set("INTERNAL",     "treeBoughLod", 0); // graphics/treeboughasset.h
+  defaults->set("INTERNAL",     "treeBoughLodCpu", 0);
+  defaults->set("INTERNAL",     "impostors", 1); // graphics/meshlevels.h
+  defaults->set("INTERNAL",     "shadowLevels", 1); // graphics/meshlevels.h
+  defaults->set("INTERNAL",     "shadowLevelNearPx", MeshLevels::ShadowNearDefaultPx);
 
   defaults->set("VIDEO", "zVidBrightness", 0.5f);
   defaults->set("VIDEO", "zVidContrast",   0.5f);

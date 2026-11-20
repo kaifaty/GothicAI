@@ -16,6 +16,7 @@
 #include "graphics/worldview.h"
 #include "graphics/lightgroup.h"
 #include "graphics/meshobjects.h"
+#include "graphics/itemview.h"
 #include "game/gamerules.h"
 #include "game/rpgvocabulary.h"
 #include "physics/dynamicworld.h"
@@ -69,7 +70,8 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     size_t wakeItems(const Tempest::Vec3& min, const Tempest::Vec3& max, size_t budget) override;
     void itemHit(Item& item, asset::MaterialGroup material, float impulse, float mass) override;
 
-    void animationPfx(const Animation::MdsParticleEffect& event, MdlVisual& visual);
+    // inPfxRange: the visual is in the particles' range; out of it only stops and looped effects come
+    void animationPfx(const Animation::MdsParticleEffect& event, MdlVisual& visual, bool inPfxRange);
 
     void probeMemory(std::string_view stage) const;
 
@@ -108,13 +110,14 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     // Load probe: one line per NPC after a fresh start's placement (game/gamescript_startupfloor.h).
     void                 logStartupFloorDigest();
     Npc*                 npcForRagdoll(const Ragdoll* body);
-    bool                 stickArrow(MeshObjects::Mesh&& arrow, const Tempest::Matrix4x4& worldMatrix,
+    bool                 stickArrow(ItemView&& arrow, const Tempest::Matrix4x4& worldMatrix,
                                     std::string_view visual = {},
                                     std::shared_ptr<const DynamicWorld::MovableVobPose> movable = {},
                                     const Npc* culprit = nullptr, const Tempest::Vec3* sightPoint = nullptr,
                                     std::string_view surface = "unknown");
     size_t               stuckArrowCount() const { return stuckArrows.size(); }
     bool                 stuckArrowTransform(size_t index, Tempest::Matrix4x4& out) const;
+    const ItemView*      stuckArrowView(size_t index) const { return index<stuckArrows.size() ? &stuckArrows[index].mesh : nullptr; }
     bool                 stuckArrowAttachment(size_t index, uint32_t& zenId, Tempest::Matrix4x4& local) const;
     struct PhysicsTrace {
       std::string id, kind, name;
@@ -210,6 +213,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     MeshObjects::Mesh    addDecalView (const asset::VisualDecal& decal);
     LightGroup::Light    addLight(const asset::VLight& vob);
     LightGroup::Light    addLight(std::string_view preset);
+    LightGroup::Light    addLight(const asset::LightPreset& preset);
 
     void                 updateAnimation(uint64_t dt);
     void                 catchUpAnimation();
@@ -250,6 +254,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     void                 disableCollizionZone(CollisionZone& z);
 
     Interactive*         availableMob(const Npc &pl, std::string_view name);
+    MobReservations&     mobReservations() { return wobj.mobReservations(); }
     Interactive*         findInteractive(const Npc& pl);
     void                 setMobRoutine(gtime time, std::string_view scheme, int32_t state);
 
@@ -358,7 +363,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     WorldSound                            wsound;
     WorldObjects                          wobj;
     struct StuckArrow {
-      MeshObjects::Mesh mesh;
+      ItemView mesh; // with the arrow's effect while it fades (graphics/itemview)
       std::string visual;
       Tempest::Matrix4x4 local;
       std::weak_ptr<const DynamicWorld::MovableVobPose> movable;
@@ -385,7 +390,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     void                                 loadBodyTraces(Serialize& fin);
     void                                 saveStuckArrows(Serialize& fout) const;
     void                                 loadStuckArrows(Serialize& fin);
-    void                                 updateStuckArrows();
+    void                                 updateStuckArrows(uint64_t dt = 0);
     struct SpellField {
       Tempest::Vec3 center;
       Npc* caster = nullptr; // identities only; never dereferenced by a field

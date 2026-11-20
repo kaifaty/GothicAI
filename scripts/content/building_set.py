@@ -29,7 +29,7 @@ with a staging set as base, it is that set with only these entries replaced.
 
 `compose SET PART...` joins the sets of several assets into one staging set for the game:
 each texture belongs to exactly one part, so a shared texture lives in its own asset. Meshes of a
-part (a prop's GLB with its `.convex-parts` and `.fracture` caches and its `.debris.glb`), particle descriptions
+part (a prop's GLB with its `.convex-parts`, `.fracture`, `.debris.glb` and `.clod`), particle descriptions
 (`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`) come along. A part may be a composed set: the working
 set plus one new part keeps the names of the working set's parts. `--without PART` leaves a part of such a
 composed set behind, so that a new part takes its place.
@@ -49,6 +49,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 import shutil
+import struct
 import sys
 import zlib
 
@@ -79,7 +80,12 @@ CACHES = {
 # A destructible's debris (its pieces as parts, reports/content/2026-11-wood-fracture) travels with its GLB;
 # beside it the `.fracture` must be version 3, cut from that debris.
 DEBRIS, DEBRIS_TAG = '.debris.glb', 'GOTHIC_FRACTURE 3'
-SIDECARS = (*CACHES, DEBRIS)
+CLUSTER_LOD = '.clod'
+# Match the format, GLB loader and builder revisions in OpenGothic/common/meshclusterlod.cpp.
+CLOD_HEADER = struct.Struct('<4s11I')
+CLOD_SIGNATURE = (b'GCLD', 2, 1, 1)
+SIDECARS = (*CACHES, DEBRIS, CLUSTER_LOD)
+CACHE_COMMANDS = {suffix: args[3] for suffix, args in CACHES.items()} | {CLUSTER_LOD: 'content-convert cook-mesh-lod'}
 MODES = ('target', 'group', 'match')
 
 
@@ -364,6 +370,18 @@ def pack(records: list[dict], spec: dict, derived_root: Path) -> dict:
     return dict(entries=len(index), replaced=sorted(names), unchanged_entries=len(index) - len(names))
 
 
+def entry_maps(entry: dict) -> list[str]:
+    """The files a record of materials.json names: its own maps (a particle texture has only an albedo) and those
+    of its layers - a rock's `fringe`, a meadow's `ground.sward`, `ground.earth` and `ground.border`, a road's
+    `track.crust`, `track.loose` and `track.ribbon` (tint, normal, mask). A record of fields alone (`grass`,
+    `verge`) names none."""
+    ground, track = entry.get('ground') or {}, entry.get('track') or {}
+    holders = [entry, entry.get('fringe'), ground.get('sward'), ground.get('earth'), ground.get('border'),
+               track.get('crust'), track.get('loose'), track.get('ribbon')]
+    return [holder[channel] for holder in holders if isinstance(holder, dict)
+            for channel in ('albedo', 'normal', 'orm', 'tint', 'mask') if channel in holder]
+
+
 def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:
     """Join the staging sets `parts` into a new set; a texture or a visual may come from one part only.
 
@@ -371,7 +389,8 @@ def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:
     materials. Entries of one part may share files: the barrel's wood and iron use one atlas. A part's
     world chunk edits (`worlds/<WORLD>/chunks/*.glb`, like the harbour stairs) and vob layer files
     (`worlds/<WORLD>/vobs.d/*.json`, like the harbour's traces of life) and its houses
-    (`worlds/<WORLD>/houses.d/*.json`, OpenGothic/common/graphics/houselights.h) come along too; such a part may have no
+    (`worlds/<WORLD>/houses.d/*.json`, OpenGothic/common/graphics/houselights.h) and its patches of ground for the
+    grass system (`worlds/<WORLD>/grass.d/*.json`, the rye of a crop field) come along too; such a part may have no
     materials at all. Particle descriptions (`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`)
     come along as well; file and effect names must belong to one part only. A part may be a composed set
     itself: `compose working-16 working-15 torch-fire-1` is the working set with one more part, its files byte
@@ -392,7 +411,7 @@ def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:
         indexes[part] = json.loads(material_index.read_text()) if material_index.is_file() else {}
         worlds = staging / part / 'worlds'
         chunks[part] = sorted(f.relative_to(worlds) for f in worlds.rglob('*') if f.is_file() and (
-            f.suffix == '.glb' or f.suffix == '.json' and f.parent.name in ('vobs.d', 'houses.d'))) if worlds.is_dir() else []
+            f.suffix == '.glb' or f.suffix == '.json' and f.parent.name in ('vobs.d', 'houses.d', 'grass.d'))) if worlds.is_dir() else []
         mesh_index = staging / part / 'meshes/meshes.json'
         meshes[part] = json.loads(mesh_index.read_text()) if mesh_index.is_file() else {}
         particle_dir = staging / part / 'particles.d'
@@ -447,9 +466,8 @@ def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:
     index, mesh_index = {}, {}
     for part, part_index in indexes.items():
         for texture, entry in part_index.items():
-            for channel in ('albedo', 'normal', 'orm'):
-                if channel in entry:  # a particle texture has only an albedo
-                    take(part, 'materials', Path(entry[channel]))
+            for path in entry_maps(entry):
+                take(part, 'materials', Path(path))
             index[texture] = entry
         for visual, entry in meshes[part].items():
             take(part, 'meshes', Path(entry['glb']))
@@ -513,10 +531,26 @@ def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:
     return result
 
 
+def fresh_clod(glb: Path, cache: Path) -> bool:
+    with cache.open('rb') as stream:
+        header = stream.read(CLOD_HEADER.size)
+        if len(header) != CLOD_HEADER.size:
+            return False
+        magic, version, loader, builder, size, crc, payload_crc, *counts = CLOD_HEADER.unpack(header)
+        if (magic, version, loader, builder) != CLOD_SIGNATURE or size != glb.stat().st_size:
+            return False
+        if sum(count * stride for count, stride in zip(counts, (36, 4, 1, 48, 20))) != cache.stat().st_size - CLOD_HEADER.size:
+            return False
+        actual_crc = 0
+        for chunk in iter(lambda: stream.read(1 << 20), b''):
+            actual_crc = zlib.crc32(chunk, actual_crc)
+    return actual_crc == payload_crc and zlib.crc32(glb.read_bytes()) == crc
+
+
 def stale_caches(content: Path) -> dict[str, list[str]]:
     """Visuals of a content folder by cache suffix whose GLB lacks a fresh adjacent cache it needs: without
     `.convex-parts` a table or cupboard gets one hull instead of the compound, without `.fracture` a
-    destructible never breaks."""
+    destructible never breaks. Cluster LOD is optional, but an existing `.clod` must match its GLB."""
     index = content / 'meshes/meshes.json'
     if not index.is_file():
         return {}
@@ -539,6 +573,11 @@ def stale_caches(content: Path) -> dict[str, list[str]]:
             wanted = (DEBRIS_TAG,) if suffix == '.fracture' and glb.with_suffix(DEBRIS).is_file() else tags
             if len(header) != 2 or header[0] not in wanted or header[1] != f'source {len(source)} {zlib.crc32(source):08x}':
                 stale.setdefault(suffix, []).append(key)
+    for visual, entry in entries:
+        glb = content / 'meshes' / entry['glb']
+        cache = glb.with_suffix(CLUSTER_LOD)
+        if cache.is_file() and not fresh_clod(glb, cache):
+            stale.setdefault(CLUSTER_LOD, []).append(Path(visual).stem.upper())
     return stale
 
 
@@ -547,12 +586,12 @@ def enable(name: str) -> dict:
     when OPENGOTHIC_CONTENT is unset. Its `materials/`, `meshes/`, `worlds/`, `particles.d/` and `vobtrees.d/` are replaced; other folders
     there stay; `enabled.json` records the set. Enabling is the user's decision (gate `enable`). A set whose
     tables or cupboards lack a fresh `.convex-parts`, or whose destructibles lack a fresh `.fracture`, is
-    refused: the collision and fracture steps cannot be skipped."""
+    refused, as is a set with a stale cluster LOD graph."""
     staging = remaster.data_root() / 'content-staging' / name
     if not (staging / 'materials/materials.json').is_file():
         raise ValueError(f'{staging}: no materials/materials.json')
     if stale := stale_caches(staging):
-        raise ValueError(f'{name}: ' + '; '.join(f'no fresh {suffix} for {", ".join(keys)}; run {CACHES[suffix][3]} {staging}'
+        raise ValueError(f'{name}: ' + '; '.join(f'no fresh {suffix} for {", ".join(keys)}; run {CACHE_COMMANDS[suffix]} {staging}'
                                                  for suffix, keys in stale.items()))
     live = remaster.data_root() / 'content'
     incoming = live / '.enable'

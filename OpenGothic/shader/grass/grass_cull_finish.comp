@@ -1,0 +1,26 @@
+#version 450
+
+layout(local_size_x = 64) in;
+
+struct IndexedDraw {
+  uint indexCount;
+  uint instanceCount;
+  uint firstIndex;
+  int  vertexOffset;
+  uint firstInstance;
+  };
+
+layout(binding = 0, std430) readonly buffer Windows { uvec2 windows[]; };
+layout(binding = 1, std430) buffer Indirect { IndexedDraw commands[]; };
+
+layout(push_constant, std430) uniform Push {
+  uint draws;
+  uint pack;
+  } push;
+
+void main() {
+  const uint draw = gl_GlobalInvocationID.x;
+  if(draw>=push.draws)
+    return;
+  commands[draw].instanceCount = (windows[draw].y + push.pack - 1u)/push.pack;
+  }

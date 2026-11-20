@@ -1,0 +1,25 @@
+# The fire bolt hits a wall of Coragon's tavern, no guards: the caster's place is the fireball fixture's, the camera
+# stands behind the line of flight (reports/content/remaster/magic-fire). A pinned npc does not catch the bolt.
+seed 73013
+cheat god
+set time 13 0
+overlay off
+ui off
+destruction setup fireball
+clear 3000
+equip ItRu_FireBolt
+tap spell
+wait 2500
+
+
+cam at 8130 300 1480 8227 262 1950
+wait 1200
+rec hit-wall
+wait 300
+press action
+wait 900
+tap forward
+wait 1500
+release action
+wait 2500
+stop

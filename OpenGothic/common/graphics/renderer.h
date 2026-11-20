@@ -13,6 +13,7 @@
 #include "blooddecals.h"
 #include "taa.h"
 #include "eyeadaptation.h"
+#include "hizhistoryverify.h"
 
 class Camera;
 
@@ -32,6 +33,7 @@ class Renderer final {
     // bench `ssao study <bits>` (reports/engine/2026-11-13-ssao-behind-camera): 1 the samples of ssao.comp behind
     // the camera are read off the screen as before 2026-11-13, 2 the frame is the blurred occlusion alone (red)
     static uint32_t benchSsaoStudy;
+    static bool     benchClusterLodMask;
 
     void drawScene(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
                    bool sceneActive);
@@ -42,9 +44,30 @@ class Renderer final {
     void dbgDraw(Tempest::Painter& painter);
 
     // reuse: an image of an earlier call to draw into again, if its size still fits (a video frame every step)
-    Tempest::Attachment screenshoot(uint8_t frameId, Tempest::Attachment&& reuse = Tempest::Attachment());
+    Tempest::Attachment screenshoot(uint8_t frameId, Tempest::Attachment&& reuse = Tempest::Attachment(),
+                                    bool benchShot = false, Tempest::Pixmap* landscapeCoverage = nullptr);
 
   private:
+    struct TreeOcclusionProbe {
+      Tempest::StorageImage occluderDepth;
+      Tempest::StorageImage mainDepth;
+      bool verify = false;
+      };
+    TreeOcclusionProbe* treeProbe = nullptr;
+    uint32_t treeProbeIndex = 0;
+    Tempest::StorageImage landscapeDepth;
+    bool captureLandscapeDepth = false;
+    void captureTreeOcclusion(Tempest::Attachment& result, uint8_t fId, WorldView& view, const Camera& camera, bool verify);
+    struct {
+      Tempest::Attachment winners, earlyOwners, referenceOwners;
+      Tempest::StorageImage pyramid, earlyDepth;
+      Tempest::ZBuffer referenceDepth;
+      HiZHistoryVerify verify;
+      bool valid = false;
+      } treeHistory;
+    void drawTreeHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
+                         const BenchProbe::HistoryVerifyRequest& request);
+
     enum Quality : uint8_t {
       None,
       VolumetricLQ,
@@ -96,13 +119,18 @@ class Renderer final {
     void surfelsTrace     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, Tempest::StorageBuffer& surfels, bool postPass);
 
     void drawHiZ          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
-    void buildHiZ         (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    void drawVsm          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
+    void buildHiZ         (Tempest::Encoder<Tempest::CommandBuffer>& cmd, Tempest::StorageImage* history = nullptr);
+    void drawVsm          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void logVsmStats      (const WorldView& view);
-    void drawGBuffer      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
+    void logVsmFrame      (uint8_t fId);
+    void copyVsmFrame     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    void drawGBuffer      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
+                           DrawCommands::HistoryDraw history = DrawCommands::HistoryDraw::Off,
+                           Tempest::Attachment* winners = nullptr);
     void drawGWater       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void drawShadowMap    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
-    void drawShadowResolve(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
+    void drawShadowResolve(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view,
+                           bool useGrassContactMask, uint32_t grassContactStudy);
     void drawLights       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawSky          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawAmbient      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
@@ -126,6 +154,7 @@ class Renderer final {
 
     void drawPathtrace    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, uint8_t fId);
 
+    void drawHaze(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void stashSceneAux    (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void drawRayQueryDbg  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
@@ -216,6 +245,7 @@ class Renderer final {
 
       float          vsmMipBias         = 0.25; //TODO: set to lower, eventually
       bool           vsmStats           = false; // OPENGOTHIC_VSM_STATS=1: VSM counters to the log every 5 s
+      bool           vsmStatsFrames     = false; // OPENGOTHIC_VSM_STATS=frames: the bins of pairs of every frame
       uint32_t       vsmLampMode        = 0;     // OPENGOTHIC_VSM_LAMP: 0 pcss, 1 hard, 2 flat (lamp filter study)
       float          vsmLampNarrow      = -1;    // OPENGOTHIC_VSM_LAMP_NARROW: four-tap penumbra, texels; <0 the shader's
       // under TAA (light.frag, the frame-turned pattern): taps of the first and second blocker search, of a narrow
@@ -248,11 +278,14 @@ class Renderer final {
     Tempest::ZBuffer          zbufferUi;
 
     Tempest::Attachment       sceneOpaque;
+    Tempest::Attachment       sceneHaze;   // the frame before the haze pass (drawHaze); made at the first haze in view
     Tempest::Attachment       sceneDepth;
 
     Tempest::Attachment       gbufDiffuse;
     Tempest::Attachment       gbufNormal;
     Tempest::Attachment       gbufOrm;
+    Tempest::StorageImage     grassContactMask;
+    Tempest::Attachment       grassContactDiagnostic;
 
     struct Shadow {
       Tempest::RenderPipeline* directLightPso = nullptr;
@@ -438,6 +471,18 @@ class Renderer final {
       Tempest::StorageImage     vsmDbg;
 
       uint64_t                  statsTime = 0; // last OPENGOTHIC_VSM_STATS line, ms
+      // OPENGOTHIC_VSM_STATS=frames: each frame slot's copy of VsmHeader, read when the slot comes round again (its
+      // fence waited for, or the bench's shot waited for the GPU), and the frame's number; the bins drawn by the
+      // frames logged last, by number, to check the frame before's that the hysteresis takes
+      Tempest::StorageBuffer    frameStats[Resources::MaxFramesInFlight];
+      Tempest::StorageBuffer    geometryStats;
+      Tempest::StorageBuffer    geometryRead[Resources::MaxFramesInFlight];
+      uint64_t                  frameStatsNo[Resources::MaxFramesInFlight] = {};
+      bool                      frameStatsWritten[Resources::MaxFramesInFlight] = {};
+      uint64_t                  frameNo = 0;
+      uint64_t                  frameLoggedNo[4] = {};
+      uint32_t                  frameLoggedAdmit[4][9] = {};
+      uint32_t                  frameLoggedPrev[4][9] = {};
       Tempest::StorageBuffer    lampProbe;     // light_vsm_probe: one frame's lamp filter counters, a stamp per pixel
       uint32_t                  lampStamp  = 0; // the counted frame's stamp
       bool                      lampArmed  = false; // the next drawLights counts

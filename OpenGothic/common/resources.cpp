@@ -32,6 +32,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <type_traits>
@@ -39,6 +40,7 @@
 
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/meshlevels.h"
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/renderrig.h"
 #include "graphics/mesh/skeleton.h"
@@ -52,6 +54,8 @@
 
 #include "contentcensus.h"
 #include "gltfmesh.h"
+#include "gltfmeshcolor.h"
+#include "meshclusterlod.h"
 #include "basemesh.h"
 #include "modeldata.h"
 #include "fontdata.h"
@@ -515,7 +519,7 @@ bool Resources::meshReplacementLoaded(std::string_view name, MeshReplacementSour
   return true;
   }
 
-asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replaced) {
+asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replaced, std::vector<std::vector<uint32_t>>* colors) {
   LoadProbe::Vobs::Scope probe("mesh_read");
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   if(replaced!=nullptr)
@@ -531,6 +535,14 @@ asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replace
       try {
         std::vector<uint8_t> bytes;
         auto mesh = loadGltfMesh(it->second.file,&bytes);
+        if(colors!=nullptr) {
+          try {
+            *colors = loadGltfMeshColors(bytes,mesh);
+            }
+          catch(const std::exception& error) {
+            Log::e("meshes: \"",it->second.file.string(),"\" is drawn without its vertex colour: ",error.what());
+            }
+          }
         if(inst->census)
           inst->census->replaced(key+".MRM",it->second.replacement);
         if(replaced!=nullptr)
@@ -561,6 +573,118 @@ asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replace
   Log::e("base: unable to load mesh \"",original,"\"");
   if(inst->census) inst->census->missing(original,"mesh unavailable");
   return {};
+  }
+
+std::vector<Resources::MeshLevel> Resources::implLoadMeshLevels(std::string_view key, const MeshOverride& source,
+                                                                const asset::StaticMesh& main,
+                                                                bool colored) {
+  std::vector<MeshLevel> ret;
+  std::string summary;
+  try {
+    for(size_t i=0; i<source.levels.size(); ++i) {
+      const auto& [file,px] = source.levels[i];
+      const auto  level     = "level "+std::to_string(i+1)+" \""+file.string()+"\": ";
+      std::vector<uint8_t> bytes;
+      asset::StaticMesh mesh;
+      try {
+        mesh = loadGltfMesh(file,&bytes);
+        }
+      catch(const std::exception& error) {
+        throw std::runtime_error(level+error.what());
+        }
+      // the same materials, each once: a level is drawn by the mesh's buckets, a slice for each of them
+      std::vector<size_t> order(main.sub_meshes.size(),size_t(-1));
+      bool same = mesh.sub_meshes.size()==main.sub_meshes.size();
+      for(size_t r=0; same && r<main.sub_meshes.size(); ++r) {
+        for(size_t k=0; k<mesh.sub_meshes.size(); ++k)
+          if(mesh.sub_meshes[k].mat.texture==main.sub_meshes[r].mat.texture &&
+             std::find(order.begin(),order.end(),k)==order.end()) {
+            order[r] = k;
+            break;
+            }
+        same = order[r]!=size_t(-1) && !mesh.sub_meshes[order[r]].triangles.empty();
+        }
+      if(!same) {
+        std::string want, got;
+        for(auto& sm:main.sub_meshes)
+          want += (want.empty() ? "" : ", ")+sm.mat.texture;
+        for(auto& sm:mesh.sub_meshes)
+          got  += (got.empty()  ? "" : ", ")+sm.mat.texture;
+        throw std::runtime_error(level+"materials "+got+" are not the mesh's "+want);
+        }
+      GltfMeshColors colors;
+      try {
+        colors = loadGltfMeshColors(bytes,mesh);
+        }
+      catch(const std::exception& error) {
+        throw std::runtime_error(level+"vertex colour: "+error.what());
+        }
+      if(colors.empty()==colored)
+        throw std::runtime_error(level+(colored ? "no COLOR_0, the mesh has it" : "COLOR_0, the mesh has none"));
+
+      MeshLevel out;
+      out.px = px;
+      out.mesh.positions = std::move(mesh.positions);
+      out.mesh.normals   = std::move(mesh.normals);
+      out.mesh.materials = std::move(mesh.materials);
+      out.mesh.alpha_test = mesh.alpha_test;
+      out.mesh.bbox      = mesh.bbox;
+      out.mesh.obbox     = mesh.obbox;
+      size_t triangles = 0;
+      for(auto k:order) {
+        triangles += mesh.sub_meshes[k].triangles.size();
+        out.mesh.sub_meshes.push_back(std::move(mesh.sub_meshes[k]));
+        if(!colors.empty())
+          out.colors.push_back(std::move(colors[k]));
+        }
+      summary += (summary.empty() ? "" : ", ")+std::to_string(triangles)+" triangles under "+
+                 std::to_string(int(std::lround(px)))+" px";
+      ret.push_back(std::move(out));
+      }
+    }
+  catch(const std::exception& error) {
+    Log::e("meshes: \"",key,"\" is drawn without its levels of detail: ",error.what());
+    return {};
+    }
+  Log::i("meshes: \"",key,"\" levels of detail: ",summary);
+  return ret;
+  }
+
+void Resources::implLoadMeshImpostor(std::string_view key, const MeshImpostor& source, StaticMesh& mesh) {
+  try {
+    const bool graphics = hasGraphicsDevice();
+    for(const auto& sub:mesh.sub) {
+      const auto& mat = sub.material;
+      if(!mat.isSolid() || (graphics && mat.tex==nullptr) || mat.hasFrameAnimation() ||
+         mat.hasUvAnimation() || mat.hasProjection() || mat.antitile!=Material::Antitile::Off ||
+         mat.emissive>0.f || mat.hair || mat.strand || mat.eye)
+        throw std::runtime_error("unsupported material "+sub.texName);
+      }
+    if(graphics && !device().properties().hasSamplerFormat(TextureFormat::DXT5))
+      throw std::runtime_error("the graphics device cannot sample DXT5 atlases");
+    StaticMesh::Impostor stage;
+    for(size_t i=0; i<source.files.size(); ++i) {
+      const auto& file = source.files[i];
+      try {
+        Pixmap pixmap(file.u16string());
+        if(pixmap.format()!=TextureFormat::DXT5 || pixmap.w()!=MeshLevels::ImpostorAtlasSize ||
+           pixmap.h()!=MeshLevels::ImpostorAtlasSize || pixmap.mipCount()!=MeshLevels::ImpostorMipCount)
+          throw std::runtime_error("expected a 1536 x 1536 DXT5 DDS with five mip levels");
+        if(graphics)
+          stage.textures[i] = device().texture(pixmap);
+        }
+      catch(const std::exception& error) {
+        throw std::runtime_error(file.string()+": "+error.what());
+        }
+      }
+    stage.px = source.px;
+    mesh.impostor = std::move(stage);
+    }
+  catch(const std::exception& error) {
+    Log::e("meshes: the impostor of \"",key,"\" is not used: ",error.what());
+    return;
+    }
+  Log::i("meshes: \"",key,"\" impostor under ",source.px," px");
   }
 
 ProtoMesh* Resources::implLoadMesh(std::string_view name) {
@@ -720,13 +844,80 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
     FileExt::exchangeExt(name,"3DS","MRM");
 
     bool replaced = false;
-    auto zmsh = loadVisualMesh(name,&replaced);
+    GltfMeshColors colors;
+    auto zmsh = loadVisualMesh(name,&replaced,&colors);
 
     if(zmsh.sub_meshes.empty())
       return nullptr;
 
-    PackedMesh packed(zmsh,PackedMesh::PK_Visual,replaced);
-    return std::unique_ptr<ProtoMesh>{new ProtoMesh(std::move(packed),name)};
+    PackedMesh packed(zmsh,PackedMesh::PK_Visual,replaced,colors.empty() ? nullptr : &colors);
+    std::optional<PackedMesh> visual;
+    const MeshOverride* source = nullptr;
+    std::string key;
+    if(replaced) {
+      key = name.substr(0,name.size()-4);
+      for(auto& c:key)
+        c = char(std::toupper(uint8_t(c)));
+      const auto it = meshOverrides.find(key);
+      if(it!=meshOverrides.end())
+        source = &it->second;
+      if(source!=nullptr && source->hasLevels) {
+        if(!source->levels.empty() && MeshLevels::enabled())
+          for(auto& level:implLoadMeshLevels(key,*source,zmsh,!colors.empty()))
+            packed.addLevel(level.mesh,level.px,level.colors.empty() ? nullptr : &level.colors);
+        }
+      else if(source!=nullptr) {
+        const auto enabled = [](const char* env, const char* setting) {
+          const char* value = std::getenv(env);
+          const std::string_view flag = value!=nullptr ? value : "";
+          const bool ini = !Settings::exists() || !Settings::has("INTERNAL",setting) ||
+                           Settings::getI("INTERNAL",setting)!=0;
+          return flag=="1" || flag=="levels" || (flag!="0" && ini);
+          };
+        if(enabled("OPENGOTHIC_CLUSTER_LOD","clusterLod") &&
+           enabled("OPENGOTHIC_CLUSTER_LOD_MESHES","clusterLodMeshes")) {
+          auto sidecar = source->file;
+          sidecar.replace_extension(".clod");
+          try {
+            if(std::filesystem::is_regular_file(sidecar)) {
+              std::vector<uint8_t> locked(zmsh.sub_meshes.size());
+              bool rigid = true;
+              for(size_t i=0; i<locked.size(); ++i) {
+                const auto& m = zmsh.sub_meshes[i].mat;
+                std::string material = m.texture;
+                for(auto& c:material)
+                  c = char(std::toupper(uint8_t(c)));
+                if(const auto found = materialMaps.find(material); found!=materialMaps.end()) {
+                  locked[i] = uint8_t(found->second.twoSided!=Material::TwoSided::Off);
+                  rigid &= !found->second.foliage.on && !found->second.strand;
+                  }
+                }
+              if(rigid) {
+                auto graph = MeshClusterLod::read(source->file,source->sourceSize,source->sourceCrc32,zmsh,locked);
+                if(!graph) {
+                  Log::e("meshes: cluster hierarchy for \"",key,"\" is not used: stale or invalid .clod file");
+                  }
+                else if(std::ranges::any_of(graph->clusters, [](const auto& c) { return c.level!=0; })) {
+                  visual.emplace(zmsh,*graph);
+                  Log::i("[cluster-lod] mesh ",key,": ",uint64_t(graph->clusters.size())," clusters");
+                  }
+                }
+              }
+            }
+          catch(const std::exception& error) {
+            Log::e("meshes: cluster hierarchy for \"",key,"\" is not used: ",error.what());
+            }
+          }
+        }
+      }
+    auto ret = std::make_unique<ProtoMesh>(std::move(packed),name,true,visual ? &*visual : nullptr);
+    auto& mesh = ret->attach[0];
+    mesh.ownMesh = replaced;
+    if(source!=nullptr && !mesh.levels.empty() && source->impostor.px>0.f && MeshLevels::impostorsEnabled())
+      implLoadMeshImpostor(key,source->impostor,mesh);
+    if(source!=nullptr && !source->hierarchy.empty() && mesh.clusterLevels.empty() && TreeBough::enabled())
+      TreeBough::attach(mesh,source->hierarchy);
+    return ret;
     }
 
   if(FileExt::hasExt(name,"MMS") || FileExt::hasExt(name,"MMB")) {
@@ -844,7 +1035,8 @@ PfxEmitterMesh* Resources::implLoadEmiterMesh(std::string_view name) {
 
   auto& ret = emiMeshCache[cname];
 
-  if(FileExt::hasExt(cname,"3DS")) {
+  // a static mesh by its visual's name (.3DS) or by its ProtoMesh's (.MRM: an item's mesh, graphics/itemview)
+  if(FileExt::hasExt(cname,"3DS") || FileExt::hasExt(cname,"MRM")) {
     FileExt::exchangeExt(cname,"3DS","MRM");
 
     bool replaced = false;
@@ -854,6 +1046,17 @@ PfxEmitterMesh* Resources::implLoadEmiterMesh(std::string_view name) {
       return nullptr;
 
     PackedMesh packed(zmsh,PackedMesh::PK_Visual,replaced);
+    ret = std::unique_ptr<PfxEmitterMesh>(new PfxEmitterMesh(packed));
+    return ret.get();
+    }
+
+  if(FileExt::hasExt(cname,"MMS") || FileExt::hasExt(cname,"MMB")) {
+    // a morph mesh (a bow): its points at rest
+    FileExt::exchangeExt(cname,"MMS","MMB");
+    auto zmm = loadMorphData(cname);
+    if(zmm.mesh.sub_meshes.empty())
+      return nullptr;
+    PackedMesh packed(zmm.mesh,PackedMesh::PK_Visual);
     ret = std::unique_ptr<PfxEmitterMesh>(new PfxEmitterMesh(packed));
     return ret.get();
     }

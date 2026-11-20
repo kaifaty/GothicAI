@@ -60,6 +60,7 @@ ALLOWED = {
 LAYER_RULES: list[tuple[str, str]] = [
     # Import of the original install into our formats (ZenKit, DirectMusic, Bink).
     ("common/asset/*fromzenkit*", "import"),
+    ("common/import/*", "import"),
     ("common/zenkitlog", "import"),
     ("common/baseimport", "import"),
     ("common/basestoreimport", "import"),
@@ -80,6 +81,7 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/navreward", "tools"),
     ("common/navsimpackage", "tools"),
     ("common/npcdayjournal", "tools"),
+    ("common/npcdaymeasurement", "tools"),
     ("common/game/*bench", "tools"),
     ("common/game/bodyarena*", "tools"),
     ("common/game/bodyreplay", "tools"),
@@ -93,6 +95,12 @@ LAYER_RULES: list[tuple[str, str]] = [
     # Gothic's media formats at runtime.
     ("common/daedalus/*", "gothic"),
     ("common/game/gamescript*", "gothic"),
+    ("common/game/itemdefinitionruntime", "gothic"),
+    ("common/game/npcdefinitionruntime", "gothic"),
+    ("common/game/npchelperruntime", "gothic"),
+    ("common/game/placementdefinitionruntime", "gothic"),
+    ("common/game/activitydefinitionruntime", "gothic"),
+    ("common/game/routinedefinitionruntime", "gothic"),
     ("common/game/gamesession", "gothic"),
     ("common/game/definitions/*", "gothic"),
     # Pure mesh packing over our asset types, independent of Gothic.
@@ -120,6 +128,12 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/gamemusic", "gothic"),
     ("common/dmusic/*", "gothic"),
     ("common/programdata", "gothic"),
+    ("common/itemdefinitions", "rpg"),
+    ("common/placementdefinitions", "rpg"),
+    ("common/activitydefinitions", "rpg"),
+    ("common/routinedefinitions", "rpg"),
+    ("common/itemloadprobe", "platform"),
+    ("common/npcloadprobe", "platform"),
     ("common/outputunits", "gothic"),
     # Our own GLB format reader and writer, independent of Gothic rules.
     ("common/gothicglb", "platform"),
@@ -130,6 +144,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/graphics/mdlvisual*", "rpg"),
     ("common/graphics/objvisual*", "rpg"),
     ("common/graphics/effect", "rpg"),
+    # An item's mesh with its own effect (reports/engine/2026-11-19-item-effects): built of World and ItemRecord.
+    ("common/graphics/itemview", "rpg"),
     # Pure camera math, independent of game objects despite living in game/.
     ("common/game/aimcamera", "platform"),
     # Pure impact math and transform validation, independent of game objects.
@@ -143,6 +159,8 @@ LAYER_RULES: list[tuple[str, str]] = [
     # The platform: resources of our formats, render, animation, physics, sound, nets.
     # Installation identity and ready-base validation use file I/O only.
     ("common/baseidentity", "platform"),
+    # The NPC definitions reader is a codec over asset types and file I/O only.
+    ("common/npcdefinitions", "platform"),
     ("common/asset/*", "platform"),
     ("common/graphics/*", "platform"),
     ("common/physics/*", "platform"),

@@ -2,7 +2,7 @@
 #define VERTEX_PROCESS_GLSL
 
 #include "common.glsl"
-#include "foliage_wind.glsl"
+#include "foliage_tree.glsl"
 
 struct Vertex {
 #if (MESH_TYPE==T_LANDSCAPE) || (MESH_TYPE==T_OBJ) || (MESH_TYPE==T_MORPH)
@@ -245,14 +245,19 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
 #endif
 
 #if (MESH_TYPE==T_OBJ) && defined(LVL_OBJECT)
-  // Living foliage (foliage_wind.glsl): the leaves of a material with `foliage` move in the world's wind, in every
-  // pass alike, so the shadow moves with them. The normal stays the card's
+  // Living foliage (foliage_wind.glsl, foliage_tree.glsl): the leaves of a material with `foliage` move in the
+  // world's wind, as a tuft or as a tree, in every pass alike, so the shadow moves with them. The normal stays
   const uint foliage = (bucket[bucketId].flags & BK_FOLIAGE)!=0u ? bucket[bucketId].foliage : 0u;
-  if(foliageMoves(foliage)) {
-    // the gust comes to the tuft's place when the front does (foliageFrontAt)
+  // far off a tree's wind fades, and past that its vertices are not moved at all (foliageTreeFade): by the main
+  // camera, whose place every view's scene keeps, so the tree and its shadow fade as one
+  const vec3 treeFade = foliageMoves(foliage) ? foliageTreeFade(foliage, bucket[bucketId].foliageReach, obj.mat,
+                                                                scene.camPos, scene.foliageFade.x) : vec3(0.0);
+  if(treeFade.x>0.0) {
+    // the gust comes to the tuft's place when the front does (foliageFrontAt); a tree reads it at every vertex
     const vec3 at = foliageFrontAt(obj.mat[3].z, scene.foliageFront.xy, scene.foliageFrontK, scene.foliageWind, scene.foliageSwing);
-    v.pos = foliageBend(v.pos, foliage, bucket[bucketId].foliageReach, obj.mat, vec4(scene.foliageWind.xy, at.x, scene.foliageWind.w),
-                        scene.foliagePhase, vec4(scene.foliageSwing.x, at.y, at.z, 0.0));
+    v.pos = foliageMove(v.pos, v.color, foliage, bucket[bucketId].foliageReach, obj.mat,
+                        vec4(scene.foliageWind.xy, at.x, scene.foliageWind.w), scene.foliagePhase, vec4(scene.foliageSwing.x, at.y, at.z, 0.0),
+                        scene.foliageFront.xy, scene.foliageFrontK, treeFade);
     }
 #endif
 
@@ -350,6 +355,23 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
       }
     shOut.normal = normalize(normal)*(0.5 + 0.5*lid);
     }
+  if((bucket[bucketId].flags & BK_CROWN)!=0u) {
+    // A tree's crown (lighting/crown_light.glsl): the openness of the vertex (COLOR_0 A of the own GLB, 1 without
+    // it) rides to main.frag in the normal's length, as the lid's shade does
+    vec3  crownN    = normal*inversesqrt(max(dot(normal,normal), 1e-12));
+    float crownOpen = unpackUnorm4x8(v.color).a;
+#if (MESH_TYPE==T_OBJ)
+    if((bucket[bucketId].flags & BK_FOLIAGE)!=0u && (bucket[bucketId].foliage >> 24)==FoliageAnchorField) {
+      // A field of corn (foliage_wind.glsl): the wave shows by the light. Where the corn lies over, the normal goes
+      // over against the wind and the vertex opens, at the place of the row, so a row is lit as one
+      const vec3  at = foliageFrontAt(obj.mat[3].z, scene.foliageFront.xy, scene.foliageFrontK, scene.foliageWind, scene.foliageSwing);
+      const float l  = foliageFieldLight(bucket[bucketId].foliage, obj.mat[3], at.x, scene.foliageWind, scene.foliagePhase);
+      crownN    = normalize(crownN - vec3(scene.foliageWind.x, 0.0, scene.foliageWind.y)*(FoliageFieldNormalTan*l));
+      crownOpen = min(crownOpen + FoliageFieldSheen*l, 1.0);
+      }
+#endif
+    shOut.normal = crownN*(0.5 + 0.5*crownOpen);
+    }
 #endif
 #endif
 
@@ -387,13 +409,14 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
 #endif
       }
 #if (MESH_TYPE==T_OBJ)
-    // the leaf where the previous frame's wind had it; the same wind (a pause) gives the same place and no motion
-    if(foliageMoves(foliage)) {
+    // the leaf where the previous frame's wind had it; the same wind (a pause) gives the same place and no motion.
+    // The fade is this frame's: the vector is the wind's alone
+    if(treeFade.x>0.0) {
       const vec3 at = foliageFrontAt(obj.mat[3].z, scene.foliageFront.zw, scene.foliageFrontK, scene.foliageWindPrev,
                                      scene.foliageSwingPrev);
-      local = foliageBend(local, foliage, bucket[bucketId].foliageReach, obj.mat,
+      local = foliageMove(local, v.color, foliage, bucket[bucketId].foliageReach, obj.mat,
                           vec4(scene.foliageWindPrev.xy, at.x, scene.foliageWindPrev.w), scene.foliagePhasePrev,
-                          vec4(scene.foliageSwingPrev.x, at.y, at.z, 0.0));
+                          vec4(scene.foliageSwingPrev.x, at.y, at.z, 0.0), scene.foliageFront.zw, scene.foliageFrontK, treeFade);
       }
 #endif
     // prev.mat*local' - mat*local = (prev.mat - mat)*local' + mat*(local' - local); v.pos is this frame's local

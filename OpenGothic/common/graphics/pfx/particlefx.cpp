@@ -178,6 +178,8 @@ uint64_t ParticleFx::effectPrefferedTime() const {
   auto v0   = prefferedTime;
   auto v1   = ppsCreateEm==nullptr ? 0 : ppsCreateEmDelay+ppsCreateEm->effectPrefferedTime();
   auto time = std::max(v0,v1);
+  for(const auto* other:with)
+    time = std::max(time,other->effectPrefferedTime());
 
   time = std::max<uint64_t>(1,time); // sleep spell has pfx burst effect with zero life span
   return time;
@@ -227,7 +229,8 @@ uint64_t ParticleFx::calcPrefferedTimeSingle(const KeyList& k, float fps) {
   }
 
 const Tempest::Texture2d* ParticleFx::loadTexture(std::string_view src) {
-  auto view = Resources::loadTexture(src,false,false);
+  // a trail and a mark find an own texture of the content as the sprite does (Material)
+  auto view = Resources::loadMaterialAlbedo(src);
   if(view==nullptr)
     view = &Resources::fallbackBlack();
   return view;

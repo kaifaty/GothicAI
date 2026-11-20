@@ -1,0 +1,45 @@
+# The fire rolled out from the wall torch (reports/content/remaster/campfire, brazier, hearth): what the campfires',
+# braziers' and hearths' own flame, smoke, lamps and the heat haze cost. Four held views: the harbour campfire at
+# midnight from 4 m (flame, smoke, haze), the same campfire at noon from 2 m, where the haze is largest in the frame,
+# a city brazier at midnight, the wide fireplace of the upper quarter with five fires at midnight.
+# Compare sets with scripts/perf-content.sh A B fires. Animated draws are hidden on both sides.
+seed 73013
+cheat god
+set time 0 0
+cadence normal
+overlay off
+ui off
+view full
+view hide animated morph
+cam lift off
+goto pos -5278 -291 -10674
+cam at -5278 -121 -10674 -5624 -151 -10874
+# Ten real seconds after the first teleport for loading and native simulation, five after the next ones.
+wait 10000
+set time 0 0
+perf sample perf-fires/view-1
+wait 8000
+perf stop
+set time 12 0
+goto pos -5433 -311 -10764
+cam at -5433 -141 -10764 -5624 -151 -10874
+wait 5000
+set time 12 0
+perf sample perf-fires/view-2
+wait 8000
+perf stop
+set time 0 0
+goto pos -5127 -69 -10541
+cam at -5127 101 -10541 -5061 106 -10915
+wait 5000
+set time 0 0
+perf sample perf-fires/view-3
+wait 8000
+perf stop
+goto pos 3174 744 8093
+cam at 3174 879 8093 2923 784 8329
+wait 5000
+set time 0 0
+perf sample perf-fires/view-4
+wait 8000
+perf stop

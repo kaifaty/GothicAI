@@ -31,6 +31,8 @@ class PfxEmitter {
     void     setDirection(const Tempest::Matrix4x4& pos);
     void     setObjMatrix(const Tempest::Matrix4x4& mt);
     bool     renderPosition(Tempest::Vec3& out) const;
+    // where the emitter is: its slot's place, the headless one's position; false - no emitter
+    bool     position(Tempest::Vec3& out) const;
     void     setActive(bool act);
     bool     isActive() const;
     void     setLooped(bool loop);
@@ -60,5 +62,7 @@ class PfxEmitter {
     CollisionZone      zone;
     // the place in the particle bucket; declared last, so it is freed first, as before
     PfxSlot            slot;
+    // particles.d "with": the effects this one brings along, at the same place and in the same state
+    std::vector<PfxSlot> extra;
   };
 

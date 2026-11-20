@@ -60,6 +60,8 @@
 //       (cloth.wcl), and their comparison with readWorldChunks and the island search (worldcook.h).
 //   content-convert time-world <world dir> [--content <dir>] [--out <dir>]
 //       Wall time of the stages (five runs) of the GLB and the cooked read, and of the world cloth.
+//   content-convert cluster-lod-census <world dir> [--out <file>]
+//       Cluster hierarchy totals for each draw GLB and the whole world, as TSV.
 //   content-convert --self-test
 //       Round trips of synthetic meshes, world data and presets; no game files.
 //
@@ -122,7 +124,17 @@
 
 namespace fs = std::filesystem;
 
+void runClusterLodCensus(const fs::path& world, const fs::path& output);
+void runOwnMeshClusterLod(const std::vector<fs::path>& roots, const fs::path& output, bool cook);
+void stressOwnMeshContent(const fs::path& root, const fs::path& output, int level);
+
 namespace {
+
+constexpr char clusterLodCensusUsage[] =
+  "content-convert cluster-lod-census <world dir> [--out <file>]\n"
+  "       content-convert cluster-lod-census --meshes <content dir>... [--out <file>]\n"
+  "       content-convert cook-mesh-lod <content dir>...\n"
+  "       content-convert stress-base <content dir> <out dir> --meshes 0..3\n";
 void require(bool ok, const std::string& what) {
   if(!ok) throw std::runtime_error(what);
   }
@@ -834,8 +846,44 @@ int main(int argc, char** argv) {
       }
     if(args.size()==1 && args[0]=="--self-test")
       return selfTest();
+    if(args.size()==5 && args[0]=="stress-base" && args[3]=="--meshes" &&
+       args[4].size()==1 && args[4][0]>='0' && args[4][0]<='3') {
+      stressOwnMeshContent(args[1],args[2],args[4][0]-'0');
+      return 0;
+      }
     if(const auto stress=StressBase::run(args)) return *stress;
     if(const auto cooked=WorldCook::run(args)) return *cooked;
+    if(!args.empty() && (args[0]=="cook-mesh-lod" || (args.size()>=2 && args[0]=="cluster-lod-census" && args[1]=="--meshes"))) {
+      const bool cook = args[0]=="cook-mesh-lod";
+      const size_t first = cook ? 1 : 2;
+      std::vector<fs::path> roots;
+      fs::path output;
+      for(size_t i=first; i<args.size(); ++i) {
+        if(!cook && i+2==args.size() && args[i]=="--out" && !args[i+1].empty()) {
+          output = args[i+1];
+          break;
+          }
+        if(args[i].empty() || args[i].starts_with("--")) {
+          roots.clear();
+          break;
+          }
+        roots.emplace_back(args[i]);
+        }
+      if(roots.empty()) {
+        std::cerr << "usage: " << clusterLodCensusUsage;
+        return 2;
+        }
+      runOwnMeshClusterLod(roots,output,cook);
+      return 0;
+      }
+    if(!args.empty() && args[0]=="cluster-lod-census") {
+      if(args.size()!=2 && (args.size()!=4 || args[2]!="--out" || args[3].empty())) {
+        std::cerr << "usage: " << clusterLodCensusUsage;
+        return 2;
+        }
+      runClusterLodCensus(args[1],args.size()==4 ? fs::path(args[3]) : fs::path());
+      return 0;
+      }
     if(args.size()==3 && args[0]=="check-particles") {
       const auto result=ParticleContent::check(args[1],args[2]);
       for(const auto& error:result.errors)
@@ -960,6 +1008,7 @@ int main(int argc, char** argv) {
                  "       content-convert sources|verify-sources <gothic dir> <dir>\n"
                  "       content-convert base <gothic dir> <dir>\n"
                  "       content-convert formats\n" << StressBase::usage << WorldCook::usage <<
+                 "       " << clusterLodCensusUsage <<
                  "       content-convert --self-test\n";
     return 2;
     }

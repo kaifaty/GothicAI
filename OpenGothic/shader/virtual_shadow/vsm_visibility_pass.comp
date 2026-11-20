@@ -7,6 +7,7 @@
 #include "scene.glsl"
 #include "common.glsl"
 #include "virtual_shadow/vsm_common.glsl"
+#include "virtual_shadow/vsm_cull.glsl"
 
 //NOTE: need to sort pages per mip upfront, to reduce pulling cost
 layout(local_size_x = 1024) in;
@@ -14,13 +15,22 @@ layout(local_size_x = 1024) in;
 const uint NumThreads = gl_WorkGroupSize.x*gl_WorkGroupSize.y*gl_WorkGroupSize.z;
 
 layout(push_constant, std430) uniform UboPush {
-  int meshletCount;
+  int  meshletCount;
+  uint candidateCap;  // DrawCommands::vsmPairCap
+  layout(offset = 16) float lodPx;
+  float lodProjection;
+  float lodHeight;
+  uint lodDebug;
+  vec4 lodCamera;
+  vec4 lodForwardAndGuard;
   } push;
 layout(binding = 0, std140) uniform UboScene    { SceneDesc   scene;         };
-layout(binding = 1, std430) buffer Payload      { uvec4       payload[];     };
+// a cluster and the page entry its sphere touches (vsm_cull_meshlets.comp takes its meshlets): the cluster's id, the
+// entry's index and its bin above 16 bits (vsmSunBin, vsmLampBin), then the meshlets that pass, which the meshlets'
+// pass writes
+layout(binding = 1, std430) writeonly buffer Cnd { uvec4      candidates[];  };
 layout(binding = 2, std430) readonly buffer Mem { uint        instanceMem[]; };
 layout(binding = 3, std140) readonly buffer Bbo { Bucket      bucket[];      };
-layout(binding = 4, std430) buffer IndirectBuf  { IndirectCmd cmd[];         };
 layout(binding = 5, std430) readonly buffer Cbo { Cluster     clusters[];    };
 layout(binding = 6, std430) readonly buffer Lbo { LightSource lights[];      };
 
@@ -56,6 +66,10 @@ Instance pullInstance(uint i) {
   return ret;
   }
 
+const uint L_ClusterLevelIndex = 10;
+const uint L_ClusterLevel = 11;
+#include "materials/cluster_lod.glsl"
+
 bool frustrumTest(const vec4 sphere) {
   if(sphere.w<0.f)
     return false;
@@ -66,25 +80,6 @@ bool frustrumTest(const vec4 sphere) {
       }
     }
 
-  return true;
-  }
-
-bool projectSphere(const vec4 sphere, out vec4 aabb, out float depthMax) {
-  const vec3  c = (scene.viewProject * vec4(sphere.xyz, 1)).xyz;
-  const float R = sphere.w;
-
-  const float smWidthInv = 1.0/(1024.0); // NOTE: from camera.cpp
-  const float zScale     = 1.0/(10*5120.0);
-
-  float Rz = R * zScale;
-  if(c.z - Rz > 1 || c.z + Rz < 0)
-    return false;
-
-  float Rx = R * smWidthInv;
-  float Ry = R * smWidthInv;
-  aabb     = vec4(c.xy-vec2(Rx,Ry), c.xy+vec2(Rx,Ry));
-  depthMax = c.z + Rz;
-  // aabb = c.xyxy;
   return true;
   }
 
@@ -114,29 +109,14 @@ bool projectInstance(const Cluster cluster, out vec4 aabb, out float depthMax) {
   }
 
 bool projectCluster(const Cluster cluster, out vec4 aabb, out float depthMax) {
-  if(cluster.instanceId==0xFFFFFFFF)
-    return projectSphere(cluster.sphere, aabb, depthMax);
-  return projectSphere(cluster.sphere, aabb, depthMax);
+  return vsmProjectSphere(scene.viewProject, cluster.sphere, aabb, depthMax);
   // return projectInstance(cluster, aabb, depthMax);
   }
 
-// the meshlets of a cluster that cast a shadow: of strands, the first part of the list
-int shadowMeshlets(const Cluster cluster) {
-  if(cluster.instanceId!=0xFFFFFFFF && (bucket[cluster.bucketId_commandId >> 16].flags & BK_STRAND)!=0u)
-    return strandShadowMeshlets(cluster.meshletCount, pullInstance(cluster.instanceId).fatness);
-  return cluster.meshletCount;
-  }
-
-bool emitCluster(const Cluster cluster, int meshletCount, uint page) {
-  const uint at = atomicAdd(vsm.header.meshletCount, meshletCount);
-  if(at+meshletCount > VSM_MAX_MESHLETS)
-    return false;
-  for(int i=0; i<meshletCount; ++i)
-    payload[at+i] = uvec4(cluster.instanceId, cluster.firstMeshlet+i, cluster.bucketId_commandId, page);
-
-  const uint commandId = cluster.bucketId_commandId & 0xFFFF;
-  atomicAdd(cmd[commandId].instanceCount, meshletCount);
-  return true;
+void listCandidate(uint clusterId, uint entry, uint bin) {
+  const uint at = atomicAdd(vsm.header.candidateCount, 1);
+  if(at<push.candidateCap)
+    candidates[at] = uvec4(clusterId, entry | (bin << 16), 0, 0);
   }
 
 
@@ -212,10 +192,7 @@ void pullPagesOmni() {
   }
 
 bool pageBoundsTest(in vec4 aabb, const ivec3 page, const ivec2 sz) {
-  aabb -= page.xyxy;
-  if(aabb.z < 0 || sz.x <= aabb.x)
-    return false;
-  if(aabb.w < 0 || sz.y <= aabb.y)
+  if(!vsmEntryOverlap(aabb, page, sz))
     return false;
   const float dx  = (aabb.z-aabb.x)*VSM_PAGE_SIZE;
   const float dy  = (aabb.w-aabb.y)*VSM_PAGE_SIZE;
@@ -250,12 +227,16 @@ bool pageHiZTest(ivec4 iaabb, float depthMax, const ivec3 at, const ivec2 sz) {
 
 void runCluster(const uint clusterId, const uint mip) {
   const Cluster cluster = clusters[clusterId];
-  if(cluster.sphere.w<=0.f)
+  if(cluster.sphere.w<=0.f || cluster.meshletCount<=0)
     return; // disabled or deleted
+
+  uint level;
+  if(!clusterLodVisible(clusterId, cluster.instanceId, level))
+    return;
 
   if(frustrumTest(cluster.sphere)) {
     if(gl_GlobalInvocationID.y==0)
-      atomicAdd(vsm.header.counterV, cluster.meshletCount);
+      atomicAdd(vsm.header.counterV, shadowCluster(cluster).meshletCount);
     } else {
     // return;
     }
@@ -265,11 +246,7 @@ void runCluster(const uint clusterId, const uint mip) {
   if(!projectCluster(cluster, aabb, depthMax))
     return;
 
-  aabb /= (1u << mip);
-  aabb = aabb*0.5+0.5; // [0..1]
-  aabb = aabb*VSM_PAGE_TBL_SIZE;
-
-  const int meshletCount = shadowMeshlets(cluster);
+  aabb = vsmPageTableBox(aabb, mip);
 
   ivec4 iaabb = ivec4(ivec2(aabb.xy), ivec2(aabb.zw)+1);
   iaabb.xy = max(iaabb.xy, ivec2(0));
@@ -302,53 +279,32 @@ void runCluster(const uint clusterId, const uint mip) {
       continue;
 #endif
 
-    if(!emitCluster(cluster, meshletCount, i))
-      break;
+    listCandidate(clusterId, i, vsmSunBin(page, sz));
     }
   }
 
-
-bool frustrumOmniTest(vec3 pos, float r) {
-  const vec3  plane[] = {vec3(0,-1,1),  vec3(0,+1,1), vec3(-1,0,1), vec3(+1,0,1)};
-  const float scale   = 1.41421356237; //sqrt(2);
-
-  [[unroll]]
-  for(int i=0; i<4; ++i) {
-    if(dot(pos, plane[i]) < -r*scale)
-      return false;
-    }
-  return true;
-  }
 
 void runClusterOmni(const uint clusterId) {
   const Cluster cluster = clusters[clusterId];
-  if(cluster.sphere.w<=0.f)
-    return; // disabled or deleted
+  if(cluster.sphere.w<=0.f || cluster.meshletCount<=0)
+    return; // disabled, deleted or hidden
 
-  const int meshletCount = shadowMeshlets(cluster);
+  uint level;
+  if(!clusterLodVisible(clusterId, cluster.instanceId, level))
+    return;
+
   for(uint ix=0; ix<pageListSize; ++ix) {
     const uint  i    = pageList[ix];
     const uint  data = vsm.pageList[i];
 
     const uvec2       page = unpackLightId(data);
     const LightSource lx   = lights[page.x];
-    const uint        face = page.y;
-    // const ivec2       sz   = unpackVsmPageSize(data);
-
-    const vec3  dvec = cluster.sphere.xyz - lx.pos;
-    const float r    = cluster.sphere.w   + lx.range;
-
-    if(dot(dvec,dvec) > r*r)
-      continue;
-
-    const vec3 pos  = vsmMapDirToFace(dvec, face);
-    if(!frustrumOmniTest(pos, cluster.sphere.w))
+    if(!vsmOmniFaceTest(cluster.sphere, lx.pos, lx.range, page.y))
       continue;
 
     // imageAtomicAdd(dbg, ivec2(0,1), cluster.meshletCount);
     // imageAtomicAdd(dbg, ivec2(page.x%64,1+page.x/64), cluster.meshletCount);
-    if(!emitCluster(cluster, meshletCount, i))
-      break;
+    listCandidate(clusterId, i, vsmLampBin(distance(lx.pos, scene.camPos)));
     }
   }
 

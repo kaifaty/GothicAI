@@ -6,6 +6,8 @@
 #include "graphics/dynamic/frustrum.h"
 #include "rtscene.h"
 #include "resources.h"
+#include "graphics/crownlight.h"
+#include "graphics/treewindfade.h"
 #include "graphics/foliagewind.h"
 #include "graphics/houselights.h"
 
@@ -33,6 +35,15 @@ class SceneGlobals final {
       VF_TAA = 0x2,
       VF_HAIR_DEBUG = 0x4,
       VF_SHADOW = 0x8,
+      VF_LAMP_CONTACT = 0x10,
+      VF_CONTACT_AO = 0x20,
+      VF_GRASS_CONTACT = 0x40,
+      VF_CROWN_MASK = 0x80,
+      VF_HIZ_NO_CANOPY = 0x100,
+      VF_TREE_OCCLUSION_PROBE = 0x200,
+      VF_HIZ_PRECISE = 0x400,
+      VF_HIZ_VERIFY  = 0x800,
+      VF_HIZ_HISTORY_REFERENCE = 0x1000,
       };
 
     static bool isShadowView(VisCamera v);
@@ -51,6 +62,10 @@ class SceneGlobals final {
     // TAA: the bias of the material textures' mip level in the main view; shadows keep 0
     void setMipBias(float bias);
     void setTaaFrame(bool taa, bool lampTaa, uint32_t frame);
+    void setLandscapeMask(bool enabled) { landscapeMask = enabled; }
+    bool isLandscapeMask() const { return landscapeMask; }
+    void setTreeOcclusionProbe(bool verify) { uboGlobalCpu.viewFlags |= VF_TREE_OCCLUSION_PROBE | (verify ? VF_HIZ_VERIFY : 0u); }
+    bool isTreeOcclusionProbe() const { return (uboGlobalCpu.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0; }
     // motion vectors of objects: on/off and the camera's part (identity and this frame's camera on a cut)
     void setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
     // the TAA reactive mask (graphics plan 1v): the added light on screen that makes an additive pixel fully reactive
@@ -68,6 +83,7 @@ class SceneGlobals final {
     void setTime(uint64_t time);
     void commitUbo(uint8_t fId);
     void prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer> &cmd, uint8_t frameId);
+    Tempest::StorageBuffer treeHistoryReferenceUbo() const;
 
     void setResolution(uint32_t w, uint32_t h);
     void setHiZ(const Tempest::Texture2d& hiZ);
@@ -87,8 +103,14 @@ class SceneGlobals final {
     const Tempest::Vec3       clipInfo() const;
     // the eye of the main view and the size of the frame it is drawn into (the levels of strands, VisualObjects)
     Tempest::Vec3             camPos()    const { return uboGlobalCpu.camPos;    }
+    float                     verticalProjection() const { return uboGlobalCpu.project[1][1]; }
+    // SceneDesc::foliageFade.x of the frame (commitUbo): the scale of the tree's wind fade, 0 without it
+    float                     foliageFade() const { return uboGlobalCpu.foliageFade.x; }
     // SceneDesc::grassRing: the field of grass says where its blades end (GrassField); zero without it
     void                      setGrassRing(const Tempest::Vec4& ring) { uboGlobalCpu.grassRing = ring; }
+    // the last frame drew blades: the sun's screen ray over them runs in the next (graphics/grasscontact.h)
+    void                      setGrassDrawn(bool drawn) { grassDrawn = drawn; }
+    bool                      grassContactActive() const { return (uboGlobalCpu.viewFlags & VF_GRASS_CONTACT)!=0; }
     Tempest::Point            screenRes() const { return uboGlobalCpu.screenRes; }
 
     const Tempest::Matrix4x4  viewProjectLwc() const;
@@ -104,6 +126,7 @@ class SceneGlobals final {
 
     const Tempest::Texture2d*         sceneColor   = &Resources::fallbackBlack();
     const Tempest::Texture2d*         sceneDepth   = &Resources::fallbackBlack();
+    const Tempest::Texture2d*         sceneHaze    = &Resources::fallbackBlack(); // the frame before the haze pass
     const Tempest::Texture2d*         zbuffer      = &Resources::fallbackBlack();
 
     const Tempest::Texture2d*         gbufDiffuse  = &Resources::fallbackBlack();
@@ -194,9 +217,11 @@ class SceneGlobals final {
       // the travelling front of the gust (graphics/foliagefront.h) and the grass ring (graphics/grass/grassparams.h)
       Tempest::Vec4                   foliageFront;
       Tempest::Vec4                   foliageFrontK;
+      Tempest::Vec4                   foliageFade; // x: FoliageTree::fadeScale of the main view (commitUbo), 0 off
       Tempest::Vec4                   grassRing;
       // the houses whose windows fade with their lamps (HouseLights::pack): three vectors a house
       Tempest::Vec4                   house[3*HouseLights::MaxHouses];
+      alignas(16) uint32_t            grassGroundParts = 0;
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];
@@ -205,6 +230,8 @@ class SceneGlobals final {
     Frustrum                          frustrum[V_Count];
 
     bool                              zWindEnabled = false;
+    bool                              grassDrawn   = false; // setGrassDrawn
+    bool                              landscapeMask = false;
     bool                              legacyWind = true;
     float                             windScale = 1.f;
     uint64_t                          windPeriod = 6000;
@@ -217,6 +244,7 @@ class SceneGlobals final {
     Tempest::Matrix4x4                jitter;
     bool                              jitterEnabled = false;
 
+    UboGlobal                         makeViewUbo(VisCamera v) const;
     Tempest::Matrix4x4                jittered(const Tempest::Matrix4x4& proj) const;
   };
 

@@ -7,6 +7,7 @@
 #include <limits>
 
 #include "utils/string_frm.h"
+#include "game/npcactivityhost.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
 #include "world/objects/interactive.h"
@@ -551,13 +552,8 @@ void GameScript::ai_playani(std::shared_ptr<daedalus::INpc> npcRef, std::string_
   }
 
 void GameScript::ai_setwalkmode(std::shared_ptr<daedalus::INpc> npcRef, int modeBits) {
-  int32_t weaponBit = 0x80;
-  auto npc = findNpc(npcRef);
-
-  int32_t mode = modeBits & (~weaponBit);
-  if(npc!=nullptr && mode>=0 && mode<=3){ //TODO: weapon flags
-    npc->aiPush(AiQueue::aiSetWalkMode(WalkBit(mode)));
-    }
+  if(auto npc = findNpc(npcRef))
+    NpcEngineCalls::setWalkMode(*npc,modeBits);
   }
 
 void GameScript::ai_wait(std::shared_ptr<daedalus::INpc> npcRef, float ms) {
@@ -579,20 +575,8 @@ void GameScript::ai_aligntowp(std::shared_ptr<daedalus::INpc> npcRef) {
   }
 
 void GameScript::ai_gotowp(std::shared_ptr<daedalus::INpc> npcRef, std::string_view waypoint) {
-  auto npc = findNpc(npcRef);
-  if(npc==nullptr)
-    return;
-
-  auto to = world().findWayPoint(npc->position(), waypoint);
-  if(to!=nullptr) {
-    npc->aiPush(AiQueue::aiGoToPoint(*to));
-    return;
-    }
-
-  // in vanilla 'ai_gotowp' sometimes is used incorrectly, so we need to check all other points
-  to = world().findPoint(waypoint, false);
-  if(to!=nullptr)
-    npc->aiPush(AiQueue::aiGoToPoint(*to));
+  if(auto npc = findNpc(npcRef))
+    NpcEngineCalls::gotoWaypoint(world(),*npc,waypoint);
   }
 
 void GameScript::ai_gotofp(std::shared_ptr<daedalus::INpc> npcRef, std::string_view waypoint) {
@@ -869,14 +853,6 @@ void GameScript::perc_setrange(int perc, int dist) {
 int GameScript::hlp_getinstanceid(std::shared_ptr<daedalus::DaedalusInstance> instance) {
   // Log::d("hlp_getinstanceid: name \"",handle.name,"\" not found");
   return instance == nullptr ? -1 : int(instance->symbol_index());
-  }
-
-int GameScript::hlp_random(int bound) {
-  uint32_t   mod  = uint32_t(std::max(1,bound));
-  const Npc* self = nullptr;
-  if(!isolatedRandom.empty() && vm.global_self()!=nullptr)
-    self = findNpc(vm.global_self());
-  return int32_t(rand(mod,self));
   }
 
 bool GameScript::hlp_isvalidnpc(std::shared_ptr<daedalus::INpc> npcRef) {

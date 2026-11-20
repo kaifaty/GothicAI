@@ -115,6 +115,12 @@ void LightGroup::Light::setTimeOffset(uint64_t t) {
   data.setTimeOffset(t);
   }
 
+void LightGroup::Light::setRangeOnce(bool once) {
+  if(owner==nullptr)
+    return;
+  owner->lightSourceDesc[id].setRangeOnce(once);
+  }
+
 void LightGroup::Light::setYaw(float yaw) {
   if(owner==nullptr)
     return;
@@ -198,11 +204,11 @@ LightGroup::Light LightGroup::add(const asset::VLight& vob) {
     lightSourceData[l.id].nearLimit = nearLimit;
     markAsDurtyNoSync(l.id);
     }
-  float jitterCm = 0;
-  if(const auto* flicker = VobLayer::flicker(vob, &jitterCm)) {
+  float jitterCm = 0, swayHz = 0;
+  if(const auto* flicker = VobLayer::flicker(vob, &jitterCm, &swayHz)) {
     // the brightness of a lamp follows its emitter's flame signal (vobs.d "flicker_from")
     std::lock_guard<std::mutex> guard(sync);
-    lightSourceDesc[l.id].setFlicker(*flicker, jitterCm);
+    lightSourceDesc[l.id].setFlicker(*flicker, jitterCm, swayHz);
     animatedLights.insert(l.id);
     }
   if(!vob.cookie.empty()) {

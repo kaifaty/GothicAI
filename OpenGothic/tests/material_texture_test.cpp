@@ -1,8 +1,10 @@
 #include "commandline.h"
+#include "graphics/crownlight.h"
 #include "graphics/material.h"
 #include "graphics/mesh/submesh/animmesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/hizoccluders.h"
 #include "graphics/mdlvisual.h"
 #include "graphics/meshobjects.h"
 #include "graphics/rtscene.h"
@@ -43,6 +45,14 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
+
+// a slot item with no item behind it (graphics/itemview)
+struct ItemViewTest {
+  static ItemView of(MeshObjects::Mesh&& mesh) {
+    const auto* proto = mesh.protoMesh();
+    return ItemView(proto,0,std::move(mesh));
+    }
+  };
 
 namespace {
 size_t assertions = 0;
@@ -631,6 +641,7 @@ void foliageRecords(Tempest::Device& device, const Fixture& fixture) {
     record("LEAF_DEFAULT.TGA", "{}") + "," +
     record("LEAF_SET.TGA", R"({"wind":1.5,"flutter":0.5,"translucency":0.25,"anchor":"line"})") + "," +
     record("LEAF_LIMITS.TGA", R"({"wind":4,"flutter":0,"translucency":1})") + "," +
+    record("LEAF_FIELD.TGA", R"({"anchor":"field"})") + "," +
     record("LEAF_STILL.TGA", R"({"wind":0,"flutter":0,"translucency":0})") + "," +
     R"("LEAF_NONE.TGA":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds"},)" +
     record("LEAF_NUMBER.TGA", "1") + "," +
@@ -653,6 +664,11 @@ void foliageRecords(Tempest::Device& device, const Fixture& fixture) {
   const auto set = Resources::loadMaterialMaps("LEAF_SET.TGA").foliage;
   require(set.on && set.wind==1.5f && set.flutter==0.5f && set.translucency==0.25f && set.anchor==FoliageWind::AnchorLine,
           "foliage must carry the record's numbers");
+  const auto field = Resources::loadMaterialMaps("LEAF_FIELD.TGA").foliage;
+  require(field.on && field.anchor==FoliageWind::AnchorField && (FoliageWind::pack(field,FoliageWind::Both)>>24)==2u &&
+          CrownLight::lit(field,FoliageWind::Both,true) && !CrownLight::lit(set,FoliageWind::Both,true) &&
+          std::abs(FoliageWind::FieldSteady+FoliageWind::FieldSwing-FoliageWind::WaveSteady-FoliageWind::WaveSwing)<1e-6f,
+          "a field of corn is a line with the crown's shade and a tuft's crest");
   const auto limits = Resources::loadMaterialMaps("LEAF_LIMITS.TGA").foliage;
   require(limits.on && limits.wind==4.f && limits.flutter==0.f && limits.translucency==1.f,
           "both ends of the ranges are allowed");
@@ -825,6 +841,135 @@ void groundRecords(Tempest::Device& device, const Fixture& fixture) {
           Material(source("MEADOW_PLAIN.TGA"),true).textureUvPerMetre(0.1f)==0.1f*std::abs(unlisted.uvScale),
           "a ground of two layers is asked no coarser than a repeat per its finer tile, the others by their mesh");
   }
+
+// materials.json "track" and the "border" of a meadow's "ground": the cart track's own material and the earth of
+// the meadow's notches beside it (reports/engine/2026-11-15-meadow-road). Neither replaces the texture the ground
+// has; a record without them is as before (groundRecords)
+void trackRecords(Tempest::Device& device, const Fixture& fixture) {
+  const std::string maps   = R"("albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds")";
+  const std::string sward  = R"("sward":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds"})";
+  const std::string earth  = R"("earth":{"albedo":"alpha.dds","normal":"alpha.dds","orm":"solid.dds"})";
+  const std::string crust  = R"("crust":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds"})";
+  const std::string loose  = R"("loose":{"albedo":"alpha.dds","normal":"alpha.dds","orm":"solid.dds"})";
+  const std::string ribbon = R"("ribbon":{"tint":"solid.dds","normal":"alpha.dds","mask":"solid.dds"})";
+  const std::string track  = R"("track":{)" + crust + "," + loose + "," + ribbon + "}";
+  textFile(fixture.root/"materials/materials.json", std::string("{") +
+    R"("MEADOW.TGA":{"grass":{},"ground":{)" + sward + "," + earth + R"(,"border":{)" + maps + R"(,"tile_m":2.5}}},)" +
+    R"("MEADOW_DEFAULT.TGA":{"grass":{},"ground":{)" + sward + "," + earth + R"(,"border":{)" + maps + R"(}}},)" +
+    R"("MEADOW_PLAIN.TGA":{"grass":{},"ground":{)" + sward + "," + earth + R"(}},)" +
+    R"("MEADOW_LOST.TGA":{"grass":{},"ground":{)" + sward + "," + earth +
+      R"(,"border":{"albedo":"absent.dds","normal":"alpha.dds","orm":"alpha.dds"}}},)" +
+    R"("TRACK.TGA":{"verge":{"of":"MEADOW.TGA"},)" + track + R"(},)" +
+    R"("TRACK_ALONE.TGA":{"track":{"crust":{)" + maps + R"(,"tile_m":5},"loose":{)" + maps + R"(,"tile_m":0.5},)" + ribbon +
+      R"(,"wander":30,"fade":0,"ragged":2}},)" +
+    R"("TRACK_OWN.TGA":{)" + maps + "," + track + R"(},)" +
+    R"("TRACK_LOST.TGA":{"verge":{"of":"MEADOW.TGA"},"track":{)" + crust + "," + loose +
+      R"(,"ribbon":{"tint":"solid.dds","normal":"alpha.dds","mask":"absent.dds"}}},)" +
+    R"("ROAD.TGA":{"verge":{"of":"MEADOW.TGA"}},)" +
+    R"("BAD_TRACK_GRASS.TGA":{"grass":{},)" + track + R"(},)" +
+    R"("BAD_TRACK_NUMBER.TGA":{"track":1},)" +
+    R"("BAD_TRACK_NO_RIBBON.TGA":{"track":{)" + crust + "," + loose + R"(}},)" +
+    R"("BAD_TRACK_NO_MAP.TGA":{"track":{"crust":{"albedo":"solid.dds","normal":"alpha.dds"},)" + loose + "," + ribbon + R"(}},)" +
+    R"("BAD_TRACK_RIBBON.TGA":{"track":{)" + crust + "," + loose + R"(,"ribbon":{)" + maps + R"(}}},)" +
+    R"("BAD_TRACK_TILE.TGA":{"track":{"crust":{)" + maps + R"(,"tile_m":0.1},)" + loose + "," + ribbon + R"(}},)" +
+    R"("BAD_TRACK_WANDER.TGA":{"track":{)" + crust + "," + loose + "," + ribbon + R"(,"wander":31}},)" +
+    R"("BAD_TRACK_FADE.TGA":{"track":{)" + crust + "," + loose + "," + ribbon + R"(,"fade":1.5}},)" +
+    R"("BAD_TRACK_RAGGED.TGA":{"track":{)" + crust + "," + loose + "," + ribbon + R"(,"ragged":-1}},)" +
+    R"("BAD_TRACK_PROJECTED.TGA":{)" + maps + R"(,"projection":{"tile_m":2},)" + track + R"(},)" +
+    R"("BAD_TRACK_WINDOW.TGA":{)" + maps + R"(,"emissive":1,"window":{},)" + track + R"(},)" +
+    R"("BAD_BORDER_NUMBER.TGA":{"grass":{},"ground":{)" + sward + "," + earth + R"(,"border":1}},)" +
+    R"("BAD_BORDER_NO_MAP.TGA":{"grass":{},"ground":{)" + sward + "," + earth + R"(,"border":{"albedo":"solid.dds","normal":"alpha.dds"}}},)" +
+    R"("BAD_BORDER_TILE.TGA":{"grass":{},"ground":{)" + sward + "," + earth + R"(,"border":{)" + maps + R"(,"tile_m":100}}})" +
+    "}");
+  Resources resources(device);
+  const Material unlisted(source("UNLISTED.TGA"),true);
+
+  const auto meadow = Resources::loadMaterialMaps("MEADOW.TGA");
+  const auto plain  = Resources::loadMaterialMaps("MEADOW_PLAIN.TGA");
+  require(meadow.layers.present() && meadow.layers.hasBorder() && meadow.layers.borderTile==2.5f && !meadow.layers.hasTrack() &&
+          meadow.layers.border[0]==meadow.layers.sward[0] && meadow.layers.border[2]!=meadow.layers.earth[2] &&
+          Resources::loadMaterialMaps("MEADOW_DEFAULT.TGA").layers.borderTile==3.f,
+          "a ground's border carries its three maps and its tile, 3 m by default");
+  require(plain.layers.present() && !plain.layers.hasBorder() && plain.layers.borderTile==0.f &&
+          plain.layers.border==Material::Layers::Maps{} && !(plain.layers==meadow.layers) &&
+          !(Material(source("MEADOW.TGA"),true)==Material(source("MEADOW_PLAIN.TGA"),true)),
+          "a ground without the border has none, in a bucket of its own");
+  const auto lostBorder = Resources::loadMaterialMaps("MEADOW_LOST.TGA");
+  require(lostBorder.layers.present() && !lostBorder.layers.hasBorder() && lostBorder.layers==plain.layers,
+          "a border with a map that does not load is none: the ground keeps its two layers");
+
+  const auto road  = Resources::loadMaterialMaps("ROAD.TGA");
+  const auto way   = Resources::loadMaterialMaps("TRACK.TGA");
+  const Grass::Track byDefault;
+  require(!way.present && !way.hasAlbedo && way.layers.present() && way.layers.hasTrack() && way.layers.verge==road.layers.verge &&
+          way.layers.sward[0]==road.layers.sward[0] && way.layers.track.on && way.layers.track.crustTile==4.f &&
+          way.layers.track.looseTile==3.f && way.layers.track.wander==byDefault.wander && way.layers.track.fade==byDefault.fade &&
+          way.layers.track.ragged==byDefault.ragged && !way.layers.hasBorder(),
+          "a track beside a verge carries the verge's layers, its own nine maps, the defaults and no maps of its own");
+  require(way.layers.crust[0]!=way.layers.loose[0] && way.layers.crust[2]!=way.layers.loose[2] &&
+          way.layers.crust[1]==way.layers.loose[1] && way.layers.ribbon[0]==way.layers.crust[0] &&
+          way.layers.ribbon[2]==way.layers.loose[2],
+          "each layer of a track and its ribbon have the maps their part of the record names");
+  require(!road.layers.hasTrack() && road.layers.crust==Material::Layers::Maps{} && road.layers.track==Grass::Track() &&
+          !(road.layers==way.layers),
+          "a verge without the field has no track");
+  const Material tracked(source("TRACK.TGA"),true);
+  require(tracked.layers==way.layers && !tracked.hasMaterialMaps() && tracked.uvScale==unlisted.uvScale &&
+          !(tracked==unlisted) && !(tracked==Material(source("ROAD.TGA"),true)),
+          "a road with a track keeps the texture it has, in a bucket of its own");
+  const auto alone = Resources::loadMaterialMaps("TRACK_ALONE.TGA");
+  require(!alone.present && !alone.layers.present() && alone.layers.hasTrack() && !Resources::groundParams("TRACK_ALONE.TGA").verge.on &&
+          alone.layers.track.crustTile==5.f && alone.layers.track.looseTile==0.5f && alone.layers.track.wander==30.f &&
+          alone.layers.track.fade==0.f && alone.layers.track.ragged==2.f,
+          "a track without a verge stands alone and carries the record's numbers");
+  require(Grass::pack(alone.layers.track)==float(255u | (0u<<8) | (255u<<16)) &&
+          Grass::pack(byDefault)==float(uint32_t(std::lround(9.f/30.f*255.f)) | (153u<<8) | (128u<<16)),
+          "the track's numbers go to the shader as three bytes of one whole number");
+  const auto own = Resources::loadMaterialMaps("TRACK_OWN.TGA");
+  require(own.present && own.layers.hasTrack() && Material(source("TRACK_OWN.TGA"),true).hasMaterialMaps(),
+          "a track beside the maps of an own material keeps the material");
+  const auto lost = Resources::loadMaterialMaps("TRACK_LOST.TGA");
+  require(lost.layers.present() && !lost.layers.hasTrack() && lost.layers==road.layers,
+          "a track with a map that does not load is none: the road keeps its verge");
+
+  for(const auto* name:{"BAD_TRACK_GRASS.TGA","BAD_TRACK_NUMBER.TGA","BAD_TRACK_NO_RIBBON.TGA","BAD_TRACK_NO_MAP.TGA",
+                       "BAD_TRACK_RIBBON.TGA","BAD_TRACK_TILE.TGA","BAD_TRACK_WANDER.TGA","BAD_TRACK_FADE.TGA",
+                       "BAD_TRACK_RAGGED.TGA","BAD_TRACK_PROJECTED.TGA","BAD_TRACK_WINDOW.TGA","BAD_BORDER_NUMBER.TGA",
+                       "BAD_BORDER_NO_MAP.TGA","BAD_BORDER_TILE.TGA"}) {
+    const auto bad = Resources::loadMaterialMaps(name);
+    require(!bad.present && !Resources::grassParams(name).on && !Resources::groundParams(name).ground.on &&
+            !bad.layers.present() && !bad.layers.hasTrack() && bad.layers==Material::Layers(),
+            (std::string("track or border of a wrong type or range, without a map, or beside a grass, a projection or a "
+                        "window must reject the record whole: ")+name).c_str());
+    }
+
+  // The track's and the border's maps are of their ground's demand, as the two layers' are
+  const auto asked = [] { return Resources::textureStats().categoryCount[size_t(Resources::TextureCategory::Landscape)]; };
+  const auto demand = [&](const Material::Layers& l) {
+    Material m;
+    m.layers = l;
+    const auto before = asked();
+    Resources::textureDemand(m,Resources::TextureCategory::Landscape,true);
+    const auto with = asked();
+    Resources::textureDemand(m,Resources::TextureCategory::Landscape,false);
+    return with-before;
+    };
+  // the fixture's two files make five maps by their kinds: a colour, a normal and an ORM of the one, a colour and
+  // an ORM of the other. The lone track names four of them; a map counts once, under its first owner's category
+  Material::Layers bordered;
+  bordered.border = {meadow.layers.earth[0],meadow.layers.earth[1],meadow.layers.earth[2]};
+  const auto ofTrack = demand(alone.layers), ofBorder = demand(bordered);
+  require(ofTrack==4 && ofBorder==1,
+          ("the owner of a ground demands each map of its track and its border once: "+std::to_string(ofTrack)+" "+
+           std::to_string(ofBorder)).c_str());
+  require(Material(source("TRACK_ALONE.TGA"),true).textureUvPerMetre(0.1f)==2.f &&
+          Material(source("MEADOW.TGA"),true).textureUvPerMetre(0.1f)==0.5f &&
+          tracked.textureUvPerMetre(0.1f)==0.5f && tracked.textureUvPerMetre(3.f)==3.f*std::abs(tracked.uvScale),
+          "a ground with a track or a border is asked no coarser than a repeat per the finest of its tiles");
+  }
+#include "foliage_tree_test.h" // foliageTreeMaths, foliageTreeRecords
+#include "vsm_pair_cap_test.h" // vsmRecords
+#include "lights_bvh_test.h" // lightsBvhRecords
 
 // graphics/foliagewind.h: the processor's copy of the rule of shader/materials/foliage_wind.glsl
 void foliageWindMaths() {
@@ -2701,12 +2846,12 @@ void textureOwnerLevels(Tempest::Device& device, const Fixture& fixture) {
                                {{0,100,0},{0,0,1},{0,1},0xffffffffu}},{0,1,2});
   MdlVisual npcVisual;
   npcVisual.setTextureOwner({start.x+1,0,start.z},true);
-  npcVisual.setShield(MeshObjects::Mesh(meshes,shieldMesh,0,false));
+  npcVisual.setShield(ItemViewTest::of(MeshObjects::Mesh(meshes,shieldMesh,0,false)));
   require(std::abs(npcVisual.setTextureOwner(start,true)-400.f)<1.f,"the NPC must get 4 m of reach 40 m away");
   view.x-=700;
   tick();
   require(std::abs(npcVisual.setTextureOwner({start.x+200,0,start.z},true)-200.f)<1.f,"a 2 m move must stay within the reach");
-  npcVisual.setSword(MeshObjects::Mesh(meshes,swordMesh,0,false));
+  npcVisual.setSword(ItemViewTest::of(MeshObjects::Mesh(meshes,swordMesh,0,false)));
   Resources::finishTextureLoading();
   require(armour.tex->w()==256,"a part added after the NPC moved within its reach must be placed where the NPC is");
   }
@@ -3084,6 +3229,7 @@ int main(int argc, char** argv) {
       return 0;
       }
     foliageWindMaths();
+    foliageTreeMaths();
     variants();
     Fixture fixture;
     CommandLine commandLine(0,nullptr);
@@ -3095,8 +3241,12 @@ int main(int argc, char** argv) {
     projectionRecords(device,fixture);
     fringeRecords(device,fixture);
     foliageRecords(device,fixture);
+    foliageTreeRecords(device,fixture);
+    vsmRecords(device);
+    lightsBvhRecords(device);
     grassRecords(device,fixture);
     groundRecords(device,fixture);
+    trackRecords(device,fixture);
     textureResidency(device,fixture);
     textureMipResidency(device,fixture);
     textureScreenLevels(device,fixture);

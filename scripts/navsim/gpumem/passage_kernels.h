@@ -13,15 +13,12 @@ GM_HD bool byteNonzero(float value) {
 
 // Same z-major splat as NavigationMemory::read and gm::readCell, retaining
 // familiar (the policy's ten input planes do not carry that channel).
-GM_HD Sample cell(const Ctx& c, int64_t a, int index, int vx, int vz) {
-  const GridView v = gridView(c, a, index);
-  const Body b = body(c, a);
+GM_HD Sample cell(const Ctx& c, const GridView& v, const Body& b, bool familiar, int vx, int vz) {
   const float rx = -b.fz, rz = b.fx;
   const float half = float(v.size / 2) * v.cell;
   const float ux = (float(vx) + .5f) * v.cell - half, uz = (float(vz) + .5f) * v.cell - half;
   const int ix = cellCoordinate(b.x + ux * rx + uz * b.fx, v.cell);
   const int iz = cellCoordinate(b.z + ux * rz + uz * b.fz, v.cell);
-  const bool familiar = index == 1 && c.mapId[a] >= 0 && c.famValid[a];
   Sample o = emptySample();
   for (int z = iz - 1; z <= iz + 1; ++z)
     for (int x = ix - 1; x <= ix + 1; ++x) {
@@ -60,28 +57,55 @@ GM_HD bool seenFree(const Sample& c) {
 }
 
 struct NearSample { bool hazard = false, free = false; };
-GM_HD NearSample near(const Ctx& c, int64_t a, float r, float f, float corridor) {
+struct NearMemo {
+  int key = -1;
+  NearSample sample;
+};
+
+template <int L>
+GM_HD NearSample near(const Ctx& c, const GridView& v, const Body& b, float r, float f, float corridor,
+                      int lane, unsigned mask, NearMemo& memo) {
   const int x0 = imax(0, int(floorf((r - corridor) / NearCell + float(NearSize) * .5f)));
   const int x1 = imin(NearSize - 1, int(floorf((r + corridor) / NearCell + float(NearSize) * .5f)));
   const int z0 = imax(0, int(floorf((f - corridor) / NearCell + float(NearSize) * .5f)));
   const int z1 = imin(NearSize - 1, int(floorf((f + corridor) / NearCell + float(NearSize) * .5f)));
+  // The same (x,z) belongs to the same lane as the corridor moves. Adjacent
+  // samples usually reuse most of the previous 3x3 box. Wide corridors visit
+  // additional cells at the same lane's stride.
+  constexpr int stride = L == 1 ? 1 : 4;
+  const int startX = x0 + ((lane % stride - x0) & (stride - 1));
+  const int startZ = z0 + ((lane / stride - z0) & (stride - 1));
   NearSample out;
-  for (int z = z0; z <= z1; ++z)
-    for (int x = x0; x <= x1; ++x) {
+  for (int z = startZ; z <= z1 && !out.hazard; z += stride)
+    for (int x = startX; x <= x1; x += stride) {
       const float cr = (float(x) + .5f - float(NearSize) * .5f) * NearCell;
       const float cf = (float(z) + .5f - float(NearSize) * .5f) * NearCell;
       const float dx = smax(0.f, fabsf(r - cr) - NearCell * .5f);
       const float dz = smax(0.f, fabsf(f - cf) - NearCell * .5f);
       if (dx * dx + dz * dz > corridor * corridor) continue;
-      const auto sample = cell(c, a, 0, x, z);
-      if (hazard(sample)) { out.hazard = true; return out; }
-      out.free = out.free || seenFree(sample);
+      const int key = z * NearSize + x;
+      if (memo.key != key) {
+        const auto sample = cell(c, v, b, false, x, z);
+        const bool closed = hazard(sample);
+        memo = {key, {closed, !closed && seenFree(sample)}};
+      }
+      out.hazard = out.hazard || memo.sample.hazard;
+      out.free = out.free || memo.sample.free;
+      if (out.hazard) break;
     }
+#if defined(__CUDA_ARCH__)
+  if constexpr (L > 1) {
+    out.hazard = __any_sync(mask, out.hazard);
+    out.free = __any_sync(mask, out.free);
+  }
+#endif
   return out;
 }
 
 // q: world-space from.xyz, to.xyz, corridorCm, footprintCm.
-GM_HD uint8_t check(const Ctx& c, int64_t agent, const float* q) {
+template <int L = 1>
+GM_HD uint8_t check(const Ctx& c, int64_t agent, const float* q, int lane = 0, unsigned mask = 0) {
+  static_assert(L == 1 || L == 16);
   if (!c.posed[agent]) return Unknown;
   const Body b = body(c, agent);
   // Frame normalises the view's already normalised forward once again.
@@ -98,6 +122,10 @@ GM_HD uint8_t check(const Ctx& c, int64_t agent, const float* q) {
   const float corridor = q[6], footprint = q[7];
   const float nearHalf = NearCell * float(NearSize) * .5f - corridor;
   const float farHalf = FarCell * float(FarSize) * .5f;
+  const auto nearGrid = gridView(c, agent, 0);
+  const auto farGrid = gridView(c, agent, 1);
+  const bool familiar = c.mapId[agent] >= 0 && c.famValid[agent];
+  NearMemo memo;
   bool free = true;
   float along = 0.f;
   while (true) {
@@ -106,7 +134,7 @@ GM_HD uint8_t check(const Ctx& c, int64_t agent, const float* q) {
     float step = FarCell * .5f;
     if (along >= footprint) {
       if (fabsf(r) <= nearHalf && fabsf(f) <= nearHalf) {
-        const auto sample = near(c, agent, r, f, corridor);
+        const auto sample = near<L>(c, nearGrid, b, r, f, corridor, lane, mask, memo);
         if (sample.hazard) return Closed;
         free = free && sample.free;
         step = NearCell * .5f;
@@ -114,9 +142,17 @@ GM_HD uint8_t check(const Ctx& c, int64_t agent, const float* q) {
         const int x = int(floorf(r / FarCell + float(FarSize) * .5f));
         const int z = int(floorf(f / FarCell + float(FarSize) * .5f));
         if (x >= 0 && x < FarSize && z >= 0 && z < FarSize) {
-          const auto sample = cell(c, agent, 1, x, z);
-          if (hazard(sample) && !byteNonzero(sample.free)) return Closed;
-          free = free && seenFree(sample);
+          int verdict = Unknown;
+          if (lane == 0) {
+            const auto sample = cell(c, farGrid, b, familiar, x, z);
+            if (hazard(sample) && !byteNonzero(sample.free)) verdict = Closed;
+            else if (seenFree(sample)) verdict = Free;
+          }
+#if defined(__CUDA_ARCH__)
+          if constexpr (L > 1) verdict = __shfl_sync(mask, verdict, 0, L);
+#endif
+          if (verdict == Closed) return Closed;
+          free = free && verdict == Free;
         } else free = false;
       } else free = false;
     } else if (fabsf(r) <= nearHalf && fabsf(f) <= nearHalf) step = NearCell * .5f;

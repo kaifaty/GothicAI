@@ -390,7 +390,9 @@ remote_probe() {
   local action="$1" state="$2" run="$3" scenario="$4" digest project
   toolchain
   local frame_profile=OFF require_runner=0
-  if [[ "$action" == bench && "$(basename "$scenario")" == streaming-flythrough.bench ]]; then frame_profile=ON; fi
+  if [[ "$action" == bench ]]; then
+    case "$(basename "$scenario")" in streaming-flythrough.bench|cluster-lod-meshes.bench|fir-bough-*.bench) frame_profile=ON ;; esac
+  fi
   if [[ "$action" == bench && "${BENCH_HEADLESS:-0}" == 1 ]]; then require_runner=1; fi
   digest="$(source_digest "$frame_profile")"
   printf '%s\n' "$digest" >"$state/inputs/$run/source.sha256"
@@ -416,7 +418,9 @@ remote_prepare() {
   digest="$(cat "$state/inputs/$run/source.sha256")"
   if [[ "$action" == e2e ]]; then check_protocol; fi
   local frame_profile=OFF require_runner=0
-  if [[ "$action" == bench && "$(basename "$scenario")" == streaming-flythrough.bench ]]; then frame_profile=ON; fi
+  if [[ "$action" == bench ]]; then
+    case "$(basename "$scenario")" in streaming-flythrough.bench|cluster-lod-meshes.bench|fir-bough-*.bench) frame_profile=ON ;; esac
+  fi
   if [[ "$action" == bench && "${BENCH_HEADLESS:-0}" == 1 ]]; then require_runner=1; fi
   build_engine "$state" "$digest" "$frame_profile" "$require_runner"
   if [[ "$action" == e2e ]]; then

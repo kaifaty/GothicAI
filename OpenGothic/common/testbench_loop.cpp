@@ -254,6 +254,9 @@ bool streamingWaitTick(World& w) {
 namespace testbench_detail {
 
 void run(World& w, Npc& pl, PlayerControl& ctrl) {
+  if(bench.historyVerify.pending())
+    return;
+  if(npcDayCheckpointTick(w)) return;
   if(npcTierTestTick(bench.npcTierTest,w,pl,bench.frameMs))return;
   if(npcSpeedTick(bench.npcSpeedTest,w))return;
   if(bench.routeActive || bench.placedItems.probing)return;
@@ -472,8 +475,10 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     const std::string line = bench.prog[bench.pc++];
     exec(line,w,pl,ctrl);
+    if(bench.historyVerify.pending())
+      return;
     if(bench.routeActive || bench.placedItems.probing || bench.world.waitStreaming || NavBench::running() || NavDemos::running() ||
-       NpcDayJournal::running() || bench.npcTierTest.npc || bench.npcSpeedTest.npc) return;
+       NpcDayJournal::running() || npcDayCheckpointRunning() || bench.npcTierTest.npc || bench.npcSpeedTest.npc) return;
     if(bench.movables.spellWaitFrozen>=0 || bench.movables.spellEquipPending) return;
     if(bench.routine.questWait || bench.routine.questStandingWait || bench.routine.routinePhase) return;
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
@@ -558,9 +563,13 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     if(bench.pc+1<bench.prog.size()) {
       const auto prelude=split(bench.prog[bench.pc]);
       const auto initial=split(bench.prog[bench.pc+1]);
+      const bool reloadDay=dt==0 && envStr("SAVE") && !envStr("WORLD") &&
+                           initial.size()>1 && initial[0]=="npcday";
       if(prelude.size()==2 && prelude[0]=="cheat" && prelude[1]=="god" &&
-         initial.size()==3 && (initial[0]=="water" || initial[0]=="water-bodies") && initial[1]=="initial")
+         (reloadDay || (initial.size()==3 && (initial[0]=="water" || initial[0]=="water-bodies") && initial[1]=="initial"))) {
         exec(bench.prog[bench.pc++],*world,*player,ctrl);
+        if(reloadDay) exec(bench.prog[bench.pc++],*world,*player,ctrl);
+        }
       }
     if(bench.pc<bench.prog.size()) {
       const auto args=split(bench.prog[bench.pc]);

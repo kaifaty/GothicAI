@@ -29,6 +29,14 @@ class Effect final {
     Effect&  operator = (Effect&&) = default;
     bool     is(const VisualFx& vfx) const;
     const VisualFx* handle() const { return root; }
+    // the mesh its particles are born on (setMesh), where it is now (its last matrix), where its particles are emitted
+    // from and whether they are
+    const MeshObjects::Mesh* emitterMesh() const { return meshEmitter; }
+    Tempest::Vec3   position() const { return {pos.at(3,0),pos.at(3,1),pos.at(3,2)}; }
+    bool            emitterPosition(Tempest::Vec3& out) const { return pfx.position(out); }
+    bool            isEmitting() const { return pfx.isActive(); }
+    // the key it plays now (setKey), nullptr: its base
+    const VisualFx::Key* currentKey() const { return key; }
 
     void     tick(uint64_t dt);
 
@@ -81,6 +89,8 @@ class Effect final {
 
     const MeshObjects::Mesh* meshEmitter = nullptr;
     const std::vector<Tempest::Matrix4x4>* meshSkin = nullptr;
+    bool                  meshPfx   = false; // the particle effect is born on the mesh
+    const ParticleFx* ownPfx = nullptr; // the particle effect of this one: its own light (particles.d "light")
 
     Tempest::Matrix4x4    pos;
     Tempest::Vec3         selfRotation;

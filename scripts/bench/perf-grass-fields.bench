@@ -1,0 +1,55 @@
+# The grass of big fields by time (reports/engine/2026-11-18-grass-volume, «Большие поля»): four views of
+# grass-fields.bench, the game's camera behind the hero, noon. Run by `scripts/perf.sh grass-fields` with the set in
+# PERF_ENV and OPENGOTHIC_GPU_PASSES=1; a pair with OPENGOTHIC_GRASS=0, a ring cut short or made longer with
+# OPENGOTHIC_GRASS_RING=<from>,<to> (cm). Each view also writes `grass stats` and a shot for the look.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+watch player
+cam game
+walkmode walk
+cadence normal
+# view 1: Sekob's farm: the field below the path
+goto NW_FARM3_PATH_04
+face -65
+clear 3000
+wait 20000
+grass stats
+perf sample perf-grass-fields/view-1
+wait 8000
+perf stop
+shot view-1
+wait 300
+# view 2: the road from the tavern to Onar's: the meadow down the slope
+goto NW_TAVERNE_BIGFARM_05
+face 100
+wait 20000
+grass stats
+perf sample perf-grass-fields/view-2
+wait 8000
+perf stop
+shot view-2
+wait 300
+# view 3: Lobart's pasture from the path to the city
+goto NW_FARM1_PATH_CITY_SHEEP_02
+face 75
+wait 20000
+grass stats
+perf sample perf-grass-fields/view-3
+wait 8000
+perf stop
+shot view-3
+wait 300
+# view 4: Onar's fields: crop ground, grass only in the stress set
+goto NW_BIGFARM_FARM4_PATH_07
+face -175
+wait 20000
+grass stats
+perf sample perf-grass-fields/view-4
+wait 8000
+perf stop
+shot view-4
+wait 300

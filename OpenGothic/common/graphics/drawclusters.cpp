@@ -1,6 +1,10 @@
 #include "drawclusters.h"
 #include "shaders.h"
 
+#include <cassert>
+#include <cstddef>
+#include <cstring>
+
 #include "graphics/mesh/submesh/staticmesh.h"
 #include "graphics/mesh/submesh/animmesh.h"
 
@@ -14,20 +18,29 @@ DrawClusters::DrawClusters() {
 DrawClusters::~DrawClusters() {
   }
 
-uint32_t DrawClusters::alloc(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId) {
+uint32_t DrawClusters::alloc(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId,
+                             uint16_t commandId, std::span<const PackedMesh::ClusterLevel> levels, uint32_t instanceId) {
   if(commandId==uint16_t(-1))
     return uint32_t(-1);
 
   const auto ret = implAlloc(meshletCount);
+  assert(levels.empty() || levels.size()==meshletCount);
+  assert(cx!=nullptr || instanceId!=uint32_t(-1));
+  if(!levels.empty())
+    allocLevels(ret, levels);
   for(size_t i=0; i<meshletCount; ++i) {
     Cluster c;
-    c.pos          = cx[i].pos;
-    c.r            = cx[i].r;
+    // Instanced clusters get their world bounds when the instance matrix is set.
+    if(cx!=nullptr) {
+      c.pos = cx[i].pos;
+      c.r   = cx[i].r;
+      }
     c.bucketId     = bucketId;
     c.commandId    = commandId;
     c.firstMeshlet = uint32_t(firstMeshlet + i);
     c.meshletCount = 1;
-    c.instanceId   = uint32_t(-1);
+    c.instanceId   = instanceId;
+    c.historyGeneration = (clusters[ret+i].historyGeneration+1) & ~HistoryStatic;
 
     clusters[ret+i] = c;
     }
@@ -41,9 +54,10 @@ uint32_t DrawClusters::alloc(const Bucket& bucket, size_t firstMeshlet, size_t m
   const auto ret = implAlloc(1);
 
   Cluster& c = clusters[ret];
+  c.historyGeneration = (c.historyGeneration+1) & ~HistoryStatic;
   if(bucket.staticMesh!=nullptr)
-    c.r = bucket.staticMesh->bbox.rConservative + bucket.mat.waveMaxAmplitude +
-          FoliageWind::travel(bucket.mat.foliage, bucket.staticMesh->bbox.bbox[0], bucket.staticMesh->bbox.bbox[1]); else
+    c.r = bucket.staticMesh->drawn.rConservative + bucket.mat.waveMaxAmplitude +
+          FoliageTree::travel(bucket.mat.foliage, bucket.staticMesh->bbox.bbox[0], bucket.staticMesh->bbox.bbox[1]); else
     c.r = bucket.animMesh->bbox.rConservative;
   c.bucketId     = bucketId;
   c.commandId    = commandId;
@@ -57,10 +71,13 @@ uint32_t DrawClusters::alloc(const Bucket& bucket, size_t firstMeshlet, size_t m
   }
 
 void DrawClusters::free(uint32_t id, uint32_t numCluster) {
+  freeLevels(id, numCluster);
   for(size_t i=0; i<numCluster; ++i) {
-    clusters[id + i]              = Cluster();
-    clusters[id + i].r            = -1;
-    clusters[id + i].meshletCount = 0;
+    auto& c = clusters[id + i];
+    const auto generation = c.historyGeneration;
+    c = Cluster();
+    c.r = -1;
+    c.historyGeneration = generation;
     markClusters(id + i);
     }
 
@@ -82,6 +99,7 @@ void DrawClusters::free(uint32_t id, uint32_t numCluster) {
   }
 
 bool DrawClusters::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  commitLevels(cmd, fId);
   if(!clustersDurtyBit)
     return false;
   clustersDurtyBit = false;
@@ -101,6 +119,93 @@ bool DrawClusters::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   clustersGpu.updateAsync(clusters.data(),0,clusters.size()*sizeof(clusters[0]));
   std::fill(clustersDurty.begin(), clustersDurty.end(), 0x0);
   return true;
+  }
+
+void DrawClusters::allocLevels(size_t first, std::span<const PackedMesh::ClusterLevel> source) {
+  if(const auto end = first+source.size(); end>levelIndices.size()) {
+    // Round the addressable map up so growing the live set does not replace
+    // the Metal/Vulkan buffer every time a new piece of the world streams in.
+    levelIndices.resize((end+1023) & ~size_t(1023));
+    }
+  for(const auto& level : source) {
+    if((level.flags & 1u)!=0) {
+      uint32_t index = uint32_t(levels.size());
+      if(freeLevelsIds.empty()) {
+        levels.push_back(level);
+        } else {
+        index = freeLevelsIds.back();
+        freeLevelsIds.pop_back();
+        levels[index] = level;
+        }
+      levelIndices[first] = index+1;
+      dirtyLevelIndices.begin = std::min(dirtyLevelIndices.begin, first);
+      dirtyLevelIndices.end   = std::max(dirtyLevelIndices.end, first+1);
+      dirtyLevels.begin       = std::min(dirtyLevels.begin, size_t(index));
+      dirtyLevels.end         = std::max(dirtyLevels.end, size_t(index)+1);
+      }
+    ++first;
+    }
+  }
+
+void DrawClusters::freeLevels(uint32_t first, uint32_t count) {
+  const auto end = std::min(size_t(first)+count, levelIndices.size());
+  for(size_t i=first; i<end; ++i) {
+    const auto id = levelIndices[i];
+    if(id==0)
+      continue;
+    freeLevelsIds.push_back(id-1);
+    levelIndices[i] = 0;
+    dirtyLevelIndices.begin = std::min(dirtyLevelIndices.begin, i);
+    dirtyLevelIndices.end   = std::max(dirtyLevelIndices.end, i+1);
+    }
+  }
+
+void DrawClusters::commitLevels(Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  static_assert(sizeof(PackedMesh::ClusterLevel)==48);
+  static_assert(offsetof(PackedMesh::ClusterLevel, errorCm)==32);
+  auto& device = Resources::device();
+  if(noLevelsGpu.isEmpty()) {
+    const PackedMesh::ClusterLevel none {};
+    noLevelsGpu = device.ssbo(&none, sizeof(none));
+    }
+  const auto upload = [&]<class T>(StorageBuffer& dst, const std::vector<T>& src, Range& dirty, StorageBuffer& staging) {
+    if(src.empty())
+      return;
+    if(dst.byteSize()<src.size()*sizeof(T)) {
+      Resources::recycle(std::move(dst));
+      dst = device.ssbo(Tempest::Uninitialized, ((src.size()+1023) & ~size_t(1023))*sizeof(T));
+      dst.updateAsync(src.data(), 0, src.size()*sizeof(T));
+      }
+    else if(dirty.begin<dirty.end) {
+      // Device memory can be CPU-visible on Vulkan. Apply changes on the GPU,
+      // after earlier frames have consumed the previous index/record pair.
+      constexpr size_t wordsPerBlock = 1024;
+      const size_t words = (dirty.end-dirty.begin)*sizeof(T)/sizeof(uint32_t);
+      const size_t dstWord = dirty.begin*sizeof(T)/sizeof(uint32_t);
+      const size_t blocks = (words+wordsPerBlock-1)/wordsPerBlock;
+      const size_t headerWords = blocks*3;
+      levelPatchScratch.resize(headerWords+words);
+      for(size_t i=0; i<blocks; ++i) {
+        const size_t offset = i*wordsPerBlock;
+        levelPatchScratch[i*3+0] = uint32_t(dstWord+offset);
+        levelPatchScratch[i*3+1] = uint32_t(headerWords+offset);
+        levelPatchScratch[i*3+2] = uint32_t(std::min(words-offset,wordsPerBlock));
+        }
+      std::memcpy(levelPatchScratch.data()+headerWords, src.data()+dirty.begin, words*sizeof(uint32_t));
+      if(staging.byteSize()<levelPatchScratch.size()*sizeof(uint32_t))
+        staging = device.ssbo(BufferHeap::Upload, levelPatchScratch);
+      else
+        staging.update(levelPatchScratch);
+      cmd.setFramebuffer({});
+      cmd.setBinding(0, dst);
+      cmd.setBinding(1, staging);
+      cmd.setPipeline(Shaders::inst().patch);
+      cmd.dispatch(blocks);
+      }
+    dirty = {size_t(-1), 0};
+    };
+  upload(levelIndicesGpu, levelIndices, dirtyLevelIndices, levelPatch[fId][0]);
+  upload(levelsGpu, levels, dirtyLevels, levelPatch[fId][1]);
   }
 
 size_t DrawClusters::implAlloc(size_t count) {

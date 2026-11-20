@@ -37,8 +37,8 @@ void main() {
 
   vec4 pos           = interpolate(gl_in[0].gl_Position, gl_in[1].gl_Position, gl_in[2].gl_Position);
 
-  const uint bucketId = bucketIdIn[0];
-  bucketIdOut = bucketId;
+  bucketIdOut = bucketIdIn[0];
+  const uint bucketId = bucketIdIn[0] & 0xffffu;
 
   const float waveMaxAmplitude = bucket[bucketId].waveMaxAmplitude;
 

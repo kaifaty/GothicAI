@@ -8,7 +8,6 @@
 #include <cmath>
 #include <string>
 
-#include "graphics/dynamic/frustrum.h"
 #include "graphics/grass/grassdiag.h"
 #include "graphics/sceneglobals.h"
 #include "graphics/shaders.h"
@@ -19,7 +18,6 @@ using namespace Tempest;
 
 namespace {
 
-constexpr float   CellCm     = float(Grass::CellSize/Grass::Unit);
 constexpr int32_t ChunkCells = ChunkId::Size/int32_t(Grass::CellSize/Grass::Unit);
 static_assert(ChunkId::Size%(Grass::CellSize/Grass::Unit)==0, "a chunk is a whole number of cells");
 
@@ -27,52 +25,18 @@ static_assert(ChunkId::Size%(Grass::CellSize/Grass::Unit)==0, "a chunk is a whol
 constexpr float LevelFrom[] = {0.f, 1.2f, 2.f, 3.2f, 4.8f};
 constexpr float LevelLead   = 200.f; // cm: more blades are asked for this early
 constexpr float LevelSlack  = 600.f; // and fewer this late
-constexpr float RankShare   = 1.12f; // grass.vert: a blade stands while its rank is under full/d*1.12
-constexpr float KeepBeyond  = CellCm; // a cell out of the ring is kept this far
-
-// links of a blade by the distance of its cell, and their triangles in the index buffer
-constexpr float   SegmentsTo[] = {1000.f, 2500.f, 4500.f};
-constexpr uint8_t MaxSegments  = 4;
 
 constexpr size_t  UploadBytes  = 512*1024; // a frame; one cell at least
-constexpr size_t  RankCounts   = 257;
-constexpr float   RootsBeyond  = 100.f;    // cm: a root lies no nearer to the camera than its cell less this
 constexpr size_t  MaxJobs      = 6;
-
-// The fine blades of the short sward (Grass::Params::fine): a ring of their own, cm. All of them to FineFull, a
-// share FineFull/d from there, into the ground between FineFade and FineRadius; two links near, one further
-constexpr float   FineFull     = 400.f;
-constexpr float   FineFade     = 1600.f;
-constexpr float   FineRadius   = 2000.f;
-constexpr float   FineWidth    = 0.5f;     // cm at the root, and per step of the blade's three bits
-constexpr float   FineWidthStep= 0.036f;
-
-struct Push final {
-  Vec4     origin;
-  float    wind         = 1.f;
-  float    translucency = 0.f;
-  uint32_t first        = 0;
-  uint32_t segments     = 0;
-  Vec4     shape;                  // the width at the root and per step, cm; the ring's full and fade, 0 the scene's
-  float    swardK       = 0.f;     // repeats of the sward's map in a cm, by the world's x and z; 0 without own layers
-  };
 
 int32_t floorDiv(int32_t a, int32_t b) {
   const int32_t q = a/b;
   return (a%b!=0 && ((a<0)!=(b<0))) ? q-1 : q;
   }
 
-size_t indexOffset(uint8_t segments) {
-  // the buffer holds the blades of 4, 3, 2 and 1 links one after another
-  size_t at = 0;
-  for(uint8_t s=MaxSegments; s>segments; --s)
-    at += size_t(2*s-1)*3;
-  return at;
-  }
-
 }
 
-GrassField::GrassField(SceneGlobals& scene, std::vector<ChunkId> ids)
+GrassField::GrassField(SceneGlobals& scene, std::vector<ChunkId> ids, const std::filesystem::path& worldContentDir)
   :scene(scene) {
   const auto sw = Grass::enabled();
   ring   = Grass::ring(sw.mode);
@@ -80,24 +44,22 @@ GrassField::GrassField(SceneGlobals& scene, std::vector<ChunkId> ids)
   for(auto& i:ids)
     world.insert(key(i.x,i.z));
 
-  std::vector<uint16_t> index;
-  for(uint8_t s=MaxSegments; s>=1; --s) {
-    for(uint16_t k=0; k+1<s; ++k) {
-      const uint16_t v = uint16_t(2*k);
-      const uint16_t quad[] = {v, uint16_t(v+1), uint16_t(v+2), uint16_t(v+1), uint16_t(v+3), uint16_t(v+2)};
-      index.insert(index.end(), std::begin(quad), std::end(quad));
-      }
-    const uint16_t v = uint16_t(2*(s-1));
-    const uint16_t tip[] = {v, uint16_t(v+1), uint16_t(v+2)};
-    index.insert(index.end(), std::begin(tip), std::end(tip));
-    }
-  ibo = Resources::ibo(index.data(), index.size());
+  packBuffers.front() = Resources::device().ibo(Grass::packIndices(1));
 
   // six more maps a ground: with bindless textures alone (DrawBuckets::commit)
   layers = Shaders::options().doBindless;
   scene.setGrassRing(Vec4(ring.full, ring.fadeFrom, ring.radius, blades ? 1.f : 0.5f));
-  if(blades || layers)
+  if(blades || layers) {
+    {
+    std::lock_guard guard(sync);
+    plots.load(worldContentDir, [this](std::string_view material) {
+      asset::Material m;
+      m.texture = std::string(material);
+      return slotOf(m);
+      });
+    }
     worker = std::thread([this] { run(); });
+    }
   }
 
 GrassField::~GrassField() {
@@ -109,9 +71,13 @@ GrassField::~GrassField() {
   if(worker.joinable())
     worker.join();
   scene.setGrassRing(Vec4());
+  scene.setGrassDrawn(false);
   scene.grassBorder = nullptr;
   if(!borderCpu.empty())
     Resources::recycle(std::move(borderGpu));
+  for(auto& i:spanGpu)
+    if(i.byteSize()!=0)
+      Resources::recycle(std::move(i));
   }
 
 uint32_t GrassField::rankLimit(uint8_t level) const {
@@ -237,6 +203,7 @@ void GrassField::addChunk(ChunkId id, const asset::WorldMesh& mesh) {
     else
       Grass::addGrass(*summary,pos,uv,normal,slot[m]);
     }
+  plots.addTo(*summary,id);
 
   std::lock_guard guard(sync);
   auto& c   = chunks[key(id.x,id.z)];
@@ -385,6 +352,7 @@ void GrassField::run() {
     in.rankLimitFine = job.level==0 ? 256u : (job.level==1 ? uint32_t(std::ceil(256.f*RankShare*FineFull/(LevelFrom[1]*ring.full))) : 0u);
     in.density   = ring.density;
     in.patch     = Grass::forcedPatch();
+    in.squares   = !Grass::squaresOff();
 
     Done d;
     d.cx    = job.cx;
@@ -407,7 +375,8 @@ void GrassField::release(Cell& c) {
     Resources::recycle(std::move(c.gpu));
   c.gpu     = StorageBuffer();
   c.batches.clear();
-  c.below.clear();
+  c.cpu.clear();
+  c.ranks.clear();
   c.count   = 0;
   c.live    = false;
   }
@@ -421,20 +390,21 @@ void GrassField::upload(Cell& c, Done&& d) {
   c.minY    = d.blades.minY;
   c.maxY    = d.blades.maxY;
   c.count   = uint32_t(d.blades.blades.size());
-  c.below.clear();
+  c.squareBounds = d.blades.squareBounds;
+  c.ranks.clear();
   if(c.count==0)
     return;
   c.batches = std::move(d.blades.batches);
-  c.below.assign(c.batches.size()*RankCounts, 0);
-  for(size_t i=0; i<c.batches.size(); ++i) {
-    const auto& b     = c.batches[i];
-    uint32_t*   below = &c.below[i*RankCounts];
-    for(uint32_t k=0; k<b.count; ++k)
-      ++below[(d.blades.blades[b.first+k].w[1] >> 24) + 1];
-    for(size_t r=1; r<RankCounts; ++r)
-      below[r] += below[r-1];
-    }
+  c.reach   = 80.f;
+  for(const auto& b:c.batches)
+    if(b.kind==Grass::KindEar)
+      c.reach = Grass::EarTop;
+  c.ranks.resize(c.count);
+  for(size_t i=0; i<c.count; ++i)
+    c.ranks[i] = uint8_t(d.blades.blades[i].w[1] >> 24);
   c.gpu     = Resources::ssbo(d.blades.blades.data(), d.blades.blades.size()*sizeof(Grass::Blade));
+  if(Grass::wasteOn())
+    c.cpu = std::move(d.blades.blades);
   }
 
 void GrassField::update() {
@@ -512,7 +482,7 @@ void GrassField::update() {
     const float dx = std::max(0.f, std::max(float(c.cx)*CellCm - cam.x, cam.x - float(c.cx+1)*CellCm));
     const float dz = std::max(0.f, std::max(float(c.cz)*CellCm - cam.z, cam.z - float(c.cz+1)*CellCm));
     c.dist = std::sqrt(dx*dx + dz*dz);
-    if(c.dist>ring.radius+KeepBeyond) {
+    if(c.dist>ring.radius+CellCm) {
       release(c);
       it = cells.erase(it);
       } else {
@@ -615,74 +585,4 @@ void GrassField::update() {
     }
 
   last.waiting = waiting;
-  }
-
-void GrassField::draw(Encoder<CommandBuffer>& cmd) {
-  Stats st;
-  st.waiting = last.waiting;
-  if(!blades || cells.empty()) {
-    last = st;
-    return;
-    }
-  const auto& fr  = scene.frustrum[SceneGlobals::V_Main];
-  const float pad = float(Grass::CellMargin/Grass::Unit) + 80.f;
-  bool        bound = false;
-  for(auto& i:cells) {
-    auto& c = i.second;
-    if(!c.live || c.count==0)
-      continue;
-    ++st.cells;
-    st.stored += c.count;
-    st.bytes  += size_t(c.count)*sizeof(Grass::Blade);
-    if(c.dist>ring.radius)
-      continue;
-    const Vec3 min(float(c.cx)*CellCm-pad,   float(c.minY)/float(Grass::Unit)-10.f, float(c.cz)*CellCm-pad);
-    const Vec3 max(float(c.cx+1)*CellCm+pad, float(c.maxY)/float(Grass::Unit)+80.f, float(c.cz+1)*CellCm+pad);
-    if(fr.testBbox(min,max)==Frustrum::T_Invisible)
-      continue;
-
-    uint8_t segments = MaxSegments;
-    for(float to:SegmentsTo)
-      if(c.dist>=to)
-        --segments;
-    // the ranks that stand at the nearest of the cell (grass.vert)
-    const auto ranks = size_t(std::min(256.f, std::ceil(256.f*RankShare*ring.full/std::max(c.dist-RootsBeyond,1.f))));
-
-    if(!bound) {
-      cmd.setPipeline(Shaders::inst().grass);
-      cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-      bound = true;
-      }
-    cmd.setBinding(1, c.gpu);
-    for(size_t bi=0; bi<c.batches.size(); ++bi) {
-      const auto& b    = c.batches[bi];
-      const bool  fine = b.kind==1;
-      if(fine && c.dist>=FineRadius)
-        continue;
-      const size_t   rk    = fine ? size_t(std::min(256.f, std::ceil(256.f*RankShare*FineFull/std::max(c.dist-RootsBeyond,1.f)))) : ranks;
-      const uint8_t  links = fine ? uint8_t(c.dist<FineFull ? 2 : 1) : segments;
-      const uint32_t count = c.below[bi*RankCounts+rk];
-      if(b.slot>=slotTex.size() || slotTex[b.slot]==nullptr || count==0)
-        continue;
-      st.drawn     += count;
-      st.fine      += fine ? count : 0;
-      st.triangles += size_t(count)*size_t(2*links-1);
-      const auto& p = slotParams[b.slot];
-      Push push;
-      push.origin       = Vec4(float(c.cx)*CellCm - float(Grass::CellMargin/Grass::Unit), float(c.minY)/float(Grass::Unit),
-                               float(c.cz)*CellCm - float(Grass::CellMargin/Grass::Unit), 0.f);
-      push.wind         = p.wind;
-      push.translucency = p.translucency;
-      push.first        = b.first;
-      push.segments     = links;
-      push.shape        = fine ? Vec4(FineWidth,FineWidthStep,FineFull,FineFade) : Vec4(0.f,0.f,0.f,0.f);
-      const auto* sward = slotSward[b.slot];
-      push.swardK       = (sward!=nullptr && p.tile>0.f) ? 1.f/p.tile : 0.f;
-      cmd.setBinding(2, *slotTex[b.slot], Sampler::trillinear());
-      cmd.setBinding(3, sward!=nullptr ? *sward : *slotTex[b.slot], Sampler::trillinear());
-      cmd.setPushData(push);
-      cmd.draw(nullptr, ibo, indexOffset(links), size_t(2*links-1)*3, 0, count);
-      }
-    }
-  last = st;
   }

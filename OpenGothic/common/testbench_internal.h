@@ -99,6 +99,7 @@ enum CamMode : uint8_t {
   C_NpcFace,  // the npc's face, from the hero's side
   C_Two,      // the hero and the npc from the side
   C_Arrow,    // from the side of the newest arrow's way, going along with it (overlay trail records it)
+  C_Fly,      // along a straight line to a point and its target in a time, without a cut (`cam fly`)
   };
 
 inline constexpr int Fps = 30;
@@ -1240,6 +1241,9 @@ struct CameraBench {
   Tempest::PointF      camTurnAngles;
   float       camTurnDegrees = 0;
   uint64_t    camTurnStart = 0, camTurnDuration = 0;
+  Tempest::Vec3        camTarget;                // where `cam at` and `cam fly` look now
+  Tempest::Vec3        flyFrom, flyFromTarget, flyTo, flyToTarget;
+  uint64_t    flyStart = 0, flyDuration = 0;
 
   bool        rec       = false;
   bool        recVideo  = false;
@@ -1565,6 +1569,7 @@ bool monsterCharacterCommand(MonsterCharacter& state,const MonsterCharacterConte
 bool characterCommand(Character& state,const CharacterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool placedItemsCommand(PlacedItems& state,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool itemHullsCommand(ItemHulls& state,const std::vector<std::string>& a,World& w,Npc& pl);
+bool itemEffectsCommand(const std::vector<std::string>& a,World& w,Npc& pl);
 bool fracturePiecesCommand(FracturePieces& state,Destruction& destruction,const DestructionContext& context,bool& cutPending,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool waterCommand(Water& waterState,const WaterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool furniturePartsCommand(FurnitureParts& state,const std::vector<std::string>& a,World& w,Npc& pl);
@@ -1834,6 +1839,13 @@ WorldContext worldContext();
 bool worldCommand(const WorldContext& context,const std::string& line,const std::vector<std::string>& a,
                   World& w,Npc& pl,PlayerControl& ctrl);
 NpcCommandsContext npcCommandsContext();
+bool npcDayCommand(const NpcCommandsContext& context,const std::vector<std::string>& args,World& world);
+bool npcDayCheckpointTick(World& world);
+bool npcDayCheckpointRunning();
+// A bench reset tears the world down: a pending checkpoint's NPC and probe go with it.
+void npcDayCheckpointReset();
+// The smith of a pending checkpoint is destroyed (a loaded slot, another world): the checkpoint goes and the bench fails.
+void npcDayCheckpointForget(const Npc* npc);
 bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& line,const std::vector<std::string>& a,
                         World& w,Npc& pl,PlayerControl& ctrl);
 
@@ -1900,6 +1912,14 @@ struct Bench : OverlayBench, CameraBench {
   uint32_t    settleSteps   = 0;     // fixed steps left between the end of `streaming wait` and the next command
   uint32_t    holdFrames    = 0;     // frames the loaded world has stood still in a deterministic `streaming wait`
   bool        ordered       = false; // visibility appends clusters in order (slow): from the end of the wait to the shot
+  struct {
+    std::string segment;
+    uint32_t    frames = 0, next = 0, total = 0;
+    uint64_t    start = 0, duration = 0;
+    bool        finish = false;
+
+    bool pending() const { return finish || next < frames; }
+    } historyVerify;
   struct StreamingSample {
     std::string segment;
     uint64_t frame = 0;

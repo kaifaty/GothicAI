@@ -36,8 +36,24 @@ class PfxBucket {
       std::pair<int32_t,int32_t> textureChunk;
 
       Tempest::Vec3 pos          = {};
+      Tempest::Vec3 steadyAt     = {}; // where the emitter was when its particles were last carried
+      bool          carried      = false; // steadyAt is set
+      Tempest::Vec3 trail        = {}; // the emitter's way in this tick: particles of a tail are born along it
+      // the air that passes the emitter, cm/ms: minus its own motion, through a spring (particles.d "lean")
+      Tempest::Vec3 air          = {};
+      Tempest::Vec3 airRate      = {};
+      float         grownMs      = 0;  // how long the emitter has burnt (particles.d "lean.grow")
+      // the world's wind at the emitter this frame, cm/ms (particles.d "wind"), and how open its place is to it:
+      // asked where the emitter first burns and again when it has gone a metre (PfxObjects::shelter)
+      Tempest::Vec3 wind         = {};
+      float         open         = 1.f;
+      float         openTo       = 1.f;
+      Tempest::Vec3 openAt       = {};
+      uint64_t      openTime     = 0;
+      bool          openAsked    = false;
       Tempest::Vec3 direction[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
       bool          isLoop       = false;
+      bool          spent        = false; // was looped and is not any more (a bolt that hit): its steady flame goes
 
       const ParticleTarget* targetNpc    = nullptr;
 
@@ -63,7 +79,8 @@ class PfxBucket {
 
     const ParticleFx&           decl;
     PfxObjects&                 parent;
-    // the push data of main_pfx_f/_e (main.frag PushPfx)
+    // the push data of main_pfx_f/_e (main.frag PushPfx); of a haze (main_pfx_x) hdrFrom is its shift and hdrInvRange
+    // one over its cell, cm
     struct Push {
       float reactive    = 0; // ParticleFx::taaReactive (graphics plan 1v)
       float hdrFrom     = 0; // particles.d "hdr": the night's gain over a texel's brightness
@@ -76,10 +93,13 @@ class PfxBucket {
     void                        invalidateDecal();
 
     void                        preFrameUpdate(const SceneGlobals& scene, uint8_t fId);
-    void                        drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
+    void                        drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene,
+                                                uint8_t fId, bool historyOwner);
     void                        drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId, int layer);
     void                        drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
     void                        drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
+    void                        drawHaze       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
+    bool                        hasHaze        (uint8_t fId) const;
 
     size_t                      allocEmitter();
     void                        freeEmitter(size_t& id);
@@ -121,6 +141,8 @@ class PfxBucket {
 
       Tempest::Vec3 pos       = {};
       float         flicker   = 1.f;  // the emitter's brightness this frame (ImplEmitter::flicker)
+      Tempest::Vec3 lean      = {0,1,0}; // a leaning card's lower edge to its upper, in card heights (pfx.vert)
+      float         grow      = 1.f;     // the share of its size a new emitter's card has grown to ("lean.grow")
       };
 
     struct Trail final {
@@ -131,6 +153,7 @@ class PfxBucket {
     struct ParState final {
       uint16_t      life=0, maxLife=1;
       Tempest::Vec3 pos, dir;
+      bool          landed = false; // met the ground (particles.d "land"): stays, no sprite, its trail draws in
 
       std::vector<Trail> trail;
 
@@ -148,7 +171,7 @@ class PfxBucket {
       };
 
     void                        drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, const Draw& itm,
-                                           SceneGlobals::VisCamera view, Material::AlphaFunc func, bool trl);
+                                           SceneGlobals::VisCamera view, Material::AlphaFunc func, bool trl, bool historyOwner = false);
 
     void                        tickEmit(Block& p, ImplEmitter& emitter, uint64_t emited);
     bool                        shrink();

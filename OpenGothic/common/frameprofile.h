@@ -57,6 +57,19 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   // -gi 1 (Renderer::readGiStats): live probes, probes traced in a frame (new), of them allocated at the hits of other
   // probes' rays, and probes freed in the frame; of a frame slot one or two frames back
   GiProbesLive, GiProbesTraced, GiProbesFromHits, GiProbesFreed,
+  // DrawCommands::visibilityStats: clusters and meshlets of the main view the visibility pass let through, and of them
+  // those of the crowns of trees (BK_CANOPY); of a frame slot one or two frames back
+  MainClusters, MainMeshlets, MainCanopyClusters, MainCanopyMeshlets,
+  // VisualObjects::preFrameUpdateLevels: objects of meshes with levels of detail (graphics/meshlevels.h) drawn at the
+  // mesh itself and at its levels 1 through 4 in the frame, an object once by its first submesh
+  MeshLevel0, MeshLevel1, MeshLevel2, MeshLevel3, MeshLevel4, MeshImpostors,
+  HiZHistoryEarlyClusters, HiZHistoryEarlyMeshlets, HiZHistoryTestedClusters,
+  HiZHistoryRejectedClusters, HiZHistoryRejectedMeshlets,
+  TreeBoughNodes, TreeBoughSourceCards, TreeBoughParentCards, TreeBoughTriangles, TreeBoughHeightPx,
+  TreeBoughActiveBands, TreeBoughVersionPairs, TreeBoughBandTriangles,
+  // VisualObjects::updateLevelBand: objects of trees with a bough hierarchy inside a band of their own GLBs in the main
+  // view and inside a band of the shadow scale (graphics/treelevelband.h)
+  TreeLevelBands, TreeShadowBands,
   // WorldObjects::tickNpcs (world/npcsimtick.h): Simplified NPCs that ticked, that waited for their turn, and
   // that execute native movement (Npc::usesSimplifiedMovement false)
   NpcSimplifiedTicked, NpcSimplifiedDeferred, NpcSimplifiedNative, Count };

@@ -1,0 +1,58 @@
+# Item effects (reports/engine/2026-11-19-item-effects) at night by the tavern: items of every kind of effect lying on
+# the ground (potions, a rune, a stone, an amulet, the fire bow, Beliar's claw), then the claw and the fire bow carried,
+# the claw drawn, the bow drawn. `itemfx` counts the live effects. Run it again with OPENGOTHIC_ITEM_EFFECTS=0 for
+# «off | on», or with a content set of own particles (magic_fire_set.py fire_bow) for «the game's | ours».
+seed 73013
+cheat god
+set time 22 0
+overlay off
+ui off
+goto NW_TAVERNE_TROLLAREA_03
+clear 3000
+wait 3000
+set time 22 0
+watch player
+item put ItPo_Health_01 140 -30
+item put ItPo_Mana_01 140 -15
+item put ItRu_FireBolt 140 0
+item put ItMi_Addon_Stone_01 140 15
+item put ItAm_Addon_Franco 140 30
+item put ItRw_Addon_FireBow 200 -5
+item put ItMw_BeliarWeapon_1H_01 200 15
+wait 2500
+itemfx
+cam at 41990 3440 -470 41835 3335 -505
+wait 1500
+rec ground
+wait 4000
+stop
+give ItMw_BeliarWeapon_1H_01
+equip ItMw_BeliarWeapon_1H_01
+give ItRw_Addon_FireBow
+equip ItRw_Addon_FireBow
+wait 1500
+cam follow 200 130 120
+cam look 120
+wait 1500
+rec carried
+wait 3000
+stop
+tap melee
+wait 2500
+cam follow 180 140 60
+cam look 130
+wait 1000
+rec claw
+wait 4000
+stop
+tap melee
+wait 2000
+tap bow
+wait 2500
+cam follow 200 150 90
+cam look 140
+wait 1000
+rec bow
+wait 4000
+stop
+itemfx

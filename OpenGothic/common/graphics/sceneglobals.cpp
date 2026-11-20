@@ -1,10 +1,17 @@
 #include "sceneglobals.h"
 #include "graphics/foliagefront.h"
+#include "graphics/contactao.h"
+#include "graphics/grass/grassdiag.h"
+#include "graphics/grass/grassgrounddiag.h"
+#include "graphics/grasscontact.h"
+#include "graphics/hizoccluders.h"
+#include "graphics/lampcontact.h"
 #include "settings.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
+#include <string_view>
 
 #include "graphics/shaders.h"
 #include "graphics/sky/sky.h"
@@ -193,7 +200,17 @@ void SceneGlobals::setTaaFrame(bool taa, bool lampTaa, uint32_t frame) {
   uboGlobalCpu.taaFrame  = taa ? frame : 0;
   // OPENGOTHIC_HAIR_DEBUG=1: hair shows the direction of its strands as a colour (the acceptance of the direction)
   static const bool hairDebug = []{ const char* e = std::getenv("OPENGOTHIC_HAIR_DEBUG"); return e!=nullptr && e[0]=='1'; }();
-  uboGlobalCpu.viewFlags = (taa ? VF_TAA : 0) | (hairDebug ? VF_HAIR_DEBUG : 0);
+  static const bool hizPrecise = [] {
+    const char* env = std::getenv("OPENGOTHIC_HIZ_PRECISE");
+    const bool set = env!=nullptr && *env!='\0';
+    const bool on = set ? std::string_view(env)!="0" : ::Settings::getI("INTERNAL","hizPrecise")!=0;
+    Tempest::Log::i("render: precise HiZ = ", on ? "1" : "0", set ? " by OPENGOTHIC_HIZ_PRECISE" : " by [INTERNAL] hizPrecise");
+    return on;
+    }();
+  uboGlobalCpu.viewFlags = (taa ? VF_TAA : 0) | (hairDebug ? VF_HAIR_DEBUG : 0) | (LampContact::enabled() ? VF_LAMP_CONTACT : 0) |
+                           (ContactAo::enabled() ? VF_CONTACT_AO : 0) | (grassDrawn && GrassContact::enabled() ? VF_GRASS_CONTACT : 0) |
+                           (CrownLight::mode()==CrownLight::Mask ? VF_CROWN_MASK : 0) |
+                           (HiZOccluders::skipCrowns() ? VF_HIZ_NO_CANOPY : 0) | (hizPrecise ? VF_HIZ_PRECISE : 0);
   }
 
 void SceneGlobals::setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip,
@@ -241,8 +258,10 @@ void SceneGlobals::setUnderWater(bool w) {
 
 void SceneGlobals::setTime(uint64_t time) {
   tickCount                = time;
-  uboGlobalCpu.waveAnim    = 2.f*float(M_PI)*float(tickCount%3000)/3000.f;
-  uboGlobalCpu.tickCount32 = uint32_t(tickCount);
+  // Use the same wave and texture animation phase in paired coverage masks.
+  const auto materialTick  = landscapeMask ? 0 : time;
+  uboGlobalCpu.waveAnim    = 2.f*float(M_PI)*float(materialTick%3000)/3000.f;
+  uboGlobalCpu.tickCount32 = uint32_t(materialTick);
 
   // Living foliage: the wind of this tick, and the one the previous frame was drawn with for the motion vectors.
   // A frame at the same tick (a pause) gets both alike; so does the first frame and one after a jump of the clock
@@ -266,29 +285,39 @@ void SceneGlobals::setTime(uint64_t time) {
   }
 
 void SceneGlobals::commitUbo(uint8_t fId) {
-  UboGlobal perView[V_Count];
-  uboGlobalPf[fId][V_Main].update(&uboGlobalCpu);
-
-  for(size_t i=V_Shadow0; i<V_Count; ++i) {
-    auto& ubo = perView[i];
-    ubo = uboGlobalCpu;
-    if(V_Shadow0<=i && i<=V_ShadowLast)
-      ubo.viewProject = uboGlobalCpu.viewShadow[i-V_Shadow0];
-    if(i==V_Vsm)
-      ubo.viewProject = uboGlobalCpu.viewVirtualShadow;
-    if(isShadowView(VisCamera(i))) {
-      ubo.mipBias      = 0;
-      ubo.mipGradScale = 1;
-      }
-    if(i!=V_Main)
-      ubo.motionVectors = 0;
-    ubo.viewFlags = (uboGlobalCpu.viewFlags & ~VF_HIZ) | (i==V_HiZ ? VF_HIZ : 0) | (isShadowView(VisCamera(i)) ? VF_SHADOW : 0);
-    std::memcpy(ubo.frustrum, frustrum[i].f, sizeof(ubo.frustrum));
-    }
-
+  // the tree's wind fades by its size in the main view's pixels, in the shadow views as well (graphics/treewindfade.h)
+  uboGlobalCpu.foliageFade = Tempest::Vec4(TreeWindFade::enabled() ? FoliageTree::fadeScale(proj.at(1,1), uboGlobalCpu.screenRes.y) : 0.f,
+                                           0.f, 0.f, 0.f);
+  uboGlobalCpu.viewFlags = (uboGlobalCpu.viewFlags & ~Grass::PartViewMask) | (Grass::benchPartsOff() & Grass::PartViewMask);
+  uboGlobalCpu.grassGroundParts = Grass::benchGroundPartsOff();
   for(size_t i=0; i<V_Count; ++i) {
-    uboGlobalPf[fId][i].update(&perView[i]);
+    const auto ubo = makeViewUbo(VisCamera(i));
+    uboGlobalPf[fId][i].update(&ubo);
     }
+  }
+
+SceneGlobals::UboGlobal SceneGlobals::makeViewUbo(VisCamera v) const {
+  auto ubo = uboGlobalCpu;
+  const bool shadow = isShadowView(v);
+  if(V_Shadow0<=v && v<=V_ShadowLast)
+    ubo.viewProject = uboGlobalCpu.viewShadow[v-V_Shadow0];
+  if(v==V_Vsm)
+    ubo.viewProject = uboGlobalCpu.viewVirtualShadow;
+  if(shadow) {
+    ubo.mipBias      = 0;
+    ubo.mipGradScale = 1;
+    }
+  if(v!=V_Main)
+    ubo.motionVectors = 0;
+  ubo.viewFlags = (uboGlobalCpu.viewFlags & ~VF_HIZ) | (v==V_HiZ ? VF_HIZ : 0) | (shadow ? VF_SHADOW : 0);
+  std::memcpy(ubo.frustrum, frustrum[v].f, sizeof(ubo.frustrum));
+  return ubo;
+  }
+
+Tempest::StorageBuffer SceneGlobals::treeHistoryReferenceUbo() const {
+  auto ubo = makeViewUbo(V_Main);
+  ubo.viewFlags |= VF_TREE_OCCLUSION_PROBE | VF_HIZ_HISTORY_REFERENCE;
+  return Resources::device().ssbo(Tempest::BufferHeap::Upload, &ubo, sizeof(ubo));
   }
 
 void SceneGlobals::prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {

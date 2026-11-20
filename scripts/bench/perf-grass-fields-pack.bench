@@ -1,0 +1,126 @@
+# The four big-field views from perf-grass-fields.bench, with blade pack sizes 1, 4, 16 and 64.
+# Run with scripts/perf.sh grass-fields-pack and PERF_ENV containing the grass-stress-working-34
+# content path and OPENGOTHIC_GPU_PASSES=1. The content set is described in reports/engine/2026-11-18-grass-volume.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+watch player
+cam game
+walkmode walk
+cadence normal
+# view 1: Sekob's farm: the field below the path
+goto NW_FARM3_PATH_04
+face -65
+clear 3000
+wait 20000
+grass pack 1
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-1-pack1
+wait 8000
+perf stop
+grass pack 4
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-1-pack4
+wait 8000
+perf stop
+grass pack 16
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-1-pack16
+wait 8000
+perf stop
+grass pack 64
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-1-pack64
+wait 8000
+perf stop
+# view 2: the road from the tavern to Onar's: the meadow down the slope
+goto NW_TAVERNE_BIGFARM_05
+face 100
+wait 20000
+grass pack 1
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-2-pack1
+wait 8000
+perf stop
+grass pack 4
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-2-pack4
+wait 8000
+perf stop
+grass pack 16
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-2-pack16
+wait 8000
+perf stop
+grass pack 64
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-2-pack64
+wait 8000
+perf stop
+# view 3: Lobart's pasture from the path to the city
+goto NW_FARM1_PATH_CITY_SHEEP_02
+face 75
+wait 20000
+grass pack 1
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-3-pack1
+wait 8000
+perf stop
+grass pack 4
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-3-pack4
+wait 8000
+perf stop
+grass pack 16
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-3-pack16
+wait 8000
+perf stop
+grass pack 64
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-3-pack64
+wait 8000
+perf stop
+# view 4: Onar's fields: crop ground, grass only in the stress set
+goto NW_BIGFARM_FARM4_PATH_07
+face -175
+wait 20000
+grass pack 1
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-4-pack1
+wait 8000
+perf stop
+grass pack 4
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-4-pack4
+wait 8000
+perf stop
+grass pack 16
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-4-pack16
+wait 8000
+perf stop
+grass pack 64
+wait 2000
+grass stats
+perf sample perf-grass-fields-pack/view-4-pack64
+wait 8000
+perf stop

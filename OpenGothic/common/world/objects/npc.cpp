@@ -104,11 +104,6 @@ struct Npc::BodyMovementTrace final {
   Vec3 start = {};
   };
 
-std::string_view Npc::Routine::wayPointName() const {
-  return point!=nullptr ? point->name : fallbackName;
-  }
-
-
 void Npc::GoTo::save(Serialize& fout) const {
   fout.write(npc, uint8_t(flag), wp, pos);
   }
@@ -116,6 +111,7 @@ void Npc::GoTo::save(Serialize& fout) const {
 void Npc::GoTo::load(Serialize& fin) {
   pointDistance = 0.f;
   nativeCombatTarget = nullptr;
+  activity = false;
   fin.read(npc, reinterpret_cast<uint8_t&>(flag), wp, pos);
   //NOTE: no real need to version check
   //if(fin.version()<53) {
@@ -159,10 +155,12 @@ void Npc::GoTo::clear() {
   flag = Npc::GT_No;
   pointDistance = 0.f;
   nativeCombatTarget = nullptr;
+  activity = false;
   }
 
 void Npc::GoTo::set(Npc* to, Npc::GoToHint hnt) {
   nativeCombatTarget = nullptr;
+  activity = false;
   npc  = to;
   wp   = nullptr;
   flag = hnt;
@@ -170,6 +168,7 @@ void Npc::GoTo::set(Npc* to, Npc::GoToHint hnt) {
 
 void Npc::GoTo::set(const WayPoint* to, GoToHint hnt) {
   nativeCombatTarget = nullptr;
+  activity = false;
   npc  = nullptr;
   wp   = to;
   flag = hnt;
@@ -177,12 +176,14 @@ void Npc::GoTo::set(const WayPoint* to, GoToHint hnt) {
 
 void Npc::GoTo::set(const Item* to) {
   nativeCombatTarget = nullptr;
+  activity = false;
   pos  = to->position();
   flag = Npc::GT_Item;
   }
 
 void Npc::GoTo::set(const Vec3& to) {
   nativeCombatTarget = nullptr;
+  activity = false;
   pos  = to;
   flag = GT_Point;
   pointDistance = 0.f;
@@ -190,6 +191,7 @@ void Npc::GoTo::set(const Vec3& to) {
 
 void Npc::GoTo::setFlee() {
   nativeCombatTarget = nullptr;
+  activity = false;
   flag = GT_Flee;
   }
 
@@ -292,6 +294,7 @@ Npc::~Npc(){
   NpcKeys::forget(this);
   BodyObservations::forget(this);
   Bench::bodyForget(this);
+  stopActivityEvents(ActivityEvents::Interrupted);
   if(currentInteract)
     currentInteract->detach(*this,true);
   owner.rules().detachNpc(hnpc,*this);
@@ -1115,6 +1118,9 @@ void Npc::tick(uint64_t dt) {
   if(tickPhysicsInvestigation(dt))
     return;
 
+  // Ahead of the walk and the queue, which keep the routine tick out (world/activityevents.h).
+  tickActivityDeadline();
+
   if(aniWaitTime<owner.tickCount() && aniWaitTime==logicalBody.nativeWaitEnd)
     logicalBody.waitReleased(owner.tickCount());
   if(waitTime>=owner.tickCount() || aniWaitTime>=owner.tickCount() || outWaitTime>owner.tickCount()) {
@@ -1446,20 +1452,6 @@ bool Npc::spellFrozen() const {
   return true;
   }
 
-void Npc::aiPush(AiQueue::AiAction&& a) {
-  // Vanilla quiet-sound scripts aim at OTHER. A physical sound is located at the
-  // collision, and OTHER may be null or a distant culprit, so native turning owns it.
-  if(physicsNoiseCallback && (a.act==AI_TurnToNpc || a.act==AI_LookAtNpc))
-    return;
-  a.physicsNoiseState = physicsNoiseCallback && a.act==AI_StartState;
-  a.nativeCombatTarget=nativeCombatQueueTarget;
-  if(BodyController::owns(*this) && a.act!=AI_OutputSvmOverlay)
-    BodyController::takeover(*this,"native_script_queue");
-  if(a.act==AI_OutputSvmOverlay)
-    aiQueueOverlay.pushBack(std::move(a)); else
-    aiQueue.pushBack(std::move(a));
-  }
-
 Vec3 Npc::mapWeaponBone() const {
   syncDeferredAnimation();
   return visual.mapWeaponBone();
@@ -1559,50 +1551,6 @@ Npc* Npc::talkPartner() const {
   if((talkWith->position()-position()).quadLength()>maxDist*maxDist)
     return nullptr;
   return talkWith;
-  }
-
-bool Npc::setInteraction(Interactive *id, bool quick) {
-  if(currentInteract==id)
-    return true;
-
-  if(currentInteract!=nullptr) {
-    return currentInteract->detach(*this,quick);
-    }
-
-  if(id==nullptr)
-    return (currentInteract==nullptr);
-
-  if(id->attach(*this)) {
-    currentInteract = id;
-    if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual)) {
-      mvAlgo.resetCharacterVirtual(true);
-      resetCharacterVisualHeight();
-      }
-    // Remove the contact rig in the sequential physics handoff, including
-    // when an immediate detach leaves only its transition animation behind.
-    livingWasInteracting = true;
-    attachToPoint(nullptr); //NOTE: Fajeth campfire
-    if(!quick) {
-      visual.stopAnim(*this,"");
-      setAnimRotate(0);
-      }
-    return true;
-    }
-
-  return false;
-  }
-
-void Npc::quitInteraction() {
-  if(currentInteract==nullptr)
-    return;
-  if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual)) {
-    mvAlgo.resetCharacterVirtual(true);
-    resetCharacterVisualHeight();
-    }
-  if(invTorch)
-    processDefInvTorch();
-  setDirectionY(0);
-  currentInteract=nullptr;
   }
 
 void Npc::processDefInvTorch() {

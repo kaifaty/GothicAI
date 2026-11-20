@@ -24,7 +24,9 @@ class ObjVisual : public StreamedVisual {
     void save(Serialize& fout, const Interactive& mob) const;
     void load(Serialize& fin,  Interactive &mob);
 
-    void setVisual(const ItemRecord& visual, World& world, bool staticDraw);
+    // an item held (the burning torch in a hand): a bundle, else its view (graphics/itemview), its mesh with its effect
+    void setVisual(const ItemRecord& item, World& world, bool staticDraw);
+    // an item lying in the world: its view (graphics/itemview), its mesh with its effect, streamed with its chunk
     void setWorldItem(const ItemRecord& item, World& world, const Tempest::Matrix4x4& matrix);
     void setVisual(const asset::VirtualObject& visual, World& world, bool staticDraw, bool enablePhysics = true);
     void setObjMatrix(const Tempest::Matrix4x4& obj);
@@ -34,7 +36,7 @@ class ObjVisual : public StreamedVisual {
     void setupFracture(World& world, DynamicWorld::Item& body);
     bool renderPosition(Tempest::Vec3& out) const;
 
-    void setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot, int32_t material = 0);
+    void setSlotItem(ItemView&& itm, std::string_view slot);
 
     void setInteractive(Interactive* it);
 
@@ -42,6 +44,7 @@ class ObjVisual : public StreamedVisual {
     bool hasAnim(std::string_view name) const;
 
     bool updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint64_t dt, bool force);
+    void stopLoopedEffects(); // MdlVisual::stopLoopedEffects
     void processLayers(World& world);
     void syncPhysics();
 
@@ -74,7 +77,7 @@ class ObjVisual : public StreamedVisual {
       float windStrength = 0;
       bool published = false;
       bool worldItem = false;
-      int32_t material = 0;
+      ItemView item;  // worldItem: the item's view in place of view
       };
 
     union {
@@ -98,5 +101,6 @@ class ObjVisual : public StreamedVisual {
     bool isViewMissing() const override;
     size_t viewNodesCount() const override;
     friend struct MeshGltfTest;
+    friend struct NpcDefinitionContract;
   };
 

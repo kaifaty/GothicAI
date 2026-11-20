@@ -1,6 +1,8 @@
 #ifndef GRASS_COMMON_GLSL
 #define GRASS_COMMON_GLSL
 
+#include "grass/grass_blade_limits.glsl"
+
 // The grass system (reports/engine/2026-11-14-grass-system): what the blades (grass.vert, grass.frag) and the
 // ground under them (grass_ground.glsl) share. The patches and the spots of bare earth are the processor's
 // (common/graphics/grass/grasspatch.cpp): the same whole numbers, so the ground knows where the grass stands
@@ -27,8 +29,21 @@ const uint GrassPartNormal      = 32u;
 const uint GrassPartPaint       = 64u;
 const uint GrassPartHide        = 128u;
 const uint GrassPartCover       = 256u; // the paint of the meadow's own ground (grass_layers.glsl): sward green, earth red
+const uint GrassPartBands       = 512u; // the ground of the grass painted by the bands of its distance (grassPaintFarBand)
 const uint GrassPartLayers      = 4096u; // a ground with its own layers as a painted ground: no layers, its blades as there
 const uint GrassPartCells       = 8192u;
+const uint GrassPartTrack       = 16384u; // a road with `track` as with its `verge` alone
+const uint GrassPartOffscreen   = 32768u; // the blades' whole vertex stage, then off the screen (grass.vert)
+
+// Ground breakdown. These bits use SceneDesc::viewFlags; tone uses the second word.
+const uint GrassPartGroundPaint     = 1u << 25;
+const uint GrassPartGroundBorder    = 1u << 26;
+const uint GrassPartGroundBare      = 1u << 27;
+const uint GrassPartGroundBetween   = 1u << 28;
+const uint GrassPartGroundFarSward  = 1u << 29;
+const uint GrassPartGroundMaps      = 1u << 30;
+const uint GrassPartGroundDetail    = 1u << 31;
+const uint GrassPartGroundTone      = 1u;
 
 uint grassPartsOff(float ringW) { return uint(max(ringW - 1.0, 0.0)*0.5 + 0.25); }
 
@@ -40,6 +55,18 @@ vec3 grassPaintBand(float d) {
   if(abs(d- 500.0)< 62.0) return vec3(0,1,0);
   if(abs(d-1000.0)<125.0) return vec3(1,1,0);
   return vec3(0);
+  }
+
+// The paint of the whole ground of the grass by the bands of its distance from the camera, the blades' own
+// (grass.vert): to 10, 24, 48, 64 and 100 m and beyond in magenta, red, blue, green, cyan and yellow, colours a
+// lit scene hardly has. reports/engine/2026-11-18-grass-volume counts the pixels a layer over the far ground takes
+vec3 grassPaintFarBand(float d) {
+  if(d<1000.0) return vec3(1,0,1);
+  if(d<2400.0) return vec3(1,0,0);
+  if(d<4800.0) return vec3(0,0,1);
+  if(d<6400.0) return vec3(0,1,0);
+  if(d<10000.0) return vec3(0,1,1);
+  return vec3(1,1,0);
   }
 
 // The paint of the squares: red by the squares of 0.5 m, green by those of 5 m, as a chessboard each; blue the
@@ -60,6 +87,14 @@ const float GrassRootAo      = 0.35;
 const float GrassWidth       = 1.3;                      // cm at the root, and per step of the blade's four bits
 const float GrassWidthStep   = 0.11;
 const float GrassTaper       = 0.7;                      // of the width is gone at the tip
+// A stalk with an ear (grass_ear.glsl; the record's "kind": "ear"): of the ground's colour too, the stalk as straw,
+// the ear as gold, paler by the tuft's dryness
+const vec3  GrassEarStalk      = vec3(0.95);
+const vec3  GrassEarGold       = vec3(1.22, 1.06, 0.62);
+const vec3  GrassEarPale       = vec3(1.36, 1.24, 0.84);
+const float GrassEarDepth      = 1.6;                    // the power of the height the tone rises by: the stand is deep
+const float GrassEarDroopMin   = 1.0;                    // the ear hangs over by 45 to 65 degrees, by the stalk: tangents
+const float GrassEarDroopMax   = 2.1445;
 // The ground. Seen from above it lies between the blades in their shade. Seen along the meadow it stands for the
 // blades the eye would meet behind the ones that are drawn, and from afar for all of them: it takes what the
 // grass looks like together. The share of that look: by the eye's direction against the ground, from GrassGrazeTo

@@ -4,8 +4,11 @@
 #include <cassert>
 #include <algorithm>
 #include <atomic>
+#include <limits>
 
+#include "graphics/foliagetree.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/meshlevels.h"
 #include "graphics/shaders.h"
 
 struct LandscapePages::State {
@@ -151,7 +154,7 @@ std::shared_ptr<LandscapeRange> LandscapePages::allocate(const PackedMesh& mesh)
   return range;
   }
 
-StaticMesh::StaticMesh(const PackedMesh& mesh) {
+StaticMesh::StaticMesh(const PackedMesh& mesh) :clusterLevels(mesh.clusterLevels) {
   const Vertex* vert=mesh.vertices.data();
   if(Resources::hasGraphicsDevice()) {
     LoadProbe::Vobs::Scope probe("mesh_gpu");
@@ -162,12 +165,18 @@ StaticMesh::StaticMesh(const PackedMesh& mesh) {
 
   initSubMeshes(mesh);
 
+  if(!mesh.vertices.empty() && mesh.meshletBounds.size()*PackedMesh::MaxVert==mesh.vertices.size()) {
+    meshletSpheres.reserve(mesh.meshletBounds.size());
+    for(auto& b:mesh.meshletBounds)
+      meshletSpheres.emplace_back(b.pos.x, b.pos.y, b.pos.z, b.r);
+    }
+
   if(Resources::hasGraphicsDevice() && Shaders::options().doRtScene) {
     LoadProbe::Vobs::Scope probe("mesh_gpu");
     for(size_t i=0;i<mesh.subMeshes.size();++i) {
       if(sub[i].material.strand)
         continue; // ribbons have no width until the vertex shader: nothing for a ray to hit
-      sub[i].blas = Resources::blas(vbo, ibo, sub[i].iboOffset, sub[i].iboLength);
+      sub[i].blas = Resources::blas(vbo, ibo, sub[i].rtOffset, sub[i].rtLength);
       }
     }
   }
@@ -181,9 +190,12 @@ StaticMesh::StaticMesh(const PackedMesh& mesh, LandscapePages& pages)
     for(size_t i=0;i<mesh.subMeshes.size();++i) {
       sub[i].iboOffset = mesh.subMeshes[i].iboOffset;
       sub[i].iboLength = mesh.subMeshes[i].iboLength;
+      sub[i].rtOffset  = sub[i].iboOffset;
+      sub[i].rtLength  = sub[i].iboLength;
       }
     }
   bbox.assign(mesh.bbox());
+  drawn = bbox;
   }
 
 StaticMesh::~StaticMesh() {
@@ -198,7 +210,16 @@ StaticMesh& StaticMesh::operator=(StaticMesh&& other) {
   morph=other.morph;
   sub=std::move(other.sub);
   bbox=other.bbox;
+  drawn=other.drawn;
+  levels=std::move(other.levels);
+  impostor=std::move(other.impostor);
+  treeBough=std::move(other.treeBough);
+  meshletSpheres=std::move(other.meshletSpheres);
+  clusterLevels=std::move(other.clusterLevels);
+  ownMesh=other.ownMesh;
   pageRange=std::move(other.pageRange);
+  treeHiZBoxes=std::move(other.treeHiZBoxes);
+  shadowProbeTriangleEnds=std::move(other.shadowProbeTriangleEnds);
   return *this;
   }
 
@@ -250,9 +271,87 @@ void StaticMesh::initSubMeshes(const PackedMesh& mesh) {
     sub[i].iboOffset = mesh.subMeshes[i].iboOffset;
     sub[i].iboLength = mesh.subMeshes[i].iboLength;
     sub[i].texel     = mesh.subMeshes[i].texel;
+    sub[i].rtOffset  = sub[i].iboOffset;
+    sub[i].rtLength  = clusterLevels.empty() ? sub[i].iboLength : mesh.subMeshes[i].clusterL0Length;
     }
   bbox.assign(mesh.bbox());
+  drawn = bbox;
+  // The levels of detail (meshlevels.h): the rays take the coarsest one at any distance, the culling keeps them all
+  levels.resize(mesh.levels.size());
+  for(size_t i=0;i<mesh.levels.size();++i) {
+    levels[i].px  = mesh.levels[i].px;
+    levels[i].sub = mesh.levels[i].sub;
+    Bounds level;
+    level.assign(mesh.levels[i].bbox);
+    drawn.assign(drawn,level);
+    }
+  if(!levels.empty())
+    for(size_t i=0;i<sub.size() && i<levels.back().sub.size();++i) {
+      sub[i].rtOffset = levels.back().sub[i].first;
+      sub[i].rtLength = levels.back().sub[i].second;
+      }
   strandWidth = mesh.strandWidth;
+  initTreeHiZBoxes(mesh);
+  }
+
+void StaticMesh::initTreeHiZBoxes(const PackedMesh& mesh) {
+  if(!clusterLevels.empty() ||
+     std::ranges::none_of(sub, [](const auto& s) { return FoliageTree::isTree(s.material.foliage); }))
+    return;
+
+  if(!levels.empty() && MeshLevels::vsmFrameStatsEnabled() && MeshLevels::shadowProbePx()) {
+    constexpr size_t stride = PackedMesh::MaxPrim*4;
+    const size_t meshlets = mesh.indices8.size()/stride;
+    shadowProbeTriangleEnds.resize(meshlets+1);
+    for(size_t i=0; i<meshlets; ++i) {
+      // As in processMeshlet: the last packed triangle encodes the count when there is padding.
+      const auto* tail = &mesh.indices8[(i+1)*stride-4];
+      const uint32_t triangles = tail[0]==tail[1] ? uint32_t(tail[2]) : PackedMesh::MaxPrim;
+      shadowProbeTriangleEnds[i+1] = shadowProbeTriangleEnds[i]+triangles;
+      }
+    }
+
+  const auto addBox = [&](size_t offset, size_t length) {
+    constexpr float inf = std::numeric_limits<float>::infinity();
+    TreeHiZBounds bounds {Tempest::Vec3(inf), uint32_t(offset/PackedMesh::MaxInd),
+                          Tempest::Vec3(-inf), uint32_t(length/PackedMesh::MaxInd)};
+    for(size_t i=offset; i<offset+length; i+=3) {
+      const auto a = mesh.indices[i], b = mesh.indices[i+1], c = mesh.indices[i+2];
+      // The meshlet's padding is a repeated index and can refer to an unused zero vertex.
+      if(a==b || b==c || a==c)
+        continue;
+      for(auto id : {a,b,c}) {
+        const auto& p = mesh.vertices[id].pos;
+        bounds.min.x = std::min(bounds.min.x,p[0]);
+        bounds.min.y = std::min(bounds.min.y,p[1]);
+        bounds.min.z = std::min(bounds.min.z,p[2]);
+        bounds.max.x = std::max(bounds.max.x,p[0]);
+        bounds.max.y = std::max(bounds.max.y,p[1]);
+        bounds.max.z = std::max(bounds.max.z,p[2]);
+        }
+      }
+    if(bounds.min.x!=inf)
+      treeHiZBoxes.push_back(bounds);
+    };
+
+  for(const auto& s : sub)
+    addBox(s.iboOffset,s.iboLength);
+  for(const auto& level : levels)
+    for(const auto& [offset,length] : level.sub)
+      addBox(offset,length);
+  }
+
+uint32_t StaticMesh::shadowProbeTriangles(uint32_t first, uint32_t count) const {
+  if(shadowProbeTriangleEnds.empty())
+    return 0;
+  return shadowProbeTriangleEnds[size_t(first)+count]-shadowProbeTriangleEnds[first];
+  }
+
+const StaticMesh::TreeHiZBounds* StaticMesh::treeHiZBox(uint32_t firstMeshlet, uint32_t meshletCount) const {
+  const auto it = std::ranges::find_if(treeHiZBoxes, [&](const auto& box) {
+    return box.firstMeshlet==firstMeshlet && box.meshletCount==meshletCount;
+    });
+  return it==treeHiZBoxes.end() ? nullptr : &*it;
   }
 
 const Tempest::AccelerationStructure* StaticMesh::blas(size_t iboOffset, size_t iboLen) const {
@@ -261,6 +360,35 @@ const Tempest::AccelerationStructure* StaticMesh::blas(size_t iboOffset, size_t 
       return &i.blas;
       }
   return nullptr;
+  }
+
+std::pair<uint32_t,uint32_t> StaticMesh::levelMeshlets(size_t iboOffset, size_t iboLen, size_t level) const {
+  std::pair<size_t,size_t> slice = {iboOffset,iboLen};
+  if(level>0 && level<=levels.size())
+    for(size_t i=0;i<sub.size() && i<levels[level-1].sub.size();++i)
+      if(sub[i].iboOffset==iboOffset && sub[i].iboLength==iboLen) {
+        slice = levels[level-1].sub[i];
+        break;
+        }
+  return {uint32_t(slice.first/PackedMesh::MaxInd), uint32_t(slice.second/PackedMesh::MaxInd)};
+  }
+
+MeshLevels::Selection StaticMesh::pickLevel(uint8_t previous, float height, bool allowImpostor) const {
+  const size_t glbs = std::min(levels.size(), MeshLevels::MaxLevels);
+  const bool card = allowImpostor && glbs>0 && impostor.px>0.f;
+  float px[MeshLevels::MaxLevels+1] = {};
+  for(size_t i=0; i<glbs; ++i)
+    px[i] = levels[i].px;
+  px[glbs] = impostor.px;
+  const auto stage = MeshLevels::pick(px, glbs+size_t(card), previous, height);
+  return {stage, uint8_t(std::min<size_t>(stage, glbs))};
+  }
+
+std::pair<size_t,size_t> StaticMesh::rtSlice(size_t iboOffset, size_t iboLen) const {
+  for(auto& i:sub)
+    if(i.iboOffset==iboOffset && i.iboLength==iboLen)
+      return {i.rtOffset,i.rtLength};
+  return {iboOffset,iboLen};
   }
 
 StaticMesh::StaticMesh(const Material& mat, std::vector<Resources::Vertex> cvbo, std::vector<uint32_t> cibo) {
@@ -303,6 +431,7 @@ StaticMesh::StaticMesh(const Material& mat, std::vector<Resources::Vertex> cvbo,
     sub[i].texName   = "";
     sub[i].material  = mat;
     sub[i].iboLength = PackedMesh::MaxInd;
+    sub[i].rtLength  = PackedMesh::MaxInd;
     sub[i].texel     = texel;
     if(Resources::hasGraphicsDevice() && Shaders::options().doRtScene) {
       LoadProbe::Vobs::Scope probe("mesh_gpu");
@@ -310,4 +439,5 @@ StaticMesh::StaticMesh(const Material& mat, std::vector<Resources::Vertex> cvbo,
       }
     }
   bbox.assign(cvbo);
+  drawn = bbox;
   }

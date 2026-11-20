@@ -87,6 +87,7 @@ void Npc::setBodyTrace(BodyTrace trace) {
 
 void Npc::clearState(bool noFinalize) {
   if(BodyController::deferNative(*this,[this,noFinalize] { clearState(noFinalize); })) return;
+  stopActivityEvents(ActivityEvents::Interrupted);
   if(aiState.funcIni.isValid() && aiState.started) {
     if(!noFinalize)
       owner.rules().invokeState(this,currentOther,currentVictim,aiState.funcEnd);  // cleanup
@@ -131,6 +132,19 @@ int Npc::invokeRoutine(ScriptFn function) {
   return owner.rules().invokeState(this,currentOther,currentVictim,function);
   }
 
+void Npc::runStateInit() {
+  aiState.started      = true;
+  aiState.loopNextTime = owner.tickCount();
+  // WA: for gothic1 dialogs
+  perceptionNextTime   = owner.tickCount();
+  // The commands of an activity by events' Init are its own: it can take them back (world/activityevents.h).
+  const auto* activity = owner.rules().eventActivity(aiState.funcIni);
+  activityCommands = activity!=nullptr;
+  invokeRoutine(aiState.funcIni);
+  activityCommands = false;
+  startActivityEvents(activity);
+  }
+
 void Npc::tickRoutine() {
   if(!aiState.funcIni.isValid() && !isPlayer()) {
     auto r = currentRoutine();
@@ -149,19 +163,18 @@ void Npc::tickRoutine() {
     return;
 
   if(!aiState.started) {
-    aiState.started      = true;
-    aiState.loopNextTime = owner.tickCount();
-    // WA: for gothic1 dialogs
-    perceptionNextTime   = owner.tickCount();
-    invokeRoutine(aiState.funcIni);
+    runStateInit();
     return;
     }
 
+  // A routine activity run by events (world/activityevents.h) runs no Loop: its automaton wakes on events
+  // below. The end of its row stays here, on the same perception clock as a polled Loop's.
+  const bool events = armActivityEvents();
   const bool fastPath = (aiPolicy==NpcProcessPolicy::AiFar2 && routines.empty()); //HACK: don't process far away Npc
   if(aiState.loopNextTime<=owner.tickCount()) {
     aiState.loopNextTime = owner.tickCount() + perceptionTimeClampt();
     int loop = LOOP_CONTINUE;
-    if(aiState.funcLoop.isValid()) {
+    if(!events && aiState.funcLoop.isValid()) {
       static const float MAX_DIST = 300;
       if(fastPath && currentFp!=nullptr && qDistTo(currentFp) < MAX_DIST*MAX_DIST) {
         loop = LOOP_CONTINUE;
@@ -173,7 +186,8 @@ void Npc::tickRoutine() {
       else {
         loop = invokeRoutine(aiState.funcLoop);
         }
-      } else {
+      }
+    else if(!events) {
       // ZS_DEATH   have no loop-function, in G1, G2-classic
       // ZS_GETMEAT have no loop-function, in G2-notr
       loop = 1;
@@ -186,11 +200,16 @@ void Npc::tickRoutine() {
       }
 
     if(loop!=LOOP_CONTINUE) {
+      if(events)
+        stopActivityEvents(ActivityEvents::RowEnd);
       clearState(false);
       currentOther  = nullptr;
       currentVictim = nullptr;
+      return;
       }
     }
+  if(events)
+    tickActivityEvents();
   }
 
 void Npc::forEachRoutine(const std::function<void(const RoutineInfo&)>& f) const {
@@ -304,19 +323,7 @@ void Npc::setStateTime(int64_t time) {
 
 void Npc::addRoutine(gtime s, gtime e, uint32_t callback, std::string_view point) {
   auto wp = world().findPoint(point,false);
-
-  Routine r;
-  r.start    = s;
-  r.end      = e;
-  r.callback = callback;
-  r.point    = wp;
-  if(wp==nullptr)
-    r.fallbackName = point;
-  routines.push_back(r);
-
-  std::stable_sort(routines.begin(), routines.end(), [](const Routine& l, const Npc::Routine& r) {
-    return l.start < r.start;
-    });
+  NpcRoutineTable::add(routines,s,e,callback,wp,point);
   }
 
 void Npc::clearRoutine() {

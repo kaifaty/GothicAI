@@ -60,12 +60,14 @@ static std::vector<Tempest::Vec3> hullVerticesOf(const PackedMesh& pm) {
   return vertices;
   }
 
-ProtoMesh::ProtoMesh(PackedMesh&& pm, std::string_view fname, bool collision)
+ProtoMesh::ProtoMesh(PackedMesh&& pm, std::string_view fname, bool collision, const PackedMesh* visual)
   :fname(fname) {
   LoadProbe::Vobs::Scope probe("mesh_proto_cpu");
-  attach.emplace_back(pm);
+  attach.emplace_back(visual==nullptr ? pm : *visual);
   submeshId.resize(attach[0].sub.size());
   auto&  att   = attach[0];
+  // the levels of detail are drawn only (meshlevels.h): the shape, the hull and the hit zones are the mesh's own
+  pm.dropLevels();
   if(collision) {
     points = pointsOf(pm);
     att.hullVertices = hullVerticesOf(pm);

@@ -802,6 +802,7 @@ void TestBench::configure(std::string scenario, std::string output, int64_t seed
   BloodStainsBench::reset();
   NavBench::reset();
   NavDemos::reset();
+  npcDayCheckpointReset();
   stopRecording();
   if(bench.csv!=nullptr)
     std::fclose(bench.csv);
@@ -936,6 +937,7 @@ void TestBench::bodyEvent(const Npc& actor, const Npc* target, std::string_view 
   }
 
 void TestBench::bodyForget(const Npc* npc) {
+  npcDayCheckpointForget(npc);
   if(bodyTraceAlive && bench.melee.meleeAiResponse &&
      (bench.melee.meleeAiResponse->npc==npc || bench.melee.meleeAiResponse->attacker==npc)) bench.melee.meleeAiResponse.reset();
   if(bodyTraceAlive && (bench.npcCommands.stunDrift.target==npc || bench.npcCommands.stunDrift.attacker==npc)) bench.npcCommands.stunDrift={};

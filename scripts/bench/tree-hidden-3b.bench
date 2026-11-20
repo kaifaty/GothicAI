@@ -1,0 +1,64 @@
+# @timeout 270
+# Same-frame depth and owner pairs at 2560x1440 with the tree-hidden-1024 set.
+# Each gate takes consecutive rendered frames unless its duration is specified.
+world-check NEWWORLD.ZEN
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode run
+watch player
+
+goto pos 54140 1650 -10780
+clear 3000
+cam at 54140 1760 -10780 60000 2060 -10780
+wait real 20000
+hiz-verify inside 16
+
+goto pos 42364 1700 -8973
+clear 5000
+cam at 42364 1808 -8973 54140 2490 -10780
+wait real 15000
+hiz-verify far-100 16
+
+goto pos 23216 4300 -8618
+clear 5000
+cam at 23216 11160 -8618 54140 2490 -10780
+wait real 15000
+hiz-verify far-300 16
+
+goto pos 54140 1650 -10780
+cam at 54140 1760 -10780 60000 2060 -10780
+wait real 10000
+cam fly 54140 1760 -10780 54140 2060 -4780 800
+hiz-verify turn 32
+hiz-verify cut-before 8
+cam at 54140 1760 -10780 60000 2060 -10780
+hiz-verify cut-after 8
+
+cam game
+goto pos 54500 1640 -12700
+clear 5000
+face 110
+wait real 15000
+foliage wait-gust 500 -12700
+press forward
+wait 500
+hiz-verify pass 120 9000
+release forward
+
+goto pos 42364 1700 -8973
+cam at 42364 1710 -8973 54140 2490 -10780
+wait real 10000
+cam fly 44600 4200 -9350 54140 2490 -10780 6400
+wait 667
+hiz-verify crest-1 8
+wait 1233
+hiz-verify crest-2 8
+wait 1233
+hiz-verify crest-3 8
+wait 1233
+hiz-verify crest-4 8
+hiz-verify finish

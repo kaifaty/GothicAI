@@ -28,9 +28,9 @@ layout(location = 0) out vec4 outColor;
 
 layout(push_constant, std430) uniform UboPush {
   vec3  originLwc;
-#if defined(VIRTUAL_SHADOW)
   float vsmMipBias;
-#endif
+  uint  grassContactStudy;
+  uint  useGrassContactMask;
   } push;
 
 layout(binding = 0, std140) uniform UboScene {
@@ -42,6 +42,7 @@ layout(binding = 2) uniform usampler2D gbufNormal;
 layout(binding = 3) uniform sampler2D  depth;
 #if defined(MATERIAL_MAPS)
 layout(binding = 12) uniform sampler2D gbufOrm;
+layout(binding = 13) uniform usampler2D grassContactMask;
 #endif
 
 #if defined(SHADOW_MAP)
@@ -53,6 +54,8 @@ layout(binding = 5) uniform sampler2D textureSm1;
 layout(binding = 4) uniform utexture3D pageTbl;
 layout(binding = 6) uniform texture2D  pageData;
 #endif
+
+#include "grass/grass_contact.glsl"
 
 // geometric normal of the visible surface (LWC), from the depth buffer; vec3(0) where it cannot be told
 vec3 geomNormal = vec3(0);
@@ -285,6 +288,17 @@ void main(void) {
   float       light  = shadowFactor(d, shadowNormal, isHair ? hairShell(dot(scene.sunDir,normal)) :
                                     (through>0.0 ? max(dot(scene.sunDir,normal),0.0) + through :
                                     (isFlat ? 0 : dot(scene.sunDir,normal))));
+  uint grassClass = 0u;
+  if((scene.viewFlags & VF_GRASS_CONTACT)!=0u && light>0.0)
+    light *= grassContact(depth, gbufDiffuse, grassContactMask, gl_FragCoord.xy, d,
+                          isGBufGrass(diff.a) ? vec3(0) : normal, push.useGrassContactMask!=0u,
+                          push.grassContactStudy, grassClass);
+  if(push.grassContactStudy!=0u) {
+    const vec3 color = grassClass==3u ? vec3(1,0,1) : grassClass==2u ? vec3(0,0,1) : grassClass==1u ? vec3(0,1,0) :
+                       light>0.0 ? vec3(1,0,0) : vec3(0);
+    outColor = vec4(color, 1);
+    return;
+    }
   float lightThrough = 0.0;
   if(through>0.0) {
     const float lit = light/(max(dot(scene.sunDir,normal),0.0) + through); // what the shadow leaves of the sun
@@ -357,6 +371,8 @@ void main(void) {
   if(isHair && (scene.viewFlags & VF_HAIR_DEBUG)!=0u)
     luminance = vec3(0);
   luminance += linear * scene.sunColor * (lightThrough*Fd_Lambert) * FoliageThroughTint;
+  // the depth of a tree's crown (lighting/crown_light.glsl) gets its share of the sun as of any light
+  luminance *= gbufCrownShade(ormG, diff.a);
 #endif
 
   outColor = vec4(luminance * scene.exposure, 0.0);

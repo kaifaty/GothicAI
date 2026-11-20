@@ -45,6 +45,17 @@ const float FoliageSwingAcross  = 0.3;
 const float FoliageSwing1Leaf   = 0.012;
 const float FoliageSwing2Leaf   = -0.009;
 
+// A field of corn (anchor "field" of the record; reports/content/2026-11-19-crop-fields/alive.md, step B): a tuft
+// by its motion, but the two waves are a deeper ripple on its lean, and the field shows them by its light, as the
+// eye sees a wave on standing corn - a patch that lies over shows the faces of its stalks and is lighter. The same
+// crest as a tuft's, so the bounds are a tuft's
+const uint  FoliageAnchorField    = 2u;
+const float FoliageFieldSteady    = 0.6;
+const float FoliageFieldSwing     = 0.4;
+const float FoliageFieldBreeze    = 0.45;  // of the gust's light the waves have in the breeze between gusts
+const float FoliageFieldNormalTan = 0.5;   // the normal goes over against the wind by this tangent on a crest in a gust
+const float FoliageFieldSheen     = 0.32;  // and the openness of the vertex (crown_light.glsl) rises by this
+
 float foliagePackedWind   (uint bits) { return float( bits       & 0xFFu)*(FoliageMaxScale/255.0); }
 float foliagePackedFlutter(uint bits) { return float((bits >> 8) & 0xFFu)*(FoliageMaxScale/255.0); }
 // the share of the sun a leaf lets through (main.frag writes it into the G-buffer)
@@ -83,6 +94,21 @@ float foliagePlaceHash(vec3 place) {
   return float(h & 0xFFFFu)/65536.0;
   }
 
+// the two waves that run over the world, at a place: -1..1
+float foliageWaves(vec3 place, vec4 phase) {
+  const float w1 = sin(6.2831853*(fract(place.z/FoliageWave1Length) - phase.x));
+  const float w2 = sin(6.2831853*(fract(dot(place.xz,FoliageWave2Dir)/FoliageWave2Length) - phase.y));
+  return FoliageWave1Share*w1 + FoliageWave2Share*w2;
+  }
+
+// How far a field of corn lies over at a place, for its light: 0 in a trough, 1 on a crest in a gust. pressure: the
+// lean's pressure of the place (foliageFrontAt)
+float foliageFieldLight(uint bits, vec3 place, float pressure, vec4 wind, vec4 phase) {
+  if(wind.w<=0.0 || foliagePackedWind(bits)<=0.0)
+    return 0.0;
+  return (0.5 + 0.5*foliageWaves(place, phase))*mix(FoliageFieldBreeze, 1.0, clamp(pressure, 0.0, 1.0));
+  }
+
 // p: the vertex in the tuft's axes; reach: the largest arm of the mesh at rest (Bucket::foliageReach); mat: the
 // object's matrix. The result is the vertex moved, in the same axes
 vec3 foliageBend(vec3 p, uint bits, float reach, mat4x3 mat, vec4 wind, vec4 phase, vec4 swingOf) {
@@ -107,11 +133,11 @@ vec3 foliageBend(vec3 p, uint bits, float reach, mat4x3 mat, vec4 wind, vec4 pha
 
   // the lean: the wind's pressure, and two waves that run over the world as a ripple on it
   const vec3  place = mat[3];
-  const float w1 = sin(6.2831853*(fract(place.z/FoliageWave1Length) - phase.x));
-  const float w2 = sin(6.2831853*(fract(dot(place.xz,FoliageWave2Dir)/FoliageWave2Length) - phase.y));
-  const float g     = FoliageWave1Share*w1 + FoliageWave2Share*w2;
+  const float g     = foliageWaves(place, phase);
+  const bool  field = (bits >> 24)==FoliageAnchorField;
   const float swing = min(windK*swingOf.y, FoliageSwingMaxTan);
-  const float tanT  = min(FoliageBendK*windK*wind.z*(FoliageWaveSteady + FoliageWaveSwing*g), FoliageBendMaxTan - swing);
+  const float tanT  = min(FoliageBendK*windK*wind.z*((field ? FoliageFieldSteady : FoliageWaveSteady) +
+                                                    (field ? FoliageFieldSwing : FoliageWaveSwing)*g), FoliageBendMaxTan - swing);
   const float arm   = len*mix(FoliageBendRoot, 1.0, s);
   vec3 d = dir*(arm*tanT);
 
