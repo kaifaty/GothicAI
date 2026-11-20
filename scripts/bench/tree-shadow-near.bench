@@ -13,7 +13,6 @@ set time 12 0
 goto pos 54140 1650 -10780
 clear 3000
 cam at 54140 1760 -10780 60000 2060 -10780
-streaming wait 20000
 wait real 90000
 set time 12 0
 ztimer multiplyer 0
@@ -25,8 +24,7 @@ ztimer realtime
 goto pos 48765 6250 -3156
 clear 5000
 cam at 48765 6679 -3156 54140 2190 -10780
-streaming wait 15000
-wait real 4000
+wait real 16000
 set time 12 0
 ztimer multiplyer 0
 log shadow-near near-30 begin
@@ -38,8 +36,7 @@ cam game
 goto pos 54500 1640 -12700
 clear 5000
 face 110
-streaming wait 15000
-wait real 4000
+wait real 12000
 set time 12 0
 press forward
 wait 500
