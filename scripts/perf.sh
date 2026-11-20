@@ -274,6 +274,8 @@ scripts = Path(scenario).parents[1]
 meta = json.loads(Path(metadata).read_text())
 stamp = Path(os.environ['PERF_GPU_STAMP'])
 grass_window = os.environ.get('PERF_REMOTE') == '1' and place in ('meadow', 'grass-fields')
+if grass_window:
+    meta['game_env']['TEMPEST_VULKAN_PRESENT_IMMEDIATE'] = '1'
 # The meadow ground scenario has 354 s of scripted waits.
 timeout = 420 if place == 'grass-ground' else 300
 
@@ -288,8 +290,6 @@ def prepare(leaf, profile):
     env.update(TEMPEST_BACKGROUND='0', TEMPEST_WINDOW_SIZE=meta['requested_window'],
                OPENGOTHIC_BENCH_VISIBLE='1',
                OPENGOTHIC_BENCH=scenario, OPENGOTHIC_BENCH_OUT=str(leaf))
-    if grass_window:
-        env['TEMPEST_VULKAN_PRESENT_IMMEDIATE'] = '1'
     if profile:
         env['OPENGOTHIC_FRAME_PROFILE'] = str(leaf / 'frameprofile.csv')
     # PERF_VID_RES picks the internal render resolution: 0 full, 1 = 75 %, 2 = 50 % of the drawable,

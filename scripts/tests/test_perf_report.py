@@ -147,6 +147,51 @@ TASK=/remote/task
     assert environment.get("OPENGOTHIC_BASE_CACHE") == cache
 
 
+@pytest.mark.parametrize("frames_per_interval", (20, 21))
+def test_ryzen_meadow_presentation_and_stall_guard(tmp_path, frames_per_interval):
+    source = (Path(__file__).parents[1] / "perf.sh").read_text()
+    run_game = source[source.index("\nrun_game() {"):source.index("\n# The GPU clock journal runs")]
+    scripts = tmp_path / "scripts"
+    scenario = scripts / "bench/perf-meadow.bench"
+    scenario.parent.mkdir(parents=True)
+    (scripts / "base-ensure.sh").touch()
+    metadata = tmp_path / "metadata.json"
+    metadata.write_text(json.dumps({"requested_window": "2560x1440", "game_args": [], "game_env": {}}))
+    game = tmp_path / "game"
+    game.write_text(f"#!{sys.executable}\n" + r'''
+import json, os, time
+from pathlib import Path
+
+print(os.environ.get("TEMPEST_VULKAN_PRESENT_IMMEDIATE"), flush=True)
+leaf = Path(os.environ["OPENGOTHIC_BENCH_OUT"])
+step = int(os.environ["FAKE_FRAME_STEP"])
+for interval in range(3):
+    temp = leaf / "heartbeat.tmp"
+    temp.write_text(json.dumps({"elapsed_seconds": 10 * interval, "frame": step * interval}))
+    temp.replace(leaf / "heartbeat.json")
+    time.sleep(1)
+''')
+    game.chmod(0o755)
+    leaf = tmp_path / "repeat-1"
+    environment = dict(os.environ, PERF_REMOTE="1", GAME_BIN=str(game), GOTHIC_DIR=str(tmp_path),
+                       PERF_GPU_STAMP=str(tmp_path / "stamp"), FAKE_FRAME_STEP=str(frames_per_interval),
+                       PERF_VID_RES="0", PERF_INI="")
+    environment.pop("TEMPEST_VULKAN_PRESENT_IMMEDIATE", None)
+    result = subprocess.run(
+        ["bash", "-c", run_game + '\nOUT="$1"\nrun_game measure "$2" "$3" meadow 1',
+         "bash", str(tmp_path), str(scenario), str(leaf)],
+        env=environment, capture_output=True, text=True, timeout=10)
+
+    assert (leaf / "game.log").read_text() == "1\n"
+    assert json.loads((leaf / "heartbeat.json").read_text())["elapsed_seconds"] == 20
+    if frames_per_interval == 20:
+        assert result.returncode == 1 and "2 FPS for two heartbeat intervals" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        measured = json.loads((leaf / "metadata.json").read_text())
+        assert measured["game_env"]["TEMPEST_VULKAN_PRESENT_IMMEDIATE"] == "1"
+
+
 @pytest.mark.parametrize("converter", (True, False))
 def test_remote_perf_picks_base_of_stand_engine_format(tmp_path, converter):
     # game-base.json names a base of another importer format; the stand's converter decides.
