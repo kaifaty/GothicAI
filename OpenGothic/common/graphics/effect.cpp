@@ -40,40 +40,52 @@ Effect::~Effect() {
   }
 
 bool Effect::ownLight(OwnLight& out) const {
+  if(!givenLight)
+    return false;
+  out = *givenLight;
+  return true;
+  }
+
+bool Effect::setupOwnLight(World& owner) {
+  givenLight.reset();
   if(ownPfx==nullptr || ownPfx->lightRange<=0)
     return false;
   const auto& decl = *ownPfx;
   const auto  rgb  = [](const Vec3& c) { return asset::Color(uint8_t(c.x),uint8_t(c.y),uint8_t(c.z),255); };
   // a point a metre wide
-  out.preset                        = asset::LightPreset();
-  out.preset.light_type             = asset::LightType::POINT;
-  out.preset.range                  = decl.lightRange;
-  out.preset.color                  = rgb(decl.lightColor);
-  out.preset.quality                = asset::LightQuality::LOW;
-  out.preset.on                     = true;
-  out.preset.range_animation_scale  = decl.lightKeys;
-  out.preset.range_animation_fps    = decl.lightFps;
-  out.preset.range_animation_smooth = true;
+  asset::LightPreset own;
+  own.light_type             = asset::LightType::POINT;
+  own.range                  = decl.lightRange;
+  own.color                  = rgb(decl.lightColor);
+  own.quality                = asset::LightQuality::LOW;
+  own.on                     = true;
+  own.range_animation_scale  = decl.lightKeys;
+  own.range_animation_fps    = decl.lightFps;
+  own.range_animation_smooth = true;
   for(const auto& c:decl.lightColors)
-    out.preset.color_animation_list.push_back(rgb(c));
-  out.preset.color_animation_fps    = decl.lightFps;
-  out.preset.color_animation_smooth = true;
-  out.preset.can_move               = true;
-  out.loop                          = decl.lightLoop;
-  out.at                            = lightPos;
+    own.color_animation_list.push_back(rgb(c));
+  own.color_animation_fps    = decl.lightFps;
+  own.color_animation_smooth = true;
+  own.can_move               = true;
+  // its keys count from now, as its looped emitter's do (PfxEmitter's birth, ParticleFx::keySpan)
+  light      = owner.addLight(own);
+  givenLight = OwnLight{own,false,Vec3()};
+  // without "loop" the keys are the fire's stages: the last one stays when the particles outlive it
+  giveKeysOnce(!decl.lightLoop);
+  givePosition(lightPos);
   return true;
   }
 
-bool Effect::setupOwnLight(World& owner) {
-  OwnLight own;
-  if(!ownLight(own))
-    return false;
-  // its keys count from now, as its looped emitter's do (PfxEmitter's birth, ParticleFx::keySpan)
-  light = owner.addLight(own.preset);
-  // without "loop" the keys are the fire's stages: the last one stays when the particles outlive it
-  light.setKeysOnce(!own.loop);
-  light.setPosition(own.at);
-  return true;
+void Effect::giveKeysOnce(bool once) {
+  light.setKeysOnce(once);
+  if(givenLight)
+    givenLight->loop = !once;
+  }
+
+void Effect::givePosition(const Vec3& at) {
+  light.setPosition(at);
+  if(givenLight)
+    givenLight->at = at;
   }
 
 void Effect::setupLight(World& owner) {
@@ -261,7 +273,7 @@ void Effect::syncAttachesSingle(const Matrix4x4& inPos) {
   if(ownPfx!=nullptr && ownPfx->lightRange>0)
     lightPos += ParticleFx::inAxes(axes,ownPfx->lightAt);
   pfx  .setObjMatrix(p);
-  light.setPosition(lightPos);
+  givePosition(lightPos);
   sfx  .setPosition(pos3);
   }
 

@@ -910,6 +910,17 @@ void particleMotion() {
     };
   const double fast=step(0.f), slow=step(1.5f);
   require(slow>0 && slow*4<fast,"sway_hz slows the light's trembling");
+
+  // the colour keys of an own effect's light (particles.d "light" colors), 100 ms a key: played once they hold the
+  // last colour past it, with "loop" they go round and blend
+  LightSource keyed;
+  keyed.setColor(std::vector<Tempest::Vec3>{{1,0,0},{0,1,0},{0,0,1}},10.f,true);
+  keyed.setKeysOnce(true);
+  keyed.update(450);
+  require((keyed.currentColor()-Tempest::Vec3(0,0,1)).length()<1e-5f,"colour keys played once hold the last one");
+  keyed.setKeysOnce(false);
+  keyed.update(450);
+  require((keyed.currentColor()-Tempest::Vec3(0,0.5f,0.5f)).length()<1e-5f,"looped colour keys go round");
   }
 
 // A layer emitter's flame signal ("flicker") and the light that takes it ("flicker_from", "jitter_cm")

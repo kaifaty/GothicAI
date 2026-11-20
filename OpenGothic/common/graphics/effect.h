@@ -10,6 +10,7 @@
 #include "game/rpgvocabulary.h"
 
 #include <memory>
+#include <optional>
 
 class World;
 class Bullet;
@@ -39,9 +40,9 @@ class Effect final {
     bool            isEmitting() const { return pfx.isActive(); }
     // the key it plays now (setKey), nullptr: its base
     const VisualFx::Key* currentKey() const { return key; }
-    // the light of its own particles (particles.d "light") as it gives it to the world's: the range, the colour and
-    // their keys, whether the keys go round and where the light stands now; false - it has none. A headless world has
-    // no lights, the effect still knows what it gives
+    // the light of its own particles (particles.d "light") as it gave it to the world's: the range, the colour and
+    // their keys, whether the keys go round and where it put the light last; false - it set up none. A headless world
+    // has no lights, the effect still keeps what it gave
     struct OwnLight {
       asset::LightPreset preset;
       bool               loop = false;
@@ -76,6 +77,9 @@ class Effect final {
     void               syncAttachesSingle(const Tempest::Matrix4x4& inPos);
     void               setupLight(World& owner);
     bool               setupOwnLight(World& owner);
+    // the light's settings go through these, which keep what the own light got (ownLight)
+    void               giveKeysOnce(bool once);
+    void               givePosition(const Tempest::Vec3& at);
     void               setupPfx(World& owner);
     void               setupSfx(World& owner);
     void               setupCollision(World& owner);
@@ -104,6 +108,7 @@ class Effect final {
     bool                  meshPfx   = false; // the particle effect is born on the mesh
     const ParticleFx* ownPfx = nullptr; // the particle effect of this one: its own light (particles.d "light")
     Tempest::Vec3         lightPos;          // where its light stands: its node with the own light's "at"
+    std::optional<OwnLight> givenLight;      // what setupOwnLight and the settings since gave the own light
 
     Tempest::Matrix4x4    pos;
     Tempest::Vec3         selfRotation;
