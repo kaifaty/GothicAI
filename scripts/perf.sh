@@ -333,6 +333,28 @@ def stop(process):
         process.wait()
 
 
+def stall_guard(leaf):
+    previous = None
+    slow_intervals = 0
+
+    def stalled():
+        nonlocal previous, slow_intervals
+        try:
+            current = json.loads((leaf / 'heartbeat.json').read_text())
+        except FileNotFoundError:
+            return False
+        if previous is not None:
+            seconds = current['elapsed_seconds'] - previous['elapsed_seconds']
+            if seconds <= 0:
+                return False
+            frames = current['frame'] - previous['frame']
+            slow_intervals = slow_intervals + 1 if frames <= 2 * seconds else 0
+        previous = current
+        return slow_intervals >= 2
+
+    return stalled
+
+
 launched = []  # monotonic_ns of each game start
 
 
@@ -363,7 +385,9 @@ def launch(leaf, profile, done=None):
 if mode == 'measure':
     leaf = Path(leaf)
     try:
-        code, command = launch(leaf, True)
+        code, command = launch(leaf, True, stall_guard(leaf))
+        if code is None:
+            raise RuntimeError(f'perf: stand failure: {place} stayed at or below 2 FPS for two heartbeat intervals')
     except RuntimeError as error:
         raise SystemExit(str(error))
     meta.update(place=place, repeat=int(extra), command=command, exit_code=code)
