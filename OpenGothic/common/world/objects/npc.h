@@ -26,6 +26,7 @@
 #include "physics/dynamicworld.h"
 #include "physics/collisionworld.h"
 #include "physics/ragdoll.h"
+#include "world/activityevents.h"
 #include "world/aiqueue.h"
 #include "world/npclogicalstate.h"
 #include "world/objects/attention.h"
@@ -397,6 +398,13 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     void      aiPush(AiQueue::AiAction&& a);
     void      resumeAiRoutine();
+    // A routine activity run by events (world/activityevents.h): a wake for its automaton, ignored
+    // when the state polls its Loop; stopping it gives its object's reservation up.
+    void      wakeActivity(uint16_t wakes);
+    void      stopActivityEvents(uint16_t why);
+    // MobReservations: the reservation of a use not yet attached expired or another NPC took the object.
+    void      loseActivityReservation();
+    ActivityEvents::Stage activityStage() const { return activityEvents.stage; }
     // external AI control (ai_bridge): routines and script perceptions are paused
     void      setExternalControl(bool e) { externalCtrl = e; }
     bool      isExternalControl() const  { return externalCtrl; }
@@ -940,6 +948,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
       Tempest::Vec3    pos  = {};
       float            pointDistance = 0.f; // transient bench precision; zero keeps normal tolerance
       Npc*             nativeCombatTarget = nullptr; // transient provenance; not a script goto
+      bool             activity = false; // transient provenance: the walk of an activity's own command
 
       void             save(Serialize& fout) const;
       void             load(Serialize&  fin);
@@ -1015,6 +1024,15 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     bool      isPlayerEnabledState(const ::AiState& st) const;
     void      tickRoutine();
+    void      runStateInit();
+    void      startActivityEvents(const ActivityDefinitions::MobActivity* activity);
+    bool      armActivityEvents();
+    void      tickActivityEvents();
+    void      tickActivityDeadline();
+    void      fireActivityWatchdog();
+    void      dropActivityCommand();
+    void      stepActivityEvents(uint16_t wakes);
+    void      seekActivityPlace();
     int       invokeRoutine(ScriptFn function);
     void      nextAiAction(AiQueue& queue, uint64_t dt);
     bool      startQueuedState(const AiQueue::AiAction& act);
@@ -1371,6 +1389,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     std::optional<NpcSimTier>       simTierOverrideValue; // bench-only, not serialized
     NpcLogicalState                logicalBody;
     AiState                        aiState;
+    ActivityEvents::State          activityEvents; // transient, not serialized
+    bool                           activityCommands=false; // transient: the commands queued now are the activity's
     ScriptFn                       aiPrevState;
     AiQueue                        aiQueue;
     AiQueue                        aiQueueOverlay;

@@ -1,0 +1,44 @@
+# Our own sheaf on Onar's north field (reports/content/2026-11-19-crop-fields/sheaf.md): a stook from 2.3 m and from 9 m,
+# a lying sheaf and the cart, of the set built with seed 7 and the fields of stalk.md.
+#   TEMPEST_WINDOW_SIZE=1920x1080 OPENGOTHIC_CONTENT=<set> scripts/bench.sh crop-sheaf <out>
+# @timeout 600
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+goto pos 60453 2218 -8230
+cam at 59726 2280 -9282 59553 2188 -9130
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot stook
+wait 300
+goto pos 60453 2218 -8230
+cam at 60228 2548 -9724 59553 2188 -9130
+clear 3000
+wait 4000
+grass wait
+wait 2000
+shot stook-far
+wait 300
+goto pos 58850 2128 -5749
+cam at 58100 2178 -6781 57950 2098 -6649
+clear 3000
+wait 4000
+grass wait
+wait 2000
+shot lying
+wait 300
+goto pos 57638 1985 -7260
+cam at 57053 2123 -8437 56738 1955 -8160
+clear 3000
+wait 4000
+grass wait
+wait 2000
+shot cart
+wait 300

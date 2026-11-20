@@ -79,7 +79,7 @@ class DrawCommands {
     void     visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass, bool history = false);
     void     visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void     writeTreeOcclusionDecisions(std::ostream& out);
-    void     visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void     visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::StorageBuffer* geometryStats);
 
     void     drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void     drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, SceneGlobals::VisCamera viewId, Material::AlphaFunc func,

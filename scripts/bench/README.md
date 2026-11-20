@@ -1937,7 +1937,8 @@ Queue `action` uses the `Action` enum in `game/rpgvocabulary.h`; `i0/i1/i2/s0/s1
 (wait duration in ms, animation or MOB scheme in `s0`, item symbol in `i0` for item-use actions).
 
 `npcday-save <npc> [minutes 60] [period 5] [shared]` waits up to one game day for an executed
-`ZS_SMITH_ANVIL_LOOP` on an occupied `BSANVIL`, writes `session-activity.sav`, then journals
+`ZS_SMITH_ANVIL_LOOP` on an occupied `BSANVIL` (by events, E1: for the activity's hold of the occupied
+`BSANVIL`, as no Loop runs), writes `session-activity.sav`, then journals
 and traces the next hour. It leaves the actor's routine and position untouched. Load that save in a
 fresh process with a scenario with `cheat god` followed by `npcday 60 5 shared probe trace=<symbol>`.
 With explicit `SAVE=` and no `WORLD`, an opening `cheat god` followed immediately by `npcday`

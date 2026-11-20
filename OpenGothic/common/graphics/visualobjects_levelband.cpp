@@ -29,6 +29,7 @@ void VisualObjects::allocLevelBand(Object& obj) {
   obj.bandCluster  = clustersMem.alloc(*obj.bucketId, obj.iboOff/PackedMesh::MaxInd, 0, obj.bucketId.toInt(), obj.bandCmd);
   auto& band = clustersMem[obj.bandCluster];
   band.instanceId = obj.bandInstance.offsetId<InstanceDesc>();
+  band.shadowCommandId = clustersMem[obj.clusterId].shadowCommandId & 0xFFFF0000u;
   band.historyGeneration |= clustersMem[obj.clusterId].historyGeneration & DrawClusters::HistoryStatic;
   drawCmd.addClusters(obj.bandCmd, reserve);
   }
@@ -48,9 +49,11 @@ void VisualObjects::freeLevelBand(Object& obj) {
 // Replaces the hard picks of preFrameUpdateLevels: `level` and `shadowLevel` become the finer sides of the bands. The
 // impostor and a ghost keep them; the shadow scale of a crown starts at the full GLB, as for a hierarchy crown there
 void VisualObjects::updateLevelBand(Object& obj, float height, float shadowHeight, bool shadowLevels, bool fullShadows,
-                                    MeshLevels::Selection& level, uint8_t& shadowLevel) {
+                                    MeshLevels::Selection& level, uint8_t& shadowLevel, bool& shadowCoarse) {
   const auto&  mesh  = *obj.bucketId->staticMesh;
   const size_t count = std::min(mesh.levels.size(), MeshLevels::MaxLevels);
+  const bool scale = FoliageTree::isTree(obj.bucketId->mat.foliage);
+  const auto& own = clustersMem[obj.clusterId];
   TreeLevelBand::Pick main, shadow;
   if(!obj.isGhost && !level.impostor()) {
     float px[MeshLevels::MaxLevels] = {};
@@ -59,7 +62,6 @@ void VisualObjects::updateLevelBand(Object& obj, float height, float shadowHeigh
     main  = TreeLevelBand::main(px, count, height);
     level = {main.fine, main.fine};
     const bool crown = obj.levelSub==mesh.treeBough->sourceSub;
-    const bool scale = FoliageTree::isTree(obj.bucketId->mat.foliage);
     if(scale && fullShadows)
       shadow = {};
     else if(scale && shadowLevels)
@@ -67,6 +69,8 @@ void VisualObjects::updateLevelBand(Object& obj, float height, float shadowHeigh
     else
       shadow = main; // the shadow takes the visual GLB
     shadowLevel = shadow.fine;
+    if((own.shadowCommandId >> 16)!=0)
+      shadowCoarse = scale && shadowLevels && shadow.fine!=(crown ? 0 : main.fine);
     if(crown)
       main = {main.fine, main.fine, 0.f}; // its main view is the bough cut
     }
@@ -85,7 +89,6 @@ void VisualObjects::updateLevelBand(Object& obj, float height, float shadowHeigh
 
   // The coarser side: in the main view the band's GLB, in the shadows the shadow band's. A side whose share is zero
   // is never drawn there: the main view skips the cluster (visibility_pass.comp), the shadows mask the last GLB away
-  const auto& own  = clustersMem[obj.clusterId];
   auto        next = clustersMem[obj.bandCluster];
   next.pos = own.pos;
   next.r   = own.r;
@@ -97,7 +100,9 @@ void VisualObjects::updateLevelBand(Object& obj, float height, float shadowHeigh
     next.meshletCount       = coarseMain.second;
     next.shadowFirstMeshlet = coarseShadow.first;
     next.shadowMeshletCount = coarseShadow.second;
-    next.shadowCommandId    = obj.bandCmd;
+    const uint32_t treeClass = (own.shadowCommandId >> 16)==0 ? 0 :
+                               (scale && shadowLevels ? DrawClusters::ShadowCoarse : DrawClusters::ShadowVisual);
+    next.shadowCommandId    = obj.bandCmd | treeClass;
     }
   auto& band = clustersMem[obj.bandCluster];
   if(std::memcmp(&band, &next, sizeof(next))==0)

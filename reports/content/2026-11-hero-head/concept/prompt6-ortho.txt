@@ -1,0 +1,13 @@
+Orthographic modelling reference sheet of one man's head, neck and top of the shoulders: exactly two views side by side on a plain mid-grey background (#7a7c80) — on the left a strict front view, on the right a strict left profile view (the face looking to the left of the image). No perspective, like orthographic camera blueprints for a 3D sculptor. Both views large and at the same scale, with the top of the skull, the brows, the eyes, the nose tip, the mouth, the chin and the ears on the same horizontal lines in both views. The head is held perfectly straight: no tilt, no turn. Flat even diffuse light from the front, very soft shadows, no rim light, so the forms and the outline read clearly. Realistic high-end 3D game character sculpt look. Wide landscape image, about 2:1.
+
+The man is the one in man.png: keep exactly his face, head shape, proportions, age, weathered tanned skin with grime and uneven redness, the mole on his cheek, his light grey-green eyes, his eyebrows, the short unevenly cut goatee joined with the moustache around the mouth with only patchy stubble on the jaw, and his greasy olive-brown hair with golden strands combed back close to the skull, the short strands at the hairline falling to one side, and the short ponytail tied with a leather thong, hanging down along the back of the neck.
+
+The face is in a fully neutral rest pose, the base pose for a facial rig, exactly as in man.png: every facial muscle relaxed, the eyebrows at rest, the forehead relaxed, the eyes open normally and looking straight ahead, the mouth closed with the lips resting on each other, the jaw relaxed. No expression at all.
+
+Keep his face naturally asymmetric, exactly as in man.png, in anatomy only and not through muscle tension: the slightly crooked nose bridge, the eyebrows of different height and shape, the uneven hairline, the uneven beard, the uneven skin. Do not mirror the face.
+
+In the profile view the ear, the jaw angle, the shape of the nose, the lips and the chin, the outline of the back of the skull under the hair and the ponytail must all be clearly visible.
+
+Clothing only as a hint: the torn collar of a coarse undyed linen shirt, dull grey-brown, low enough to leave the whole neck visible.
+
+Avoid: perspective distortion, a three-quarter turn, a tilted head, dramatic lighting, any facial expression, a frown, a raised eyebrow, a squint, a different face from man.png, a mirrored symmetrical face, fluffy hair, a ponytail sticking out backwards, a full beard along the jaw, scars, orange or golden colour cast, painterly strokes.

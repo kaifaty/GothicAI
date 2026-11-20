@@ -14,17 +14,44 @@ using namespace Tempest;
 
 namespace {
 // VsmHeader of vsm_common.glsl: the bins of pairs are the lamps by distance, then the sun's mips by ring
-constexpr uint32_t VsmLampBins = 16, VsmRingBins = 16, VsmPairBins = VsmLampBins+16*VsmRingBins;
+constexpr uint32_t VsmMips = 16, VsmLampBins = 16, VsmRingBins = 16, VsmPairBins = VsmLampBins+VsmMips*VsmRingBins;
 constexpr uint32_t VsmBinWords = (VsmPairBins+31)/32;
 struct VsmHeaderCpu {
   uint32_t pageCount, meshletCount, counterM, counterV;
-  uint32_t pagePerMip[16];
-  int32_t  pageBbox[16][4];
+  uint32_t pagePerMip[VsmMips];
+  int32_t  pageBbox[VsmMips][4];
   uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax;
   uint32_t pairSpill, candidateCount, clusterPairs;
   uint32_t admitBits[VsmBinWords], admitPrevBits[VsmBinWords];
   uint32_t pairDemand[VsmPairBins];
   };
+
+// vsm_pack_draws.comp: each row counts the geometry of one selected class on one light source/mip.
+struct VsmGeometryRow {
+  uint32_t pairs, triangles, affectedPairs, affectedTriangles;
+  };
+using VsmGeometryCpu = VsmGeometryRow[VsmMips+1][3];
+
+void logVsmGeometry(uint64_t frame, uint32_t drawn, const VsmGeometryCpu& geometry) {
+  uint32_t pairs = 0, triangles = 0, affectedPairs = 0, affectedTriangles = 0;
+  for(uint32_t i=0; i<=VsmMips; ++i) {
+    const auto& [other, visual, coarse] = geometry[i];
+    const uint32_t current = other.pairs + visual.pairs + coarse.pairs;
+    if(current==0)
+      continue;
+    const uint32_t changedPairs = other.affectedPairs + visual.affectedPairs + coarse.affectedPairs;
+    const uint32_t changedTriangles = other.affectedTriangles + visual.affectedTriangles + coarse.affectedTriangles;
+    pairs += current;
+    triangles += other.triangles + visual.triangles + coarse.triangles;
+    affectedPairs += changedPairs;
+    affectedTriangles += changedTriangles;
+    Log::i("vsm geometry ", frame, " source=", (i==VsmMips ? "lamp" : "m" + std::to_string(i)),
+           " other=", other.pairs, "/", other.triangles, " visual=", visual.pairs, "/", visual.triangles,
+           " coarse=", coarse.pairs, "/", coarse.triangles, " affected=", changedPairs, "/", changedTriangles);
+    }
+  Log::i("vsm geometry ", frame, " source=total pairs=", pairs, " triangles=", triangles,
+         " affected=", affectedPairs, "/", affectedTriangles, " drawn=", drawn);
+  }
 
 bool vsmBinSet(const uint32_t* bits, uint32_t bin) {
   return (bits[bin/32] & (1u << (bin%32)))!=0;
@@ -202,8 +229,11 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fI
   cmd.dispatch(1);
 
   cmd.setDebugMarker("VSM-visibility");
-  wview.visibilityVsm(cmd);
+  auto* geometryStats = settings.vsmStatsFrames ? &usesSsbo(vsm.geometryStats, sizeof(VsmGeometryCpu)) : nullptr;
+  wview.visibilityVsm(cmd, geometryStats);
   copyVsmFrame(cmd, fId);
+  if(settings.vsmStatsFrames)
+    wview.logVsmShadowProbe(vsm.frameNo);
 
   cmd.setDebugMarker("VSM-rendering");
   cmd.setFramebuffer({}, {pageData, 0.f, Tempest::Preserve});
@@ -300,6 +330,12 @@ void Renderer::copyVsmFrame(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8
   cmd.setBinding(1, vsm.pageList);
   cmd.setPipeline(shaders.copyBuf);
   cmd.dispatchThreads(sizeof(VsmHeaderCpu)/sizeof(uint32_t));
+  auto& geometry = vsm.geometryRead[fId];
+  if(geometry.isEmpty())
+    geometry = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, sizeof(VsmGeometryCpu));
+  cmd.setBinding(0, geometry);
+  cmd.setBinding(1, vsm.geometryStats);
+  cmd.dispatchThreads(sizeof(VsmGeometryCpu)/sizeof(uint32_t));
   vsm.frameStatsNo     [fId] = vsm.frameNo;
   vsm.frameStatsWritten[fId] = true;
   }
@@ -362,6 +398,9 @@ void Renderer::logVsmFrame(uint8_t fId) {
          ", ", (!hasLast ? "prev ?" : (sameLast ? "prev==last" : "PREV!=LAST")),
          (!hasNext ? "" : (sameNext ? ", next's prev==this" : ", NEXT'S PREV!=THIS")), ", spilled ", h.pairSpill,
          ", admit ", vsmBitsHex(h.admitBits), ", prev ", vsmBitsHex(h.admitPrevBits), ", bins", bins);
+  VsmGeometryCpu geometry = {};
+  Resources::device().readBytes(vsm.geometryRead[fId], &geometry, sizeof(geometry));
+  logVsmGeometry(no, h.meshletCount, geometry);
   vsm.frameLoggedNo[no%4] = no;
   std::copy(std::begin(h.admitBits),     std::end(h.admitBits),     std::begin(vsm.frameLoggedAdmit[no%4]));
   std::copy(std::begin(h.admitPrevBits), std::end(h.admitPrevBits), std::begin(vsm.frameLoggedPrev[no%4]));

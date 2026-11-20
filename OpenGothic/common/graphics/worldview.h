@@ -101,7 +101,7 @@ class WorldView {
     void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass, bool history = false);
     DrawCommands& treeHistoryCommands() { return visuals.treeHistoryCommands(); }
     void visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
-    void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::StorageBuffer* geometryStats);
 
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId, uint8_t layer);
@@ -133,6 +133,7 @@ class WorldView {
 
     void setTreeOcclusionProbe(bool verify) { sGlobal.setTreeOcclusionProbe(verify); }
     void writeTreeOcclusionProbe(std::ostream& out, std::ostream& decisions) { visuals.writeTreeOcclusionProbe(out, decisions); }
+    void logVsmShadowProbe(uint64_t frameNo) const { visuals.logVsmShadowProbe(frameNo); }
 
     SceneGlobals&       sceneGlobals()       { return sGlobal; }
     const SceneGlobals& sceneGlobals() const { return sGlobal; }

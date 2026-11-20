@@ -1,4 +1,5 @@
-# A real smith Loop at an occupied anvil, full save, then one continuous game hour.
+# A real smith at an occupied anvil (after his Loop, or his hold when the activity runs by events), full save,
+# then one continuous game hour.
 # @headless
 seed 73106
 cheat god

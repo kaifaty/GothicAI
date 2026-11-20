@@ -88,6 +88,7 @@ class Interactive : public Vob, public AnimationSound, public AnimationInteracti
     bool                attach(Npc& npc);
     bool                detach(Npc& npc, bool quick);
     bool                isAttached(const Npc& to);
+    size_t              userCount() const;
 
     auto                animNpc(const AnimationSolver &solver, Anim t) const -> const Animation::Sequence* override;
     void                marchInteractives(DbgPainter& p) const;

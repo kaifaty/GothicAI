@@ -1,0 +1,104 @@
+# Rye as stalks on every tilled field but Onar's north one (reports/content/2026-11-19-crop-fields/stalk.md, step C3):
+# one strip of rye of each plot of the set built with seed 7 and the fields of the note, from 9 m over it along the
+# strip and from a man's height beside it. Onar's north field: crop-onar-top.bench.
+#   TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_CONTENT=<set> scripts/bench.sh crop-fields-stalks <out>
+# @timeout 900
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+# lobart-a
+goto pos 10843 1266 -12313
+cam at 10035 2116 -12833 10557 1316 -13166
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot lobart-a-high
+wait 300
+cam at 9846 1390 -12453 10984 1316 -13151
+wait 5000
+shot lobart-a-eye
+wait 300
+# lobart-b
+goto pos 10497 1410 -11054
+cam at 11436 2260 -11256 11303 1460 -10653
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot lobart-b-high
+wait 300
+cam at 11302 1535 -11659 10990 1460 -10362
+wait 5000
+shot lobart-b-eye
+wait 300
+# onar-south-a
+goto pos 61087 2087 -15240
+cam at 60196 2937 -14882 60226 2137 -15500
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot onar-south-a-high
+wait 300
+cam at 60396 2212 -14508 60485 2137 -15840
+wait 5000
+shot onar-south-a-eye
+wait 300
+# onar-south-b
+goto pos 67580 2455 -15826
+cam at 66788 3305 -15283 66682 2505 -15892
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot onar-south-b-high
+wait 300
+cam at 67065 2580 -14962 66861 2505 -16280
+wait 5000
+shot onar-south-b-eye
+wait 300
+# sekob
+goto pos 51154 3064 -22450
+cam at 50635 3914 -21642 50301 3114 -22163
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot sekob-high
+wait 300
+cam at 51015 3189 -21453 50316 3114 -22590
+wait 5000
+shot sekob-eye
+wait 300
+# akil-upper
+goto pos 32279 3795 6848
+cam at 33053 4645 6279 33178 3845 6885
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot akil-upper-high
+wait 300
+cam at 32766 3920 5967 33012 3845 7278
+wait 5000
+shot akil-upper-eye
+wait 300
+# akil-lower
+goto pos 29142 3060 8822
+cam at 28766 3910 9706 28350 3110 9248
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot akil-lower-high
+wait 300
+cam at 29173 3186 9827 28292 3110 8825
+wait 5000
+shot akil-lower-eye
+wait 300

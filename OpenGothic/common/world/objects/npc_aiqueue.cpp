@@ -120,7 +120,9 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       if(usesSimplifiedMovement() && act.point->isFreePoint()) {
         act.i0=1;
         const auto* target=act.point;
+        const bool  own=act.activity;
         beginSimpleGoTo(std::move(act),*target);
+        go2.activity = own;
         break;
         }
       if(wayPath.last()!=act.point) {
@@ -130,6 +132,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
 
         if(wpoint!=nullptr) {
           go2.set(wpoint);
+          go2.activity = act.activity;
           attachToPoint(wpoint);
           } else {
           attachToPoint(act.point);
@@ -258,6 +261,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
          * For now, if no mob found - discard command, to avoid npc soft-lock.
          */
         // queue.pushFront(std::move(act));
+        wakeActivity(ActivityEvents::AttachFailed);
         break;
         }
 
@@ -271,6 +275,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         auto pos = inter->nearestPoint(*this);
         if(currentInteract==nullptr && !MoveAlgo::isClose(*this, pos, MAX_AI_USE_DISTANCE)) { // too far
           go2.set(pos);
+          go2.activity = act.activity;
           // go to MOBSI and then complete AI_UseMob
           queue.pushFront(std::move(act));
           return;

@@ -1,4 +1,5 @@
 #include "npc.h"
+#include "world/mobreservations.h"
 #include "world/npcactivityprobe.h"
 
 #include <Tempest/Log>
@@ -708,6 +709,17 @@ bool Npc::isAiBusy() const {
 
 void Npc::clearAiQueue() {
   if(BodyController::deferNative(*this,[this] { clearAiQueue(); })) return;
+  if(activityEvents.stage==ActivityEvents::Stage::Attach) {
+    // the queued use is gone with the queue: give the reservation up and look again
+    owner.mobReservations().release(*this);
+    wakeActivity(ActivityEvents::AttachFailed);
+    }
+  else if(activityEvents.stage==ActivityEvents::Stage::Approach) {
+    // the walk to the routine point is gone: an empty queue is no arrival. The automaton starts over with Init
+    // on its next step, unless a new state replaces it first (startState: its End still runs).
+    activityEvents.restart    = true;
+    activityEvents.awaitQueue = false;
+    }
   stopPhysicsInvestigation(false);
   currentLookAt    = nullptr;
   currentLookAtNpc = nullptr;

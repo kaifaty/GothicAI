@@ -49,6 +49,7 @@ layout(location = 2) out vec4 outShade;      // the share of the blade's length,
 layout(location = 3) out vec3 outPrevStatic; // as Varyings of materials_common.glsl
 layout(location = 4) out vec3 outPrevDelta;
 layout(location = 5) out vec3 outRoot;       // on a ground with its own layers: the sward under the root
+layout(location = 6) out vec4 outEar;        // a stalk's ear (grassEarCard): cm across, the share of its length, how close, its length
 
 out gl_PerVertex {
   vec4 gl_Position;
@@ -130,6 +131,7 @@ void hideBlade() {
   outPrevStatic = vec3(0,0,1);
   outPrevDelta  = vec3(0);
   outRoot       = vec3(0);
+  outEar        = vec4(0);
   }
 
 void main() {
@@ -225,15 +227,22 @@ void main() {
   vec3        dir   = bladeDir(tilt, t);
   vec3        stem  = bladePoint(tilt, k, n, height);
   float       across= width*(1.0 - GrassTaper*t); // cm: the strip at the vertex
+  // seen close a stalk of four links has its ear as a card (grassEarCard)
+  const float close = ear && n==4 ? 1.0 - smoothstep(GrassEarNearFrom, GrassEarNearTo, d) : 0.0;
+  const float top   = mix(GrassEarTopFar, GrassEarTopNear, close);
+  outEar = vec4(0);
   if(ear) {
-    const GrassEarVertex e = grassEarVertex(vertex, n, max(vec2(GrassEarStalkWidth,GrassEarWidth)*widen, vec2(thin)));
+    const vec3 widths = vec3(GrassEarStalkWidth, mix(GrassEarStalkWidth, GrassEarCardBase, close),
+                             mix(GrassEarWidth, GrassEarCardWidth, close));
+    const GrassEarVertex e = grassEarVertex(vertex, n, top, max(widths*widen, vec3(thin)));
     k     = e.k;
     t     = e.t;
     side  = e.side;
     dir   = grassEarDir(tilt, fwd, droop, t);
-    stem  = grassEarPoint(tilt, fwd, droop, k, n, height);
+    stem  = grassEarPoint(tilt, fwd, droop, k, n, top, height);
     across= e.width;
     sideV = grassEarAxis(dir, scene.camPos - (root+stem), sideV);
+    outEar = vec4(side*across, (t-GrassEarFrom)/(1.0-GrassEarFrom), close, height*(1.0-GrassEarFrom));
     }
   const vec3  off   = sideV*(side*across);
   const vec3  pos   = root + stem + off;
@@ -246,7 +255,7 @@ void main() {
                                       scene.foliageSwingPrev);
     const Tilt tiltP = bladeTilt(fwd, lean0, height, tuft, rank, still, scene.foliageWindPrev, scene.foliagePhasePrev,
                                  scene.foliageSwingPrev, locP, root);
-    const vec3 prev  = root + (ear ? grassEarPoint(tiltP, fwd, droop, k, n, height) : bladePoint(tiltP, k, n, height)) + off;
+    const vec3 prev  = root + (ear ? grassEarPoint(tiltP, fwd, droop, k, n, top, height) : bladePoint(tiltP, k, n, height)) + off;
     outPrevStatic = (scene.reprojectClip*clip).xyw;
     outPrevDelta  = (scene.viewProjectPrev*vec4(prev - pos,0.0)).xyw;
     } else {

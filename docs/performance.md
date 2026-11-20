@@ -84,6 +84,7 @@ NPC прошли цикл тел теней и сверку логических
 | `crops` | `scripts/bench/perf-crops.bench` | хлеба поля Лобарта в полдень: с края поля, с 15 м сверху, изнутри ржи и у края полосы; цена набора `scripts/content/crop_field_set.py`, сравнение наборов — `scripts/perf-content.sh A B crops` ([заметка](../reports/content/2026-11-19-crop-fields/README.md)) |
 | `itemfx` | `scripts/bench/perf-itemfx.bench` | эффекты предметов в полночь: стартовая комната Ксардаса (7 живых эффектов ближе 40 м), склон у выхода из города к лесу (10), стресс из 24 предметов с эффектом в 3 м от героя у таверны, герой с натянутым огненным луком у трёх воткнувшихся огненных стрел; цена эффектов — `PERF_ENV_A='OPENGOTHIC_ITEM_EFFECTS=0' scripts/perf-content.sh S S itemfx` ([заметка](../reports/engine/2026-11-19-item-effects/README.md)) |
 | `crops-onar` | `scripts/bench/perf-crops-onar.bench` | хлеба северного поля Онара, 12 тыс. предметов набора: южный край, с 15 м, внутри ржи, всё поле с верхнего края; сравнение наборов — `scripts/perf-content.sh A B crops-onar` |
+| `crops-game` | `scripts/bench/perf-crops-game.bench` | рожь северного поля Онара игровой камерой за героем: середина поля в обе стороны, западный и верхний восточный край; запускать с набором, где рожь стеблями (`PERF_ENV='OPENGOTHIC_CONTENT=… OPENGOTHIC_GPU_PASSES=1'`), пара — с `OPENGOTHIC_GRASS_GPU_CULL=0` |
 
 `shot`, `face`, `face-far` и `rock` не входят в прогон по умолчанию. `shot` снимает PNG `market-a`, `market-b`,
 `forest`, `interior` в папку повтора с `ui on`: кадр проходит путь до экрана,

@@ -2,6 +2,7 @@
 
 #include "game/bodycontroller.h"
 #include "settings.h"
+#include "world/mobreservations.h"
 #include "world/npcactivityprobe.h"
 #include "world/objects/interactive.h"
 #include "world/world.h"
@@ -12,6 +13,7 @@ void Npc::aiPush(AiQueue::AiAction&& a) {
   if(physicsNoiseCallback && (a.act==AI_TurnToNpc || a.act==AI_LookAtNpc))
     return;
   a.physicsNoiseState = physicsNoiseCallback && a.act==AI_StartState;
+  a.activity = a.activity || activityCommands;
   a.nativeCombatTarget=nativeCombatQueueTarget;
   if(BodyController::owns(*this) && a.act!=AI_OutputSvmOverlay)
     BodyController::takeover(*this,"native_script_queue");
@@ -33,6 +35,7 @@ bool Npc::setInteraction(Interactive *id, bool quick) {
 
   if(id->attach(*this)) {
     currentInteract = id;
+    owner.mobReservations().attached(*this,*id);
     if(auto* probe=NpcActivityProbe::instance) probe->mob(*this,*id,true);
     if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual)) {
       mvAlgo.resetCharacterVirtual(true);
@@ -63,5 +66,7 @@ void Npc::quitInteraction() {
     processDefInvTorch();
   setDirectionY(0);
   if(auto* probe=NpcActivityProbe::instance) probe->mob(*this,*currentInteract,false);
+  auto* mob = currentInteract;
   currentInteract=nullptr;
+  owner.mobReservations().detached(*this,*mob);
   }
