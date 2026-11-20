@@ -54,6 +54,8 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
   if(!reset)
     commands.compactHistory(cmd, false);
 
+  // The reference pass and the live pass draw the same prepared grass.
+  view.prepareGrass(fId);
   if(request) {
     auto& reference = usesZBuffer(treeHistory.referenceDepth, zBufferFormat, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
     auto& owners = usesAttachment(treeHistory.referenceOwners, TextureFormat::R32U, zbuffer.size());

@@ -1001,6 +1001,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
       treeHistory.valid = false;
     if(verify)
       bench->historyVerifyComplete(false);
+    if(!captureLandscapeDepth)
+      wview.prepareGrass(fId);
     drawGBuffer(cmd, fId, wview);
     }
   if(captureLandscapeDepth) {

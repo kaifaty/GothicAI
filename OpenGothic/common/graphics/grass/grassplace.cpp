@@ -41,6 +41,10 @@ int32_t units(float cm) {
   return int32_t(std::lround(double(cm)*Unit));
   }
 
+int32_t rootHeight(int32_t packedY, int32_t minY) {
+  return minY + packedY*2;
+  }
+
 using Segment = OpenEdge;
 
 struct Raw final { // a blade before it is packed
@@ -111,7 +115,7 @@ BladeInfo decode(const Blade& b, int32_t cx, int32_t cz, int32_t minY, uint8_t k
   BladeInfo r;
   r.x      = cx*CellSize - CellMargin + int32_t(b.w[0] & 0x3FFFu);
   r.z      = cz*CellSize - CellMargin + int32_t((b.w[0] >> 14) & 0x3FFFu);
-  r.y      = minY + int32_t(b.w[1] & 0xFFFFu)*2;
+  r.y      = rootHeight(int32_t(b.w[1] & 0xFFFFu),minY);
   r.height = float((b.w[1] >> 16) & 0xFFu)*heightStep(kind);
   r.rank   = uint8_t(b.w[1] >> 24);
   return r;
@@ -692,14 +696,20 @@ CellBlades buildCell(const CellInput& in) {
     });
   ret.minY = minY;
   ret.maxY = maxY;
+  ret.squareBounds.fill({maxY,minY});
   ret.blades.resize(raw.size());
   for(size_t i=0; i<raw.size(); ++i) {
     const Raw& r = raw[i];
     Blade& b = ret.blades[i];
+    const int32_t packedY = std::min((r.y-minY)/2,0xFFFF);
     b.w[0] = uint32_t(r.x-lo[0]) | (uint32_t(r.z-lo[1]) << 14) | (uint32_t(r.lean) << 28);
-    b.w[1] = uint32_t(std::min((r.y-minY)/2,0xFFFF)) | (uint32_t(r.height) << 16) | (uint32_t(r.rank) << 24);
+    b.w[1] = uint32_t(packedY) | (uint32_t(r.height) << 16) | (uint32_t(r.rank) << 24);
     b.w[2] = uint32_t(r.facing) | (uint32_t(r.phase) << 8) | (uint32_t(r.nx) << 16) | (uint32_t(r.nz) << 24);
     b.w[3] = uint32_t(r.u) | (uint32_t(r.v) << 12) | (uint32_t(r.width) << 24) | (uint32_t(r.tint) << 28);
+    auto& bounds = ret.squareBounds[r.square];
+    const int32_t y = rootHeight(packedY,minY);
+    bounds.minY = std::min(bounds.minY,y);
+    bounds.maxY = std::max(bounds.maxY,y);
     if(ret.batches.empty() || ret.batches.back().slot!=r.slot || ret.batches.back().kind!=r.kind ||
        ret.batches.back().square!=r.square)
       ret.batches.push_back(Batch{r.slot,r.kind,r.square,uint32_t(i),0});

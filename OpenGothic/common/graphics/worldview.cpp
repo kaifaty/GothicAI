@@ -839,6 +839,11 @@ void WorldView::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   visuals.drawVsm(cmd);
   }
 
+void WorldView::prepareGrass(uint8_t fId) {
+  if(grass)
+    grass->prepare(fId);
+  }
+
 void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, bool landscapeOnly,
                             DrawCommands::HistoryDraw history) {
   // The blades go first: the ground under them then fails the depth test before its layers are shaded

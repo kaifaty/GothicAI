@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -85,9 +86,14 @@ struct Batch final {
   uint32_t count = 0;
   };
 
+struct SquareBounds final {
+  int32_t minY = 0, maxY = 0; // packed roots in world units
+  };
+
 struct CellBlades final {
   std::vector<Blade> blades;   // by slot, kind and square, then by rank: a start of a batch is an even sample of it
   std::vector<Batch> batches;
+  std::array<SquareBounds, CellSquares*CellSquares> squareBounds; // indexed by Batch::square
   int32_t            minY = 0; // units
   int32_t            maxY = 0;
   };
