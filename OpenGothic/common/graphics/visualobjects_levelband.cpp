@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstring>
 
+#include "graphics/foliagetree.h"
+#include "graphics/mesh/submesh/staticmesh.h"
 #include "graphics/treelevelband.h"
 #include "frameprofile.h"
 
