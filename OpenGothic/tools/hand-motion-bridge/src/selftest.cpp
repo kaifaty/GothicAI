@@ -192,6 +192,42 @@ void biasLeft(const std::vector<RecordEvent>& part1) {
              "samples (limit 0.3)",r,double(firstEst-t0)*1e-6,m,after.size()));
   }
 
+// the left Joy-Con on a face where its accelerometer reads ~7 % high (10.57 m/s² on its side, live run of
+// 2026-11-20): rest has to be found all the same
+void biasLeftOffGravity(const std::vector<RecordEvent>& part1) {
+  std::vector<RecordEvent> ev = part1;
+  for(auto& e:ev)
+    if(!e.isDevice && e.hand==HandMotion::Left)
+      for(auto& s:e.packet.samples)
+        for(auto& a:s.accel)
+          a *= 1.078f;
+  Collect sink;
+  Bridge  b(1,sink);
+  const auto frames = feedAll(ev,b,sink);
+  uint64_t t0 = 0, firstEst = 0;
+  size_t   rest = 0, n = 0;
+  std::vector<double> after;
+  double   g = 0;
+  for(auto* f:ofHand(frames,HandMotion::Left)) {
+    if(t0==0) {
+      t0 = f->tUs;
+      g  = len3(f->accel);
+      }
+    ++n;
+    if(f->flags & HandMotion::AtRest)
+      ++rest;
+    if(f->flags & HandMotion::GyroBiasRemoved) {
+      if(firstEst==0)
+        firstEst = f->tUs;
+      after.push_back(len3(f->gyro)*RadToDeg);
+      }
+    }
+  const double m = median(after), dt = firstEst==0 ? INFINITY : double(firstEst-t0)*1e-6;
+  report(dt<=1.5 && m<0.3,"bias-off-gravity",
+         fmt("|a| %.2f m/s^2: bias set %.2f s after the first sample (limit 1.5), at rest %zu of %zu frames, then "
+             "median |w| %.3f deg/s (limit 0.3)",g,dt,rest,n,m));
+  }
+
 void tilt(const std::vector<RecordEvent>& part1, const std::vector<RecordEvent>& part2) {
   // at rest: both hands of part 1 and the right one on the table in part 2
   Collect sink;
@@ -483,10 +519,19 @@ int runSelfTest() {
 
   frameRoundTrip(ev);
   biasLeft(part1);
+  biasLeftOffGravity(part1);
   tilt(part1,part2);
   yawDrift(part1);
   timing(ev);
-  loopback(ev);
+  // the excerpt has no pressed buttons: a few, so that the wire check sees the mask
+  std::vector<RecordEvent> pressed = ev;
+  size_t k = 0;
+  for(auto& e:pressed)
+    if(!e.isDevice)
+      for(auto& s:e.packet.samples)
+        if(k++%97==0)
+          s.buttons = 1u<<(k%21);
+  loopback(pressed);
   recordRoundTrip(ev);
 
   std::printf("%s: %d failed\n",failures==0 ? "self-test passed" : "self-test FAILED",failures);
