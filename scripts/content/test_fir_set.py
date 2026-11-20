@@ -208,11 +208,14 @@ def test_bough_x4_adds_hierarchy_without_changing_the_spruce_or_its_fallbacks(tm
     for path in impostor['impostor'].values():
         write(control / 'meshes' / path, path.encode())
     write(control / 'meshes/meshes.json', {base: staged_control})
+    old_level = control / 'meshes' / full['levels'][0]['glb']
+    old_level.unlink()
+    write(old_level, b'older forest level')
     world = 'worlds/NEWWORLD/vobs.json'
     base_world = {'format': 1, 'source': {}, 'vobs': [{'object_id': 9, 'id': 20, 'children': []}]}
     write(tmp_path / world, base_world)
     monkeypatch.setattr(tree_glb, 'read', lambda _: [{'position': np.array([[-1, -1, 0], [1, 1, 2]])}])
-    fir_set.forest(SimpleNamespace(config=config, source=control, hierarchy=hierarchy_root, base=tmp_path,
+    fir_set.forest(SimpleNamespace(config=config, source=control, hierarchy=content, base=tmp_path,
                                    set='bough-x4/forest-1024', count=1024, share=1, levels=None, textures=None))
     staged = probes / 'bough-x4/forest-1024'
     assert not (staged / layer / 'tree-cost.json').exists()
@@ -220,6 +223,9 @@ def test_bough_x4_adds_hierarchy_without_changing_the_spruce_or_its_fallbacks(tm
     assert json.loads((staged / 'meshes/meshes.json').read_text()) == {
         base: dict(staged_control, hierarchy=f'trees_fir/bough-x4/{sidecar}')}
     assert json.loads((control / 'meshes/meshes.json').read_text()) == {base: staged_control}
+    assert old_level.read_bytes() == b'older forest level'
+    for path, data in mesh_bytes.items():
+        assert (staged / 'meshes' / path).read_bytes() == data
     records = json.loads((staged / world).read_text())['vobs']
     assert records[0] == base_world['vobs'][0]
     assert len(records) == 1025

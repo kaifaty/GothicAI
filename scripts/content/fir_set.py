@@ -8,7 +8,7 @@
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
         forest tree-cost-1024 --textures WORK [--from working-34] [--count 1024] [--share 1] [--levels | --random-levels] [--no-sample]
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/fir_set.py \
-        forest bough-x4/forest-1024 --from FOREST --hierarchy BAKE [--base BASE]
+        forest bough-x4/forest-1024 --from FOREST --hierarchy BOUGH_X4_SET [--base BASE]
 
 `textures` reads what mesh3d/blender/fir_boughs.py and fir_bark.py baked (boughs.npz, bark.npz) and writes
 WORK/{boughs,bark}-{albedo,normal,orm}.dds, PNG previews for mesh3d/blender/fir_views.py, boughs-mask.npz (the
@@ -52,7 +52,7 @@ and spruce A alone on the hill west of it (LONE) unless `--no-sample`. The layer
 worlds/NEWWORLD/vobs.d/tree-cost.json, the numbers of the spruces are in tree-cost.json of the set. `--count 0`
 is the control: the same set without the forest. The spruces of `--share 1` are those of `probe`, byte for byte.
 `forest --hierarchy` uses the positions and yaw from the completed 1,024-tree stand in `--from`. All trees share
-spruce A, its current levels and impostor, and the baked ×4 hierarchy. The five original grid scales are applied
+spruce A, its current levels and impostor, and the hierarchy from the staged `bough-x4` set. The grid scales are applied
 to the instance matrices in the content's world override, since the additive layer only supports rotation.
 
 `eye-threshold` copies the current probe set and places the original spruce A and three relaxed cuts from
@@ -558,12 +558,13 @@ def bough_forest(args) -> int:
     meshes = work / 'meshes/meshes.json'
     index = json.loads(meshes.read_text())
     visual = f'{VISUAL}_4'
-    entry = index[visual]
+    hierarchy_meshes = args.hierarchy / 'meshes'
+    entry = json.loads((hierarchy_meshes / 'meshes.json').read_text())[f'{VISUAL}_BOUGH_X4']
     config = json.loads(args.config.read_text())
     levels = entry['levels']
     if ([level['px'] for level in levels if 'glb' in level] != [level['px'] for level in config['levels']]
-            or 'impostor' not in levels[-1] or 'hierarchy' in entry):
-        raise SystemExit('--from must carry the four current mesh levels and the impostor for spruce A')
+            or 'impostor' not in levels[-1]):
+        raise SystemExit('--hierarchy must carry the four current mesh levels and the impostor for spruce A')
     world = work / 'worlds' / WORLD
     layer = world / 'vobs.d/tree-cost.json'
     placements = json.loads(layer.read_text())['add']
@@ -574,7 +575,14 @@ def bough_forest(args) -> int:
     ):
         raise SystemExit('--from must carry the completed 1,024-tree stand of spruce A')
 
-    entry['hierarchy'] = stage_bough_hierarchy(work, config, args.hierarchy)
+    files = [part['glb'] for part in (entry, *levels) if 'glb' in part]
+    files.extend(levels[-1]['impostor'].values())
+    for file in files:
+        target = work / 'meshes' / file
+        target.unlink(missing_ok=True)
+        shutil.copyfile(hierarchy_meshes / file, target)
+    entry['hierarchy'] = stage_bough_hierarchy(work, config, (hierarchy_meshes / entry['hierarchy']).parent)
+    index[visual] = entry
     meshes.unlink()
     meshes.write_text(json.dumps(index, indent=2) + '\n')
 
@@ -723,7 +731,7 @@ def main() -> int:
     command.add_argument('--share', type=float, default=1., help="the share of a spruce's triangles kept (thin)")
     command.add_argument('--no-sample', dest='sample', action='store_false', help='without the lone spruce A')
     command.add_argument('--base', type=Path, help='the base the ground is read from (the newest in the cache)')
-    command.add_argument('--hierarchy', type=Path, help='the ×4 bake to add to the completed stand in --from')
+    command.add_argument('--hierarchy', type=Path, help='the staged bough-x4 set to use on the completed stand in --from')
     for builder in (probe_command, command):
         levels = builder.add_mutually_exclusive_group()
         levels.add_argument('--levels', action='store_const', const='designed', dest='levels',
