@@ -11,6 +11,7 @@
 #include "loadprobe.h"
 #include "settings.h"
 #include "raytracingrule.h"
+#include "graphics/treeboughasset.h"
 
 #include "shader.h"
 #include "utils/string_frm.h"
@@ -527,7 +528,9 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
 
   const auto alpha   = (mat.isGhost ? Material::Ghost : mat.alpha);
   const bool trivial = (!mat.hasUvAnimation() && alpha==Material::Solid && t==DrawCommands::Landscape);
-  if(bough==Bough::Cards && (t!=DrawCommands::Movable || alpha!=Material::AlphaTest || (pt!=T_Main && pt!=T_HistoryGBuffer)))
+  const uint32_t boughBench = bough==Bough::Cards ? TreeBough::benchFlags() : 0u; // TEMPORARY diag of step 4b
+  if(bough==Bough::Cards && (t!=DrawCommands::Movable || alpha!=Material::AlphaTest ||
+     (pt!=T_Main && pt!=T_HistoryGBuffer && !(pt==T_HistoryDepth && (boughBench & 2u)!=0u))))
     return nullptr;
 
   // materials.json "two_sided": an object's mesh without culling in every pass, the same shaders. The world mesh,
@@ -547,6 +550,10 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
 
   if(pt==PipelineType::T_Shadow || pt==PipelineType::T_Vsm) {
     state.setZTestMode(RenderState::ZTestMode::Greater); //FIXME
+    }
+  if((boughBench & 2u)!=0u && pt==T_HistoryGBuffer) {
+    state.setZTestMode(RenderState::ZTestMode::Equal);
+    state.setZWriteEnabled(false);
     }
   if(pt==PipelineType::T_Vsm) {
     // state.setZTestMode(RenderState::ZTestMode::Always); //FIXME
@@ -626,7 +633,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
       break;
     }
   if(bough==Bough::Cards) {
-    vsTok = "bough";
+    vsTok = (boughBench & 1u)!=0u && options().doMeshShading ? "boughold" : "bough";
     fsTok = "bough";
     } else if(bough==Bough::Joint) {
     vsTok = "joint";

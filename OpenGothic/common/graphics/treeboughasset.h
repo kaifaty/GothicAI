@@ -17,6 +17,7 @@ namespace TreeBough {
 constexpr uint32_t NoNode = UINT32_MAX;
 constexpr uint32_t MaxIndices = 48;
 constexpr uint32_t MaxVertices = 32;
+constexpr uint32_t FirstIndexBits = 26; // the mesh path keeps a node's vertex count above its first index
 constexpr uint32_t DescendantSide = 0x8000u;
 
 // Preorder forest and matching compact draw range (tree_bough.glsl).
@@ -38,8 +39,8 @@ struct Range {
   uint32_t indexCount = 0;
   uint32_t primitive = 0;
   uint32_t cardCount = 0;
+  uint32_t vertexCount = 0;
   };
-static_assert(sizeof(Range)==16);
 
 struct Page {
   Material material;
@@ -71,6 +72,7 @@ struct Selected {
 
 bool enabled();
 bool cpuEnabled();
+uint32_t benchFlags(); // TEMPORARY diag switches of step 4b, removed after the run
 
 // Attach only on success. Malformed or unsupported sidecars keep the original mesh.
 void attach(StaticMesh& mesh, const std::filesystem::path& file);

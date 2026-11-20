@@ -204,6 +204,8 @@ add_geom_shader(main_lnd_orm      "-DMESH_TYPE=0" -DFLAT_NORMAL -DMATERIAL_MAPS 
 add_geom_shader(main_obj_g_orm    "-DMESH_TYPE=1" -DMATERIAL_MAPS -DGBUFFER_MOTION)
 add_geom_shader(main_bough_g      "-DMESH_TYPE=1" -DGBUFFER_MOTION -DTREE_BOUGH_CARDS)
 add_geom_shader(main_bough_g_orm  "-DMESH_TYPE=1" -DGBUFFER_MOTION -DTREE_BOUGH_CARDS -DMATERIAL_MAPS)
+add_geom_shader(main_boughold_g      "-DMESH_TYPE=1" -DGBUFFER_MOTION -DTREE_BOUGH_CARDS -DTREE_BOUGH_BENCH_UNPACKED)
+add_geom_shader(main_boughold_g_orm  "-DMESH_TYPE=1" -DGBUFFER_MOTION -DTREE_BOUGH_CARDS -DTREE_BOUGH_BENCH_UNPACKED -DMATERIAL_MAPS)
 add_geom_shader(main_ani_g_orm    "-DMESH_TYPE=2" -DMATERIAL_MAPS -DGBUFFER_MOTION)
 add_geom_shader(main_mph_g_orm    "-DMESH_TYPE=3" -DMATERIAL_MAPS -DGBUFFER_MOTION)
 add_geom_shader(main_lnd_d_at_orm "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DHIZ_OCCLUDER -DATEST -DMATERIAL_MAPS)
@@ -254,6 +256,8 @@ add_frag_shader(main_bough_g_at -DGBUFFER -DGBUFFER_MOTION -DATEST -DTREE_BOUGH_
 add_frag_shader(main_bough_g_at_orm -DGBUFFER -DGBUFFER_MOTION -DATEST -DTREE_BOUGH_CARDS -DMATERIAL_MAPS)
 add_frag_shader(main_bough_g_at_hist -DGBUFFER -DGBUFFER_MOTION -DATEST -DTREE_BOUGH_CARDS -DHISTORY_OWNER)
 add_frag_shader(main_bough_g_at_orm_hist -DGBUFFER -DGBUFFER_MOTION -DATEST -DTREE_BOUGH_CARDS -DHISTORY_OWNER -DMATERIAL_MAPS)
+add_frag_shader(main_bough_g_at_hist_depth -DGBUFFER -DGBUFFER_MOTION -DATEST -DTREE_BOUGH_CARDS -DHISTORY_DEPTH)
+add_frag_shader(main_bough_g_at_orm_hist_depth -DGBUFFER -DGBUFFER_MOTION -DATEST -DTREE_BOUGH_CARDS -DHISTORY_DEPTH -DMATERIAL_MAPS)
 add_frag_shader(main_lnd_d_at_orm -DFLAT_NORMAL -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 add_frag_shader(main_obj_d_at_orm -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 

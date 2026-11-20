@@ -259,6 +259,8 @@ void packGeometry(Asset& asset, const Forest& forest, std::vector<GlbPage> sourc
       if(range.firstVertex>UINT16_MAX)
         reject("vertex range cannot be encoded in a compact header");
       const auto first = uint32_t(indices.size());
+      if(first>=(1u<<FirstIndexBits))
+        reject("index range cannot be encoded in a compact draw");
       indices.push_back((range.firstVertex<<16u) | range.vertexCount);
       nextIndex += range.indexCount;
       nextVertex += range.vertexCount;
@@ -279,7 +281,8 @@ void packGeometry(Asset& asset, const Forest& forest, std::vector<GlbPage> sourc
       if(primitive==1)
         asset.sourceTriangles += range.indexCount/3;
       if(primitive==1 || node.thresholdPx>0.f)
-        asset.ranges[i] = {first,range.indexCount,range.primitive,primitive==1 ? 1u : range.indexCount/6u};
+        asset.ranges[i] = {first,range.indexCount,range.primitive,primitive==1 ? 1u : range.indexCount/6u,
+                           range.vertexCount};
       }
     if(nextIndex!=geometry.indices.size() || nextVertex!=geometry.vertices.size())
       reject("primitive has unused geometry");
@@ -390,6 +393,14 @@ bool enabled() {
     return value;
     }();
   return on;
+  }
+
+uint32_t benchFlags() {
+  static const uint32_t flags = [] {
+    const char* env = std::getenv("OPENGOTHIC_BENCH_BOUGH");
+    return env!=nullptr ? uint32_t(std::atoi(env)) : 0u;
+    }();
+  return flags;
   }
 
 bool cpuEnabled() {

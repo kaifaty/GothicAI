@@ -55,6 +55,11 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
   commands.finishBoughVisibility(cmd, fId, !reset);
   if(!reset)
     commands.compactHistory(cmd, false);
+  if(commands.boughDepthBench()) { // TEMPORARY diag of step 4b
+    cmd.setDebugMarker("Bough-depth");
+    cmd.setFramebuffer({}, {zbuffer, Preserve, Preserve});
+    commands.drawBoughDepthBench(cmd);
+    }
 
   // The reference pass and the live pass draw the same prepared grass.
   view.prepareGrass(cmd, fId, *grassHiZ, reset ? 0.f : quantization);
