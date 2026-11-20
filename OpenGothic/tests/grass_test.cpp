@@ -569,9 +569,16 @@ void placementGround() {
   require(onLevel>1000, "the test's cell has grass: "+std::to_string(onLevel));
   const auto onGentle = build(gentle,0,0,par);
   require(onGentle.blades.size()==onLevel, "a slope 10 degrees under the limit keeps every blade");
-  for(const auto& b:onGentle.blades) {
-    const auto i = Grass::decode(b,0,0,onGentle.minY);
-    require(std::abs(double(i.y)-double(i.x)*double(tanOf(20)))<=8.0, "a root stands on the slope");
+  for(const auto& batch:onGentle.batches) {
+    const auto& bounds = onGentle.squareBounds[batch.square];
+    require(bounds.minY>=onGentle.minY && bounds.maxY<=onGentle.maxY &&
+            (bounds.minY>onGentle.minY || bounds.maxY<onGentle.maxY),
+            "a square on a slope has a narrower height range than its cell");
+    for(uint32_t k=batch.first; k<batch.first+batch.count; ++k) {
+      const auto i = Grass::decode(onGentle.blades[k],0,0,onGentle.minY);
+      require(std::abs(double(i.y)-double(i.x)*double(tanOf(20)))<=8.0, "a root stands on the slope");
+      require(bounds.minY<=i.y && i.y<=bounds.maxY, "the square's height range covers its root");
+      }
     }
   // by the share of the way to the limit left: 0.525 at 30 degrees of 25 to 35. The level meadow keeps every node
   // the patches ask for, so the share is the only place where the count shows the node's final roll

@@ -49,8 +49,8 @@ void orderDraws(std::vector<Draw>& draws) {
 
 // The grass round the camera (reports/engine/2026-11-14-grass-system). The streaming of the landscape gives each
 // chunk's mesh as it reads it (addChunk); the field keeps the summary of its ground under materials with `grass`,
-// builds the blades of the 8 m cells of the ring on its own thread (Grass::buildCell), keeps one buffer per cell
-// and draws them into the G-buffer after the landscape (Shaders::grass, shader/grass/grass.vert).
+// builds the blades of the 8 m cells of the ring on its own thread (Grass::buildCell) and keeps one buffer per cell.
+// It prepares the draw list before the G-buffer pass, then draws the blades before the landscape in that pass.
 //
 // A cell is built when its chunk and the eight round it are in (or are not in the world). A cell far from the
 // camera keeps only the blades of the lower ranks, as many as the ring shows there (Grass::Ring); it is built anew
@@ -78,6 +78,8 @@ class GrassField final {
 
     // the main thread, once a frame: what the ring needs, the worker's results into buffers
     void update();
+    // prepare once before the G-buffer pass, then draw the prepared list inside it
+    void prepare(uint8_t fId);
     void draw(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool historyOwner = false);
 
     struct Stats final {
@@ -89,7 +91,7 @@ class GrassField final {
       uint32_t pack    = 1; // blades per instance
       size_t instances = 0; // submitted instances, including each partially filled pack
       size_t draws     = 0; // draw calls of the last frame
-      size_t drawUs    = 0; // with OPENGOTHIC_GRASS_WASTE=1: the mean time of draw() on the CPU, microseconds
+      size_t drawUs    = 0; // with OPENGOTHIC_GRASS_WASTE=1: mean CPU time of preparation and drawing, microseconds
       size_t bytes     = 0; // of the buffers
       size_t waiting   = 0; // cells not built yet
       Grass::Waste waste;      // with OPENGOTHIC_GRASS_WASTE=1: of the drawn those submitted for nothing
@@ -102,6 +104,10 @@ class GrassField final {
       }
 
   private:
+    static constexpr float CellCm    = float(Grass::CellSize/Grass::Unit);
+    static constexpr float RankShare = 1.12f; // grass.vert: a blade stands while its rank is under full/d*1.12
+    static constexpr float FineFull  = 400.f; // cm: all fine blades stand within this distance
+
     struct Slot final {
       asset::Material           material;
       Grass::Params             params;
@@ -131,6 +137,7 @@ class GrassField final {
       std::vector<Grass::Batch> batches;
       std::vector<Grass::Blade> cpu;             // with OPENGOTHIC_GRASS_WASTE=1 alone (grasswaste.h)
       int32_t                   minY = 0, maxY = 0;
+      std::array<Grass::SquareBounds, Grass::CellSquares*Grass::CellSquares> squareBounds;
       float                     reach = 0;       // cm: no blade's tip is further from its root
       uint32_t                  count = 0;
       std::vector<uint8_t>      ranks;           // of each blade: within a batch they rise
@@ -219,11 +226,15 @@ class GrassField final {
     Tempest::StorageBuffer              borderGpu;
     std::vector<uint32_t>               borderCpu;
     Stats                               last;
-    // a frame's draws and the table of their spans (draw)
+    // a frame's draws and the table of their spans (prepare)
+    std::vector<Draw>                   draws;
+    const Tempest::IndexBuffer<uint16_t>* drawIbo = nullptr;
+    const Tempest::StorageBuffer*        drawIndirect = nullptr;
     std::vector<uint32_t>               spanCpu;
     Tempest::StorageBuffer              spanGpu[2];      // by the frame in flight (Resources::MaxFramesInFlight)
     Tempest::StorageBuffer              indirectGpu[2];
     uint32_t                            wasteFrame = 0;
+    uint64_t                            prepareNs  = 0;
     uint64_t                            drawNs     = 0;
     uint32_t                            drawFrames = 0;
   };
