@@ -822,8 +822,8 @@ void WorldView::visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, u
   visuals.visibilityStats(cmd, fId);
   }
 
-void WorldView::visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
-  visuals.visibilityVsm(cmd);
+void WorldView::visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::StorageBuffer* geometryStats) {
+  visuals.visibilityVsm(cmd, geometryStats);
   }
 
 void WorldView::drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {

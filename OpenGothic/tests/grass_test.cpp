@@ -306,7 +306,7 @@ void grassCull() {
       const float height = ring.height(36,distance,ear ? Grass::EarTop : (kind==1 ? 13.f : 60.f));
       if(height<=0.05f)
         continue;
-      const float boundWidth = ear ? std::max(Shader::GrassEarStalkWidth, Shader::GrassEarWidth) : width;
+      const float boundWidth = ear ? std::max(Shader::GrassEarStalkWidth, Shader::GrassEarCardWidth) : width;
       const float halfWidth = Shader::GrassCullHalfWidthScale*std::max(boundWidth*widen, thin);
       const float reach = Shader::GrassCullHorizontalReach*height + halfWidth;
       const float verticalPad = ear ? halfWidth : 0.f;
@@ -334,18 +334,24 @@ void grassCull() {
         };
 
       for(int links=1; links<=4; ++links) {
+        // as grassEarAt and grassEarVertex of grass_ear.glsl: seen close a stalk of four links has its ear as a card
+        const float close = links==4 ? 1.f - std::clamp((distance-Shader::GrassEarNearFrom)/(Shader::GrassEarNearTo-Shader::GrassEarNearFrom),0.f,1.f) : 0.f;
+        const float top   = Shader::GrassEarTopFar + (Shader::GrassEarTopNear-Shader::GrassEarTopFar)*close;
         const auto node = [&](int k) {
-          constexpr float EarNodes[] = {0.45f,0.86f,0.90f};
-          if(ear && k>0 && k<links)
-            return links==2 ? EarNodes[1] : EarNodes[k+3-links];
-          return float(k)/float(links);
+          if(!ear || k<=0 || k>=links)
+            return float(k)/float(links);
+          if(links==2)
+            return 0.86f;
+          if(links==3)
+            return k==1 ? 0.84f : 0.92f;
+          return k==1 ? 0.78f : (k==2 ? 0.86f : top);
           };
         // Exercise the link's tilt clamp in each horizontal direction, independent of the wind phase.
         for(const Vec2& wind : {Vec2(0), Vec2(8,0), Vec2(-8,0), Vec2(0,8), Vec2(0,-8)}) {
           const auto direction = [&](float t) {
             Vec2 tilt = Vec2(0.8f,0.6f)*(0.35f + 0.9f*t) + wind*t;
-            if(ear)
-              tilt += Vec2(0.8f,0.6f)*(2.1445f*std::clamp((t-0.78f)/0.22f,0.f,1.f));
+            if(ear) // a rod with the lean of a blade's middle, turned over under the ear
+              tilt = Vec2(0.8f,0.6f)*(0.35f + 0.45f) + wind*0.5f + Vec2(0.8f,0.6f)*(2.1445f*std::clamp((t-0.70f)/0.30f,0.f,1.f));
             if(tilt.length()>2.4f)
               tilt *= 2.4f/tilt.length();
             return Vec3::normalize({tilt.x,1.f,tilt.y});
@@ -357,7 +363,10 @@ void grassCull() {
               center += direction(0.5f*(node(k-1)+t))*(height*(t-node(k-1)));
             const Vec3 axis = ear ? Vec3::normalize(Vec3::crossProduct(direction(t),Vec3::normalize(camera-center)) + horizontal*1e-3f)
                                  : horizontal;
-            const float vertexWidth = ear ? std::max((t>0.87f ? Shader::GrassEarWidth : Shader::GrassEarStalkWidth)*widen, thin)
+            const float earWidth    = t>0.87f ? Shader::GrassEarWidth + (Shader::GrassEarCardWidth-Shader::GrassEarWidth)*close :
+                                      (t>0.85f && links==4 ? Shader::GrassEarStalkWidth + (Shader::GrassEarCardBase-Shader::GrassEarStalkWidth)*close
+                                                           : Shader::GrassEarStalkWidth);
+            const float vertexWidth = ear ? std::max(earWidth*widen, thin)
                                           : std::max(width*widen,thin)*(1.f-0.7f*t);
             const bool tip = ear && links==1 ? k==0 : k==links;
             const Vec3 off = axis*(tip ? 0.f : 0.5f*vertexWidth);

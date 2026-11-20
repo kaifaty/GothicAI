@@ -1,0 +1,21 @@
+Character concept turnaround sheet for a dark medieval fantasy game: the head, neck and top of the shoulders of one man, shown four times side by side on a plain mid-grey background (#7a7c80): front view, three-quarter view (facing left), left profile, and back of the head. Same man, same calm expression, same scale and eye height in all four views. Soft even studio light from the upper front-left, no rim light. Rendered like a high-end realistic 3D game character sculpt (real skin, real hair strands), not a painting and not a photo of a real person. Wide landscape image, about 3:1.
+
+Two reference images of the same character from the original 2002 game. He is the only source: the task is a faithful modern remake of exactly this man, not a new design.
+- original.png — his face texture, unwrapped: it looks wider than the face is, and the hair on both sides wraps around to the back of the head. Take from it the face itself: every feature, the beard, the colours.
+- model.png — the old low-poly head with that texture, from the front, three-quarter, profile, back and over the shoulder. Take from it the true proportions of the head: the width of the face, the height of the forehead, the hairline, the ears, the shape of the hair volume and the short ponytail.
+
+He must be recognised as this man at first glance. Likeness comes before everything else. Keep, feature by feature:
+1. Age about 30. The skin is fairly smooth: two faint horizontal lines on the forehead, a soft fold from the nose to the mouth corners, nothing more. Do not make him older, harder, heavier or more handsome than the reference.
+2. Face shape: broad and rather square, flat full cheeks, a wide jaw with a short rounded chin, a wide and not high forehead. A plain, solid, slightly fleshy face, not chiselled, not gaunt, no hollow cheeks, no sharp cheekbones.
+3. Eyebrows: dark, fairly thin, straight and low over the eyes, slightly ragged, the outer ends a little raised. Not bushy.
+4. Eyes: set fairly wide apart, almond-shaped, light grey-blue with a dark rim, slightly heavy upper lids, a faint shadow under the eyes. The look is calm, level, a little tired and dry, straight at the viewer. No squint, no frown.
+5. Nose: short, broad and straight, with a wide soft tip and wide nostrils.
+6. Mouth: closed and relaxed, a thin upper lip and a fuller lower lip of a dull pink-brown; the corners level.
+7. Beard, exactly as in original.png: a small goatee. A thin moustache runs down past the mouth corners and joins a short beard that covers only the chin. The cheeks are clean. Along the edge of the jaw, from the ear to the chin, runs only a thin line of sparse stubble. No full beard, no thick moustache, no beard on the cheeks.
+8. Hair: thick, combed straight back from the forehead with no parting, lying along the skull in coarse strands, and gathered at the nape into a short ponytail (about 8 cm) tied with a thin leather thong. At the hairline a few short strands stand up and forward instead of lying flat, as in the reference. The hairline is low and straight, with slightly receding corners. The ears are fully visible, rather large. Colour: olive-brown, dark blond in the light, with many lighter straw-golden strands (crown #5c4b2d, temples #463825). Not dark brown, not black, not ginger.
+9. Colours as the eye sees them: skin warm light tan (forehead #c09679, cheek #b28767), a little redder on the cheeks and nose; lips #724e44; beard reddish brown #7e5c4a, moustache darker #5e4535.
+10. The face is slightly uneven, not mirrored.
+
+What is modern is only the execution: real volume of the skull, brows, nose, lips and ears; skin with pores and fine detail; hair and beard as real strands; real eyes with a cornea and a small highlight. Clothing only as a hint: the collar of a coarse undyed linen shirt, dull grey-brown.
+
+Avoid: a rugged action-movie hero, a grizzled veteran, a man of forty, deep wrinkles, a frown or scowl, hollow cheeks, a full or thick beard, bushy eyebrows, dark brown or black hair, smooth glossy salon hair, a modern haircut (shaved sides, undercut, parting), a long ponytail, scars, tattoos, earrings, bright blue eyes, a handsome model face, an average generic face, glossy wet skin, waxy skin, orange or golden colour cast over the whole image, painterly brush strokes, perfect symmetry.

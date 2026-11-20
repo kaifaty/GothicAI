@@ -130,7 +130,7 @@ class VisualObjects final {
     DrawCommands& treeHistoryCommands() { return drawCmd; }
     void visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void writeTreeOcclusionProbe(std::ostream& out, std::ostream& decisions);
-    void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::StorageBuffer* geometryStats);
 
     void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -140,6 +140,8 @@ class VisualObjects final {
     static BenchImpostors benchImpostors;
     enum class BenchShadowLevels { Auto, On, Off, Full };
     static BenchShadowLevels benchShadowLevels;
+    static std::optional<float> benchShadowNearPx;
+    void logVsmShadowProbe(uint64_t frameNo) const;
     void drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int layer);
     void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -222,6 +224,7 @@ class VisualObjects final {
       uint8_t             levelSub       = NoLevels; // its submesh of a mesh with levels of detail (meshlevels.h)
       MeshLevels::Selection level;                // ...the stage selected for this instance, 0 the mesh itself
       uint8_t             shadowLevel    = 0;
+      uint8_t             shadowProbeLevel = 0;
       // A tree with a bough hierarchy (treelevelband.h): the second cluster, its instance and command for the coarser
       // side of a level band, the meshlets reserved for it, and the band word of the object's own instance
       uint32_t            bandCluster    = uint32_t(-1);
@@ -271,7 +274,7 @@ class VisualObjects final {
     void     allocLevelBand(Object& obj);
     void     freeLevelBand(Object& obj);
     void     updateLevelBand(Object& obj, float height, float shadowHeight, bool shadowLevels, bool fullShadows,
-                             MeshLevels::Selection& level, uint8_t& shadowLevel);
+                             MeshLevels::Selection& level, uint8_t& shadowLevel, bool& shadowCoarse);
     void     drawImpostors(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool history);
     // the meshlets the object's cluster draws while visible: [first, first+count) of its bucket's mesh
     std::pair<uint32_t,uint32_t> drawnMeshlets(Object& obj);
@@ -331,6 +334,12 @@ class VisualObjects final {
     std::unordered_set<size_t> objectsStrand;
     std::unordered_set<size_t> objectsTree;
     std::unordered_set<size_t> objectsLevels;
+    struct ShadowProbe {
+      uint32_t coarseTrees = 0, changedTrees = 0;
+      uint64_t coarseMeshlets = 0, coarseTriangles = 0;
+      uint64_t oldMeshlets = 0, oldTriangles = 0, newMeshlets = 0, newTriangles = 0;
+      };
+    ShadowProbe                shadowProbe;
     struct ImpostorInstance {
       float    transform[16];
       uint32_t info[4] = {};

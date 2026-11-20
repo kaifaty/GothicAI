@@ -14,6 +14,10 @@ class DrawClusters {
 
     using Bucket = DrawBuckets::Bucket;
     static constexpr uint32_t HistoryStatic = 0x80000000u;
+    // Diagnostic bits in shadowCommandId. The lower half keeps the shadow command.
+    static constexpr uint32_t ShadowVisual = 1u << 16;
+    static constexpr uint32_t ShadowCoarse = 2u << 16;
+    static constexpr uint32_t ShadowProbeChanged = 1u << 18;
 
     struct alignas(16) Cluster final {
       Tempest::Vec3 pos;

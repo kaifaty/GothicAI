@@ -121,6 +121,7 @@ class StaticMesh {
     // The meshlets (first, count) the submesh at this slice draws at a level of detail: 0 or one the mesh has not, its own
     std::pair<uint32_t,uint32_t>          levelMeshlets(size_t iboOffset, size_t iboLen, size_t level) const;
     MeshLevels::Selection                pickLevel(uint8_t previous, float height, bool allowImpostor) const;
+    uint32_t                             shadowProbeTriangles(uint32_t first, uint32_t count) const;
     auto                                 treeHiZBounds() const -> std::span<const TreeHiZBounds> { return treeHiZBoxes; }
     const TreeHiZBounds*                  treeHiZBox(uint32_t firstMeshlet, uint32_t meshletCount) const;
 
@@ -161,4 +162,5 @@ class StaticMesh {
     void retireRange();
     std::shared_ptr<LandscapeRange> pageRange;
     std::vector<TreeHiZBounds> treeHiZBoxes;
+    std::vector<uint32_t> shadowProbeTriangleEnds;
   };

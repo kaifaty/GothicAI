@@ -19,10 +19,10 @@
 #include <iomanip>
 #include <limits>
 
-#include "graphics/drawcommands.h"
 #include "graphics/foliagewind.h"
 #include "graphics/grasscontact.h"
 #include "graphics/grass/grassparams.h"
+#include "graphics/meshlevels.h"
 #include "camera.h"
 #include "frameprofile.h"
 #include "utils/string_frm.h"
@@ -93,10 +93,9 @@ Renderer::Renderer() {
   settings.vsmEnabled       = Shaders::options().doVirtualShadow;
   // OPENGOTHIC_VSM_STATS=frames: a line a frame of the bins of meshlet-page pairs (Renderer::logVsmFrame), without
   // waiting for the GPU and without the lamp study the 5 s counters switch on, so the selection runs as without it
-  if(const char* stats = std::getenv("OPENGOTHIC_VSM_STATS")) {
-    settings.vsmStats       = std::string_view(stats)=="1";
-    settings.vsmStatsFrames = std::string_view(stats)=="frames";
-    }
+  if(const char* stats = std::getenv("OPENGOTHIC_VSM_STATS"))
+    settings.vsmStats = std::string_view(stats)=="1";
+  settings.vsmStatsFrames = MeshLevels::vsmFrameStatsEnabled();
   // OPENGOTHIC_VSM_LAMP=hard|flat: the lamp shadow filter for a study of its cost
   // (reports/render-features/2026-11-04-lamp-pcss/step-2c.md): one gather at the centre, or the same taps against
   // the receiver's depth without its plane; unset or pcss: the PCSS ([INTERNAL] vsmLampSoft does not change the study)
