@@ -75,12 +75,4 @@ inline uint32_t word(const Pick& main, const Pick& shadow, bool coarse) {
   return Tag | (coarse ? Coarse : 0u) | share(main) | (share(shadow) << Bits);
   }
 
-// Whether the side of `word` draws the sample of a rank of Bits bits (tree_bough_dissolve.glsl, boughBandCovers)
-inline bool covers(uint32_t word, bool shadow, uint32_t rank) {
-  if((word & Tag)==0u)
-    return true;
-  const uint32_t value = (word >> (shadow ? Bits : 0u)) & Full;
-  return (rank<value) == ((word & Coarse)!=0u);
-  }
-
 }

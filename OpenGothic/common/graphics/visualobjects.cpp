@@ -315,7 +315,7 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   // vertex (its own range) starts that much before its storage (uint arithmetic wraps on both sides).
   d.deformPtr = obj.objDeform.offsetId<uint32_t>() - obj.deformFirst*8u;
   d.deformCount = obj.deformCount==0 ? 0 : obj.deformFirst+obj.deformCount;
-  if(obj.bandCluster!=uint32_t(-1)) {
+  if(obj.bandCluster!=uint32_t(-1) && obj.deformCount==0) {
     // a static tree's level band: the deform slot, then the second instance of the coarser side
     d.deformPtr = obj.bandWord;
     obj.objInstance.set(&d, 0, sizeof(d));
