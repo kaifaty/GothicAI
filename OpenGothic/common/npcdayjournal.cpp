@@ -13,6 +13,7 @@
 
 #include "game/gamescript.h"
 #include "game/inventory.h"
+#include "game/npcactivityhost.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
@@ -200,9 +201,11 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
     const auto  inv   = inventoryHash(*npc);
     const int   ta    = npc->currentRoutineIndex();
     const auto* mob   = npc->interactive();
-    const auto* point = npc->currentWayPoint();
+    const auto* point = npc->heldWayPoint();
     if(point!=nullptr && !point->isFreePoint()) point=nullptr;
-    const bool onPoint=point!=nullptr && MoveAlgo::isClose(*npc,*point,MAX_AI_USE_DISTANCE);
+    const auto* currentPoint=npc->currentWayPoint();
+    const bool onPoint=point!=nullptr && currentPoint!=nullptr && currentPoint->isFreePoint() &&
+                       currentPoint->checkName(point->name) && MoveAlgo::isClose(*npc,*currentPoint,MAX_AI_USE_DISTANCE);
     // Availability is needed to distinguish legal waiting from losing an empty point.
     // These are the five script forms calibrated by the point-activity bench, not executors.
     const auto state=symbolName(w,npc->currentState().ptr);
@@ -211,8 +214,7 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
     else if(state=="ZS_SIT_CAMPFIRE") pointName="CAMPFIRE";
     else if(state=="ZS_PEE") pointName="PEE";
     const int available=pointName.empty() ? -1 : (w.findFreePoint(*npc,pointName)!=nullptr ? 1 : 0);
-    const auto* routinePoint=w.findWayPoint(npc->handle().wp);
-    const bool onRoutine=routinePoint!=nullptr && MoveAlgo::isClose(*npc,*routinePoint,500.f);
+    const bool onRoutine=NpcEngineCalls::distanceToWaypoint(w,*npc,npc->handle().wp)<=500;
     if(j.heights!=nullptr && npc->usesSimplifiedMovement() && !npc->isDead() && mob==nullptr) {
       // Verification only, at journal sample times; movement itself never rays.
       const auto ground=w.physic()->landRay(p+Tempest::Vec3(0,100,0));

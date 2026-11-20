@@ -492,6 +492,7 @@ def test_point_loss_late_arrival_collision_and_legal_fallback(tmp_path):
         points = result["points"]["total"]
         if name == "lost":
             assert points["pose_ratio"] == 0 and points["missed_segments"] == 1
+            assert result["activity"]["total"]["stuck_npcs"] == 1
             assert "max_activity_stuck" in failed and "max_point_missed_segments" in failed
         elif name == "late":
             assert points["arrival_max"] == 30
@@ -514,3 +515,13 @@ def test_point_loss_late_arrival_collision_and_legal_fallback(tmp_path):
     samples.write_text("\n".join(",".join(line.split(",")[:24]) for line in samples.read_text().splitlines()) + "\n")
     result = npc_day_parity.compare(aa, npc_day_parity.load(mixed), activity_states={"ZS_STAND_GUARDING"})
     assert all(not c["pass"] for c in npc_day_parity.evaluate(result, {"max_point_missed_segments": 0, "min_point_same_fp": 0.9}))
+    # Campfire and PEE wait standing, without the target pose's body/stage.
+    for state, kind, body in (("ZS_SIT_CAMPFIRE", "CAMPFIRE", 11), ("ZS_PEE", "PEE", 0)):
+        camp_a, camp_b = tmp_path / (state + "-a"), tmp_path / (state + "-b")
+        journal(camp_a, [dict(r, zs=state, fp=kind, body=body) for r in reference], [], header)
+        journal(camp_b, [dict(r, zs=state, fp="-", on_fp=0, body=0, aivar_19=1, fp_available=0)
+                         for r in reference], [], header)
+        result = npc_day_parity.compare(npc_day_parity.load(camp_a), npc_day_parity.load(camp_b), activity_states={state})
+        assert result["points"]["total"]["pose_ratio"] == 0
+        assert result["points"]["total"]["fallback_b"] == 13
+        assert all(c["pass"] for c in npc_day_parity.evaluate(result, limits))

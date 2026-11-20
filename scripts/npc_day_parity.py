@@ -70,8 +70,8 @@ CHECKS = {
     "max_activity_arrival_max": ("max", "activity: maximum arrival delay, game min"),
     "max_activity_stuck": ("max", "activity: NPCs missing every MOB sample in a routine segment"),
     "min_point_same_fp": ("min", "point activity: same held coordinates (legal fallback excluded), share"),
-    "min_point_pose_ratio": ("min", "point activity: B/A samples in pose, including legal fallback"),
-    "max_point_pose_ratio": ("max", "point activity: B/A samples in pose, including legal fallback"),
+    "min_point_pose_ratio": ("min", "point activity: B/A pose samples outside legal B waiting"),
+    "max_point_pose_ratio": ("max", "point activity: B/A pose samples outside legal B waiting"),
     "max_point_arrival_p95": ("max", "point activity: first arrival delay p95, game min"),
     "max_point_arrival_max": ("max", "point activity: maximum first arrival delay, game min"),
     "max_point_missed_segments": ("max", "point activity: reference segments with no arrival in B"),
@@ -410,7 +410,7 @@ def point_status(row, point, state):
     on = point["on"] and kind in point["name"] if kind else point["on_wp"]
     # Campfire sets BS_SIT (11); the other four forms set aivar[19]=0 on entering the pose.
     posed = row[10] == 11 if state == "ZS_SIT_CAMPFIRE" else point["stage"] == 0
-    fallback = bool(kind and not on and point["available"] == 0 and point["on_wp"] and posed)
+    fallback = bool(kind and not on and point["available"] == 0 and point["on_wp"] and row[10] == 0)
     return bool(on), bool(posed and (on or fallback)), fallback
 
 
@@ -422,7 +422,7 @@ def point_metrics(a, b, common, states):
     def tally(state):
         return by_state.setdefault(state, {name: [] if name in {"arrivals", "missed", "collisions"} else 0 for name in
             ("samples", "held_a", "comparable", "same_fp", "same_fp_raw", "on_a", "on_b", "pose_a", "pose_b",
-             "fallback_a", "fallback_b", "arrivals", "missed", "collisions")})
+             "pose_comparable_a", "pose_comparable_b", "fallback_a", "fallback_b", "arrivals", "missed", "collisions")})
 
     # Check against all B NPCs, including those outside --activity-states.
     owners = {}
@@ -448,6 +448,8 @@ def point_metrics(a, b, common, states):
         item["comparable"] += held and not fallback_b
         item["same_fp"] += held and not fallback_b and pa["position"] == pb["position"]
         item["same_fp_raw"] += held and pa["position"] == pb["position"]
+        item["pose_comparable_a"] += pose_a and not fallback_b
+        item["pose_comparable_b"] += pose_b and not fallback_b
         for name, value in (("on_a", on_a), ("on_b", on_b), ("pose_a", pose_a), ("pose_b", pose_b),
                             ("fallback_a", fallback_a), ("fallback_b", fallback_b)):
             item[name] += value
@@ -492,7 +494,8 @@ def point_metrics(a, b, common, states):
 
     def summary(items):
         counts = {name: sum(item[name] for item in items) for name in
-                  ("samples", "held_a", "comparable", "same_fp", "same_fp_raw", "on_a", "on_b", "pose_a", "pose_b", "fallback_a", "fallback_b")}
+                  ("samples", "held_a", "comparable", "same_fp", "same_fp_raw", "on_a", "on_b", "pose_a", "pose_b",
+                   "pose_comparable_a", "pose_comparable_b", "fallback_a", "fallback_b")}
         arrivals = [entry for item in items for entry in item["arrivals"]]
         missed = [entry for item in items for entry in item["missed"]]
         collisions = {(entry["t_min"], tuple(entry["point"])): entry for item in items for entry in item["collisions"]}
@@ -501,6 +504,7 @@ def point_metrics(a, b, common, states):
                 "same_fp": share(counts["same_fp_raw"], counts["held_a"]),
                 "same_fp_available": share(counts["same_fp"], counts["comparable"]),
                 "pose_ratio": share(counts["pose_b"], counts["pose_a"]),
+                "pose_ratio_available": share(counts["pose_comparable_b"], counts["pose_comparable_a"]),
                 "arrival_p95": percentile(delays, 0.95), "arrival_max": max(delays) if delays else None,
                 "arrivals": arrivals, "missed_segments": len(missed), "missed": missed,
                 "stuck_npcs": len({entry["key"] for entry in missed}),
@@ -633,7 +637,7 @@ def check_values(result, inventory_evidence=()):
         "max_activity_arrival_max": activity["arrival_max"],
         "max_activity_stuck": activity["stuck_npcs"],
         **{check: points[metric] if points["available"] else None for check, metric in {
-            "min_point_same_fp": "same_fp_available", "min_point_pose_ratio": "pose_ratio", "max_point_pose_ratio": "pose_ratio",
+            "min_point_same_fp": "same_fp_available", "min_point_pose_ratio": "pose_ratio_available", "max_point_pose_ratio": "pose_ratio_available",
             "max_point_arrival_p95": "arrival_p95", "max_point_arrival_max": "arrival_max",
             "max_point_missed_segments": "missed_segments", "max_point_double_occupancy": "double_occupancy"}.items()},
         **{name: (result["activity_events"] or {}).get(counter) for name, counter in HEALTH.items()},
@@ -660,6 +664,9 @@ def evaluate(result, tolerances, inventory_evidence=()):
         applicable = not (name in object_checks and activity["samples"] and not activity["mob_samples_a"])
         # No held FP / arrivals is meaningful for a population entirely in legal fallback, or STAND_WP.
         if name == "min_point_same_fp" and points["available"] and not points["comparable"]:
+            applicable = False
+        if name in {"min_point_pose_ratio", "max_point_pose_ratio"} and points["available"] and not points["pose_comparable_a"] and (
+                points["fallback_a"] or points["fallback_b"]):
             applicable = False
         if name in {"max_point_arrival_p95", "max_point_arrival_max"} and points["available"] and not points["arrivals"] and not points["missed"]:
             applicable = False
@@ -763,15 +770,16 @@ def markdown(result, checks, label_a, label_b):
     lines += ["## Point activities", "",
               "Held points are identified by coordinates; equal names alone do not match. Pose follows aivar[19],",
               "BS_SIT for campfire. STAND_WP uses the routine waypoint (within the 500 cm approach radius).",
-              "Legal fallback requires no available FP, the routine waypoint and the pose; it is counted separately,",
-              "excluded from held-point agreement and included in pose time. Observed legal waits do not count as late arrival.",
+              "Legal fallback requires no available FP, the routine waypoint and a standing body; it is counted separately.",
+              "Raw pose time is reported; acceptance excludes legal B waiting from both pose populations and held-point agreement.",
+              "Observed legal waits do not count as late arrival.",
               "Missing point columns fail enabled point checks. Resolution is the journal step.", "",
-              "| State | Samples | Same held FP raw / excluding legal fallback | On point A / B | Pose A / B | Pose B/A | Arrival p95 / max, min | Missed segments | Double occupancy B |",
+              "| State | Samples | Same held FP raw / excluding legal fallback | On point A / B | Pose A / B | Pose B/A raw / outside B waiting | Arrival p95 / max, min | Missed segments | Double occupancy B |",
               "|---|---|---|---|---|---|---|---|---|"]
     points = result["points"]
     for state, item in [("**Selected total**", points["total"]), *points["by_state"].items()]:
         lines.append(f"| {state} | {item['samples']} | {pct(item['same_fp'])} / {pct(item['same_fp_available'])} | {item['on_a']} / {item['on_b']} | "
-                     f"{item['pose_a']} / {item['pose_b']} | {fmt(item['pose_ratio'], 4)} | "
+                     f"{item['pose_a']} / {item['pose_b']} | {fmt(item['pose_ratio'], 4)} / {fmt(item['pose_ratio_available'], 4)} | "
                      f"{fmt(item['arrival_p95'])} / {fmt(item['arrival_max'])} | {item['missed_segments']} | {item['double_occupancy']} |")
         lines.append(f"| {state}: legal routine-waypoint fallback | | | {item['fallback_a']} / {item['fallback_b']} | | | | | |")
     lines += ["", "### Missed point segments / later point arrivals", "",
