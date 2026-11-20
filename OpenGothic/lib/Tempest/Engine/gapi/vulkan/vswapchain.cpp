@@ -6,9 +6,6 @@
 #include <Tempest/SystemApi>
 #include <Tempest/Platform>
 
-#include <algorithm>
-#include <cstdlib>
-
 #include "vdevice.h"
 
 #if defined(__UNIX__)
@@ -420,13 +417,6 @@ VkSurfaceFormatKHR VSwapchain::findSwapSurfaceFormat(const std::vector<VkSurface
   }
 
 VkPresentModeKHR VSwapchain::findSwapPresentMode(const std::vector<VkPresentModeKHR> &availablePresentModes) const {
-#if defined(__UNIX__)
-  // Xwayland falls back to one FIFO present per second when the compositor stops frame callbacks.
-  const auto* immediate = std::getenv("TEMPEST_VULKAN_PRESENT_IMMEDIATE");
-  if(immediate!=nullptr && immediate[0]=='1' && immediate[1]=='\0' &&
-     std::find(availablePresentModes.begin(),availablePresentModes.end(),VK_PRESENT_MODE_IMMEDIATE_KHR)!=availablePresentModes.end())
-    return VK_PRESENT_MODE_IMMEDIATE_KHR;
-#endif
   /** intel says mailbox is better option for games
     * https://software.intel.com/content/www/us/en/develop/articles/api-without-secrets-introduction-to-vulkan-part-2.html
     **/

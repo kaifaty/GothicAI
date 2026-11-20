@@ -273,9 +273,6 @@ metadata, mode, scenario, leaf, place, extra = sys.argv[1:]
 scripts = Path(scenario).parents[1]
 meta = json.loads(Path(metadata).read_text())
 stamp = Path(os.environ['PERF_GPU_STAMP'])
-grass_window = os.environ.get('PERF_REMOTE') == '1' and place in ('meadow', 'grass-fields')
-if grass_window:
-    meta['game_env']['TEMPEST_VULKAN_PRESENT_IMMEDIATE'] = '1'
 # The meadow ground scenario has 354 s of scripted waits.
 timeout = 420 if place == 'grass-ground' else 300
 
@@ -388,9 +385,9 @@ def launch(leaf, profile, done=None):
 if mode == 'measure':
     leaf = Path(leaf)
     try:
-        code, command = launch(leaf, True, stall_guard(leaf) if grass_window else None)
+        code, command = launch(leaf, True, stall_guard(leaf))
         if code is None:
-            raise RuntimeError(f'perf: {place} stayed at or below 2 FPS for two heartbeat intervals; check Xwayland presentation')
+            raise RuntimeError(f'perf: stand failure: {place} stayed at or below 2 FPS for two heartbeat intervals')
     except RuntimeError as error:
         raise SystemExit(str(error))
     meta.update(place=place, repeat=int(extra), command=command, exit_code=code)

@@ -148,11 +148,11 @@ TASK=/remote/task
 
 
 @pytest.mark.parametrize("frames_per_interval", (20, 21))
-def test_ryzen_meadow_presentation_and_stall_guard(tmp_path, frames_per_interval):
+def test_perf_stall_guard(tmp_path, frames_per_interval):
     source = (Path(__file__).parents[1] / "perf.sh").read_text()
     run_game = source[source.index("\nrun_game() {"):source.index("\n# The GPU clock journal runs")]
     scripts = tmp_path / "scripts"
-    scenario = scripts / "bench/perf-meadow.bench"
+    scenario = scripts / "bench/perf-market.bench"
     scenario.parent.mkdir(parents=True)
     (scripts / "base-ensure.sh").touch()
     metadata = tmp_path / "metadata.json"
@@ -162,7 +162,6 @@ def test_ryzen_meadow_presentation_and_stall_guard(tmp_path, frames_per_interval
 import json, os, time
 from pathlib import Path
 
-print(os.environ.get("TEMPEST_VULKAN_PRESENT_IMMEDIATE"), flush=True)
 leaf = Path(os.environ["OPENGOTHIC_BENCH_OUT"])
 step = int(os.environ["FAKE_FRAME_STEP"])
 for interval in range(3):
@@ -173,23 +172,21 @@ for interval in range(3):
 ''')
     game.chmod(0o755)
     leaf = tmp_path / "repeat-1"
-    environment = dict(os.environ, PERF_REMOTE="1", GAME_BIN=str(game), GOTHIC_DIR=str(tmp_path),
+    environment = dict(os.environ, GAME_BIN=str(game), GOTHIC_DIR=str(tmp_path),
                        PERF_GPU_STAMP=str(tmp_path / "stamp"), FAKE_FRAME_STEP=str(frames_per_interval),
                        PERF_VID_RES="0", PERF_INI="")
-    environment.pop("TEMPEST_VULKAN_PRESENT_IMMEDIATE", None)
+    environment.pop("PERF_REMOTE", None)
     result = subprocess.run(
-        ["bash", "-c", run_game + '\nOUT="$1"\nrun_game measure "$2" "$3" meadow 1',
+        ["bash", "-c", run_game + '\nOUT="$1"\nrun_game measure "$2" "$3" market 1',
          "bash", str(tmp_path), str(scenario), str(leaf)],
         env=environment, capture_output=True, text=True, timeout=10)
 
-    assert (leaf / "game.log").read_text() == "1\n"
     assert json.loads((leaf / "heartbeat.json").read_text())["elapsed_seconds"] == 20
     if frames_per_interval == 20:
-        assert result.returncode == 1 and "2 FPS for two heartbeat intervals" in result.stderr
+        assert result.returncode == 1
+        assert "stand failure: market stayed at or below 2 FPS for two heartbeat intervals" in result.stderr
     else:
         assert result.returncode == 0, result.stderr
-        measured = json.loads((leaf / "metadata.json").read_text())
-        assert measured["game_env"]["TEMPEST_VULKAN_PRESENT_IMMEDIATE"] == "1"
 
 
 @pytest.mark.parametrize("converter", (True, False))
