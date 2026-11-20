@@ -1,5 +1,7 @@
 // Included by mesh_gltf_test.cpp.
 
+#include "tree_level_band_test.h"
+
 void treeBoughRasterCases(Tempest::Device& device) {
   using namespace Tempest;
   constexpr uint32_t side = 32;
@@ -118,6 +120,7 @@ void treeBoughRasterCases(Tempest::Device& device) {
       }
     require(draws[0]>0 && draws[1]>0 && draws[0]+draws[1]<side*side,"bough raster fixture missed a side or the background");
     require(jointPixels>0 && jointPixels<draws[0]+draws[1],"impostor mask has no fractional 3D coverage");
+    treeLevelBandRaster(device, render, covered, jointGeometry, packedIbo, instance, jointInstance, baseline, jointWood, mesh);
     std::cout << "tree bough " << (mesh ? "mesh" : "vertex") << " coverage: " << draws[0] << " parent and " << draws[1]
               << " child pixels, " << jointPixels << " 3D pixels in the impostor joint\n";
     }
@@ -305,5 +308,7 @@ void treeBoughCutCases() {
   std::cout << "tree bough cut: " << heights.size() << " CPU/GPU samples from 800 to 30 px and back\n";
   require(activeJointSamples>2, "tree bough fixture missed the impostor joint");
   std::cout << "tree bough impostor joint: " << activeJointSamples << " fractional CPU/GPU samples\n";
+  treeLevelBandPicks();
+  treeLevelBandMasks(device);
   treeBoughRasterCases(device);
   }

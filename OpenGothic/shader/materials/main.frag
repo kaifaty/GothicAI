@@ -42,6 +42,10 @@ layout(location = 1) in Varyings  shInp;
 layout(location = 7) in flat uvec3 boughFadeIn;
 layout(location = 8) in flat vec3 boughMaskIn;
 #endif
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+layout(location = 9) in vec2 boughBandCellIn;
+layout(location = 10) in flat uvec2 boughBandIn;
+#endif
 #if defined(VIRTUAL_SHADOW)
 layout(location = 3) in flat uint vsmMipId;
 #endif
@@ -1099,7 +1103,7 @@ void main() {
 #if defined(GBUFFER) && !defined(HISTORY_DEPTH)
   const bool treeProbe = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u;
 #endif
-#if defined(TREE_BOUGH_JOINT)
+#if defined(TREE_BOUGH_JOINT) && defined(GBUFFER)
   const bool treeJoint = (materialRef & BoughJointTag)!=0u;
   const uint taskRef = materialRef & ~BoughJointTag;
 #endif
@@ -1174,6 +1178,11 @@ void main() {
 #  endif
 #endif
 
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+  if(!boughBandCovers(boughBandIn.x, true, uvec2(ivec2(floor(boughBandCellIn))), boughBandIn.y))
+    discard;
+#endif
+
 #if defined(ATEST) && defined(GBUFFER) && defined(MATERIAL_MAPS)
   const float alphaTest = t.a;
 #endif
@@ -1228,9 +1237,13 @@ void main() {
     discard;
 #elif defined(TREE_BOUGH_JOINT)
   if(treeJoint) {
+    // the impostor joint's 3D side, then the side of a level band, at independent ranks of the same sample
     const Instance instance = pullInstance(payload[taskRef].x);
     const uint fade = boughJointFade(instance.animPtr) ^ BoughFadeChild;
-    if(!boughJointCovers(fade, instance.mat[3], gl_FragCoord.xy, scene))
+    const uint seed = boughJointSeed(instance.mat[3]);
+    const vec2 sampleOffset = boughSampleOffset(gl_FragCoord.xy, boughMaskCoordinates(instance.mat[3], scene));
+    if(!boughCovers(fade, seed, sampleOffset) ||
+       !boughBandCovers(boughBandWord(instance), false, uvec2(ivec2(floor(sampleOffset))), seed))
       discard;
     }
 #endif

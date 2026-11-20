@@ -279,8 +279,9 @@ uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId
       bough = Shaders::Bough::Joint;
     }
   auto pMain    = shadowOnly ? nullptr : Shaders::inst().materialPipeline(m, type, Shaders::T_Main, bindless, bough);
-  auto pShadow  = Shaders::inst().materialPipeline(m, type, Shaders::T_Shadow, bindless);
-  auto pVsm     = Shaders::inst().materialPipeline(m, type, Shaders::T_Vsm,    bindless);
+  // the hierarchy mesh's shadows mask the sides of its level bands (graphics/treelevelband.h)
+  auto pShadow  = Shaders::inst().materialPipeline(m, type, Shaders::T_Shadow, bindless, bough);
+  auto pVsm     = Shaders::inst().materialPipeline(m, type, Shaders::T_Vsm,    bindless, bough);
   auto pHiZ     = shadowOnly ? nullptr : Shaders::inst().materialPipeline(m, type, Shaders::T_Depth, bindless);
   if(pMain==nullptr && pShadow==nullptr && pVsm==nullptr && pHiZ==nullptr)
     return uint16_t(-1);

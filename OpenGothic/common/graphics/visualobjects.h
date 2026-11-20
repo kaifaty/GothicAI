@@ -157,7 +157,18 @@ class VisualObjects final {
     void dbgClusters(Tempest::Painter& p, Tempest::Vec2 wsz);
 
   private:
-    struct InstanceDesc;
+    struct InstanceDesc {
+      void setPosition(const Tempest::Matrix4x4& m) {
+        for(int i=0; i<4; ++i)
+          for(int r=0; r<3; ++r)
+            pos[i][r] = m.at(i,r);
+        }
+      float    pos[4][3] = {};
+      float    fatness   = 0;
+      uint32_t animPtr   = 0;
+      uint32_t deformPtr = 0; // a static tree with a bough hierarchy: its level band (treelevelband.h)
+      uint32_t deformCount = 0;
+      };
     struct MorphDesc;
     struct MorphData;
 
@@ -211,6 +222,13 @@ class VisualObjects final {
       uint8_t             levelSub       = NoLevels; // its submesh of a mesh with levels of detail (meshlevels.h)
       MeshLevels::Selection level;                // ...the stage selected for this instance, 0 the mesh itself
       uint8_t             shadowLevel    = 0;
+      // A tree with a bough hierarchy (treelevelband.h): the second cluster, its instance and command for the coarser
+      // side of a level band, the meshlets reserved for it, and the band word of the object's own instance
+      uint32_t            bandCluster    = uint32_t(-1);
+      InstanceStorage::Id bandInstance;
+      uint16_t            bandCmd        = uint16_t(-1);
+      uint32_t            bandReserve    = 0;
+      uint32_t            bandWord       = 0;
       bool                clusterLod     = false;
       bool                isGhost       = false;
       bool                visible       = true;
@@ -249,6 +267,11 @@ class VisualObjects final {
     void     preFrameUpdateTrees();
     void     preFrameUpdateLevels();
     void     setImpostorShadow(Object& obj, bool enable);
+    // The level bands of a tree with a bough hierarchy (visualobjects_levelband.cpp)
+    void     allocLevelBand(Object& obj);
+    void     freeLevelBand(Object& obj);
+    void     updateLevelBand(Object& obj, float height, float shadowHeight, bool shadowLevels, bool fullShadows,
+                             MeshLevels::Selection& level, uint8_t& shadowLevel);
     void     drawImpostors(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool history);
     // the meshlets the object's cluster draws while visible: [first, first+count) of its bucket's mesh
     std::pair<uint32_t,uint32_t> drawnMeshlets(Object& obj);

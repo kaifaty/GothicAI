@@ -293,8 +293,11 @@ void runCluster(const uint clusterId) {
   const uint command = cluster.bucketId_commandId & 0xffffu;
   const uint treeCommands = tree==0u ? 0xffffffffu : boughData[tree+1u];
   const bool useBough = tree!=0u && command==(treeCommands & 0xffffu) && pullInstance(cluster.instanceId).deformCount==0u;
+  const uint bandWord = cluster.instanceId!=0xffffffffu ? boughBandWord(pullInstance(cluster.instanceId)) : 0u;
+  if((bandWord & (BoughBandCoarse | BoughBandFull))==BoughBandCoarse)
+    return; // the coarser side of a band that is in the shadows alone (graphics/treelevelband.h)
   const bool treeJoint = cluster.instanceId!=0xffffffffu &&
-                         (pullInstance(cluster.instanceId).animPtr & BoughJointTag)!=0u;
+                         ((pullInstance(cluster.instanceId).animPtr & BoughJointTag)!=0u || boughBandActive(bandWord));
   boughWholeBox = useBough;
 #if defined(LARGE)
   if(useBough || treeJoint)

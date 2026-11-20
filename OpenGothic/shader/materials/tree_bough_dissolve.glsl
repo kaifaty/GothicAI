@@ -56,4 +56,39 @@ bool boughJointCovers(uint fade, vec3 origin, vec2 fragCoord, SceneDesc scene) {
   return boughCovers(fade, boughJointSeed(origin), sampleOffset);
   }
 
+// The level band of a hierarchy tree's own GLBs (graphics/treelevelband.h): its word in the deform slot of a static
+// instance, the shares of the coarser GLB in the main view and in the shadows, and the side the instance draws.
+const uint BoughBandTag = 0x80000000u;
+const uint BoughBandCoarse = 0x40000000u;
+const uint BoughBandBits = 15u;
+const uint BoughBandFull = (1u << BoughBandBits) - 1u;
+
+uint boughBandWord(Instance obj) {
+  return obj.deformCount==0u ? obj.deformPtr : 0u;
+  }
+
+bool boughBandActive(uint word) {
+  return (word & BoughBandTag)!=0u;
+  }
+
+// The coarser side holds the ranks below its share. The rank is independent of the joint's at the same cell.
+bool boughBandCovers(uint word, bool shadow, uvec2 cell, uint seed) {
+  if((word & BoughBandTag)==0u)
+    return true;
+  const uint share = (word >> (shadow ? BoughBandBits : 0u)) & BoughBandFull;
+  const uint rank = pcg3d(uvec3(cell, seed)).y >> (32u - BoughBandBits);
+  return (rank < share) == ((word & BoughBandCoarse)!=0u);
+  }
+
+// A shadow's cell: the sample's offset from the pivot in the plane across the light, in steps of 1/128 of the tree's
+// height. Both GLBs of a band take the same cells, so one light ray sees one of them; the cells stay on the tree when
+// the camera moves.
+vec2 boughBandShadowCell(vec3 pos, vec3 pivot, vec3 toLight, float height) {
+  const vec3 axis = abs(toLight.y)<0.999 ? vec3(0,1,0) : vec3(1,0,0);
+  const vec3 u = normalize(cross(toLight, axis));
+  const vec3 v = cross(toLight, u);
+  const vec3 at = pos - pivot;
+  return vec2(dot(at, u), dot(at, v)) * (128.0/max(height, 1.0));
+  }
+
 #endif
