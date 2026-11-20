@@ -72,7 +72,6 @@ struct Selected {
 
 bool enabled();
 bool cpuEnabled();
-uint32_t benchFlags(); // TEMPORARY diag switches of step 4b, removed after the run
 
 // Attach only on success. Malformed or unsupported sidecars keep the original mesh.
 void attach(StaticMesh& mesh, const std::filesystem::path& file);

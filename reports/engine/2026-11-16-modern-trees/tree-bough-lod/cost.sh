@@ -9,7 +9,7 @@
 # BUILD_ONLY=1 stops after the build; NO_BUILD=1 keeps the stand's build of the same sources.
 # Another measurement of the same forests names its own: COST_TASK, the folder under ~/gothic-ai/ on Ryzen;
 # COST_STATES, "name|forest|switch|warm-up seconds[|VAR=value]" separated by spaces, the first one the base of the
-# tables; COST_MAX, the limit of the windowed job; COST_BENCH, a scenario to run in place of perf-trees.bench.
+# tables; COST_MAX, the limit of the windowed job.
 #   reports/engine/2026-11-16-modern-trees/tree-bough-lod/cost.sh /absolute/local/out [forest S122] [forest B]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
@@ -49,7 +49,6 @@ rsync -a --checksum --no-times --delete --exclude='build*/' --exclude='cmake-bui
 rsync -a "$ROOT"/scripts/{ryzen-build.sh,perf.sh,perf_report.py,perf_gpu_log.py,base-ensure.sh,ryzen_game.py} "$HOST:$SOURCE/scripts/"
 rsync -a --delete --exclude='/build*/' "$ROOT/scripts/convert/" "$HOST:$SOURCE/scripts/convert/"
 rsync -a "$ROOT"/scripts/bench/perf-*.bench "$HOST:$SOURCE/scripts/bench/"
-[[ -z "${COST_BENCH:-}" ]] || rsync -a "$COST_BENCH" "$HOST:$SOURCE/scripts/bench/perf-trees.bench"
 
 ENV=(PERF_REMOTE=1 PERF_VID_RES=0 PERF_INI= PERF_WINDOW=2560x1440 PERF_REPEAT=1 PERF_WAIT=600 PERF_ARGS=
      "PERF_COMMIT=$COMMIT" "PERF_DIRTY=$DIRTY" "PERF_SOURCE_FINGERPRINT=$FINGERPRINT")

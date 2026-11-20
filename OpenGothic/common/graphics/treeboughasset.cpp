@@ -395,14 +395,6 @@ bool enabled() {
   return on;
   }
 
-uint32_t benchFlags() {
-  static const uint32_t flags = [] {
-    const char* env = std::getenv("OPENGOTHIC_BENCH_BOUGH");
-    return env!=nullptr ? uint32_t(std::atoi(env)) : 0u;
-    }();
-  return flags;
-  }
-
 bool cpuEnabled() {
   static const bool on = Settings::exists() && Settings::getI("INTERNAL","treeBoughLodCpu")!=0;
   return on;

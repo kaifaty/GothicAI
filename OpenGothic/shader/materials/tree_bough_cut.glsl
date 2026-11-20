@@ -32,12 +32,7 @@ float boughScreenSize(BoughNode node, BoughProjection projection) {
   }
 
 float boughParentWeight(BoughNode node, BoughProjection projection) {
-  const float weight = 1.0 - smoothstep(node.lowPx, node.highPx, boughScreenSize(node, projection));
-#if defined(BOUGH_BENCH_HARD_CUT)
-  if(BOUGH_BENCH_HARD_CUT)
-    return step(0.5, weight);
-#endif
-  return weight;
+  return 1.0 - smoothstep(node.lowPx, node.highPx, boughScreenSize(node, projection));
   }
 
 // The fast-path query: no proxy of the slice [first, last) of the preorder array replaces its children yet.

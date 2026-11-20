@@ -92,8 +92,6 @@ class DrawCommands {
     void compactHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool early);
     void finishHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& winners, uint8_t fId);
     void finishBoughVisibility(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool late);
-    bool boughDepthBench() const; // TEMPORARY diag of step 4b
-    void drawBoughDepthBench(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     const Tempest::StorageBuffer& historyStatus() const { return history.status; }
     uint32_t historyClusterCount() const;
 

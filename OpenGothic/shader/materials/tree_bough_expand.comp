@@ -23,7 +23,6 @@ layout(push_constant, std430) uniform Push {
   uint stage; // 0: cut of each crown, 1: reset of the counters, 2: whole meshlets of the mesh path
   } push;
 
-#define BOUGH_BENCH_HARD_CUT ((push.flags & 32u)!=0u)
 #include "materials/tree_bough_cut.glsl"
 
 // The state prefix matches TreeBoughRender::readStats. Height is a maximum; the other counters are sums.
@@ -128,13 +127,12 @@ void main() {
   const float scaleBound = sqrt(max(max(scale.x, scale.y), scale.z));
   BoughProjection projection = BoughProjection(vec3(dot(forward, x), dot(forward, y), dot(forward, z)),
                                                 dot(forward, origin)+scene.view[3][2], focal*scaleBound, push.nearZ);
-  const uint rootBase = data[asset], rootCount = data[asset+1u], nodeCount = data[asset+3u];
+  const uint nodeCount = data[asset+3u];
   nodeBase = data[asset+2u];
   rangeBase = data[asset+4u];
   // Equal slices of the preorder array: one long bough no longer holds the whole workgroup.
   const uint slice = (nodeCount+gl_WorkGroupSize.x-1u)/gl_WorkGroupSize.x;
   const uint sliceFirst = min(lane*slice, nodeCount), sliceLast = min(sliceFirst+slice, nodeCount);
-  const bool benchSerial = (push.flags & 16u)!=0u;
 
   const bool useReference = (push.flags & 1u)!=0u;
   if(lane==0u)
@@ -153,18 +151,8 @@ void main() {
     const float farDepth = projection.originDepth+dot(projection.forwardLocal,farthest);
     const float openScale = uintBitsToFloat(data[asset+7u]);
     if(farDepth>projection.nearZ && projection.focalScale<=farDepth*openScale) {
-      if(benchSerial) {
-        for(uint i=lane; i<rootCount; i+=gl_WorkGroupSize.x) {
-          const uint root = data[rootBase+i];
-          if(boughMerges(root, boughGetNode(root).subtreeEnd, projection)) {
-            atomicOr(hasCompact, 1u);
-            break;
-            }
-          }
-        }
-      else if(boughMerges(sliceFirst, sliceLast, projection)) {
+      if(boughMerges(sliceFirst, sliceLast, projection))
         atomicOr(hasCompact, 1u);
-        }
       }
     }
   barrier();
@@ -194,12 +182,6 @@ void main() {
       const uint transition = reference[ref+1u+i*2u];
       if(transition!=0xffffffffu)
         boughEmit(i, transition, uintBitsToFloat(reference[ref+2u+i*2u]));
-      }
-    }
-  else if(benchSerial) {
-    for(uint i=lane; i<rootCount; i+=gl_WorkGroupSize.x) {
-      const uint root = data[rootBase+i];
-      boughWalkFrom(root, boughGetNode(root).subtreeEnd, 0u, 0u, 0.0, projection);
       }
     }
   else {

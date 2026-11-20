@@ -24,7 +24,6 @@ class TreeBoughRender {
     const Tempest::ComputePipeline& historyClassify();
     void expand(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint32_t token, bool lateHiZ);
     void draw(Tempest::Encoder<Tempest::CommandBuffer>& enc, DrawCommands::HistoryDraw history);
-    void drawDepthBench(Tempest::Encoder<Tempest::CommandBuffer>& enc);
     void readStats(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint8_t frame, bool expanded);
 
   private:

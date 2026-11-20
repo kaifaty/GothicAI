@@ -4,13 +4,8 @@
 #include "tree_bough_dissolve.glsl"
 
 #if !defined(GL_VERTEX_SHADER)
-#if defined(TREE_BOUGH_BENCH_UNPACKED)
-layout(local_size_x = 32) in;
-layout(triangles, max_vertices = 32, max_primitives = 16) out;
-#else
 layout(local_size_x = 64) in;
 layout(triangles, max_vertices = MaxVert, max_primitives = MaxPrim) out;
-#endif
 layout(location = 7) flat out uvec3 boughFadeOut[];
 layout(location = 8) flat out vec3 boughMaskOut[];
 #endif
