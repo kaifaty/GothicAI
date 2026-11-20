@@ -2444,8 +2444,9 @@ void arrowEffects(Gothic& gothic) {
   for(size_t i=0;i<100 && !glanced && !glancing.isFinished();++i) {
     session->tick(4);
     // a finished bullet is removed on the next tick only
-    glanced=!glancing.isFinished() && glancing.itemView().level()==3 && glancing.itemView().effectKey()==hit &&
-            emitting(glancing.itemView());
+    // thrown back: no longer straight down (the stone's n.y>=.7 turns a straight down flight to y>=-.02)
+    glanced=!glancing.isFinished() && Tempest::Vec3::normalize(glancing.direction()).y>-.5f &&
+            glancing.itemView().level()==3 && glancing.itemView().effectKey()==hit && emitting(glancing.itemView());
     }
   require(glanced,"a fire arrow glancing off stone must fly on at KEY_INVEST_3");
   // flat stone by Harad, found from above as the ground: each point to `take` until it is done with one
@@ -2462,12 +2463,14 @@ void arrowEffects(Gothic& gothic) {
     };
   // A touch of stone at the very start of a step is a glance like any other (DynamicWorld::moveBullet): four arrows
   // fall straight down onto one point of flat stone from 0.05 to 0.3 cm, so their first 4 ms step meets it at a
-  // fraction of a few hundredths. Each finishes its flight and never stands still unfinished. Bullets do not collide
-  // with each other: shot at once.
+  // fraction of a few hundredths. Each finishes its flight on the stone, neither standing still unfinished nor
+  // falling through it. Bullets do not collide with each other: shot at once.
   {
     struct Touch { float height; Bullet* b; Tempest::Vec3 last,end; size_t still=0,steps=0; bool done=false; };
     std::vector<Touch> touches;
-    require(onFlatStone([&](const Tempest::Vec3& at) {
+    Tempest::Vec3 at;
+    require(onFlatStone([&](const Tempest::Vec3& p) {
+      at=p;
       for(float h:{.05f,.1f,.2f,.3f}) {
         auto& b=shoot(arrow,at+Tempest::Vec3(0,h,0),Tempest::Vec3(0,-1,0));
         touches.push_back({h,&b,b.position(),{}});
@@ -2507,6 +2510,9 @@ void arrowEffects(Gothic& gothic) {
       const auto under=world->physic()->ray(t.end+Tempest::Vec3(0,5,0),t.end-Tempest::Vec3(0,20,0));
       std::printf("Arrow touch: from %.2f cm finished in %zu steps at %.1f %.1f %.1f on material %d\n",double(t.height),
                   t.steps,double(t.end.x),double(t.end.y),double(t.end.z),under.hasCol ? int(under.mat) : -1);
+      const auto fell="an arrow shot down onto stone from "+std::to_string(t.height)+" cm fell through the stone: "
+                      "stopped at y "+std::to_string(t.end.y)+", the stone at y "+std::to_string(at.y);
+      require(t.end.y>=at.y-1.f && under.hasCol && under.mat==asset::MaterialGroup::STONE,fell.c_str());
       }
   }
 
