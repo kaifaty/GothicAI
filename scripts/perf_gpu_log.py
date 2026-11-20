@@ -3,7 +3,8 @@
 
 Each row carries time.monotonic_ns(), the CLOCK_MONOTONIC of the frame profile's begin_ns
 (steady_clock in OpenGothic/common/frameprofile.cpp), so rows line up with frames.
-SIGTERM stops nvidia-smi and exits 0. See docs/performance.md.
+SIGTERM stops nvidia-smi and exits 0; nvidia-smi ending on its own passes on its exit code.
+See docs/performance.md.
 """
 
 import csv
@@ -82,6 +83,7 @@ def main(argv=None):
 
     signal.signal(signal.SIGTERM, stop)
     process = None
+    code = 0
     try:
         with open(argv[0], "w", newline="") as stream:
             writer = csv.writer(stream)
@@ -96,6 +98,7 @@ def main(argv=None):
                     continue
                 writer.writerow([stamp, *fields])
                 stream.flush()
+            code = process.wait()
     except Stop:
         pass
     finally:
@@ -107,7 +110,7 @@ def main(argv=None):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-    return 0
+    return code
 
 
 if __name__ == "__main__":

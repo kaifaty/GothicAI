@@ -150,7 +150,7 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
     rsync -a --delete --exclude='/build*/' "$ROOT/scripts/convert/" "$RYZEN_HOST:$SOURCE/scripts/convert/"
     rsync -a "$ROOT"/scripts/bench/perf-*.bench "$RYZEN_HOST:$SOURCE/scripts/bench/"
     REMOTE_ENV=(PERF_REMOTE=1 "PERF_VID_RES=$PERF_VID_RES" "PERF_INI=$PERF_INI" "PERF_WINDOW=$PERF_WINDOW" "PERF_REPEAT=$PERF_REPEAT" "PERF_WAIT=$PERF_WAIT"
-      "PERF_WARMUP=$PERF_WARMUP" "PERF_WARMUP_MAX=$PERF_WARMUP_MAX"
+      "PERF_WARMUP=$PERF_WARMUP" "PERF_WARMUP_MAX=$PERF_WARMUP_MAX" "PERF_GPU_STAMP=${PERF_GPU_STAMP:-}"
       "PERF_ARGS=$PERF_ARGS" "PERF_ENV=$PERF_ENV" "PERF_COMMIT=$PERF_COMMIT" "PERF_DIRTY=$PERF_DIRTY"
       "PERF_SOURCE_FINGERPRINT=$PERF_SOURCE_FINGERPRINT"
       ${GAME_ENV[@]+"${GAME_ENV[@]}"})
@@ -259,10 +259,13 @@ import json
 import os
 from pathlib import Path
 import shlex
+import signal
 import subprocess
 import sys
 import time
 
+# A cancelled job (SIGTERM to the group) still stops the game and refreshes the stamp in launch().
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 metadata, mode, scenario, leaf, place, extra = sys.argv[1:]
 scripts = Path(scenario).parents[1]
 meta = json.loads(Path(metadata).read_text())
@@ -327,6 +330,9 @@ def stop(process):
         process.wait()
 
 
+launched = []  # monotonic_ns of each game start
+
+
 def launch(leaf, profile, done=None):
     """Exit code of one game; None when done() stopped it. RuntimeError on the timeout."""
     env, command = prepare(leaf, profile)
@@ -334,6 +340,7 @@ def launch(leaf, profile, done=None):
     try:
         with (leaf / 'game.log').open('w') as log:
             process = subprocess.Popen(command, cwd=leaf / 'run', env=env, stdout=log, stderr=subprocess.STDOUT)
+            launched.append(time.monotonic_ns())
             while True:
                 try:
                     return process.wait(timeout=1 if done else timeout), command
@@ -379,10 +386,10 @@ else:
     import perf_gpu_log as gpu
     journal = out / 'gpu.csv'
     fixed = None if setting == 'auto' else int(setting)
-    started = time.monotonic_ns()
 
     def done():
-        now = time.monotonic_ns()
+        # Warm-up time counts from the first game's start, not from preparing the base.
+        now, started = time.monotonic_ns(), launched[0]
         if fixed is not None:
             result['reason'] = 'fixed' if now - started >= fixed * 1e9 else None
         else:
@@ -404,6 +411,7 @@ else:
             print(f'perf: warning: warm-up game failed ({code}); measuring anyway, see {run / "game.log"}', flush=True)
             break
     ended = time.monotonic_ns()
+    started = launched[0] if launched else ended
     result['seconds'] = round((ended - started) / 1e9, 1)
     rows = [row for row in gpu.read_log(journal) if started <= row['mono_ns'] <= ended]
     if rows:
@@ -431,6 +439,13 @@ if [[ "$GPU_LOG" == 1 ]]; then
   trap 'exit 143' TERM
   python3 "$ROOT/scripts/perf_gpu_log.py" "$OUT/gpu.csv" &
   GPU_LOG_PID=$!
+  # nvidia-smi -L can work while the query fails: without samples there is no journal to warm up by.
+  for ((tries = 0; tries < 50; tries++)); do
+    (( $(wc -l <"$OUT/gpu.csv" 2>/dev/null || echo 0) < 2 )) || break
+    kill -0 "$GPU_LOG_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  (( $(wc -l <"$OUT/gpu.csv" 2>/dev/null || echo 0) >= 2 )) || fail "nvidia-smi gave no GPU clock sample in 5 s; see $OUT/gpu.csv"
 fi
 [[ -n "$PERF_WARMUP" ]] || PERF_WARMUP=$([[ "$GPU_LOG" == 1 ]] && echo auto || echo 0)
 export PERF_WARMUP PERF_WARMUP_MAX

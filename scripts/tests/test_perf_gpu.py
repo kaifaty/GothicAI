@@ -1,6 +1,7 @@
 """GPU clock journal and warm-up of scripts/perf.sh, with nvidia-smi and the game replaced by stubs."""
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -22,16 +23,22 @@ def rows(temps, step_s=1):
 
 def test_warm_reason_needs_ninety_seconds_and_a_still_minute():
     second = int(1e9)
-    rising = rows([50 + index * 0.1 for index in range(200)])
+    rising = rows([50 + index * 0.1 for index in range(400)])
     assert gpu.warm_reason(rising, 0, 150 * second, 300) is None
-    # Flat from the start: still not warm before 90 s of load.
+    # Flat from the start: warm at 90 s of load, not before.
     flat = rows([70.0] * 200)
-    assert gpu.warm_reason(flat, 0, 80 * second, 300) is None
-    assert gpu.warm_reason(flat, 0, 95 * second, 300) == "stable"
-    # A 1 °C wobble is still; a missing reading does not count.
+    assert gpu.warm_reason(flat, 0, 90 * second - 1, 300) is None
+    assert gpu.warm_reason(flat, 0, 90 * second, 300) == "stable"
+    # A 1 °C wobble is still, 1.5 °C is not; a missing reading does not count.
     wobble = rows([70 + (index % 2) for index in range(200)])
     wobble[120]["temp_c"] = None
     assert gpu.warm_reason(wobble, 0, 150 * second, 300) == "stable"
+    assert gpu.warm_reason(rows([70 + (index % 2) * 1.5 for index in range(200)]), 0, 150 * second, 300) is None
+    # The window is the last 60 s: a 2 °C step 59 s back counts, 61 s back does not.
+    for step_at, warm in ((150 - 59, None), (150 - 61, "stable")):
+        stepped = rows([68.0 if index < step_at else 70.0 for index in range(151)])
+        assert gpu.warm_reason(stepped, 0, 150 * second, 300) == warm
+    assert gpu.warm_reason(rising, 0, 300 * second - 1, 300) is None
     assert gpu.warm_reason(rising, 0, 300 * second, 300) == "max"
     # A journal that stopped long ago does not cover the minute.
     assert gpu.warm_reason(rows([70.0] * 40), 0, 120 * second, 300) is None
@@ -39,8 +46,10 @@ def test_warm_reason_needs_ninety_seconds_and_a_still_minute():
 
 SMI_LINES = r'''#!/usr/bin/env bash
 [[ "${1:-}" != -L ]] || { echo 'GPU 0: Fake'; exit 0; }
+[[ "$*" == "--query-gpu=temperature.gpu,clocks.sm,clocks.mem,power.draw,pstate,fan.speed,utilization.gpu,clocks_throttle_reasons.active --format=csv,noheader,nounits -lms 1000" ]] || exit 9
 echo $$ >"$FAKE_SMI_PID"
 echo '61, 1905, 9501, 301.25, P2, 45, 99, 0x0000000000000000'
+sleep 0.5
 echo '[N/A], [N/A], 9501, [N/A], P2, [N/A], 99, 0x0000000000000004'
 echo 'Unable to determine the device handle'
 exec sleep 600
@@ -85,21 +94,28 @@ def test_journal_stamps_rows_survives_na_and_stops_on_sigterm(tmp_path):
     assert not alive(int(pid.read_text()))
     assert out.read_text().splitlines()[0] == "mono_ns,temp_c,sm_mhz,mem_mhz,power_w,pstate,fan_pct,util_pct,reasons"
     first, second = gpu.read_log(out)
-    assert before <= first["mono_ns"] <= second["mono_ns"] <= time.monotonic_ns()
+    assert before <= first["mono_ns"] and first["mono_ns"] + 0.4e9 <= second["mono_ns"] <= time.monotonic_ns()
     assert (first["temp_c"], first["sm_mhz"], first["mem_mhz"], first["power_w"]) == (61, 1905, 9501, 301.25)
     assert (second["temp_c"], second["sm_mhz"], second["power_w"], second["mem_mhz"]) == (None, None, None, 9501)
     assert second["reasons"] == "0x0000000000000004"
 
 
 GAME = r'''#!/usr/bin/env python3
-import json, os, time
+import json, os, signal, time
 from pathlib import Path
 out = Path(os.environ["OPENGOTHIC_BENCH_OUT"])
 profile = os.environ.get("OPENGOTHIC_FRAME_PROFILE", "")
 with open(os.environ["FAKE_GAME_LOG"], "a") as log:
     log.write(f"{out}\t{profile}\n")
 if not profile:
-    time.sleep(1)  # a warm-up scenario shorter than the warm-up
+    if sum(1 for line in open(os.environ["FAKE_GAME_LOG"]) if line.endswith("\t\n")) == 1:
+        time.sleep(1)  # a warm-up scenario shorter than the warm-up: restarted
+        raise SystemExit(0)
+    def stopped(*_):
+        Path(os.environ["FAKE_GAME_LOG"] + ".stopped").touch()
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, stopped)
+    time.sleep(60)
     raise SystemExit(0)
 start = time.monotonic_ns()
 lines = ["attempt,segment,begin_ns,end_ns,outcome,overflow"]
@@ -114,7 +130,7 @@ print("[bench] drawable 1728x1117")
 '''
 
 
-def stand(tmp_path, smi, stamp_age=None):
+def stand(tmp_path, smi, stamp_age=None, warmup=None):
     root = tmp_path / "gothic"
     (root / "scripts/bench").mkdir(parents=True)
     (root / "OpenGothic/build-perf").mkdir(parents=True)
@@ -139,6 +155,8 @@ def stand(tmp_path, smi, stamp_age=None):
                        FAKE_GAME_LOG=str(tmp_path / "games"), FAKE_SMI_PID=str(tmp_path / "smi.pid"))
     for name in ("BENCH_HOST", "PERF_WARMUP", "PERF_ENV", "PERF_ARGS", "PERF_INI", "PERF_REPEAT"):
         environment.pop(name, None)
+    if warmup is not None:
+        environment["PERF_WARMUP"] = warmup
     result = subprocess.run(["bash", str(root / "scripts/perf.sh"), "market"], env=environment,
                             capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -148,12 +166,12 @@ def stand(tmp_path, smi, stamp_age=None):
 
 
 def test_fresh_stamp_skips_the_warm_up_and_journals_the_run(tmp_path):
-    out, games, stdout, stamp = stand(tmp_path, SMI_LOOP, stamp_age=30)
-    assert "perf: GPU warm: last stand game ended 30 s ago, no warm-up" in stdout
+    out, games, stdout, stamp = stand(tmp_path, SMI_LOOP, stamp_age=110)
+    assert re.search(r"^perf: GPU warm: last stand game ended 11[0-9] s ago, no warm-up$", stdout, re.M)
     assert [Path(leaf).relative_to(out).as_posix() for leaf, _ in games] == ["market/repeat-1"]
     assert not (out / "warmup").exists()
     warmup = json.loads((out / "warmup.json").read_text())
-    assert warmup["reason"] == "skipped-recent-game" and 29 <= warmup["last_game_age_s"] < 60
+    assert warmup["reason"] == "skipped-recent-game" and 110 <= warmup["last_game_age_s"] < 120
     assert gpu.read_log(out / "gpu.csv")
     assert not alive(int((tmp_path / "smi.pid").read_text()))
     assert time.time() - stamp.stat().st_mtime < 30
@@ -162,10 +180,12 @@ def test_fresh_stamp_skips_the_warm_up_and_journals_the_run(tmp_path):
 
 
 def test_old_stamp_warms_up_with_restarts_until_the_ceiling(tmp_path):
-    out, games, stdout, stamp = stand(tmp_path, SMI_LOOP, stamp_age=1000)
+    out, games, stdout, stamp = stand(tmp_path, SMI_LOOP, stamp_age=130)
     warmup = json.loads((out / "warmup.json").read_text())
     assert warmup["reason"] == "max" and warmup["mode"] == "auto"
-    assert warmup["runs"] >= 2 and 3 <= warmup["seconds"] < 30
+    # The first game ends by itself and is restarted; the second is stopped at the ceiling.
+    assert warmup["runs"] == 2 and 3 <= warmup["seconds"] < 6
+    assert (tmp_path / "games.stopped").exists()
     assert (warmup["temp_end_c"], warmup["sm_end_mhz"]) == (66, 1890)
     leaves = [Path(leaf).relative_to(out).as_posix() for leaf, _ in games]
     assert leaves == [f"warmup/run-{n}" for n in range(1, warmup["runs"] + 1)] + ["market/repeat-1"]
@@ -178,7 +198,17 @@ def test_old_stamp_warms_up_with_restarts_until_the_ceiling(tmp_path):
     assert not alive(int((tmp_path / "smi.pid").read_text()))
 
 
-def test_without_nvidia_smi_there_is_no_journal_and_no_warm_up(tmp_path):
-    out, games, _, _ = stand(tmp_path, SMI_BROKEN if shutil.which("nvidia-smi") else None, stamp_age=1000)
+@pytest.mark.parametrize("warmup", (None, "auto", "3"))
+def test_without_nvidia_smi_there_is_no_journal_and_no_warm_up(tmp_path, warmup):
+    out, games, _, _ = stand(tmp_path, SMI_BROKEN if shutil.which("nvidia-smi") else None, stamp_age=1000,
+                             warmup=warmup)
     assert len(games) == 1
-    assert sorted(path.name for path in out.iterdir()) == ["market", "metadata.json", "report.json", "report.md"]
+    files = ["market", "metadata.json", "report.json", "report.md"]
+    assert sorted(path.name for path in out.iterdir()) == sorted(files + ["warmup.json"] * (warmup is not None))
+    assert "Прогрев" not in (out / "report.md").read_text()
+    assert "warmup" not in json.loads((out / "report.json").read_text())
+
+
+def test_query_without_samples_stops_the_stand(tmp_path):
+    with pytest.raises(AssertionError, match="nvidia-smi gave no GPU clock sample"):
+        stand(tmp_path, '#!/usr/bin/env bash\n[[ "${1:-}" != -L ]] || exit 0\nexit 9\n', stamp_age=1000)

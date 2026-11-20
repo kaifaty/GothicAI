@@ -802,41 +802,69 @@ def gpu_journal(directory, samples):
     (directory / "gpu.csv").write_text("\n".join(lines) + "\n")
 
 
+def two_views(directory, offset):
+    """view-1 frames at offset+0..40 ms, view-2 at offset+100..140 ms."""
+    return profile(directory, [{"begin_ns": offset + index * 10_000_000} for index in range(5)]
+                   + [{"begin_ns": offset + 100_000_000 + index * 10_000_000, "segment": "perf-market/view-2"}
+                      for index in range(5)])
+
+
 def test_gpu_clocks_by_view_skip_warmup_and_compare_warns(tmp_path, capsys):
-    a, b = tmp_path / "a", tmp_path / "b"
-    for root, sm in ((a, 1900), (b, 1850)):
-        for repeat in (1, 2):
-            # Repeat 2's frames start 1 s later; the journal row at 1 s is outside repeat 1's 0..40 ms frames.
-            offset = (repeat - 1) * 1_000_000_000
-            profile(root / "market" / f"repeat-{repeat}", [{"begin_ns": offset + index * 10_000_000}
-                                                           for index in range(5)])
-        gpu_journal(root, [(20_000_000, 60, sm, 300), (1_000_000_000, 70, sm + 20, "[N/A]"),
-                           (1_030_000_000, "[N/A]", sm + 40, 310), (5_000_000_000, 99, 999, 999)])
+    a = tmp_path / "a"
+    for repeat in (1, 2):
+        two_views(a / "market" / f"repeat-{repeat}", (repeat - 1) * 1_000_000_000)
+    # Rows inside view-1 and view-2 of each repeat; [N/A] is skipped; the last row is outside every view.
+    gpu_journal(a, [(20_000_000, 60, 1900, 300), (120_000_000, 62, 1800, 280),
+                    (1_000_000_000, 70, 1920, "[N/A]"), (1_030_000_000, "[N/A]", 1940, 310),
+                    (1_120_000_000, 72, 1700, 260), (5_000_000_000, 99, 999, 999)])
     # The warm-up games are not measurements, even with a profile.
-    profile(a / "warmup/run-1", cadence_rows(1))
+    for run in (1, 2):
+        profile(a / f"warmup/run-{run}", cadence_rows(1))
     (a / "warmup.json").write_text(json.dumps({"mode": "auto", "reason": "stable", "seconds": 121.4, "runs": 2,
                                                "temp_start_c": 55, "temp_end_c": 70, "sm_start_mhz": 1995,
                                                "sm_end_mhz": 1905, "last_game_age_s": None}))
     assert report.main(["run", str(a)]) == 0
     result = json.loads((a / "report.json").read_text())
+    assert result["schema_version"] == 2
     assert [source["directory"] for source in result["sources"]] == ["market/repeat-1", "market/repeat-2"]
-    first, second = (repeat["views"]["view-1"]["gpu_clock"] for repeat in result["places"]["market"]["repeats"])
-    assert first == {"sm_mhz": 1900, "mem_mhz": 9501, "temp_c": 60, "power_w": 300, "samples": 1}
-    assert second == {"sm_mhz": 1930, "mem_mhz": 9501, "temp_c": 70, "power_w": 310, "samples": 2}
-    assert result["places"]["market"]["summary"]["gpu_clock"]["sm_mhz"] == pytest.approx(1920)
+    first, second = (repeat["views"] for repeat in result["places"]["market"]["repeats"])
+    assert first["view-1"]["gpu_clock"] == {"sm_mhz": 1900, "mem_mhz": 9501, "temp_c": 60, "power_w": 300, "samples": 1}
+    assert first["view-2"]["gpu_clock"] == {"sm_mhz": 1800, "mem_mhz": 9501, "temp_c": 62, "power_w": 280, "samples": 1}
+    assert second["view-1"]["gpu_clock"] == {"sm_mhz": 1930, "mem_mhz": 9501, "temp_c": 70, "power_w": 310, "samples": 2}
+    assert second["view-2"]["gpu_clock"]["sm_mhz"] == 1700
+    views = result["places"]["market"]["views"]
+    assert (views["view-1"]["gpu_clock"]["sm_mhz"], views["view-2"]["gpu_clock"]["sm_mhz"]) == (
+        pytest.approx(1920), pytest.approx(1750))
+    assert result["places"]["market"]["summary"]["gpu_clock"]["samples"] == 5
     markdown = (a / "report.md").read_text()
     assert "| market/view-1 | 1920 | 9501 | 65.0 | 305.0 |" in markdown
     assert "Прогрев GPU (auto): stable за 121 с, запусков 2; 55 → 70 °C, SM 1995 → 1905 МГц." in markdown
 
-    comparison = report.compare_reports(report.build_report(a), report.build_report(b))
-    assert comparison["places"]["market"]["gpu_sm_mhz"]["a"] == pytest.approx(1920)
-    assert comparison["warnings"][-1] == "market: частоты SM расходятся на 2.6 %: в разнице времени есть разница частоты GPU"
+    # The 1 % threshold: B at 1.0 % below A is quiet, 1.1 % warns.
+    flat = report.build_report(a)
+    for sm, warned in ((1980, False), (1978, True)):
+        b = tmp_path / f"b-{sm}"
+        for repeat in (1, 2):
+            two_views(b / "market" / f"repeat-{repeat}", (repeat - 1) * 1_000_000_000)
+        gpu_journal(b, [(stamp, 60, sm, 300) for stamp in (20_000_000, 120_000_000, 1_020_000_000, 1_120_000_000)])
+        gpu_journal(a, [(stamp, 60, 2000, 300) for stamp in (20_000_000, 120_000_000, 1_020_000_000, 1_120_000_000)])
+        comparison = report.compare_reports(report.build_report(a), report.build_report(b))
+        assert comparison["schema_version"] == 2
+        assert comparison["places"]["market"]["gpu_sm_mhz"]["b"] == sm
+        warnings = [warning for warning in comparison["warnings"] if "частоты SM" in warning]
+        assert warnings == (["market: частоты SM расходятся на 1.1 %: в разнице времени есть разница частоты GPU"]
+                            if warned else [])
     assert report.main(["compare", str(a), str(b)]) == 0
-    assert "| market | 1920 → 1870 | -2.6 |" in capsys.readouterr().out
-    # Without journals the report is as before.
+    assert "| market | 2000 → 1978 | -1.1 |" in capsys.readouterr().out
+    # Compared leaves find the journal of their run two folders up.
+    leaves = report.compare_reports(report.build_report(a / "market/repeat-1"), report.build_report(b / "market/repeat-2"))
+    assert (leaves["places"]["market"]["gpu_sm_mhz"]["a"], leaves["places"]["market"]["gpu_sm_mhz"]["b"]) == (2000, 1978)
+    # Without journals the report is as before, warm-up line included.
     for root in (a, b):
         (root / "gpu.csv").unlink()
     comparison = report.compare_reports(report.build_report(a), report.build_report(b))
     assert "gpu_sm_mhz" not in comparison["places"]["market"]
     assert not any("частоты SM" in warning for warning in comparison["warnings"])
-    assert "gpu_clock" not in report.build_report(b)["places"]["market"]["summary"]
+    plain = report.build_report(a)
+    assert "gpu_clock" not in plain["places"]["market"]["summary"] and "warmup" not in plain
+    assert flat["warmup"]["reason"] == "stable"

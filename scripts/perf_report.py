@@ -519,14 +519,11 @@ def streaming_stats(rows):
     }
 
 
-def find_gpu_log(path, directory):
-    """The run's GPU clock journal: gpu.csv in the profile's folder or its nearest parent inside the report."""
-    for folder in (path.parent, *path.parent.parents):
-        if (folder / "gpu.csv").exists():
-            return folder / "gpu.csv"
-        if folder == directory:
-            return None
-    return None
+def find_gpu_log(path):
+    """The run's GPU clock journal: gpu.csv in the profile's folder or its nearest parent, also above a
+    compared leaf such as market/repeat-1."""
+    return next((folder / "gpu.csv" for folder in (path.parent, *path.parent.parents)
+                 if (folder / "gpu.csv").exists()), None)
 
 
 def gpu_clock(rows):
@@ -552,7 +549,7 @@ def build_report(directory):
     clocks = {}
     for path in profiles:
         segments, issues = samples_from_profile(path)
-        journal_path = find_gpu_log(path, directory)
+        journal_path = find_gpu_log(path)
         if journal_path is not None and journal_path not in journals:
             import perf_gpu_log  # only runs that wrote a journal need it
             journals[journal_path] = perf_gpu_log.read_log(journal_path)
@@ -624,9 +621,10 @@ def build_report(directory):
                     [row for repeat in measured for row in streaming[repeat][view]])
             places[place]["summary"]["streaming"] = streaming_stats(
                 [row for repeat in measured for rows in streaming[repeat].values() for row in rows])
-    report = {"schema_version": 1, "directory": str(directory), "metadata": read_metadata(directory),
+    # 2: gpu_clock by view and the warm-up of perf.sh, both only with a GPU clock journal.
+    report = {"schema_version": 2, "directory": str(directory), "metadata": read_metadata(directory),
               "timing": TIMING, "warnings": warnings, "sources": sources, "places": places}
-    if (directory / "warmup.json").exists():
+    if journals and (directory / "warmup.json").exists():
         report["warmup"] = json.loads((directory / "warmup.json").read_text())
     return report
 
@@ -923,7 +921,8 @@ def compare_reports(a, b):
                                 "в разнице времени есть разница частоты GPU")
     if not places:
         raise ValueError("Runs have no places in common")
-    return {"schema_version": 1, "a": a["directory"], "b": b["directory"],
+    # 2: gpu_sm_mhz by place.
+    return {"schema_version": 2, "a": a["directory"], "b": b["directory"],
             "warnings": warnings,
             "metadata_a": a["metadata"], "metadata_b": b["metadata"],
             "only_a": sorted(set(a["places"]) - set(b["places"])),

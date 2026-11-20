@@ -224,7 +224,7 @@ def run_attempts(directory, content, args):
             env = {**base_env, "PERF_REPEAT": "1", "NO_BUILD": "1", "PERF_REMOTE": "1",
                    "OPENGOTHIC_CONTENT": selected,
                    "PERF_ENV": shlex.join([*extra, *own[side], "OPENGOTHIC_CONTENT=" + selected])}
-            out = directory / side / f"attempt-{counts[side]}"
+            out = directory / side / place / f"attempt-{counts[side]}"
             print(f"perf-content: {place} {side}={name}, repeat {counts[side]}/2", flush=True)
             subprocess.run(["bash", str(ROOT / "scripts/perf.sh"), "__run", str(out), place], env=env, check=True)
     write_report(directory, args.noise_pct, args.threshold_pct)
@@ -276,7 +276,8 @@ def launch(args):
     settings = {key: os.environ.get(key, default) for key, default in
                 (("PERF_WINDOW", "1728x1117"), ("PERF_VID_RES", "0"),
                  ("PERF_ARGS", ""), ("PERF_ENV", ""), ("PERF_ENV_A", ""), ("PERF_ENV_B", ""),
-                 ("PERF_INI", ""), ("PERF_WARMUP", ""), ("PERF_WARMUP_MAX", "300"))}
+                 ("PERF_INI", ""), ("PERF_WARMUP", ""), ("PERF_WARMUP_MAX", "300"),
+                 ("PERF_GPU_STAMP", ""))}
     environment = ["PERF_REMOTE=1", "OPENGOTHIC_BASE=", f"OPENGOTHIC_BASE_CACHE={task}/base-cache",
                    f"OPENGOTHIC_BASE_STORE={task}/base-store", "OPENGOTHIC_VIDEOS_FINGERPRINT=",
                    f"PERF_COMMIT={commit}", f"PERF_DIRTY={dirty}"]
