@@ -2250,7 +2250,7 @@ void itemEffects(World& world) {
             "on the belt, none in the inventory; fire bow on the back; none with itemEffects 0");
   }
 
-// Effects of the animations' events (reports/engine/2026-11-19-item-effects): the forge's looped FIRE_HOT burns while
+// Effects of the animations' events (docs/map/engine.md, «Частицы анимации»): the forge's looped FIRE_HOT burns while
 // the smith works the bellows and goes out with his animation out or with the forge's rest without one; the anvil's
 // ANVIL_SPARKS live their own time.
 void animationEffects(Gothic& gothic) {
@@ -2342,13 +2342,14 @@ void animationEffects(Gothic& gothic) {
   // the anvil's sparks of each blow go by their own time
   Npc* harad=nullptr;
   auto* anvil=worker("ZS_SMITH_ANVIL","BSANVIL",harad);
+  const auto* hammering=NpcDefinitionContract::solver(NpcDefinitionContract::model(*anvil)).solveFrm("S_S1");
+  require(hammering!=nullptr,"BSANVIL_OC must have S_S1");
+  const auto striking=std::find_if(hammering->data->pfx.begin(),hammering->data->pfx.end(),[](const auto& e) {
+    return !e.pfxStop && e.name=="ANVIL_SPARKS"; });
+  require(striking!=hammering->data->pfx.end(),"S_S1 of BSANVIL_OC must strike ANVIL_SPARKS");
+  const int blow=striking->index;
   useMob(*harad,"BSANVIL",1);
-  int blow=0;
-  require(tickUntil([&] {
-            for(const auto& e:NpcDefinitionContract::effects(NpcDefinitionContract::model(*anvil)))
-              blow=e.id;
-            return !NpcDefinitionContract::effects(NpcDefinitionContract::model(*anvil)).empty();
-            },20000),(npcName(world,*harad)+"'s blows must strike ANVIL_SPARKS").c_str());
+  require(tickUntil([&] { return slot(*anvil,blow)!=nullptr; },20000),(npcName(world,*harad)+"'s blows must strike ANVIL_SPARKS").c_str());
   const auto struck=world.tickCount();
   uint64_t until=0;
   for(const auto& e:NpcDefinitionContract::effects(NpcDefinitionContract::model(*anvil)))

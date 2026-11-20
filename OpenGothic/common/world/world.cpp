@@ -2156,7 +2156,7 @@ void World::animationPfx(const Animation::MdsParticleEffect& p, MdlVisual& visua
     if(p.name==visual.mutedPfx())
       return;
     // a looped one (FIRE_HOT of the forge) emits and lives until its stop, its slot's next effect, its object's rest
-    // or its visual's end; the others live their own time (reports/engine/2026-11-19-item-effects)
+    // or its visual's end; the others live their own time (docs/map/engine.md)
     const auto* decl = GameServices::inst().loadParticleFx(p.name);
     const bool  loop = decl!=nullptr && decl->ppsIsLooping;
     Effect e(PfxEmitter(*this,decl),p.position);
