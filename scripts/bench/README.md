@@ -1903,7 +1903,7 @@ explain the bounds and remaining combat/body work. `npcday` files:
 | File | Contents |
 |---|---|
 | `npc-day.json` | Tier mode, seed, private random streams, period, start time and hero; at the end the sample/event counts, wall time and the NPC tick time per tier |
-| `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag |
+| `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag; appended `fp,fp_x,fp_y,fp_z,on_fp,aivar_19,fp_available,on_routine_wp` |
 | `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
 | `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
 | `npc-day-script.json` | Opt-in `probe`: deterministic script calls by symbol/family, per-state engine Init/Loop/End entries, nested calls, inclusive VM instruction counts, externals and RNG sources. Header records `npc` or `shared` random streams. |
@@ -2024,6 +2024,44 @@ python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
   --tolerances scripts/bench/npc-day-parity.tolerances-activity.json \
   --out /absolute/activity.md --json /absolute/activity.json
 ```
+
+Point activities use `npc-day-parity.tolerances-points.json` (E2.1, **uncalibrated draft**).
+It currently holds exact control-against-itself bounds, with no noise allowance: seed 73106 completed,
+but the seed 73107 day was externally cancelled at minute 995/1440. A replacement day and lead
+approval are required before using it for E2.2 acceptance. Use `--activity-states` for the states being
+changed. [Measurements and pending calibration](../../reports/engine/2026-11-14-npc-data/e2-tolerance.md).
+
+```sh
+python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
+  --activity-states ZS_STAND_GUARDING \
+  --tolerances scripts/bench/npc-day-parity.tolerances-points.json \
+  --out /absolute/points.md --json /absolute/points.json
+```
+
+The new sample columns follow every old column, in its original order:
+
+| Column | Meaning |
+|---|---|
+| `fp`, `fp_x`, `fp_y`, `fp_z` | Held free point name and coordinates in cm (`-`, zeros without one); repeated names do not identify a point |
+| `on_fp` | `Npc_IsOnFP(self, held_name)`: current point is free, its name matches, and it is close by `MoveAlgo::isClose(..., MAX_AI_USE_DISTANCE)`; the comparer also checks its activity name |
+| `aivar_19` | Raw script stage; 2 walking, 1 ready to enter, 0 pose for guarding, arms crossed, STAND_WP and PEE |
+| `fp_available` | The script's point lookup for STAND / CAMPFIRE / PEE finds a point (1) or none (0); -1 outside these four forms |
+| `on_routine_wp` | `Npc_GetDistToWP(self, self.wp) <= 500`, using the engine call shared with the original script; independent of the nearest waypoint column |
+
+`points.total` and `points.by_state` report held-coordinate agreement (raw and with legal B fallback
+excluded), pose sample time B/A, signed first arrival p95/max, missed reference TA segments and
+double occupancy in B. The collision search includes occupants outside the state filter. Campfire
+pose uses body state 11 (`BS_SIT`); the other four forms use `aivar_19 == 0`. STAND_WP has no held
+free point: arrival/pose use `on_routine_wp`, and held-point agreement is not applicable.
+
+A legal fallback is a standing NPC near its routine waypoint with no suitable available free point.
+It has a separate A/B row. Raw pose time is reported (waiting for a campfire is not sitting); acceptance
+excludes legal B waiting samples from both pose populations and from held-point agreement. Observed legal waiting intervals are subtracted from a later arrival's delay.
+An entirely waiting segment is allowed only if **every reference on-point sample** has legal fallback
+in B. Waiting once cannot hide losing an otherwise empty point for the rest of the segment.
+Missing point columns fail enabled point checks. MOB metrics are **not applicable** when the selected
+reference samples have no objects; an empty state selection still fails numeric checks. The shared
+`max_activity_stuck` gate includes unique NPCs from missed point segments as well as missing MOBs.
 
 ## Engine side
 

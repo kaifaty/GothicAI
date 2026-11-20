@@ -16,6 +16,7 @@ SCRIPT = Path(__file__).parents[1] / "npc_day_parity.py"
 STRICT = Path(__file__).parents[1] / "bench" / "npc-day-parity.tolerances.json"
 SIX_C = Path(__file__).parents[1] / "bench" / "npc-day-parity.tolerances-6c.json"
 ACTIVITY = Path(__file__).parents[2] / "scripts/bench/npc-day-parity.tolerances-activity.json"
+POINTS = Path(__file__).parents[2] / "scripts/bench/npc-day-parity.tolerances-points.json"
 DONE = {"seed": 7, "isolate": True, "minutes": 90, "period_min": 30, "end_reason": "done"}
 HEADER = ("t_min,at_min,key,symbol,alive,hp,hp_max,ta,zs,zs_ms,x,y,z,wp,wp_dist,queue,head,body,"
           "inv_hash,inv_items,mob,tier,policy,hero,fp,fp_x,fp_y,fp_z,on_fp,aivar_19,fp_available,on_routine_wp").split(",")
@@ -469,7 +470,8 @@ def test_point_loss_late_arrival_collision_and_legal_fallback(tmp_path):
                      on_fp=1, aivar_19=0, fp_available=1) for t in range(0, 65, 5)]
     header = {**DONE, "minutes": 60, "period_min": 5}
     a = tmp_path / "a"
-    journal(a, reference, [], header)
+    other = [row(t, "GUARD2#0", ta="-") for t in range(0, 65, 5)]
+    journal(a, reference + other, [], header)
     aa = npc_day_parity.load(a)
     limits = {"min_point_same_fp": 0.98, "min_point_pose_ratio": 0.98, "max_point_pose_ratio": 1.02,
               "max_point_arrival_p95": 5, "max_point_arrival_max": 5, "max_point_missed_segments": 0,
@@ -485,6 +487,8 @@ def test_point_loss_late_arrival_collision_and_legal_fallback(tmp_path):
     }
     for name, rows in variants.items():
         b = tmp_path / name
+        if name != "double":
+            rows = rows + other
         journal(b, rows, [], header)
         result = npc_day_parity.compare(aa, npc_day_parity.load(b), activity_states={"ZS_STAND_GUARDING"})
         checks = npc_day_parity.evaluate(result, limits)
@@ -505,11 +509,25 @@ def test_point_loss_late_arrival_collision_and_legal_fallback(tmp_path):
         assert all(c["pass"] and not c["applicable"] for c in checks if c["name"] in {
             "min_activity_same_mob", "max_activity_mob_mismatch", "min_activity_mob_time_ratio",
             "max_activity_mob_time_ratio", "max_activity_arrival_p95", "max_activity_arrival_max"})
+        assert npc_day_parity.main([str(a), str(b), "--activity-states", "ZS_STAND_GUARDING",
+                                   "--tolerances", str(POINTS), "--out", str(tmp_path / (name + ".md")),
+                                   "--json", str(tmp_path / (name + ".json"))]) == (0 if name == "fallback" else 1)
+        if name == "double":
+            assert {c["name"] for c in json.loads((tmp_path / (name + ".json")).read_text())["checks"]
+                    if not c["pass"]} == {"max_point_double_occupancy"}
     # A single legal wait cannot disguise losing the rest of the activity to an empty point.
     mixed = tmp_path / "mixed"
     journal(mixed, [variants["fallback"][0], *variants["lost"][1:]], [], header)
     result = npc_day_parity.compare(aa, npc_day_parity.load(mixed), activity_states={"ZS_STAND_GUARDING"})
     assert result["points"]["total"]["missed_segments"] == 1
+    # The previous point ZS can linger at the boundary of a new, unrelated routine.
+    transition_a, transition_b = tmp_path / "transition-a", tmp_path / "transition-b"
+    next_ta = "1 22:00-08:00 ZS_GOTOBED NW_BED"
+    journal(transition_a, [dict(reference[0], ta=next_ta)], [], header)
+    journal(transition_b, [dict(reference[0], ta=next_ta, zs="ZS_GOTOBED", fp="-", on_fp=0)], [], header)
+    transition = npc_day_parity.compare(npc_day_parity.load(transition_a), npc_day_parity.load(transition_b),
+                                       activity_states={"ZS_STAND_GUARDING"})
+    assert transition["points"]["total"]["missed_segments"] == 0
     # Old journals remain usable for old profiles; point checks require the new fields.
     samples = mixed / "npc-day.csv"
     samples.write_text("\n".join(",".join(line.split(",")[:24]) for line in samples.read_text().splitlines()) + "\n")

@@ -1,0 +1,17 @@
+{
+  "comment": "UNCALIBRATED E2.1 draft, 2026-11-21; do not use for E2.2 acceptance. The seed 73106 control against itself measures held-point agreement and pose ratio 1, arrival delays 0, missed segments and double occupancy 0; the numeric bounds below preserve that exact control. No noise allowance has been chosen. The second authorized run (seed 73107, gq d49a7bfafa23) was externally cancelled with exit 143 after 776.844 seconds at t=995/1440 game minutes. Its incomplete prefix is diagnostic only and fails completeness. A replacement day and lead approval are required before choosing margins from the complete seed pair. See reports/engine/2026-11-14-npc-data/e2-tolerance.md. Legal waiting is excluded from the point/pose comparison and arrival delay; no reference MOB makes object metrics not applicable. Missing point columns fail point checks. Completeness requires both full days, no unmatched samples and no missing final NPCs. A lost segment, a 30-minute late arrival or two NPCs on one point fails these strict control bounds.",
+  "tolerances": {
+    "require_done": true,
+    "require_full_length": true,
+    "max_only_samples": 0,
+    "max_missing_end": 0,
+    "min_point_same_fp": 1,
+    "min_point_pose_ratio": 1,
+    "max_point_pose_ratio": 1,
+    "max_point_arrival_p95": 0,
+    "max_point_arrival_max": 0,
+    "max_point_missed_segments": 0,
+    "max_point_double_occupancy": 0,
+    "max_activity_stuck": 0
+  }
+}

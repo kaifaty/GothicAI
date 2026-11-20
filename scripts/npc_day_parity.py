@@ -15,6 +15,9 @@ Routine activity metrics use A's nonempty TA samples, grouped by A's ZS: state,
 MOB scheme and waypoint agreement, occupancy ratio, first-MOB arrival delay and
 NPCs with no MOB sample in a reference TA segment. --activity-states limits their
 totals and checks, while the complete state table remains visible.
+Point activities additionally compare held coordinates, pose time, first arrivals,
+missed segments and double occupancy. Legal waiting at the routine waypoint is
+reported separately and excluded from the point acceptance populations.
 The activity health checks read run B's own counters of the activities by events
 (npc-day.json "activity_events", common/world/activityevents.h): watchdog restarts,
 expired reservations, reservations without a living owner, two NPCs on one place. A run
@@ -68,7 +71,7 @@ CHECKS = {
     "max_activity_mob_time_ratio": ("max", "activity: B/A occupied MOB samples"),
     "max_activity_arrival_p95": ("max", "activity: arrival delay p95, game min"),
     "max_activity_arrival_max": ("max", "activity: maximum arrival delay, game min"),
-    "max_activity_stuck": ("max", "activity: NPCs missing every MOB sample in a routine segment"),
+    "max_activity_stuck": ("max", "activity: NPCs missing every MOB or point sample in a routine segment"),
     "min_point_same_fp": ("min", "point activity: same held coordinates (legal fallback excluded), share"),
     "min_point_pose_ratio": ("min", "point activity: B/A pose samples outside legal B waiting"),
     "max_point_pose_ratio": ("max", "point activity: B/A pose samples outside legal B waiting"),
@@ -461,7 +464,12 @@ def point_metrics(a, b, common, states):
             item["collisions"].append({"t_min": sample[0], "point": pb["position"], "npcs": occupants})
 
     def segment(key, samples):
-        available = [(t, ra) for t, ra in samples if (t, key) in selected and ra[3] in POINT_STATES]
+        routine = samples[0][1][2].split()
+        routine_state = routine[2] if len(routine) == 4 else None
+        # A previous ZS can linger at the first sample of a new TA. It is not an arrival
+        # for that new routine (e.g. arms crossed while the next TA is going to bed).
+        available = [(t, ra) for t, ra in samples if (t, key) in selected and ra[3] in POINT_STATES
+                     and (routine_state is None or ra[3] == routine_state)]
         arrived_a = [(t, ra[3]) for t, ra in available if point_status(ra, a["points"].get((t, key)), ra[3])[0]]
         if not arrived_a:
             return
