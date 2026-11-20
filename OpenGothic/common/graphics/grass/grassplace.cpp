@@ -616,7 +616,8 @@ CellBlades buildCell(const CellInput& in) {
         height = fp.height*earHeight(h,fx,fz);
       height *= 1.f - 0.5f*float(bare)/256.f;
       height *= 0.55f + 0.45f*float(stand)/256.f;
-      height *= 0.5f + 0.5f*edgeShare;
+      // a stand of stalks is thinner at its edge, not half as tall
+      height *= ear ? 1.f - EarEdgeLower*(1.f-edgeShare) : 0.5f + 0.5f*edgeShare;
       height *= 0.5f + 0.5f*slopeShare;
       if(past>=0)
         height = std::min(height*(1.f - 0.5f*float(past)/float(PastEdge)),PastHeight);
@@ -650,7 +651,7 @@ CellBlades buildCell(const CellInput& in) {
         float d = angle-out;
         d -= 6.2831853f*std::floor(d/6.2831853f + 0.5f);
         angle = out + d*edgeShare;
-        lean  = lean + (45.f-lean)*(1.f-edgeShare)*0.8f;
+        lean  = lean + ((ear ? EarEdgeLean : 45.f)-lean)*(1.f-edgeShare)*0.8f;
         }
       const float turn = angle/6.2831853f;
 
