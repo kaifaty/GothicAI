@@ -1,0 +1,24 @@
+Character model sheet for a dark medieval fantasy game, made as the reference for sculpting a 3D head that will be rigged for facial animation: the head, neck and top of the shoulders of one man, shown four times side by side on a plain mid-grey background (#7a7c80): front view, three-quarter view (facing left), left profile, and back of the head. Same man, same scale and eye height in all four views. Soft even studio light from the upper front-left, no rim light. Rendered like a high-end realistic 3D game character sculpt (real skin, real hair strands), not a painting. Wide landscape image, about 3:1.
+
+Two reference images:
+- man.png — the previous concept sheet of this character. This is the man: keep his identity, his broad square face, his age (30 to 33), his weathered tanned skin with grime, the mole on his cheek, his olive-brown hair with golden strands combed back, the short strands at the hairline falling to one side, the short ponytail tied with a leather thong, the unevenly cut goatee, the torn linen collar, the layout and the four views.
+- original.png — the face texture of the original 2002 game character (unwrapped, so it looks wider than the face is). Only to check that he still reads as this man.
+
+What to change in man.png: the face must be in a fully neutral rest pose, the base pose for a facial rig. Every facial muscle is relaxed, as in a 3D face scan taken with a neutral expression:
+- the eyebrows lie at rest: none raised, none lowered, not drawn together; the forehead is smooth and relaxed, with no lines caused by lifting the brows;
+- the eyes are open normally and look straight ahead; no squint, no narrowing, no widened eyes; the lids are relaxed;
+- the mouth is closed, the lips rest on each other without pressing, the corners neither up nor down; no smirk, no tension around the mouth or in the chin;
+- the jaw is relaxed, the teeth not clenched; the nostrils are not flared; the cheeks are not lifted;
+- the head is held perfectly straight in every view: no tilt, no turn in the front view, the eyes on one horizontal line of the image; the profile is an exact side view.
+He has no expression at all: not friendly, not angry, not ironic, not tired. Just a face at rest.
+
+Keep the face asymmetric, but only in its anatomy and surface, never through muscle tension. The left and right halves differ the way they do in every real person at rest:
+- bones: the nose was broken once long ago and healed slightly crooked, the bridge leans a little to his left, one nostril is a little wider; the jaw line and the cheekbones differ slightly side to side; the chin sits a little off the centre line;
+- soft tissue at rest: one upper eyelid is naturally a little heavier, so that eye opening is slightly smaller; one eyebrow grows a little higher and has a different shape and thickness than the other, with a small gap in the hairs; the lips are not mirrored, one half of the upper lip a little fuller; one ear stands out a little more;
+- hair: the hairline is higher at one temple; the strands lie differently on each side; the goatee is fuller on one side of the chin, the moustache halves differ in length, the stubble along the jaw is patchy;
+- skin: tan, redness, grime, pores and small blemishes are spread unevenly; the mole on one cheek. No scars.
+The asymmetry must be visible in the front view when the halves are compared, and stay natural: an ordinary man's face, not deformed.
+
+Hair: combed back and lying fairly close to the skull, greasy, not fluffy. The ponytail hangs down along the back of the neck, it does not stick out backwards. Eyes: light grey-blue with a dark rim.
+
+Avoid: any facial expression, a raised eyebrow, a frown, knitted brows, forehead lines from raised brows, a squint, a smirk or smile, pressed lips, a clenched jaw, a tilted or turned head, a mirrored face, a mannequin or wax look, a handsome model face, a caricature, a deformed face, scars, tattoos, earrings, brown eyes, bright blue eyes, a full beard, a long ponytail, fluffy voluminous hair, glossy wet skin, orange colour cast, painterly brush strokes.

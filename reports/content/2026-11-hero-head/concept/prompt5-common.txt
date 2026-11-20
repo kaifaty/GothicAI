@@ -1,0 +1,21 @@
+Character concept turnaround sheet for a dark medieval fantasy game: the head, neck and top of the shoulders of one man, shown four times side by side on a plain mid-grey background (#7a7c80): front view, three-quarter view (facing left), left profile, and back of the head. Same man, same scale and eye height in all four views. Soft even studio light from the upper front-left, no rim light. Rendered like a high-end realistic 3D game character sculpt (real skin, real hair strands), not a painting. Wide landscape image, about 3:1.
+
+Two reference images:
+- man.png — the previous concept sheet of this character. This is the man: keep his identity, his broad square face, his age, his weathered tanned skin with grime, his greasy olive-brown hair with golden strands combed back, the short strands standing up at the hairline, the short ponytail tied with a leather thong, the goatee, the torn linen collar, the layout and the four views.
+- original.png — the face texture of the original 2002 game character (unwrapped, so it looks wider than the face is). Only to check that he still reads as this man.
+
+The problem with man.png: the face is a mirror image of itself, left and right halves identical, so he looks like a mannequin and not like a living person. Redo him as a real man with a naturally uneven face. No real face is symmetric. Build the two halves of the face differently on purpose:
+1. Eyes: his left eye is a little narrower than the right, its upper lid heavier and lower; the eyes are not at exactly the same height.
+2. Eyebrows: the right eyebrow sits higher and is more arched, the left one is lower and straighter; they differ in thickness, and one has a small gap in the hairs.
+3. Nose: broken once long ago and healed slightly crooked — the bridge leans a little to his left, one nostril is a little wider than the other.
+4. Mouth: the mouth is slightly off the centre line; one corner sits lower than the other, the lips are not mirrored.
+5. Beard: the goatee is cut unevenly with a knife, fuller on one side of the chin than the other; the moustache halves differ in length; the stubble along the jaw is patchy and heavier on one side.
+6. Hairline and hair: the hairline is higher at one temple than the other; the short strands at the forehead fall to one side, not as a centred tuft; the hair strands lie differently on the left and the right.
+7. Ears: one ear stands out a little more than the other.
+8. Jaw and cheeks: one cheek a little fuller, the jaw line slightly different on each side.
+9. Skin: tan, redness, grime and small marks are spread unevenly — a sunburnt patch on one cheekbone, a small mole on one cheek, a few pores and blemishes, dirt heavier on one side of the neck. No scars.
+In the front view the head is turned and tilted by a couple of degrees, as a living person holds it, not locked like a passport photo. The asymmetry must be clearly visible in the front view when the left half is compared with the right, but it must stay natural: an ordinary man's face, not a deformed or injured one.
+
+Also fix: the eyes are light grey-blue with a dark rim, not brown. He is 30 to 33, not older: keep the weathering, but no deep folds.
+
+Avoid: a mirrored face, a centred tuft of hair, identical eyebrows, a perfectly straight nose, a doll or mannequin look, a wax figure, a handsome model face, a caricature, a visibly deformed face, a scowl, scars, tattoos, earrings, brown eyes, bright blue eyes, a full beard, a long ponytail, glossy wet skin, orange colour cast, painterly brush strokes.
