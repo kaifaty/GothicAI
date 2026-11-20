@@ -1,0 +1,35 @@
+# TEMPORARY, the cause run of tree-bough-lod.md: view-1 and view-2 of perf-trees.bench with their timing. The
+# stand's check of the place wants view-3 and view-4 too: they sample the first 8 of the 20 s each view settles.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+walkmode run
+watch player
+goto pos 54140 1650 -10780
+clear 3000
+cam at 54140 1760 -10780 60000 2060 -10780
+perf sample perf-trees/view-3
+wait 8000
+perf stop
+wait 12000
+perf sample perf-trees/view-1
+wait 8000
+perf stop
+shot inside
+wait 200
+goto pos 48765 6250 -3156
+clear 5000
+cam at 48765 6679 -3156 54140 2190 -10780
+perf sample perf-trees/view-4
+wait 8000
+perf stop
+wait 12000
+perf sample perf-trees/view-2
+wait 8000
+perf stop
+shot near-30
+wait 200

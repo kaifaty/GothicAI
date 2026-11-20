@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 
 VIEWS = ('Изнутри леса', 'С 30 м', 'Со 100 м', 'С 300 м', 'Проход героя')
-CUT = ('Visibility', 'HiZ-history-seeds', 'HiZ-history-retest')
+CUT = ('Visibility', 'HiZ-history-seeds', 'HiZ-history-retest', 'Bough-cut')
 COUNTERS = ('nodes', 'source_cards', 'parent_cards', 'triangles', 'active_bands', 'version_pairs', 'band_triangles')
 VSM = re.compile(r'vsm frame \d+: candidates \d+( LOST)?, .*demand (\d+), .*cut (none|bin [^,]*), .*spilled (\d+)')
 
@@ -29,6 +29,8 @@ def times(run):
     out = []
     views = json.loads((run / 'report.json').read_text())['places']['trees']['views']
     for index in range(len(VIEWS)):
+        if f'view-{index + 1}' not in views:
+            break  # a shortened scenario
         view = views[f'view-{index + 1}']
         passes = {name: entry['mean_ms'] for name, entry in view['gpu_passes'].items()}
         out.append((view['gpu']['completed_frames'], view['gpu']['mean_ms'], passes['GBuffer'], passes['VSM-rendering'],
@@ -44,6 +46,8 @@ def counters(run):
     out = []
     for index in range(len(VIEWS)):
         samples = [row for row in rows if row['segment'] == f'perf-trees/view-{index + 1}'][2:]
+        if not samples:
+            break
         out.append([max(int(row['tree_bough_height_mpx']) for row in samples) / 1e3]
                    + [sum(int(row[f'tree_bough_{name}']) for row in samples) / len(samples) for name in COUNTERS])
     return out
@@ -77,7 +81,7 @@ def main():
     print('| Вид | Состояние | Кадров | Кадр GPU, мс | `GBuffer`, мс | `VSM-rendering`, мс | Видимость и срез, мс '
           '| Треугольники, тыс. |\n|---|---|---:|---:|---:|---:|---:|---:|')
     table = {name: times(args.runs / name) for name in args.on}
-    for index, view in enumerate(VIEWS):
+    for index, view in enumerate(VIEWS[:len(off)]):
         base = off[index]
         print(f'| {view} | {args.off} | {base[0]} | ' + ' | '.join(
             num(value, digits) for value, digits in zip(base[1:], (3, 3, 3, 3, 1))) + ' |')
@@ -90,7 +94,7 @@ def main():
           '| Треугольники хвои | Активные полосы | Пары версий | Треугольники в полосах |\n'
           '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|')
     table = {name: counters(args.runs / name) for name in [args.off] + args.on}
-    for index, view in enumerate(VIEWS):
+    for index, view in enumerate(VIEWS[:len(off)]):
         for name in [args.off] + args.on:
             row = table[name][index]
             print(f'| {view} | {name} | {num(row[0], 3)} | ' + ' | '.join(num(value, 0) for value in row[1:]) + ' |')
