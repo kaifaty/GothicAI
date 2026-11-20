@@ -5,7 +5,8 @@
 
 The heights follow the marked camera path as in fir_eye_frames.py. Stage 0 is the 3D crown alone, 1 the joint
 fade with the impostor (46 to 56 px for a 49 px impostor, TreeBough::impostorJointWeight) and 2 the impostor
-alone. Recorded frames are the frameprofile.csv rows with outcome 3. The CPU counter mesh_impostors belongs to
+alone. Recorded frames are the first run of frameprofile.csv rows with outcome 3 (later single rows are the
+stills after the recording). The CPU counter mesh_impostors belongs to
 its own row; the GPU tree_bough_* counters arrive a few frames later, and the delay is taken where their
 largest height best matches the path.
 """
@@ -41,7 +42,11 @@ def write_frames(content: Path, run: Path, output: Path, layer: str, visuals: li
         'ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=nb_frames',
         '-of', 'csv=p=0', run / f'{NAME}.mp4']))
     with (run / 'frameprofile.csv').open(newline='') as stream:
-        profile = [row for row in csv.DictReader(stream) if row['outcome'] == '3']
+        rows = [row['outcome'] == '3' for row in csv.DictReader(stream)]
+        stream.seek(0)
+        first = rows.index(True)
+        count = rows[first:].index(False) if False in rows[first:] else len(rows) - first
+        profile = list(csv.DictReader(stream))[first:first + count]
     if not frames == stop['frames'] == len(profile):
         raise ValueError(f'{frames} video frames, {stop["frames"]} recorded, {len(profile)} profile rows')
     focal_px = 1080 / (2 * math.tan(math.radians(FOV_DEGREES / 2)))
