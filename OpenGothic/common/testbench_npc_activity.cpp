@@ -36,6 +36,12 @@ std::unique_ptr<Checkpoint> checkpoint;
 
 bool npcDayCheckpointRunning() {return bool(checkpoint);}
 
+void npcDayCheckpointReset() {
+  if(!checkpoint) return;
+  if(NpcActivityProbe::instance==checkpoint.get()) NpcActivityProbe::instance=nullptr;
+  checkpoint.reset();
+  }
+
 bool npcDayCheckpointTick(World& w) {
   if(!checkpoint) return false;
   // By events (world/activityevents.h) the smith runs no Loop: the save point is his hold of the anvil.

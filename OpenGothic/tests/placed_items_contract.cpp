@@ -88,6 +88,7 @@ struct NpcDefinitionContract {
   // The engine's next queued action, as the NPC's tick takes it.
   static void nextAiAction(Npc& npc) { npc.nextAiAction(npc.aiQueue,0); }
   static const AiQueue& queue(const Npc& npc) { return npc.aiQueue; }
+  static bool walking(const Npc& npc) { return !npc.go2.empty(); }
   // An action at the head of the queue, as an interruption ahead of the queued use.
   static void pushFront(Npc& npc, AiQueue::AiAction&& a) { npc.aiQueue.pushFront(std::move(a)); }
   static const auto& items(GameScript& script) { return script.itemDefinitions; }
@@ -2406,14 +2407,14 @@ class ActivityEventsWorld final {
       return before.steps==after.steps && std::equal(std::begin(before.wakes),std::end(before.wakes),std::begin(after.wakes));
       }
     // A point of the way net, by its links from `a`'s point, 3 to 9 m from `mob` and reaching it as the nearest free
-    // object of the scheme: an activity there walks to the object with its use queued.
-    const WayPoint* nearObject(const EventActor& a,Npc& npc,Interactive& mob) {
+    // object of the scheme: an activity there walks to the object with its use queued. Not `skip`.
+    const WayPoint* nearObject(const EventActor& a,Npc& npc,Interactive& mob,const WayPoint* skip=nullptr) {
       std::vector<const WayPoint*> queue={a.point};
       std::set<const WayPoint*> seen={a.point};
       for(size_t i=0;i<queue.size() && i<256;++i) {
         npc.setPosition(queue[i]->position());
         const float d=std::sqrt(npc.qDistTo(mob));
-        if(queue[i]!=a.point && d>300.f && d<900.f && world().availableMob(npc,a.scheme)==&mob)
+        if(queue[i]!=a.point && queue[i]!=skip && d>300.f && d<900.f && world().availableMob(npc,a.scheme)==&mob)
           return queue[i];
         for(const auto& c:queue[i]->connections())
           if(c.point!=nullptr && seen.insert(c.point).second) queue.push_back(c.point);
@@ -2531,10 +2532,11 @@ void activityEventsWorld(Gothic& gothic) {
                              std::to_string(walked)+" cm, at the look "+std::to_string(arrival)+" cm from "+anvil.pointName+
                              " (start "+away->name+")");
 
-  // Interrupted on the approach through the queue: End runs and the previous state is the activity, as with
-  // OPENGOTHIC_ACTIVITY_EVENTS=0, with the same stream of engine calls, queued commands and phases throughout.
-  // The same one routine tick after a reset queue on the approach (Npc_ClearAIQueue), which starts the walk over
-  // (the polled Loop looks for the object instead, so only End and the previous state compare there).
+  // Interrupted on the approach through the queue: End runs, the previous state is the activity and the commands
+  // left behind are the same as with OPENGOTHIC_ACTIVITY_EVENTS=0, with the same stream of engine calls, queued
+  // commands and phases throughout. The same one routine tick after a reset queue on the approach
+  // (Npc_ClearAIQueue), which starts the walk over: the polled Loop looks for the object instead, so the stream
+  // does not compare there.
   auto approachInterrupted=[&](bool events,bool reset) {
     NpcDefinitionContract::activityEventsOn(test.world().script())=events;
     ActivityCalls phases;
@@ -2555,21 +2557,27 @@ void activityEventsWorld(Gothic& gothic) {
     require(harad.isInState(ScriptFn(cool.phases.init)),"the queued interruption must switch the state");
     const auto ends=stream ? activityCount(stream->events,"phase "+state+"_END") : phases.phase(harad,state+"_END");
     const auto result=std::tuple{ends,harad.wasInState(ScriptFn(anvil.phases.init)),
-                                 stream ? stream->events : std::vector<std::string>{}};
+                                 stream ? stream->events : std::vector<std::string>{},activityQueue(harad)};
     stream.reset();
     NpcDefinitionContract::activityEventsOn(test.world().script())=true;
     return result;
     };
   for(const bool reset:{false,true}) {
     const auto polled=approachInterrupted(false,reset),byEvents=approachInterrupted(true,reset);
-    const auto& a=std::get<2>(polled);
-    const auto& b=std::get<2>(byEvents);
-    const auto at=std::mismatch(a.begin(),a.end(),b.begin(),b.end());
+    // the first difference of the stream, else of the commands left behind
+    const auto firstDifference=[&](const std::vector<std::string>& a,const std::vector<std::string>& b) {
+      const auto at=std::mismatch(a.begin(),a.end(),b.begin(),b.end());
+      return at.first==a.end() && at.second==b.end() ? std::string() :
+             ": polled '"+(at.first!=a.end() ? *at.first : "")+"', by events '"+(at.second!=b.end() ? *at.second : "")+"'";
+      };
+    auto difference=firstDifference(std::get<2>(polled),std::get<2>(byEvents));
+    if(difference.empty())
+      difference=firstDifference(std::get<3>(polled),std::get<3>(byEvents));
     require(std::get<0>(byEvents)==1 && std::get<1>(byEvents) && byEvents==polled,
-            (std::string(reset ? "an interruption after a reset queue on the approach must run End as the polled Loop does"
-                               : "an interruption on the approach must give the polled Loop's stream: run End and leave the state")+
-             (at.first!=a.end() || at.second!=b.end() ? ": polled '"+(at.first!=a.end() ? *at.first : "")+"', by events '"+
-                                                        (at.second!=b.end() ? *at.second : "")+"'" : "")).c_str());
+            (std::string(reset ? "an interruption after a reset queue on the approach must run End and leave the commands "
+                                 "as the polled Loop does"
+                               : "an interruption on the approach must give the polled Loop's stream: run End, leave the state "
+                                 "and the commands")+difference).c_str());
     }
 
   // The watchdog of a walk: the routine tick never runs while the NPC walks, the watchdog still fires and is
@@ -2701,6 +2709,8 @@ void activityEventsWorld(Gothic& gothic) {
   // ReservationMs on the world tick; the watchdog then drops only the activity's own use, counted on that tick,
   // and the AI_StartState queued behind it runs.
   const auto* nearMob=test.nearObject(anvil,harad,*mob);
+  // The second NPC's own point is a walk from the object too: its reservation shows before it sits down.
+  const auto* nearMob2=test.nearObject(anvil,harad,*mob,nearMob);
   auto walkToObject=[&](const char* what) {
     test.start(anvil,nearMob->position());
     harad.handle().wp=nearMob->name;
@@ -2713,7 +2723,8 @@ void activityEventsWorld(Gothic& gothic) {
   // A second NPC of the activity waits for the reserved object: the expiry must free the place (not renew the old
   // reservation) and drop the first NPC's use, so the waiting one wakes and takes the place; whoever sits down then
   // holds a reservation of its own first.
-  test.start(anvil,at,other);
+  test.start(anvil,nearMob2->position(),other);
+  other->handle().wp=nearMob2->name;
   test.only({&harad,other});
   test.stepUntil(30,[&] { return ActivityEventsWorld::stage(*other)==Stage::Wait; },"a second NPC waits for the reserved object");
   require(ActivityEventsWorld::stage(harad)==Stage::Attach && test.places().reserved(harad)==mob && harad.interactive()==nullptr,
@@ -2725,13 +2736,11 @@ void activityEventsWorld(Gothic& gothic) {
   // The first NPC sits the expiry tick out: a reservation renewed instead of freed would keep the place from the other.
   test.only({other});
   test.step();
-  require(stats.expired==expired+1 && test.stats(state).wakes[6]==freedAtExpiry+1 &&
-          (test.places().reserved(*other)==mob || other->interactive()==mob) &&
-          test.places().reserved(harad)==nullptr && NpcDefinitionContract::queue(harad).size()==0,
-          "an expired reservation must free the place and drop its use: the NPC waiting for it takes the place");
+  require(stats.expired==expired+1 && test.stats(state).wakes[6]==freedAtExpiry+1 && test.places().reserved(*other)==mob &&
+          other->interactive()==nullptr && test.places().reserved(harad)==nullptr && NpcDefinitionContract::queue(harad).size()==0,
+          "an expired reservation must free the place and drop its use: the NPC waiting for it reserves it");
   test.only({&harad,other});
-  // The other NPC took the place on the expiry tick through its own reservation, checked above.
-  std::array<bool,2> reservedLast={false,true},attachedBare={};
+  std::array<bool,2> reservedLast={},attachedBare={};
   const std::array<Npc*,2> rivals={&harad,other};
   test.stepUntil(900,[&] { return test.holds(anvil,harad,mob) || test.holds(anvil,*other,mob); },"after the expired reservation: attach",[&] {
     for(size_t k=0;k<rivals.size();++k) {
@@ -2818,6 +2827,17 @@ void activityEventsWorld(Gothic& gothic) {
   require(stats.watchdog==watchdogs+1 && test.stats(state).steps==unseen.steps+1,
           "the watchdog must restart the activity exactly once, with one check of the place");
 
+  // A reservation whose owner does not walk to use it (made here by hand for an NPC without an activity) goes on the
+  // next world tick, whether or not a journal counts the wakes. Its count is this check's, not a defect's.
+  test.stop(*stranger);
+  stats.counting=false;
+  require(test.places().reserve(*stranger,*farSame),"a free object must take a reservation");
+  test.step();
+  stats.counting=true;
+  require(test.places().reserved(*stranger)==nullptr && stats.ownerless==ownerless+1,
+          "a reservation without its owner must go on the next world tick, with no journal too");
+  stats.ownerless=ownerless;
+
   // Two NPCs for one free object: exactly one gets it, the other waits and takes the second object once it is free.
   auto& first=*cool.npc;
   auto* second=test.extra();
@@ -2865,10 +2885,9 @@ void activityEventsWorld(Gothic& gothic) {
     test.stop(smoker);
     }
 
-  // A save while one NPC holds, one walks to its point, one waits and one walks to its reserved object with its
-  // use queued; after the load each reaches its object, the last only with a new reservation. One more is saved
-  // right after Init, its commands still queued, another command behind them, as one behind the reserved use: the
-  // load takes back only the activity's own commands.
+  // A save while one NPC holds its object, one waits, one walks to its point with another walk queued behind (a
+  // second AI_GoToPoint), one walks to its reserved object with its use queued and a look behind (AI_LookAtNpc), and
+  // one is saved right after Init, its commands still queued and another state behind them (AI_StartState).
   // One clock for all: each state ends by its own eTime, hours away.
   const auto stand=activityPhases(test.world().script(),"ZS_STAND_ARMSCROSSED");
   test.start(anvil,at);
@@ -2878,6 +2897,13 @@ void activityEventsWorld(Gothic& gothic) {
   test.stop(*second);
   test.stop(smoker);
   const auto* coolAway=test.awayFrom(*cool.point);
+  // the walker's second walk ends near the cool objects, not where the cool NPC's next state goes
+  const WayPoint* walkerTo=nullptr;
+  for(auto* object:{coolA,coolB})
+    try { if(walkerTo==nullptr) walkerTo=test.nearObject(cool,*second,*object,coolAway); }
+    catch(const std::runtime_error&) {}
+  require(walkerTo!=nullptr,"a way point 3-9 m from a cool object");
+  const std::string walkerToName=walkerTo->name;
   const auto* pipeAway=test.awayFrom(*pipe.point);
   const std::string pipeAwayName=pipeAway->name;
   std::vector<Npc*> smokers;
@@ -2921,6 +2947,7 @@ void activityEventsWorld(Gothic& gothic) {
            ActivityEventsWorld::stage(*second)==Stage::Approach && NpcDefinitionContract::queue(*second).size()==0 &&
            !second->isAiQueueEmpty();
     },"before the save: waiting, walking to the point and walking to a reserved object");
+  second->aiPush(AiQueue::aiGoToPoint(*walkerTo));
   userNpc.aiPush(AiQueue::aiLookAtNpc(&harad));
   // The cool NPC saved right after Init: its walk mode, then its walk, still queued, and another state behind.
   test.start(cool,coolAway->position(),nullptr,false);
@@ -2941,15 +2968,73 @@ void activityEventsWorld(Gothic& gothic) {
   }
   const auto names=std::array{npcName(test.world(),harad),npcName(test.world(),first),npcName(test.world(),smoker),
                               npcName(test.world(),*smokers.front()),npcName(test.world(),userNpc),npcName(test.world(),*second)};
-  gothic.clearGame().reset();
-  // The old world and its NPCs are gone: observe the loaded session afresh, its restoration too.
-  calls.reset();
-  calls.emplace();
-  {
-    Tempest::MemReader reader(bytes);
-    Serialize in(reader);
-    gothic.setGame(std::make_unique<GameSession>(in));
-  }
+  using Actors=std::array<Npc*,std::tuple_size_v<decltype(names)>>;
+  using Runs=std::array<std::vector<std::string>,std::tuple_size_v<decltype(names)>>;
+  // The save loaded afresh, with the activities by events or polled. The automaton takes nothing from the saved
+  // queues and walks: each NPC's run until its queue and walk end, with the clock past the watchdog's time meanwhile,
+  // must equal the polled run with OPENGOTHIC_ACTIVITY_EVENTS=0, as distinct states of its queue, walk, object, look
+  // and state. Routines stay paused meanwhile (external control runs only the queues), so what follows the end of a
+  // queue, the Loop or the activity's check, does not enter the run.
+  const auto restoredRuns=[&](bool events,const std::function<void(const Actors&)>& each) {
+    gothic.clearGame().reset();
+    // The old world and its NPCs are gone: observe the loaded session afresh, its restoration too.
+    calls.reset();
+    calls.emplace();
+    {
+      Tempest::MemReader reader(bytes);
+      Serialize in(reader);
+      gothic.setGame(std::make_unique<GameSession>(in));
+    }
+    ActivityEventsWorld session(gothic);
+    NpcDefinitionContract::activityEventsOn(session.world().script())=events;
+    Actors npcs={};
+    for(size_t i=0;i<names.size();++i)
+      require((npcs[i]=activityNpc(session.world(),names[i].c_str()))!=nullptr,"the loaded world must have the actors");
+    session.only({});
+    Runs runs;
+    const auto record=[&] {
+      for(size_t i=0;i<npcs.size();++i) {
+        auto& n=*npcs[i];
+        const auto queue=activityQueue(n);
+        const auto* look=n.lookAtTarget();
+        auto now=std::to_string(queue.size())+" "+(queue.empty() ? "-" : queue.front())+" | "+
+                 (NpcDefinitionContract::walking(n) ? "walk" : "stand")+" | "+
+                 (n.interactive()!=nullptr ? std::to_string(n.interactive()->zenId()) : "-")+" | "+
+                 (look!=nullptr ? npcName(session.world(),*look) : "-")+" | "+NpcDefinitionContract::aiState(n).hint;
+        if(runs[i].empty() || runs[i].back()!=now)
+          runs[i].push_back(std::move(now));
+        }
+      each(npcs);
+      };
+    record();
+    size_t tick=0;
+    for(;tick<900 && !std::all_of(npcs.begin(),npcs.end(),[](const Npc* n) { return n->isAiQueueEmpty(); });++tick) {
+      if(tick==10) {
+        auto late=session.world().time();
+        late.addMilis(ActivityEvents::WatchdogMs+60*1000);
+        gothic.gameSession()->setTime(late);
+        }
+      session.step();
+      record();
+      }
+    require(tick>10 && tick<900,"after the load the saved queues and walks must run on, then end");
+    return runs;
+    };
+  const auto polled=restoredRuns(false,[](const Actors&) {});
+  const auto loadWatchdogs=stats.watchdog;
+  const auto byEvents=restoredRuns(true,[&](const Actors& npcs) {
+    for(const auto* npc:npcs)
+      require(npc->activityStage()==Stage::Off,"after the load the activity must wait for the saved queue and walk to end");
+    });
+  for(size_t i=0;i<names.size();++i) {
+    const auto at=std::mismatch(polled[i].begin(),polled[i].end(),byEvents[i].begin(),byEvents[i].end());
+    require(at.first==polled[i].end() && at.second==byEvents[i].end(),
+            ("after the load "+names[i]+" must run its saved queue and walk as the polled Loop does: polled '"+
+             (at.first!=polled[i].end() ? *at.first : "")+"', by events '"+(at.second!=byEvents[i].end() ? *at.second : "")+"'").c_str());
+    }
+  require(stats.watchdog==loadWatchdogs && polled[5].size()>2 && polled[4].size()>2 && polled[1].size()>2,
+          "the saved queues must run whole, no watchdog over them");
+
   ActivityEventsWorld loaded(gothic);
   auto* lHarad=activityNpc(loaded.world(),names[0].c_str());
   auto* lCool=activityNpc(loaded.world(),names[1].c_str());
@@ -2957,40 +3042,27 @@ void activityEventsWorld(Gothic& gothic) {
   auto* lBlocker=activityNpc(loaded.world(),names[3].c_str());
   auto* lUser=activityNpc(loaded.world(),names[4].c_str());
   auto* lWalker=activityNpc(loaded.world(),names[5].c_str());
-  require(lHarad && lCool && lSmoker && lBlocker && lUser && lWalker && lUser->isInState(ScriptFn(user->phases.init)),
-          "the loaded world must have the actors");
+  const auto* lWalkerTo=loaded.world().findWayPoint(walkerToName);
   require(lHarad->interactive()!=nullptr && lHarad->interactive()->zenId()==anvilId,"the loaded Harad must be at his anvil");
+  require(lCool->isInState(ScriptFn(stand.init)),"the state queued behind the cool NPC's Init must run after its walk");
+  require(lUser->interactive()!=nullptr && loaded.places().reserved(*lUser)==nullptr && lUser->lookAtTarget()==lHarad,
+          "the saved use must sit down past the reservations, as the polled Loop's, and the look behind it run");
+  require(lWalkerTo!=nullptr && MoveAlgo::isClose(*lWalker,*lWalkerTo,MoveAlgo::closeToPointThreshold*1.5f),
+          "the walk queued behind the saved walk must run after it");
   auto* lMob=lHarad->interactive();
-  loaded.only({lHarad,lCool,lSmoker,lUser,lWalker});
+  // Only now, the saved queues done, the routines run: each activity checks its place once, the walker where its
+  // second walk ended, without Init.
   const auto beforeLoad=loaded.stats(state);
   const auto userLoads=loaded.stats(user->state).wakes[1];
-  // The first tick takes the activity's own commands back from the restored queue, whatever their order, and the walk
-  // in progress: they are the activity's again, under its watchdog. The commands behind them stay.
-  loaded.step();
-  for(auto* npc:{lCool,lWalker})
-    require(ActivityEventsWorld::stage(*npc)==Stage::Approach && NpcDefinitionContract::activityEvents(*npc).deadline!=gtime::endOfTime(),
-            "after the load the walk to the point, queued or in progress, must be the activity's again");
-  require(lUser->lookAtTarget()==lHarad,"a load must keep the command queued behind the activity's saved use");
-  const auto coolWatchdogs=loaded.stats(cool.state).wakes[9];
   const auto walkerInits=calls->phase(*lWalker,cool.state);
-  auto loadLate=loaded.world().time();
-  loadLate.addMilis(ActivityEvents::WatchdogMs+60*1000);
-  gothic.gameSession()->setTime(loadLate);
-  loaded.step();
-  require(loaded.stats(cool.state).wakes[9]==coolWatchdogs+2 && ActivityEventsWorld::stage(*lWalker)==Stage::Approach &&
-          calls->phase(*lWalker,cool.state)==walkerInits+1,
-          "after the load the walks to the point must be under the activity's watchdog, which starts a walk over with Init");
-  require(lCool->isInState(ScriptFn(stand.init)),
-          "a load must keep the command queued behind the activity's Init: the watchdog drops only the activity's own");
-  bool userReserved=false,userBare=false;
-  loaded.stepUntil(900,[&] { return loaded.holds(*user,*lUser); },"loaded mid-use: reach the object",[&] {
-    if(lUser->interactive()==nullptr)
-      userReserved=loaded.places().reserved(*lUser)!=nullptr;
-    else if(!userReserved)
-      userBare=true;
-    });
-  require(!userBare && loaded.stats(user->state).wakes[1]==userLoads+1,
-          "a load in the middle of a use must look again and reserve before the NPC sits down");
+  const auto walkerChecks=loaded.stats(cool.state).steps;
+  loaded.only({lHarad,lCool,lSmoker,lUser,lWalker});
+  loaded.stepUntil(5,[&] { return lWalker->activityStage()!=Stage::Off; },"after the saved queue: the walker's look");
+  require(calls->phase(*lWalker,cool.state)==walkerInits && loaded.stats(cool.state).steps==walkerChecks+1,
+          "after its saved queue the activity must check its place once, without Init");
+  loaded.stepUntil(60,[&] { return loaded.holds(*user,*lUser); },"loaded mid-use: hold");
+  require(loaded.stats(user->state).wakes[1]==userLoads+1 && calls->uses(*lUser)==0 && loaded.places().reserved(*lUser)==nullptr,
+          "a load in the middle of a use keeps the object the saved use took: one look, no new use");
   loaded.stepUntil(60,[&] { return loaded.holds(anvil,*lHarad,lMob); },"loaded mid-hold: hold");
   require(loaded.places().reserved(*lHarad)==nullptr && loaded.stats(state).wakes[3]==beforeLoad.wakes[3] &&
           loaded.stats(state).wakes[1]==beforeLoad.wakes[1]+1,

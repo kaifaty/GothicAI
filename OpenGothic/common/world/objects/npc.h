@@ -1028,7 +1028,6 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      armActivityEvents();
     void      tickActivityEvents();
     void      tickActivityDeadline();
-    void      takeActivityCommands();
     void      fireActivityWatchdog();
     void      dropActivityCommand();
     void      stepActivityEvents(uint16_t wakes);

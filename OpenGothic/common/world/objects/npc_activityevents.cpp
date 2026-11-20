@@ -48,7 +48,7 @@ void Npc::startActivityEvents(const ActivityDefinitions::MobActivity* activity) 
 bool Npc::armActivityEvents() {
   auto& s = activityEvents;
   if(s.init!=aiState.funcIni.ptr) {
-    // the state runs without its Init here: a loaded game
+    // the state runs without its Init here: a loaded game, on the first routine tick after its saved queue
     stopActivityEvents(0);
     s.init     = aiState.funcIni.ptr;
     s.activity = owner.rules().eventActivity(aiState.funcIni);
@@ -86,12 +86,6 @@ void Npc::tickActivityDeadline() {
   using ActivityEvents::Stage;
   auto& s = activityEvents;
   const bool busy = aiQueue.size()>0 || !go2.empty();
-  if(aiState.started && aiState.funcIni.isValid() && s.init!=aiState.funcIni.ptr) {
-    // A loaded game: the save keeps the queue and the walk but not whose they are.
-    if(armActivityEvents() && busy)
-      takeActivityCommands();
-    return;
-    }
   if(s.activity==nullptr || s.retry || (s.stage!=Stage::Approach && s.stage!=Stage::Attach) || !busy)
     return;
   const auto now = owner.time();
@@ -102,29 +96,6 @@ void Npc::tickActivityDeadline() {
   if(s.stage==Stage::Attach && aiState.loopNextTime<=owner.tickCount() && aiState.eTime<=now &&
      currentTarget==nullptr && outputPipe->isFinished())
     dropActivityCommand(); // the routine tick ends the row once the queue is empty
-  }
-
-void Npc::takeActivityCommands() {
-  // The activity queues its Init and its use into an empty queue, so its own commands lead a loaded one; the
-  // commands behind them are another's and stay, in their order. A saved use goes with its walk: its reservation
-  // is not saved, the check after the load reserves again. The leading commands of the kinds the record's Init
-  // queues, and a walk in progress, are the activity's again, under its watchdog.
-  using ActivityEvents::Stage;
-  auto&       s    = activityEvents;
-  const auto* head = aiQueue.front();
-  if(head!=nullptr && head->act==AI_UseMob && head->s0==s.activity->scheme && head->i0==s.activity->useState) {
-    aiQueue.pop();
-    clearGoTo();
-    wayPath.clear();
-    return;
-    }
-  const size_t init = aiQueue.markActivity({AI_StopLookAt,AI_RemoveWeapon,AI_SetWalkMode,AI_GoToPoint});
-  if(init==0 && go2.empty())
-    return;
-  go2.activity = !go2.empty();
-  s.stage      = Stage::Approach;
-  s.awaitQueue = true;
-  s.deadline   = after(owner.time(),ActivityEvents::WatchdogMs);
   }
 
 void Npc::loseActivityReservation() {
@@ -163,12 +134,9 @@ void Npc::stepActivityEvents(uint16_t wakes) {
     return;
     }
   if(wakes & Loaded) {
-    // after a load: an NPC at an object of its scheme keeps it, any other starts the activity over
-    if(currentInteract!=nullptr && currentInteract->checkMobName(s.activity->scheme)) {
-      seekActivityPlace();
-      return;
-      }
-    runStateInit();
+    // after a load the saved queue and walk ran as they would with the polled Loop; now one check of the place:
+    // an NPC at an object of its scheme holds it, any other looks for one
+    seekActivityPlace();
     return;
     }
   switch(s.stage) {

@@ -111,8 +111,7 @@ void MobReservations::freed(const Interactive& mob) {
 void MobReservations::tick() {
   if(reservations.empty())
     return;
-  if(ActivityEvents::stats().counting)
-    audit(false); // the day journal's and the contract's check: the game itself runs only the expiry below
+  audit(false);
   const auto now = world.time();
   for(size_t i=0; i<reservations.size();) {
     if(now<reservations[i].until) {

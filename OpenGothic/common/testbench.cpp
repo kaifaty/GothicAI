@@ -802,6 +802,7 @@ void TestBench::configure(std::string scenario, std::string output, int64_t seed
   BloodStainsBench::reset();
   NavBench::reset();
   NavDemos::reset();
+  npcDayCheckpointReset();
   stopRecording();
   if(bench.csv!=nullptr)
     std::fclose(bench.csv);

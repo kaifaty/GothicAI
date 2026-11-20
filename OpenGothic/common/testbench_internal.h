@@ -1842,6 +1842,8 @@ NpcCommandsContext npcCommandsContext();
 bool npcDayCommand(const NpcCommandsContext& context,const std::vector<std::string>& args,World& world);
 bool npcDayCheckpointTick(World& world);
 bool npcDayCheckpointRunning();
+// A bench reset tears the world down: a pending checkpoint's NPC and probe go with it.
+void npcDayCheckpointReset();
 bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& line,const std::vector<std::string>& a,
                         World& w,Npc& pl,PlayerControl& ctrl);
 
