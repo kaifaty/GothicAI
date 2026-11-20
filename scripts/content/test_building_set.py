@@ -409,6 +409,18 @@ def test_compose_and_enable_carry_a_vob_layer(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match='chunk NEWWORLD/HOUSES.D/MARKET-HOUSE.JSON: in both city-2 and market-2'):
         building_set.compose('twice', ['city-2', 'market-2'])
 
+    # so do a part's patches of ground for the grass system (worlds/<WORLD>/grass.d): the rye of a crop field
+    patches = tmp_path / 'content-staging/crops-1/worlds/NEWWORLD/grass.d/crop-field.json'
+    patches.parent.mkdir(parents=True)
+    patches.write_text('{"format": 1, "patches": []}\n')
+    result = building_set.compose('city-3', ['city-2', 'crops-1'])
+    assert result['parts'] == {'city-2': 3, 'crops-1': 1}
+    composition = json.loads((tmp_path / 'content-staging/city-3/composition.json').read_text())
+    assert composition['parts']['crops-1'] == ['worlds/NEWWORLD/grass.d/crop-field.json']
+    building_set.enable('city-3')
+    assert (tmp_path / 'content/worlds/NEWWORLD/grass.d/crop-field.json').read_text() == patches.read_text()
+    building_set.enable('city-2')
+
     particles = tmp_path / 'content-staging/smoke-1/particles.d/smoke.json'
     particles.parent.mkdir(parents=True)
     particles.write_text(json.dumps({'format': 1, 'effects': [
