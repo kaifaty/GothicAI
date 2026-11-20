@@ -98,6 +98,13 @@ PERF_WAIT="${PERF_WAIT:-600}"
 [[ "$PERF_REPEAT" =~ ^[1-9][0-9]*$ ]] || fail 'PERF_REPEAT must be positive'
 [[ "$PERF_WAIT" =~ ^[0-9]+$ ]] || fail 'PERF_WAIT must be seconds'
 PERF_WAIT=$((10#$PERF_WAIT))
+# GPU warm-up before the first place: auto (default where the GPU clock journal runs), 0 or seconds.
+PERF_WARMUP="${PERF_WARMUP:-}"
+PERF_WARMUP_MAX="${PERF_WARMUP_MAX:-300}"
+[[ -z "$PERF_WARMUP" || "$PERF_WARMUP" == auto || "$PERF_WARMUP" =~ ^[0-9]+$ ]] || fail 'PERF_WARMUP must be auto, 0 or seconds'
+[[ "$PERF_WARMUP" != [0-9]* ]] || PERF_WARMUP=$((10#$PERF_WARMUP))
+[[ "$PERF_WARMUP_MAX" =~ ^[0-9]*[1-9][0-9]*$ ]] || fail 'PERF_WARMUP_MAX must be positive seconds'
+PERF_WARMUP_MAX=$((10#$PERF_WARMUP_MAX))
 if [[ $# == 0 ]]; then PLACES=(market harbour forest interior combat); else PLACES=("$@"); fi
 for place in "${PLACES[@]}"; do
   case "$place" in
@@ -139,10 +146,11 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
     remote df -h "$REMOTE_HOME"
     # Stamp changed sources now: old source mtimes could otherwise skip rebuilding newer objects.
     rsync -a --checksum --no-times --delete --exclude='build*/' --exclude='cmake-build-*/' --exclude='.git' "$ROOT/OpenGothic/" "$RYZEN_HOST:$SOURCE/OpenGothic/"
-    rsync -a "$ROOT/scripts/ryzen-build.sh" "$ROOT/scripts/perf.sh" "$ROOT/scripts/perf_report.py" "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$RYZEN_HOST:$SOURCE/scripts/"
+    rsync -a "$ROOT/scripts/ryzen-build.sh" "$ROOT/scripts/perf.sh" "$ROOT/scripts/perf_report.py" "$ROOT/scripts/perf_gpu_log.py" "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$RYZEN_HOST:$SOURCE/scripts/"
     rsync -a --delete --exclude='/build*/' "$ROOT/scripts/convert/" "$RYZEN_HOST:$SOURCE/scripts/convert/"
     rsync -a "$ROOT"/scripts/bench/perf-*.bench "$RYZEN_HOST:$SOURCE/scripts/bench/"
     REMOTE_ENV=(PERF_REMOTE=1 "PERF_VID_RES=$PERF_VID_RES" "PERF_INI=$PERF_INI" "PERF_WINDOW=$PERF_WINDOW" "PERF_REPEAT=$PERF_REPEAT" "PERF_WAIT=$PERF_WAIT"
+      "PERF_WARMUP=$PERF_WARMUP" "PERF_WARMUP_MAX=$PERF_WARMUP_MAX"
       "PERF_ARGS=$PERF_ARGS" "PERF_ENV=$PERF_ENV" "PERF_COMMIT=$PERF_COMMIT" "PERF_DIRTY=$PERF_DIRTY"
       "PERF_SOURCE_FINGERPRINT=$PERF_SOURCE_FINGERPRINT"
       ${GAME_ENV[@]+"${GAME_ENV[@]}"})
@@ -154,7 +162,7 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
     fi
     rc=0
     "$ROOT/scripts/gq" --host "$RYZEN_HOST" run --class quiet --threads 4 --mem 5G --gpu-mem 4G \
-      --display --max "$((5 + ${#PLACES[@]} * PERF_REPEAT * 5))m" --wait-max "${RYZEN_LOCK_WAIT:-3600}" --name 'perf stand' \
+      --display --max "$((10 + ${#PLACES[@]} * PERF_REPEAT * 5))m" --wait-max "${RYZEN_LOCK_WAIT:-3600}" --name 'perf stand' \
       --archive "$REMOTE_OUT" -- env "${REMOTE_ENV[@]}" NO_BUILD=1 \
       bash "$SOURCE/scripts/perf.sh" __run "$REMOTE_OUT" "${PLACES[@]}" \
       2>&1 | tee "$OUT/ryzen.log" || rc="${PIPESTATUS[0]}"
@@ -240,6 +248,195 @@ meta = dict(binary_sha256=hashlib.sha256(Path(os.environ['GAME_BIN']).read_bytes
             game_args=args, game_env=extra_env)
 (out / 'metadata.json').write_text(json.dumps(meta, indent=2) + '\n')
 PY
+export PERF_GPU_STAMP="${PERF_GPU_STAMP:-$HOME/.cache/gothic-ai/perf-last-game}"
+# One launch path for the warm-up and the measured places: the same environment, Gothic.ini and command.
+#   run_game measure SCENARIO LEAF PLACE REPEAT
+#   run_game warmup SCENARIO OUT PLACE GPU_LOG
+# Every game that ran, measured or not, refreshes PERF_GPU_STAMP when it ends.
+run_game() {
+  python3 - "$OUT/metadata.json" "$@" <<'PY'
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import time
+
+metadata, mode, scenario, leaf, place, extra = sys.argv[1:]
+scripts = Path(scenario).parents[1]
+meta = json.loads(Path(metadata).read_text())
+stamp = Path(os.environ['PERF_GPU_STAMP'])
+# The meadow ground scenario has 354 s of scripted waits.
+timeout = 420 if place == 'grass-ground' else 300
+
+
+def prepare(leaf, profile):
+    (leaf / 'run').mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env.update(meta['game_env'])
+    # The timing contract wins over inherited bench/capture settings.
+    for key in ('OPENGOTHIC_BENCH_KEEP', 'OPENGOTHIC_BENCH_REALTIME', 'TEMPEST_AUDIO_LOOPBACK', 'OPENGOTHIC_FRAME_PROFILE'):
+        env.pop(key, None)
+    env.update(TEMPEST_BACKGROUND='0', TEMPEST_WINDOW_SIZE=meta['requested_window'],
+               OPENGOTHIC_BENCH_VISIBLE='1',
+               OPENGOTHIC_BENCH=scenario, OPENGOTHIC_BENCH_OUT=str(leaf))
+    if profile:
+        env['OPENGOTHIC_FRAME_PROFILE'] = str(leaf / 'frameprofile.csv')
+    # PERF_VID_RES picks the internal render resolution: 0 full, 1 = 75 %, 2 = 50 % of the drawable,
+    # game = no key, the game's own default for this backend.
+    vid_res = env.get('PERF_VID_RES', '0')
+    if vid_res not in ('0', '1', '2', 'game'):
+        raise SystemExit('perf: PERF_VID_RES must be 0, 1, 2 or game')
+    ini = {'ENGINE': {'zMaxFps': '0'}, 'INTERNAL': {} if vid_res == 'game' else {'vidResIndex': vid_res},
+           'SOUND': {'soundVolume': '1', 'musicVolume': '1', 'musicEnabled': '1', 'worldSounds': '1'},
+           'GAME': {}}
+    # The same initial GAME switches accepted by bench.sh, before world loading.
+    settings = ('MOVABLE_VOBS', 'ARROW_STICKING', 'PHYSICS_NOISE', 'DESTRUCTION', 'BUOYANCY',
+                'CLOTH', 'CHARACTER_VIRTUAL', 'NPC_CHARACTER_VIRTUAL', 'MONSTER_CHARACTER_VIRTUAL',
+                'MELEE_PHYSICS_HITS', 'MELEE_POSTURE', 'MELEE_REACTIONS', 'MELEE_BLADE_SHADOW')
+    for key in settings:
+        if key in env:
+            if env[key] not in ('0', '1'):
+                raise SystemExit(f'perf: {key} must be 0 or 1')
+            ini['GAME'][key.lower()] = env[key]
+    # PERF_INI='INTERNAL.halfResAoFog=0 ENGINE.zCloudShadowScale=1' sets any Gothic.ini key.
+    for item in shlex.split(env.get('PERF_INI', '')):
+        name, sep, value = item.partition('=')
+        section, dot, key = name.partition('.')
+        if not sep or not dot or not section or not key:
+            raise SystemExit(f'perf: PERF_INI expects SECTION.key=value, got {item!r}')
+        ini.setdefault(section, {})[key] = value
+    lines = []
+    for section, values in ini.items():
+        lines.append(f'[{section}]')
+        lines += [f'{k}={v}' for k, v in values.items()]
+    (leaf / 'run/Gothic.ini').write_text('\n'.join(lines) + '\n')
+    subprocess.run(['bash', str(scripts / 'base-ensure.sh'), env['GOTHIC_DIR']], env=env, check=True)
+    command = [env['GAME_BIN'], '-g', env['GOTHIC_DIR'], '-window', '-devmode',
+               '-nomenu', '-nointro', '-w', 'NEWWORLD.ZEN', *meta['game_args']]
+    return env, command
+
+
+def stop(process):
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def launch(leaf, profile, done=None):
+    """Exit code of one game; None when done() stopped it. RuntimeError on the timeout."""
+    env, command = prepare(leaf, profile)
+    deadline = time.monotonic() + timeout
+    try:
+        with (leaf / 'game.log').open('w') as log:
+            process = subprocess.Popen(command, cwd=leaf / 'run', env=env, stdout=log, stderr=subprocess.STDOUT)
+            while True:
+                try:
+                    return process.wait(timeout=1 if done else timeout), command
+                except subprocess.TimeoutExpired:
+                    if done is not None and done():
+                        stop(process)
+                        return None, command
+                    if time.monotonic() >= deadline:
+                        stop(process)
+                        raise RuntimeError(f'perf: game timed out after {timeout}s; stopped only this run')
+    finally:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+
+
+if mode == 'measure':
+    leaf = Path(leaf)
+    try:
+        code, command = launch(leaf, True)
+    except RuntimeError as error:
+        raise SystemExit(str(error))
+    meta.update(place=place, repeat=int(extra), command=command, exit_code=code)
+    (leaf / 'metadata.json').write_text(json.dumps(meta, indent=2) + '\n')
+    if code:
+        raise SystemExit(f'perf: {place} exited {code}; see {leaf / "game.log"}')
+    sys.exit()
+
+# Warm-up: run the first place's scenario until the GPU temperature holds still, see docs/performance.md.
+out = Path(leaf)
+setting, limit = os.environ['PERF_WARMUP'], int(os.environ['PERF_WARMUP_MAX'])
+result = dict(mode=setting, reason=None, seconds=0.0, runs=0, temp_start_c=None, temp_end_c=None,
+              sm_start_mhz=None, sm_end_mhz=None, last_game_age_s=None)
+age = time.time() - stamp.stat().st_mtime if stamp.exists() else None
+if extra != '1':
+    result['reason'] = 'no-gpu-log'
+elif setting == '0':
+    result['reason'] = 'off'
+elif setting == 'auto' and age is not None and age < 120:
+    result.update(reason='skipped-recent-game', last_game_age_s=round(age, 1))
+    print(f'perf: GPU warm: last stand game ended {age:.0f} s ago, no warm-up', flush=True)
+else:
+    sys.path.insert(0, str(scripts))
+    import perf_gpu_log as gpu
+    journal = out / 'gpu.csv'
+    fixed = None if setting == 'auto' else int(setting)
+    started = time.monotonic_ns()
+
+    def done():
+        now = time.monotonic_ns()
+        if fixed is not None:
+            result['reason'] = 'fixed' if now - started >= fixed * 1e9 else None
+        else:
+            result['reason'] = gpu.warm_reason(gpu.read_log(journal), started, now, limit)
+        return result['reason'] is not None
+
+    print(f'perf: GPU warm-up ({setting}) on {place}', flush=True)
+    while True:
+        result['runs'] += 1
+        run = out / 'warmup' / f'run-{result["runs"]}'
+        try:
+            code, _ = launch(run, False, done)
+        except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+            code = str(error)
+        if code is None or (code == 0 and done()):
+            break
+        if code != 0:
+            result['reason'] = 'failed'
+            print(f'perf: warning: warm-up game failed ({code}); measuring anyway, see {run / "game.log"}', flush=True)
+            break
+    ended = time.monotonic_ns()
+    result['seconds'] = round((ended - started) / 1e9, 1)
+    rows = [row for row in gpu.read_log(journal) if started <= row['mono_ns'] <= ended]
+    if rows:
+        result.update(temp_start_c=rows[0]['temp_c'], temp_end_c=rows[-1]['temp_c'],
+                      sm_start_mhz=rows[0]['sm_mhz'], sm_end_mhz=rows[-1]['sm_mhz'])
+    print(f'perf: GPU warm-up {result["reason"]} after {result["seconds"]:.0f} s, {result["runs"]} run(s), '
+          f'{result["temp_start_c"]} → {result["temp_end_c"]} °C, SM {result["sm_start_mhz"]} → {result["sm_end_mhz"]} MHz',
+          flush=True)
+(out / 'warmup.json').write_text(json.dumps(result, indent=2) + '\n')
+PY
+}
+
+# The GPU clock journal runs over the whole run phase where nvidia-smi works (Ryzen); Mac has none.
+GPU_LOG=0 GPU_LOG_PID=''
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then GPU_LOG=1; fi
+stop_gpu_log() {
+  [[ -n "$GPU_LOG_PID" ]] || return 0
+  kill -TERM "$GPU_LOG_PID" 2>/dev/null || true
+  wait "$GPU_LOG_PID" 2>/dev/null || true
+  GPU_LOG_PID=''
+}
+if [[ "$GPU_LOG" == 1 ]]; then
+  [[ -r "$ROOT/scripts/perf_gpu_log.py" ]] || fail "missing $ROOT/scripts/perf_gpu_log.py; upload it with the other stand scripts"
+  trap stop_gpu_log EXIT
+  trap 'exit 143' TERM
+  python3 "$ROOT/scripts/perf_gpu_log.py" "$OUT/gpu.csv" &
+  GPU_LOG_PID=$!
+fi
+[[ -n "$PERF_WARMUP" ]] || PERF_WARMUP=$([[ "$GPU_LOG" == 1 ]] && echo auto || echo 0)
+export PERF_WARMUP PERF_WARMUP_MAX
+if [[ "$GPU_LOG" == 1 || "$PERF_WARMUP" != 0 ]]; then
+  run_game warmup "$ROOT/scripts/bench/perf-${PLACES[0]}.bench" "$OUT" "${PLACES[0]}" "$GPU_LOG"
+fi
 
 for place in "${PLACES[@]}"; do
   for ((repeat=1; repeat<=PERF_REPEAT; repeat++)); do
@@ -254,80 +451,7 @@ for place in "${PLACES[@]}"; do
     LEAF="$OUT/$place/repeat-$repeat"
     mkdir -p "$LEAF/run"
     echo "perf: $place, repeat $repeat/$PERF_REPEAT"
-    python3 - "$ROOT/scripts/bench/perf-$place.bench" "$LEAF" "$OUT/metadata.json" "$place" "$repeat" <<'PY'
-import json
-import os
-from pathlib import Path
-import platform
-import shlex
-import subprocess
-import sys
-
-scenario, leaf, metadata, place, repeat = sys.argv[1:]
-leaf = Path(leaf)
-meta = json.loads(Path(metadata).read_text())
-env = os.environ.copy()
-env.update(meta['game_env'])
-# The timing contract wins over inherited bench/capture settings.
-for key in ('OPENGOTHIC_BENCH_KEEP', 'OPENGOTHIC_BENCH_REALTIME', 'TEMPEST_AUDIO_LOOPBACK'):
-    env.pop(key, None)
-env.update(TEMPEST_BACKGROUND='0', TEMPEST_WINDOW_SIZE=meta['requested_window'],
-           OPENGOTHIC_BENCH_VISIBLE='1',
-           OPENGOTHIC_BENCH=scenario, OPENGOTHIC_BENCH_OUT=str(leaf),
-           OPENGOTHIC_FRAME_PROFILE=str(leaf / 'frameprofile.csv'))
-# PERF_VID_RES picks the internal render resolution: 0 full, 1 = 75 %, 2 = 50 % of the drawable,
-# game = no key, the game's own default for this backend.
-vid_res = env.get('PERF_VID_RES', '0')
-if vid_res not in ('0', '1', '2', 'game'):
-    raise SystemExit('perf: PERF_VID_RES must be 0, 1, 2 or game')
-ini = {'ENGINE': {'zMaxFps': '0'}, 'INTERNAL': {} if vid_res == 'game' else {'vidResIndex': vid_res},
-       'SOUND': {'soundVolume': '1', 'musicVolume': '1', 'musicEnabled': '1', 'worldSounds': '1'},
-       'GAME': {}}
-# The same initial GAME switches accepted by bench.sh, before world loading.
-settings = ('MOVABLE_VOBS', 'ARROW_STICKING', 'PHYSICS_NOISE', 'DESTRUCTION', 'BUOYANCY',
-            'CLOTH', 'CHARACTER_VIRTUAL', 'NPC_CHARACTER_VIRTUAL', 'MONSTER_CHARACTER_VIRTUAL',
-            'MELEE_PHYSICS_HITS', 'MELEE_POSTURE', 'MELEE_REACTIONS', 'MELEE_BLADE_SHADOW')
-for key in settings:
-    if key in env:
-        if env[key] not in ('0', '1'):
-            raise SystemExit(f'perf: {key} must be 0 or 1')
-        ini['GAME'][key.lower()] = env[key]
-# PERF_INI='INTERNAL.halfResAoFog=0 ENGINE.zCloudShadowScale=1' sets any Gothic.ini key.
-for item in shlex.split(env.get('PERF_INI', '')):
-    name, sep, value = item.partition('=')
-    section, dot, key = name.partition('.')
-    if not sep or not dot or not section or not key:
-        raise SystemExit(f'perf: PERF_INI expects SECTION.key=value, got {item!r}')
-    ini.setdefault(section, {})[key] = value
-lines = []
-for section, values in ini.items():
-    lines.append(f'[{section}]')
-    lines += [f'{k}={v}' for k, v in values.items()]
-(leaf / 'run/Gothic.ini').write_text('\n'.join(lines) + '\n')
-subprocess.run(['bash', str(Path(scenario).parents[1] / 'base-ensure.sh'), env['GOTHIC_DIR']],
-               env=env, check=True)
-command = [env['GAME_BIN'], '-g', env['GOTHIC_DIR'], '-window', '-devmode',
-           '-nomenu', '-nointro', '-w', 'NEWWORLD.ZEN', *meta['game_args']]
-meta.update(place=place, repeat=int(repeat), command=command)
-# The meadow ground scenario has 354 s of scripted waits.
-timeout = 420 if place == 'grass-ground' else 300
-with (leaf / 'game.log').open('w') as log:
-    process = subprocess.Popen(command, cwd=leaf / 'run', env=env, stdout=log, stderr=subprocess.STDOUT)
-    try:
-        code = process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-        raise SystemExit(f'perf: game timed out after {timeout}s; stopped only this run')
-meta['exit_code'] = code
-(leaf / 'metadata.json').write_text(json.dumps(meta, indent=2) + '\n')
-if code:
-    raise SystemExit(f'perf: {place} exited {code}; see {leaf / "game.log"}')
-PY
+    run_game measure "$ROOT/scripts/bench/perf-$place.bench" "$LEAF" "$place" "$repeat"
     python3 - "$LEAF" "$place" <<'PY'
 import csv
 import json
@@ -384,5 +508,6 @@ print(f'perf: validated {place}: {len(segments_expected)} samples, {len(rows)} a
 PY
   done
 done
+stop_gpu_log
 python3 "$ROOT/scripts/perf_report.py" run "$OUT"
 echo "$OUT"
