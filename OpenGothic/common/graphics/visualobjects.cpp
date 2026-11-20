@@ -462,7 +462,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     for(uint32_t i=0; i<obj.clusterCount; ++i)
       clustersMem[obj.clusterId+i].historyGeneration |= DrawClusters::HistoryStatic;
     }
-  if(DrawCommands::vsmFrameStatsEnabled() &&
+  if(MeshLevels::vsmFrameStatsEnabled() &&
      std::ranges::any_of(mesh.sub, [](const auto& sub) { return FoliageTree::isTree(sub.material.foliage); })) {
     for(uint32_t i=0; i<obj.clusterCount; ++i)
       clustersMem[obj.clusterId+i].shadowCommandId |= DrawClusters::ShadowVisual;
@@ -1026,7 +1026,7 @@ void VisualObjects::preFrameUpdateLevels() {
                             (benchShadowLevels==BenchShadowLevels::Auto && MeshLevels::shadowLevelsEnabled());
   const bool  fullShadows = benchShadowLevels==BenchShadowLevels::Full;
   const float nearPx = benchShadowNearPx.value_or(MeshLevels::shadowNearPx());
-  const bool vsmStats = DrawCommands::vsmFrameStatsEnabled();
+  const bool vsmStats = MeshLevels::vsmFrameStatsEnabled();
   const auto probePx = vsmStats ? MeshLevels::shadowProbePx() : std::nullopt;
   if(probePx)
     shadowProbe = {};

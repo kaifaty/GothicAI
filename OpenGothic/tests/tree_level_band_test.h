@@ -23,7 +23,7 @@ void treeLevelBandPicks() {
     const auto  band = TreeLevelBand::main(px, 4, height);
     hard = MeshLevels::pick(px, 4, hard, height);
     const auto shadow = TreeLevelBand::shadow(4, height, band.fine);
-    hardShadow = MeshLevels::pickShadow(4, hardShadow, shadowSeparate, height, hard, true);
+    hardShadow = MeshLevels::pickShadow(4, hardShadow, shadowSeparate, height, hard, true, MeshLevels::ShadowNearDefaultPx);
     shadowSeparate = hardShadow!=hard;
     for(const auto& [now, before, step, name] : {std::tuple(band, previous, hard, "main"),
                                                   std::tuple(shadow, previousShadow, hardShadow, "shadow")}) {

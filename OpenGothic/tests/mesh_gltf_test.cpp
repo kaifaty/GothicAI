@@ -1502,11 +1502,25 @@ int levelSwitchChild(std::string_view mode) {
     }
   if(mode.starts_with("shadow-")) {
     textFile(fixture.root/"system.ini", "");
-    textFile(fixture.root/"user.ini", mode=="shadow-ini" ? "[INTERNAL]\nshadowLevels=0\n" : "");
+    const char* ini = "";
+    float expectedNearPx = MeshLevels::ShadowNearDefaultPx;
+    if(mode=="shadow-ini") {
+      ini = "[INTERNAL]\nshadowLevels=0\nshadowLevelNearPx=600\n";
+      expectedNearPx = 600.f;
+      }
+    if(mode=="shadow-env") {
+      ini = "[INTERNAL]\nshadowLevelNearPx=600\n";
+      expectedNearPx = 650.f;
+      }
+    textFile(fixture.root/"user.ini", ini);
     settings = std::make_unique<Settings>();
     settings->load((fixture.root/"system.ini").u16string(), (fixture.root/"user.ini").u16string());
-    const bool enabled = MeshLevels::shadowLevelsEnabled();
-    require(enabled==(mode=="shadow-default") && MeshLevels::pickShadow(4, 0, false, 700.f, 0, enabled)==(enabled ? 3 : 0),
+    const bool  enabled = MeshLevels::shadowLevelsEnabled();
+    const float nearPx  = MeshLevels::shadowNearPx();
+    require(nearPx==expectedNearPx &&
+            MeshLevels::pickShadow(4, 0, false, 700.f, 0, true, nearPx)==(mode=="shadow-default" ? 3 : 0),
+            "the shadow selection must honor the default, INI and environment: "+std::string(mode));
+    require(enabled==(mode=="shadow-default") && MeshLevels::pickShadow(4, 0, false, 700.f, 0, enabled, nearPx)==(enabled ? 3 : 0),
             "the shadow switch must affect only the shadow level: "+std::string(mode));
     return 0;
     }
@@ -1549,7 +1563,8 @@ void levelSwitchCase(std::string_view mode) {
   for(char** e=environ; *e!=nullptr; ++e) {
     const std::string_view v(*e);
     if(!v.starts_with("OPENGOTHIC_MESH_LEVELS=") && !v.starts_with("OPENGOTHIC_IMPOSTORS=") &&
-       !v.starts_with("OPENGOTHIC_SHADOW_LEVELS=") && !v.starts_with("OPENGOTHIC_TREE_BOUGH_LOD=") &&
+       !v.starts_with("OPENGOTHIC_SHADOW_LEVELS=") && !v.starts_with("OPENGOTHIC_SHADOW_LEVEL_NEAR_PX=") &&
+       !v.starts_with("OPENGOTHIC_TREE_BOUGH_LOD=") &&
        !v.starts_with("GOTHIC_MESH_LEVELS_CHILD="))
       env.emplace_back(v);
     }
@@ -1558,8 +1573,10 @@ void levelSwitchCase(std::string_view mode) {
     env.push_back("OPENGOTHIC_MESH_LEVELS=0");
   if(mode=="impostor-env")
     env.push_back("OPENGOTHIC_IMPOSTORS=0");
-  if(mode=="shadow-env")
+  if(mode=="shadow-env") {
     env.push_back("OPENGOTHIC_SHADOW_LEVELS=0");
+    env.push_back("OPENGOTHIC_SHADOW_LEVEL_NEAR_PX=650");
+    }
   if(mode=="bough-env-off")
     env.push_back("OPENGOTHIC_TREE_BOUGH_LOD=0");
   if(mode=="bough-legacy")
@@ -1599,16 +1616,20 @@ void levelCases(const Fixture& fixture) {
   levelSwitchCase("bough-ini");
 
   const auto spruceShadow = [](uint8_t previous, float height) {
-    return MeshLevels::pickShadow(4, previous, previous!=0, height, 0, true);
+    return MeshLevels::pickShadow(4, previous, previous!=0, height, 0, true, MeshLevels::ShadowNearDefaultPx);
     };
   const auto separate = spruceShadow(0, 799.9f);
   require(spruceShadow(0, 800.f)==0 && separate==3 && spruceShadow(separate, 800.f)==3 &&
           spruceShadow(separate, 879.9f)==3 && spruceShadow(separate, 880.f)==0 && spruceShadow(0, 879.9f)==0,
           "the near shadow must leave the visual GLB below 800 pixels and return at 880 pixels");
-  require(MeshLevels::pickShadow(4, 1, false, 850.f, 0, true)==0 && MeshLevels::pickShadow(4, 0, false, 800.f, 1, true)==1 &&
-          MeshLevels::pickShadow(4, 0, false, 390.f, 0, true)==4 &&
-          MeshLevels::pickShadow(4, 4, true, 420.f, 1, true)==4 && MeshLevels::pickShadow(4, 4, true, 450.f, 1, true)==3 &&
-          MeshLevels::pickShadow(2, 0, false, 390.f, 0, true)==2 && MeshLevels::pickShadow(4, 3, true, 850.f, 0, false)==0,
+  constexpr float nearPx = MeshLevels::ShadowNearDefaultPx;
+  require(MeshLevels::pickShadow(4, 1, false, 850.f, 0, true, nearPx)==0 &&
+          MeshLevels::pickShadow(4, 0, false, 800.f, 1, true, nearPx)==1 &&
+          MeshLevels::pickShadow(4, 0, false, 390.f, 0, true, nearPx)==4 &&
+          MeshLevels::pickShadow(4, 4, true, 420.f, 1, true, nearPx)==4 &&
+          MeshLevels::pickShadow(4, 4, true, 450.f, 1, true, nearPx)==3 &&
+          MeshLevels::pickShadow(2, 0, false, 390.f, 0, true, nearPx)==2 &&
+          MeshLevels::pickShadow(4, 3, true, 850.f, 0, false, nearPx)==0,
           "shadow LOD must match the near visual GLB and use its own thresholds and hysteresis farther away");
   const auto probeShadow = [](uint8_t previous, float height) {
     return MeshLevels::pickShadow(4, previous, previous!=0, height, 0, true, 600.f);

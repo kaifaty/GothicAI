@@ -113,6 +113,14 @@ inline float shadowNearPx() {
   return px;
   }
 
+inline bool vsmFrameStatsEnabled() {
+  static const bool enabled = [] {
+    const char* value = std::getenv("OPENGOTHIC_VSM_STATS");
+    return value!=nullptr && std::string_view(value)=="frames";
+    }();
+  return enabled;
+  }
+
 inline std::optional<float> shadowProbePx() {
   static const auto px = []() -> std::optional<float> {
     if(const char* env = std::getenv("OPENGOTHIC_SHADOW_LEVEL_PROBE_PX"))
@@ -147,7 +155,7 @@ inline bool shadowUsesVisual(float heightAt1080, bool wasSeparate, float nearPx)
 // Leave the visual GLB below the near threshold at 1080p and return at Hysteresis times that size.
 // Farther out, sun and lamps share the coarser scale. Neither shadow path takes the impostor card.
 inline uint8_t pickShadow(size_t count, uint8_t current, bool wasSeparate, float heightAt1080, uint8_t visualGlb,
-                          bool enabled, float nearPx = ShadowNearDefaultPx) {
+                          bool enabled, float nearPx) {
   const float px[MaxLevels] = {2400.f, 1400.f, nearPx, ShadowFarPx};
   if(!enabled || shadowUsesVisual(heightAt1080, wasSeparate, nearPx))
     return visualGlb;

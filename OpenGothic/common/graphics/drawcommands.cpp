@@ -99,14 +99,6 @@ uint32_t DrawCommands::vsmPairCap() {
   return cap;
   }
 
-bool DrawCommands::vsmFrameStatsEnabled() {
-  static const bool enabled = [] {
-    const char* value = std::getenv("OPENGOTHIC_VSM_STATS");
-    return value!=nullptr && std::string_view(value)=="frames";
-    }();
-  return enabled;
-  }
-
 static void usesSsbo(StorageBuffer& b, const size_t desiredSz) {
   if(b.byteSize()<desiredSz || b.byteSize()>=2*desiredSz) {
     Resources::recycle(std::move(b));

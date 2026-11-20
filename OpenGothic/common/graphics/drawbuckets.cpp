@@ -5,7 +5,7 @@
 
 #include "graphics/mesh/submesh/staticmesh.h"
 #include "graphics/mesh/submesh/animmesh.h"
-#include "graphics/drawcommands.h"
+#include "graphics/meshlevels.h"
 #include "graphics/shaders.h"
 #include "frameprofile.h"
 #include "commandline.h"
@@ -237,8 +237,8 @@ void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
   }
 
 void DrawBuckets::updatePrimitiveCounts(Encoder<CommandBuffer>& cmd) {
-  // One compact range per packed index buffer, shared by all of its materials. The diagnostic never reads
-  // back geometry and can use the same table on backends without bindless storage buffers.
+  // One compact range per packed index buffer, shared by its materials. With per-material IBO bindings
+  // (DrawCommands::drawVsm), the pair packer has no bindless array of all buckets to read.
   constexpr uint32_t none = uint32_t(-1);
   constexpr size_t meshletBytes = PackedMesh::MaxPrim*sizeof(uint32_t);
   std::unordered_map<const StorageBuffer*, uint32_t> buffers;
@@ -519,7 +519,7 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   treeHiZBoundsGpu.updateAsync(treeBounds.data(),0,treeBounds.size()*sizeof(treeBounds[0]));
 
   updateBindlessArrays(true,fId);
-  if(DrawCommands::vsmFrameStatsEnabled() && Shaders::isVsmSupported())
+  if(MeshLevels::vsmFrameStatsEnabled() && Shaders::isVsmSupported())
     updatePrimitiveCounts(cmd);
   return true;
   }

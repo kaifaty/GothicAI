@@ -20,7 +20,6 @@ class DrawCommands {
     // workgroups of vsm_cull_meshlets.comp: each takes the candidates one after another
     static constexpr uint32_t VsmCullGroups  = 2048;
     static uint32_t vsmPairCap(); // VsmMaxMeshlets, or OPENGOTHIC_VSM_PAIRS for a study
-    static bool vsmFrameStatsEnabled();
     // the sun's virtual shadow map for a forward-lit draw, or the 1x1x1 table that sends it to the cascades
     static void bindSunVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene,
                            uint32_t tblSlot, uint32_t atlasSlot);
