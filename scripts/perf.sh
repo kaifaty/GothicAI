@@ -398,7 +398,7 @@ if mode == 'measure':
             restarts += 1
             kept = leaf / f'stalled-{restarts}'
             kept.mkdir()
-            for path in leaf.iterdir():
+            for path in list(leaf.iterdir()):
                 if path != kept:
                     path.rename(kept / path.name)
             print(f'perf: stand stall: {failure}; restarting the game once, its files are in {kept}',
