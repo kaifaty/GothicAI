@@ -130,22 +130,40 @@ void readMotion(const Json& entry, Motion& motion) {
     }
   if(entry.HasMember("light")) {
     const auto& light=entry["light"];
-    fields(light,{"range","color","keys","fps"});
+    fields(light,{"range","color","keys","colors","fps","at","loop"});
     motion.lightRange=number(member(light,"range"),"light.range",50,2000,"50..2000");
-    const auto& color=member(light,"color");
-    require(color.IsArray() && color.Size()==3,"light.color: expected [r,g,b]");
-    for(rapidjson::SizeType i=0; i<3; ++i)
-      motion.lightColor[i]=number(color[i],"light.color",0,255,"0..255");
+    const auto triple=[](const Json& value, const char* name, double lo, double hi, const char* range, float* out) {
+      require(value.IsArray() && value.Size()==3,std::string(name)+": expected three numbers");
+      for(rapidjson::SizeType i=0; i<3; ++i)
+        out[i]=number(value[i],name,lo,hi,range);
+      };
+    triple(member(light,"color"),"light.color",0,255,"0..255",motion.lightColor);
     motion.lightKeys.clear();
+    motion.lightColors.clear();
     motion.lightFps=0;
     if(light.HasMember("keys")) {
       const auto& keys=light["keys"];
       require(keys.IsArray() && keys.Size()>=2 && keys.Size()<=64,"light.keys: expected 2..64 numbers");
       for(const auto& k:keys.GetArray())
         motion.lightKeys.push_back(number(k,"light.keys",0,2,"0..2"));
-      motion.lightFps=number(member(light,"fps"),"light.fps",0.1,60,"0.1..60");
       }
-    else require(!light.HasMember("fps"),"light.fps: needs light.keys");
+    if(light.HasMember("colors")) {
+      const auto& colors=light["colors"];
+      require(colors.IsArray() && colors.Size()>=2 && colors.Size()<=64,"light.colors: expected 2..64 colours");
+      for(const auto& c:colors.GetArray())
+        triple(c,"light.colors",0,255,"0..255",motion.lightColors.emplace_back().data());
+      }
+    if(!motion.lightKeys.empty() || !motion.lightColors.empty())
+      motion.lightFps=number(member(light,"fps"),"light.fps",0.1,60,"0.1..60");
+    else require(!light.HasMember("fps"),"light.fps: needs light.keys or light.colors");
+    for(auto& v:motion.lightAt) v=0;
+    if(light.HasMember("at"))
+      triple(light["at"],"light.at",-200,200,"-200..200",motion.lightAt);
+    motion.lightLoop=false;
+    if(light.HasMember("loop")) {
+      require(light["loop"].IsBool(),"light.loop: expected boolean");
+      motion.lightLoop=light["loop"].GetBool();
+      }
     }
   if(entry.HasMember("haze")) {
     const auto& haze=entry["haze"];
@@ -228,8 +246,9 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
       decltype(result.motions) pendingMotions;
       decltype(result.with) pendingWith;
       decltype(result.land) pendingLand;
+      decltype(result.nodes) pendingNodes;
       for(const auto& entry:effects.GetArray()) {
-        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze","lean","inherit","wind","plume","light","replaces","with","land"});
+        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels","hdr","haze","lean","inherit","wind","plume","light","replaces","with","land","node"});
         const auto name=text(member(entry,"name"));
         require(!name.empty() && std::all_of(name.begin(),name.end(),[](char c) {
           return (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_';
@@ -332,6 +351,13 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
           require(book==pendingFlipbooks.end() || !book->second.steady,"land: not with a steady flipbook");
           pendingLand.emplace(name,other);
           }
+        if(entry.HasMember("node")) {
+          const auto& node=entry["node"];
+          require(node.IsString(),"node: expected string");
+          const auto nodeName=uppercase(text(node));
+          require(!nodeName.empty() && nodeName.size()<=64,"node: expected 1..64 characters");
+          pendingNodes.emplace(name,nodeName);
+          }
         pending.emplace(name,std::move(definition));
         }
       result.effects.insert(pending.begin(),pending.end());
@@ -339,6 +365,7 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
       result.motions.insert(pendingMotions.begin(),pendingMotions.end());
       result.with.insert(pendingWith.begin(),pendingWith.end());
       result.land.insert(pendingLand.begin(),pendingLand.end());
+      result.nodes.insert(pendingNodes.begin(),pendingNodes.end());
       }
     catch(const std::exception& error) { result.errors.push_back(file.string()+": "+error.what()); }
     }

@@ -25,6 +25,7 @@ PfxEmitter::PfxEmitter(World& world, const ParticleFx* decl) {
     return;
     }
   *this = PfxEmitter(world.view()->pfxGroup,decl);
+  setBorn(world.tickCount());
   }
 
 PfxEmitter::PfxEmitter(PfxObjects& owner, const ParticleFx* decl)
@@ -49,6 +50,7 @@ PfxEmitter::PfxEmitter(World& world, const asset::VirtualObject& vob) {
     if(decl==nullptr || decl->visMaterial.tex==nullptr)
       return;
     slot = PfxSlot(owner,*decl,VobLayer::flicker(vob));
+    setBorn(world.tickCount());
     }
   else if(auto decal = dynamic_cast<const asset::VisualDecal*>(vob.visual.get())) {
     Material mat(*decal);
@@ -153,6 +155,12 @@ void PfxEmitter::setLooped(bool loop) {
   slot.setLooped(loop);
   for(auto& i:extra)
     i.setLooped(loop);
+  }
+
+void PfxEmitter::setBorn(uint64_t worldTime) {
+  slot.setBorn(worldTime);
+  for(auto& i:extra)
+    i.setBorn(worldTime);
   }
 
 void PfxEmitter::setMesh(const MeshObjects::Mesh* mesh, const Pose* pose, const std::vector<Tempest::Matrix4x4>* skin) {

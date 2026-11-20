@@ -4,6 +4,7 @@
 #include "game/gamehost.h"
 
 #include "daedalus/vm.h"
+#include <array>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -66,13 +67,19 @@ struct Motion {
   float plumeHeight   = 0;
   float plumeRise     = 0;
   float plumeWind     = 0;  // the flame's own "wind" share: its lean differs from the smoke's drift
-  // "light": a spell effect (graphics/effect) of this particle effect brings a point light of lightRange cm and the
-  // colour lightColor (0..255) instead of the game's preset. lightKeys are the range's scale over the effect's
-  // life at lightFps keys a second (a fire that spreads, holds and dies down); none: the full range. 0: off
+  // "light": a spell effect or an animation event's effect (graphics/effect) of this particle effect brings a point
+  // light of lightRange cm and the colour lightColor (0..255), a spell's instead of the game's preset. lightKeys are
+  // the range's scale over the effect's life at lightFps keys a second (a fire that spreads, holds and dies down);
+  // none: the full range. lightColors are its colours (0..255) at the same rate in place of lightColor. The keys play
+  // once and hold the last, with lightLoop they go round. lightAt is its place in cm in the axes of the effect's node
+  // (a forge's bowl over its bone). 0: off
   float lightRange    = 0;
   float lightColor[3] = {};
   std::vector<float> lightKeys;
+  std::vector<std::array<float,3>> lightColors;
   float lightFps      = 0;
+  float lightAt[3]    = {};
+  bool  lightLoop     = false;
 
   bool empty() const { return curlStrength==0 && drag==0 && stretch==0 && minPixels==0 && hdrTo==0 && hazeShift==0 && leanRise==0 && inherit==0 && wind==0 && plumeHeight==0 && lightRange==0; }
   };
@@ -86,6 +93,9 @@ struct Result {
   // "land": the own effect put where a particle of this one meets the world's static geometry (a drop of the fire
   // rain); the particle stops there
   std::map<std::string,std::string> land;
+  // "node": an animation event's effect of this one stands on this node of its object instead of the event's
+  // (World::animationPfx), upper case as a model's nodes; not inherited
+  std::map<std::string,std::string> nodes;
   std::vector<std::string> errors;
   };
 

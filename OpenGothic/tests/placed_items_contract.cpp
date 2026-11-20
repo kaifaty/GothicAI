@@ -72,6 +72,7 @@
 #include <type_traits>
 #include <functional>
 #include <optional>
+#include <tuple>
 
 void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
                       void (*placement)(World&), void (*placementDisabled)(World&), void (*activities)(World&));
@@ -3289,6 +3290,10 @@ void itemEffects(World& world) {
 // the smith works the bellows and goes out with his animation out or with the forge's rest without one; the anvil's
 // ANVIL_SPARKS live their own time.
 void animationEffects(Gothic& gothic) {
+  // a fresh game: the session before comes from a load of activityEventsWorld's world, where the forge's worker left it
+  // in S1 without its fire, which only T_S0_2_S1 lights
+  gothic.clearGame().reset();
+  gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
   auto& world=*gothic.world();
   auto& script=world.script();
   auto* session=gothic.gameSession();
@@ -3358,13 +3363,60 @@ void animationEffects(Gothic& gothic) {
     return burning!=nullptr && burning->isEmitting() && burning->isAlive() && world.tickCount()>since+aliveFor &&
            burning->emitterPosition(at) && (at-model.mapBone(fireBone)).length()<1.f;
     };
+  // FIRE_HOT with an own light (particles.d "light"), set on its declaration for the test: the forge's effect gives
+  // the world's light its range, colours and keys going round, at its "at" in the axes of BIP01 PFX_FIRE
+  auto& fireDecl=const_cast<ParticleFx&>(*fire);
+  const auto fireLight=std::make_tuple(fire->lightRange,fire->lightColor,fire->lightKeys,fire->lightColors,fire->lightFps,
+                                       fire->lightAt,fire->lightLoop,fire->node);
+  fireDecl.lightRange=300; fireDecl.lightColor={255,140,60}; fireDecl.lightKeys={0.6f,1.f,0.7f};
+  fireDecl.lightColors={{255,120,40},{255,190,110}}; fireDecl.lightFps=12.5f; fireDecl.lightAt={-8,77,1}; fireDecl.lightLoop=true;
+  const auto ownLight=[&](const Effect* e) {
+    Effect::OwnLight own;
+    if(e==nullptr || !e->ownLight(own))
+      return false;
+    const auto& m=model.pose().bone(fireBone);
+    const Tempest::Vec3 at=Tempest::Vec3(m.at(3,0),m.at(3,1),m.at(3,2))+Tempest::Vec3(m.at(0,0),m.at(0,1),m.at(0,2))*-8.f+
+                           Tempest::Vec3(m.at(1,0),m.at(1,1),m.at(1,2))*77.f+Tempest::Vec3(m.at(2,0),m.at(2,1),m.at(2,2));
+    return own.loop && own.preset.range==300.f && own.preset.color==asset::Color(255,140,60,255) &&
+           own.preset.range_animation_scale==fire->lightKeys && own.preset.range_animation_fps==12.5f &&
+           own.preset.color_animation_list==std::vector<asset::Color>{asset::Color(255,120,40,255),asset::Color(255,190,110,255)} &&
+           own.preset.color_animation_fps==12.5f && (own.at-at).length()<0.1f && (own.at-model.mapBone(fireBone)).length()>70.f;
+    };
   require(bellows(true),(npcName(world,*smith)+" must work the bellows of BSFIRE with FIRE_HOT burning").c_str());
   const auto lit=world.tickCount();
+  require(ownLight(slot(*forge,fireSlot)),"FIRE_HOT's own light must stand at its at in the axes of BIP01 PFX_FIRE, its keys going round");
   require(tickUntil([&] { return inAnim("S_S1"); },5000),"the forge must reach the bellows' cycle S_S1");
   const auto cycle=world.tickCount();
-  require(!tickUntil([&] { return slot(*forge,fireSlot)==nullptr; },5000) && world.tickCount()>=cycle+5000 &&
+  // without "node" the emitter goes with BIP01 PFX_FIRE, which the bellows toss up and down
+  float fireLow=1e9f,fireHigh=-1e9f;
+  bool  follows=true;
+  require(!tickUntil([&] {
+            Tempest::Vec3 at;
+            const auto* burning=slot(*forge,fireSlot);
+            if(burning==nullptr)
+              return true;
+            const auto bone=model.mapBone(fireBone);
+            follows=follows && burning->emitterPosition(at) && (at-bone).length()<1.f;
+            fireLow=std::min(fireLow,bone.y); fireHigh=std::max(fireHigh,bone.y);
+            return false;
+            },5000) && world.tickCount()>=cycle+5000 &&
           forge->stateId()==forge->stateCount() && burns(lit),
           "FIRE_HOT must burn at BIP01 PFX_FIRE with its emitter alive after 5 s of S_S1, not its own time");
+  std::printf("Animation effects: BIP01 PFX_FIRE goes %.1f cm up and down in S_S1\n",double(fireHigh-fireLow));
+  require(follows && fireHigh-fireLow>30.f,"without node FIRE_HOT must go with BIP01 PFX_FIRE up and down in S_S1");
+  require(ownLight(slot(*forge,fireSlot)),"FIRE_HOT's own light must follow BIP01 PFX_FIRE while it burns");
+  // its pulse keeps the beat: a block taken again near after it was freed far away counts the looped keys from the
+  // effect's birth by the world's clock (PfxBucket::implTickCommon); a burst's keys count from its block as before
+  {
+  const uint64_t period=fire->prefferedTime,dt=16,now=lit+7*period+period/3;
+  const auto beat=fire->keySpan(true,lit,now,dt,0);
+  const auto burst=sparks->keySpan(true,lit,now,dt,0);
+  std::printf("Animation effects: FIRE_HOT's keys %llu ms after its birth: %llu..%llu ms of its %llu ms period\n",
+              (unsigned long long)(now-lit),(unsigned long long)beat.first,(unsigned long long)beat.second,(unsigned long long)period);
+  require(period/3>=dt && beat.second==(now-lit)%period && beat.first+dt==beat.second &&
+          burst==std::pair<uint64_t,uint64_t>(0,dt) && fire->keySpan(false,lit,now,dt,40)==std::pair<uint64_t,uint64_t>(40,56),
+          "a looped emitter's new block must count its keys from its birth by the world's clock, a burst's from 0");
+  }
   std::printf("Animation effects: FIRE_HOT of BSFIRE burns %llu ms of S_S1, %llu ms from its lighting (its own time and "
               "particle life %llu ms)\n",(unsigned long long)(world.tickCount()-cycle),(unsigned long long)(world.tickCount()-lit),
               (unsigned long long)aliveFor);
@@ -3394,6 +3446,36 @@ void animationEffects(Gothic& gothic) {
           "T_S1_2_S0's stop must put FIRE_HOT out at its frame while the transition plays");
   require(tickUntil([&] { return smith->interactive()==nullptr && forge->stateId()<=0; },20000) && slot(*forge,fireSlot)==nullptr,
           "the smith must leave the forge at rest without FIRE_HOT");
+  // particles.d "node": FIRE_HOT with node BIP01 FPLACE stands on the forge's still root, while BIP01 PFX_FIRE, the
+  // event's node, goes up and down with the bellows
+  {
+  const auto rootBone=NpcDefinitionContract::bone(model,"BIP01 FPLACE");
+  require(rootBone!=size_t(-1),"BSFIRE_OC must have BIP01 FPLACE");
+  fireDecl.node="BIP01 FPLACE";
+  require(bellows(true) && tickUntil([&] { return inAnim("S_S1"); },5000),"the smith must light FIRE_HOT on BIP01 FPLACE and work the bellows");
+  Tempest::Vec3 first,at;
+  float low=1e9f,high=-1e9f,moved=0;
+  bool  onRoot=true;
+  for(int i=0;i<60;++i) { // 3 s: more than a cycle of the bellows
+    step(50);
+    const auto* burning=slot(*forge,fireSlot);
+    require(burning!=nullptr && burning->emitterPosition(at),"FIRE_HOT on BIP01 FPLACE must burn through S_S1");
+    if(i==0)
+      first=at;
+    moved =std::max(moved,(at-first).length());
+    onRoot=onRoot && (at-model.mapBone(rootBone)).length()<1.f;
+    low   =std::min(low,model.mapBone(fireBone).y);
+    high  =std::max(high,model.mapBone(fireBone).y);
+    }
+  std::printf("Animation effects: FIRE_HOT on BIP01 FPLACE moves %.2f cm while BIP01 PFX_FIRE goes %.1f cm\n",
+              double(moved),double(high-low));
+  require(inAnim("S_S1") && high-low>30.f && onRoot && moved<1.f,
+          "FIRE_HOT with node BIP01 FPLACE must stay on it while BIP01 PFX_FIRE goes up and down in S_S1");
+  useMob(*smith,"BSFIRE",-1);
+  require(tickUntil([&] { return smith->interactive()==nullptr && forge->stateId()<=0; },20000) && slot(*forge,fireSlot)==nullptr,
+          "the smith must leave the forge at rest after FIRE_HOT on BIP01 FPLACE");
+  fireDecl.node.clear();
+  }
   // the forge back at rest without its animation out right after the lighting (the routine's reset)
   require(bellows(true) && inAnim("T_S0_2_S1"),"the smith must light FIRE_HOT again in T_S0_2_S1");
   smith->setInteraction(nullptr,true);
@@ -3412,6 +3494,8 @@ void animationEffects(Gothic& gothic) {
   smith->setInteraction(nullptr,true);
   forge->resetPositionToTA(0);
   step(50);
+  std::tie(fireDecl.lightRange,fireDecl.lightColor,fireDecl.lightKeys,fireDecl.lightColors,fireDecl.lightFps,fireDecl.lightAt,
+           fireDecl.lightLoop,fireDecl.node)=fireLight;
 
   // the anvil's sparks of each blow go by their own time
   Npc* harad=nullptr;
@@ -3431,6 +3515,8 @@ void animationEffects(Gothic& gothic) {
     if(e.id==blow)
       until=e.timeUntil;
   require(until==struck+sparks->effectPrefferedTime(),"ANVIL_SPARKS must live their own time");
+  Effect::OwnLight none;
+  require(!slot(*anvil,blow)->ownLight(none),"ANVIL_SPARKS without an own light must bring none");
   const auto there=[&] {
     for(const auto& e:NpcDefinitionContract::effects(NpcDefinitionContract::model(*anvil)))
       if(e.id==blow && e.timeUntil==until)
