@@ -62,6 +62,7 @@ CHECKS = {
     "min_same_inventory": ("min", "same inventory, share of NPC-samples"),
     "min_same_hp": ("min", "same HP, share of NPC-samples"),
     "min_activity_same_mob": ("min", "activity: same MOB scheme when A occupies a MOB, share"),
+    "max_activity_mob_mismatch": ("max", "activity: samples where A occupies a MOB and B another or none"),
     "min_activity_same_wp": ("min", "activity: same waypoint, share"),
     "min_activity_mob_time_ratio": ("min", "activity: B/A occupied MOB samples"),
     "max_activity_mob_time_ratio": ("max", "activity: B/A occupied MOB samples"),
@@ -354,6 +355,8 @@ def activity_metrics(a, b, common, states):
                 "same_wp": share(counts["same_wp"], counts["samples"]),
                 "mob_samples_a": counts["mob_a"], "mob_samples_b": counts["mob_b"],
                 "same_mob": share(counts["same_mob"], counts["mob_a"]),
+                # A count, not a share: a share of one state set's few samples admits no mismatch at all.
+                "mob_mismatch": counts["mob_a"] - counts["same_mob"] if counts["mob_a"] else None,
                 "extra_mob": share(counts["extra_mob"], counts["samples"] - counts["mob_a"]),
                 "mob_time_ratio": share(counts["mob_b"], counts["mob_a"]),
                 "arrival_segments": len(arrivals),
@@ -477,6 +480,7 @@ def check_values(result, inventory_evidence=()):
         "max_stationary_pos_p95": result["by_movement"].get("stationary_both", {}).get("pos_p95"),
         "min_same_hp": total["same_hp"],
         "min_activity_same_mob": activity["same_mob"],
+        "max_activity_mob_mismatch": activity["mob_mismatch"],
         "min_activity_same_wp": activity["same_wp"],
         "min_activity_mob_time_ratio": activity["mob_time_ratio"],
         "max_activity_mob_time_ratio": activity["mob_time_ratio"],
@@ -573,11 +577,11 @@ def markdown(result, checks, label_a, label_b):
               "(5 minutes in npc-day-parity). Segment bounds are the first/last observed samples, including day edges.",
               "Undefined ratios or arrivals are shown as — and fail an enabled numeric check.",
               f"Summary states: {', '.join(activity['states']) if activity['states'] is not None else 'all'}; the state table always includes all states.", "",
-              "| State | Samples | Same ZS | Same MOB | Extra MOB | Same WP | MOB samples A / B | MOB time B/A | Arrival p50 / p95 / max, min | Stuck NPCs |",
-              "|---|---|---|---|---|---|---|---|---|---|"]
+              "| State | Samples | Same ZS | Same MOB | MOB mismatches | Extra MOB | Same WP | MOB samples A / B | MOB time B/A | Arrival p50 / p95 / max, min | Stuck NPCs |",
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
     for state, item in [("**Selected total**", activity["total"]), *activity["by_state"].items()]:
         lines.append(f"| {state} | {item['samples']} | {pct(item['same_zs'])} | {pct(item['same_mob'])} | "
-                     f"{pct(item['extra_mob'])} | {pct(item['same_wp'])} | {item['mob_samples_a']} / {item['mob_samples_b']} | "
+                     f"{fmt(item['mob_mismatch'])} | {pct(item['extra_mob'])} | {pct(item['same_wp'])} | {item['mob_samples_a']} / {item['mob_samples_b']} | "
                      f"{fmt(item['mob_time_ratio'], 4)} | {fmt(item['arrival_p50'])} / {fmt(item['arrival_p95'])} / "
                      f"{fmt(item['arrival_max'])} | {item['stuck_npcs']} |")
     lines += ["", "### Stuck routine segments (all states)", "",

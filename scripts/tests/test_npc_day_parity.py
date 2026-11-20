@@ -305,6 +305,7 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
     assert total["samples"] == 18
     assert total["same_zs"] == total["same_wp"] == 17 / 18
     assert total["same_mob"] == 10 / 14 and total["extra_mob"] == 1 / 4
+    assert total["mob_mismatch"] == 4
     assert total["mob_samples_a"] == 14 and total["mob_samples_b"] == 12
     assert total["mob_time_ratio"] == 12 / 14
     assert total["arrival_segments"] == 2
@@ -313,12 +314,12 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
     assert total["stuck"] == [{"key": "SMITH#0", "state": "ZS_SMITH", "ta": "second", "start_min": 25,
                                 "end_min": 40, "arrival_a_min": 0, "arrival_b_min": None, "delay_min": None}]
     smith = activity["by_state"]["ZS_SMITH"]
-    assert smith["samples"] == 9 and smith["same_mob"] == 2 / 6
+    assert smith["samples"] == 9 and smith["same_mob"] == 2 / 6 and smith["mob_mismatch"] == 4
     assert smith["extra_mob"] == 0 and smith["same_wp"] == smith["same_zs"] == 8 / 9
     assert smith["mob_time_ratio"] == 3 / 6 and smith["arrival_p95"] == 5
 
     # Every new bound passes on its boundary and fails just outside it.
-    limits = {"min_activity_same_mob": 10 / 14, "min_activity_same_wp": 17 / 18,
+    limits = {"min_activity_same_mob": 10 / 14, "max_activity_mob_mismatch": 4, "min_activity_same_wp": 17 / 18,
               "min_activity_mob_time_ratio": 12 / 14, "max_activity_mob_time_ratio": 12 / 14,
               "max_activity_arrival_p95": total["arrival_p95"], "max_activity_arrival_max": 5,
               "max_activity_stuck": 1}
@@ -328,6 +329,7 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
     filtered = npc_day_parity.compare(aa, bb, activity_states={"ZS_READ"})
     assert filtered["activity"]["total"] == activity["by_state"]["ZS_READ"]
     assert filtered["activity"]["by_state"] == activity["by_state"]
+    assert filtered["activity"]["total"]["mob_mismatch"] == 0
     assert {check["name"] for check in npc_day_parity.evaluate(filtered, outside) if not check["pass"]} == {
         "max_activity_mob_time_ratio"}
 
@@ -378,5 +380,6 @@ def test_activity_segments_repeat_after_no_routine_and_empty_metrics_fail(tmp_pa
     assert total["arrival_p95"] == 0 and total["stuck_npcs"] == 1
     assert total["stuck"][0]["start_min"] == 15
     missing = npc_day_parity.compare(aa, bb, activity_states={"ZS_ABSENT"})
-    checks = npc_day_parity.evaluate(missing, {"min_activity_same_mob": 0, "max_activity_arrival_p95": 5})
+    checks = npc_day_parity.evaluate(missing, {"min_activity_same_mob": 0, "max_activity_mob_mismatch": 4,
+                                               "max_activity_arrival_p95": 5})
     assert all(not check["pass"] for check in checks)
