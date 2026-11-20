@@ -1,6 +1,6 @@
 // Mesh stage of the compact foliage cards (main.vert). A workgroup draws push.meshletCount cut nodes of one command:
 // a node alone left most of its group idle, and the frame paid for every group. The mesh path keeps the vertex
-// count of a node above its first index (TreeBoughRender::uploadData), so no lane reads the range header here.
+// count of a node above its first index (TreeBoughRender::uploadData): the layout of a group comes from the payload alone.
 const uint BoughFirstIndexBits = 26u;
 
 uint boughFirstIndex(uvec4 task) {

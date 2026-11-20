@@ -226,11 +226,11 @@ void TreeBoughRender::uploadData() {
     words.insert(words.end(),source.roots.begin(),source.roots.end());
     words.resize(ranges);
     std::memcpy(words.data()+nodes,source.nodes.data(),source.nodes.size()*sizeof(TreeBough::Node));
-    const bool mesh = Shaders::options().doMeshShading;
+    const bool packed = Shaders::options().doMeshShading;
     for(size_t i=0; i<source.ranges.size(); ++i) {
       const auto& r = source.ranges[i];
       // tree_bough_mesh.glsl: a mesh workgroup lays out its nodes without reading their index headers
-      const uint32_t first = mesh ? r.firstIndex | (r.vertexCount << TreeBough::FirstIndexBits) : r.firstIndex;
+      const uint32_t first = packed ? r.firstIndex | (r.vertexCount << TreeBough::FirstIndexBits) : r.firstIndex;
       words.insert(words.end(),{first,r.indexCount,asset.rangeCommands[i],r.cardCount});
       }
     asset.offset = base;

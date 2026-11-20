@@ -44,8 +44,8 @@ void treeBoughRasterCases(Tempest::Device& device) {
   const std::array<uint32_t,4> meshTasks[] = {
     meshTask(0,4,0,indicesPerCard,0), meshTask(0,4,1,indicesPerCard,0x800000u),
     meshTask(0,4,1u | TreeBough::DescendantSide,indicesPerCard,0x800000u),
-    meshTask(7,4,0,indicesPerCard,0), meshTask(14,4,2,indicesPerCard,0x400000u),
-    meshTask(21,3,3u | TreeBough::DescendantSide,3,0xc00000u), {},
+    meshTask(7,4,0,indicesPerCard,0), meshTask(14,4,2,indicesPerCard,0xc00000u),
+    meshTask(21,3,4u | TreeBough::DescendantSide,3,0x400000u), {},
     };
   const float instance[16] = {1.f,0.f,0.f, 0.f,1.f,0.f, 0.f,0.f,1.f, 0.f,0.f,0.f};
   uint32_t bucket[36] = {};
@@ -155,15 +155,18 @@ void treeBoughRasterCases(Tempest::Device& device) {
       // One workgroup of four nodes covers what the same nodes cover one by one, with their own bands.
       const auto single = renderGroups(bough,compactIbo,3,instances,1,4);
       const auto packedGroup = renderGroups(bough,compactIbo,3,instances,4,1);
-      const auto steady = render(bough,compactIbo,3,instances);
-      size_t steadyPixels = 0, groupPixels = 0;
-      for(size_t i=0; i<side*side; ++i) {
-        steadyPixels += size_t(covered(steady,i));
+      size_t groupPixels = 0;
+      for(size_t i=0; i<side*side; ++i)
         groupPixels += size_t(covered(packedGroup,i));
-        }
       require(std::memcmp(single.data(),packedGroup.data(),single.dataSize())==0,
               "a packed bough workgroup differs from its nodes drawn one by one");
-      require(steadyPixels>0 && groupPixels>steadyPixels, "bough packing fixture missed a node");
+      for(uint32_t node=3; node<6; ++node) {
+        const auto alone = render(bough,compactIbo,node,instances);
+        size_t pixels = 0;
+        for(size_t i=0; i<side*side; ++i)
+          pixels += size_t(covered(alone,i));
+        require(pixels>0 && pixels<groupPixels, "bough packing fixture missed a node");
+        }
       std::cout << "tree bough mesh packing: " << groupPixels << " pixels of four nodes in one workgroup\n";
       }
     treeLevelBandRaster(device, render, covered, jointGeometry, packedIbo, instance, jointInstance, baseline, jointWood, mesh);
