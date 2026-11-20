@@ -6,6 +6,7 @@ twice in the mode of pairs (reports/engine/2026-11-16-modern-trees/two-sided.md)
 import copy
 import hashlib
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -222,6 +223,33 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path, monkeyp
             selected = tree_hierarchy_probe.cut(relaxed, relaxed_roots, screen_height, 1.)
             assert sorted(leaf for ident in selected for leaf in relaxed[ident - 1].leaves) == sorted(cut)
 
+    # The staggered law keeps each band under the bands below it and spreads the parents of cards evenly.
+    monkeypatch.setattr(tree_hierarchy_probe, 'STAGGER_PX', (800., 100.))
+    for ratio in (11 / 9, 1.5):
+        spread, spread_roots, _, _ = tree_hierarchy_probe.read_eye_hierarchy(tmp_path, source, parts[1])
+        tree_hierarchy_probe.stagger(spread, 1., ratio)
+
+        def chain(ident, upper):
+            node = spread[ident - 1]
+            if node.children:
+                assert 0 < node.low_px < node.threshold_px < node.high_px
+                assert node.high_px / node.low_px == pytest.approx(ratio)
+                assert node.low_px >= upper
+                for child in node.children:
+                    chain(child, max(upper, node.high_px))
+        for root in spread_roots:
+            chain(root, 0.)
+        cards = [node.threshold_px / node.diameter for node in spread
+                 if node.children and not any(spread[i - 1].children for i in node.children)]
+        octaves = np.log2(800 / np.array(cards))
+        assert np.all((octaves > 0) & (octaves < 3))
+        assert max(np.count_nonzero((octaves >= i) & (octaves < i + 1)) for i in range(3)) <= math.ceil(len(cards) / 3)
+        centres = sorted({0., *(node.threshold_px / node.diameter for node in spread if node.children), 1e6})
+        for below, above in zip(centres, centres[1:]):
+            for screen_height in (below, (below + above) / 2):
+                selected = tree_hierarchy_probe.cut(spread, spread_roots, screen_height, 1.)
+                assert sorted(leaf for ident in selected for leaf in spread[ident - 1].leaves) == sorted(cut)
+
     bake = tree_hierarchy_probe.bake
     monkeypatch.setattr(bake, 'BOUGH_SIDE', 128)
     tile = np.ones((12, 16, 4), np.float32)
@@ -233,9 +261,9 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path, monkeyp
     # The old ×4 skyline places these same-size tiles in ID order, at four per row.
     tiles = [(mapped[ident]['page'], *(mapped[ident]['uv'][0] * 128)) for ident in sorted(parents)]
     assert tiles == [(0, 8 + 32 * (i % 4), 8 + 32 * (i // 4)) for i in range(len(parents))]
-    assert fir_hierarchy.parent_material(0, 2, 4) == 'FIR_HIERARCHY_0_2'
-    assert fir_hierarchy.parent_material(0, 2, 8) == 'FIR_HIERARCHY_X8_0_2'
-    assert fir_hierarchy.parent_material(0, 2, 16) == 'FIR_HIERARCHY_X16_0_2'
+    assert fir_hierarchy.parent_material(0, 2, 'X4') == 'FIR_HIERARCHY_0_2'
+    assert fir_hierarchy.parent_material(0, 2, 'X8') == 'FIR_HIERARCHY_X8_0_2'
+    assert fir_hierarchy.parent_material(0, 2, 'X16') == 'FIR_HIERARCHY_X16_0_2'
     for ident, parent in mapped.items():
         assert parent['position'].tobytes() == stored_parents[ident]['position'].tobytes()
         assert parent['colour'][:, :3].tobytes() == stored_parents[ident]['colour'][:, :3].tobytes()

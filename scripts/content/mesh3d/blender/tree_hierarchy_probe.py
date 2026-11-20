@@ -22,6 +22,12 @@ import tree_prefix
 HEIGHTS = (800, 400, 300, 200, 150, 100, 70, 50)
 LEVEL_HEIGHTS = (400, 200, 100, 50)
 EYE_FACTORS = (4, 8, 16)
+# Merge moments of the parents of original cards, log-uniform in whole-tree pixels.
+# The geometric mean, 200 px, stays at the median of the accepted ×4 hang and end bands.
+STAGGER_PX = (800., 50.)
+STAGGER_GAP = 2.  # octaves below the latest moment an older node may wait
+# Spruce A's impostor (49 px) takes over completely below 46 px and starts below 56 px.
+SOLID_PX = 56
 
 
 def read_rgba(path):
@@ -76,6 +82,51 @@ def schedule(nodes, fits, parents, height_m, certify):
         merges.append(lod.CutMerge(node.high_px * scale, node.low_px * scale, before, after, node.leaf_count))
         states[node.id] = (after, node.low_px)
     return merges
+
+
+def stable_unit(ident):
+    """A fixed pseudo-random fraction for a node ID (the splitmix64 finalizer)."""
+    z = (ident * 0x9E3779B97F4A7C15 + 0x9E3779B97F4A7C15) % 2 ** 64
+    z = (z ^ z >> 30) * 0xBF58476D1CE4E5B9 % 2 ** 64
+    z = (z ^ z >> 27) * 0x94D049BB133111EB % 2 ** 64
+    return (z ^ z >> 31) / 2 ** 64
+
+
+def stagger(nodes, height_m, ratio):
+    """Spread the merge moments of the enabled bands over the whole flight in whole-tree pixels.
+
+    Each level of the hierarchy, counted up from the original cards, takes the order of its moments from
+    a hash of the node IDs, so that neighbours in the crown do not merge one after another. Parents of
+    cards are spread evenly in log height over STAGGER_PX. An older node merges from zero to STAGGER_GAP
+    octaves below the latest moment at which its band stays under the lower edges of all bands below it
+    in node-local pixels, which is the loader's rule for an ancestor chain.
+    """
+    band = (ratio - 1) / (ratio + 1)
+    level, ready = {}, {}
+    for node in nodes:
+        level[node.id] = 1 + max(level[child] for child in node.children) if node.children else 0
+    order = defaultdict(list)
+    for node in nodes:
+        if node.children and node.high_px:
+            order[level[node.id]].append(node.id)
+    unit = {ident: (rank + .5) / len(ids) for ids in order.values()
+            for rank, ident in enumerate(sorted(ids, key=stable_unit))}
+    top, bottom = STAGGER_PX
+    for node in nodes:
+        # Lowest band edge below the node in its own pixels.
+        ready[node.id] = min((ready[child] for child in node.children), default=math.inf)
+        if not node.children or not node.high_px:
+            continue
+        scale = node.diameter / height_m
+        latest = ready[node.id] / (1 + band) / scale
+        if math.isinf(latest):
+            moment = top * (bottom / top) ** unit[node.id]
+        else:
+            moment = latest * 2 ** (-STAGGER_GAP * unit[node.id])
+        node.threshold_px = moment * scale
+        node.high_px = node.threshold_px * (1 + band)
+        node.low_px = node.threshold_px * (1 - band)
+        ready[node.id] = node.low_px
 
 
 def cut(nodes, roots, height_px, height_m, *, k=1):
@@ -273,20 +324,61 @@ def eye_levels(args, output):
             print(json.dumps(dict(k=k, height=height, views=len(rows), **costs[k][height], **ranges)), flush=True)
 
 
+def level_spread(nodes, height_m):
+    """Merge moments in whole-tree pixels per level, counted up from the original cards."""
+    level, moments = {}, defaultdict(list)
+    for node in nodes:
+        level[node.id] = 1 + max(level[child] for child in node.children) if node.children else 0
+        if node.children and node.high_px:
+            moments[level[node.id]].append(node.threshold_px * height_m / node.diameter)
+    spread = {}
+    for depth, values in sorted(moments.items()):
+        values = np.sort(values)
+        octave = np.searchsorted(values, 2 * values, side='left') - np.arange(len(values))
+        spread[depth] = dict(nodes=len(values), geometric_mean_px=float(np.exp(np.log(values).mean())),
+                             p5_p50_p95_px=np.percentile(values, (5, 50, 95)).tolist(),
+                             octave_max_share=float(octave.max() / len(values)))
+    return spread
+
+
+def band_measures(nodes, height_m, parents):
+    """Turnover per 1% of height over the 3D range and with the solid crown only, and the level spread."""
+    merges, (cards, _) = lod.progressive_merges(nodes, height_m, parents)
+    turnover = {}
+    for low in (30, SOLID_PX):
+        steps, grid = lod.turnover_steps(merges, cards, 800, low)
+        regular = steps[1:-2]
+        peak = int(np.argmax(regular)) + 1
+        turnover[f'{low}-800'] = dict(max_pct=100 * float(steps[peak]), p95_pct=100 * float(np.percentile(regular, 95)),
+                                      above_px=float(grid[peak - 1]), below_px=float(grid[peak]))
+    return dict(turnover=turnover, levels=level_spread(nodes, height_m))
+
+
+def bough_nodes(args, foliage):
+    """Read the strict hierarchy with its bands scaled by k or rescheduled by the staggered law."""
+    if args.stagger:
+        nodes, roots, parents, height_m = read_eye_hierarchy(args.bough, args.glb, foliage)
+        stagger(nodes, height_m, args.stagger)
+        return nodes, roots, parents, height_m, f'S{round(100 * args.stagger)}'
+    return (*read_eye_hierarchy(args.bough, args.glb, foliage, k=args.k), f'X{args.k}')
+
+
 def bough(args, output):
-    k = args.k
     source = tree_glb.read(args.glb)
     crown = dict(rgba=read_rgba(args.atlas), tangent_normal=read_normal(args.normal))
     wood, foliage = parts_for_comparison(source, crown, dict(rgba=read_rgba(args.bark)))
-    nodes, roots, parents, height_m = read_eye_hierarchy(args.bough, args.glb, foliage, k=k)
+    nodes, roots, parents, height_m, label = bough_nodes(args, foliage)
+    if args.bands_only:
+        print(json.dumps(band_measures(nodes, height_m, parents), allow_nan=False))
+        return
     px_per_m = {ident: nodes[ident - 1].high_px / nodes[ident - 1].diameter for ident in parents}
     print(f'Baking all {len(parents)} parent nodes', flush=True)
     fits = bake.rebake_cards(foliage, nodes, parents, px_per_m, jobs=args.jobs, samples=4)
     mapped, atlas, textures, coverage, area = bake.pack_bough(output, fits, parents)
     unpadded = sum(card['rgba'].shape[0] * card['rgba'].shape[1] for cards in fits.values() for card in cards)
-    sizes = fir_hierarchy.export(output / f'OWN_TREE_FIR_A_BOUGH_X{k}_H.glb', source, nodes, roots, mapped, atlas,
+    sizes = fir_hierarchy.export(output / f'OWN_TREE_FIR_A_BOUGH_{label}_H.glb', source, nodes, roots, mapped, atlas,
                                  metadata=dict(height_m=height_m, source=hashlib.sha256(args.glb.read_bytes()).hexdigest()),
-                                 k=k)
+                                 label=label)
     print(f"{atlas['tiles']} cards on {len(atlas['pages'])} pages, {atlas['bytes']} DDS bytes", flush=True)
 
     level_wood = {height: len(tree_prefix.split_parts(tree_glb.read(path))[0]['index'])
@@ -298,9 +390,12 @@ def bough(args, output):
             for height in HEIGHTS if height != 800}
     print(f'Measuring hard centre cuts at {len(cuts)} heights in 24 cameras', flush=True)
     views = raster.tree_comparisons([wood, foliage], {'cut': cuts}, jpeg_dir=args.sheets,
-                                    sheet_prefix=f'tree-bough-x{k}', sheet_label=f'Cut ×{k}')
+                                    sheet_prefix=f'tree-bough-{label.lower()}',
+                                    sheet_label=f'Stagger {args.stagger:.2f}' if args.stagger else f'Cut ×{args.k}')
     result = dict(views=views['cut'], curve=curve, coverage=coverage, atlas=atlas, sizes=sizes,
                   padded_texels=area, content_texels=unpadded)
+    if args.stagger:
+        result['bands'] = band_measures(nodes, height_m, parents)
     (output / 'result.json').write_text(json.dumps(result, allow_nan=False, separators=(',', ':')) + '\n')
     print(f'Data and metrics in {output}', flush=True)
 
@@ -317,6 +412,9 @@ def main():
     parser.add_argument('--sheets', type=Path)
     parser.add_argument('--jobs', type=int, default=1)
     parser.add_argument('--k', type=int, choices=EYE_FACTORS, default=4, help='tolerance multiplier for --bough')
+    parser.add_argument('--stagger', type=float, metavar='RATIO',
+                        help='for --bough: staggered merge moments with this high/low band ratio instead of --k')
+    parser.add_argument('--bands-only', action='store_true', help='for --bough: print the band measures and stop')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--eye', type=Path, help='read a saved hierarchy and bake and measure its relaxed cuts')
     mode.add_argument('--bough', '--bough-x4', type=Path, help='reprint all parents for the scaled bands')
