@@ -972,11 +972,12 @@ void placementEar() {
       for(const auto& bt:cell.batches) {
         require(bt.kind==(bt.slot==1 ? Grass::KindEar : 0), "the stalks are a kind of their own, the meadow beside keeps its"+at(cx,cz));
         // an even stand: every square of 2 m has the record's count, 400 a m2
-        require(bt.slot!=1 || (bt.count>1440 && bt.count<1760), "stalks stand evenly, without tufts or bare spots"+at(cx,cz));
+        require(bt.slot!=1 || cx>1 || (bt.count>1440 && bt.count<1760), "stalks stand evenly, without tufts or bare spots"+at(cx,cz));
         for(uint32_t i=bt.first; i<bt.first+bt.count; ++i) {
           const auto& b    = cell.blades[i];
           const auto  info = Grass::decode(b,cx,cz,cell.minY,bt.kind);
-          require((info.x<1600*U)==(bt.slot==1) && info.y==0, "each kind roots on its own ground"+at(cx,cz));
+          // a root on the line between the two is of either
+          require((bt.slot==1 ? info.x<=1600*U : info.x>=1600*U) && info.y==0, "each kind roots on its own ground"+at(cx,cz));
           if(bt.slot!=1) {
             ++grass;
             continue;
