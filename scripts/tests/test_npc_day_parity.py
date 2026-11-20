@@ -361,7 +361,6 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
                                 "--json", str(data)]) == 1
     assert {c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]} == set(health.values())
     healthy = {"watchdog": 0, "reservation_expired": 0, "reservation_ownerless": 0, "double_occupancy": 0,
-               "reservations": 3, "reservation_bypassed": 0,
                "states": {"ZS_SMITH": {"steps": 4, "wakes": {"entered": 2, "queue": 2}}}}
     (a / "npc-day.json").write_text(json.dumps({**header, "activity_events": healthy}))
     assert npc_day_parity.main([str(a), str(a), "--tolerances", str(ACTIVITY), "--out", str(out)]) == 0
@@ -373,6 +372,12 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
     assert npc_day_parity.main([str(a), str(bare), "--tolerances", str(ACTIVITY), "--out", str(out),
                                 "--json", str(data)]) == 1
     assert {c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]} == set(health.values())
+    # ...one counter missing in B fails exactly its own check...
+    partial = tmp_path / "partial"
+    journal(partial, a_rows, [], {**header, "activity_events": {k: v for k, v in healthy.items() if k != "reservation_expired"}})
+    assert npc_day_parity.main([str(a), str(partial), "--tolerances", str(ACTIVITY), "--out", str(out),
+                                "--json", str(data)]) == 1
+    assert [c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]] == ["max_activity_reservation_expired"]
     # ...and one bad counter in B, with A healthy, fails exactly its own check.
     for counter, check in health.items():
         c = tmp_path / ("c-" + counter)

@@ -607,8 +607,7 @@ def markdown(result, checks, label_a, label_b):
     else:
         lines += [f"Watchdog restarts {events.get('watchdog')}, expired reservations {events.get('reservation_expired')}, "
                   f"reservations without a living owner {events.get('reservation_ownerless')}, two NPCs on one place "
-                  f"{events.get('double_occupancy')}; reservations made {events.get('reservations')}, taken past a "
-                  f"reservation {events.get('reservation_bypassed')}.", "",
+                  f"{events.get('double_occupancy')}.", "",
                   "| State | Place checks | Wakes |", "|---|---|---|"]
         for state, item in events.get("states", {}).items():
             wakes = ", ".join(f"{name} {count}" for name, count in item.get("wakes", {}).items() if count)

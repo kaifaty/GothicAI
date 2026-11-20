@@ -21,10 +21,13 @@ ActivityEvents::Stats& ActivityEvents::stats() {
 
 void ActivityEvents::reset() {
   stats() = Stats();
+  stats().counting = true;
   }
 
 void ActivityEvents::countWakes(std::string_view state, uint16_t wakes, bool step) {
   auto& st = stats();
+  if(!st.counting)
+    return;
   auto  it = st.states.find(state);
   if(it==st.states.end())
     it = st.states.emplace(std::string(state),StateStats()).first;
@@ -41,7 +44,6 @@ std::string ActivityEvents::json() {
   const auto& st = stats();
   std::string ret = "{\"watchdog\":"+std::to_string(st.watchdog)+",\"reservation_expired\":"+std::to_string(st.expired)+
                     ",\"reservation_ownerless\":"+std::to_string(st.ownerless)+",\"double_occupancy\":"+std::to_string(st.doubled)+
-                    ",\"reservations\":"+std::to_string(st.reserved)+",\"reservation_bypassed\":"+std::to_string(st.bypassed)+
                     ",\"states\":{";
   bool first = true;
   for(const auto& [name,s]:st.states) {

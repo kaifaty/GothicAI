@@ -66,14 +66,13 @@ struct StateStats final {
 struct Stats final {
   std::map<std::string,StateStats,std::less<>> states;
   uint64_t watchdog  = 0;            // waits that outlived WatchdogMs
-  uint64_t reserved  = 0;            // reservations made
   uint64_t expired   = 0;            // reservations whose owner never attached in ReservationMs
   uint64_t ownerless = 0;            // reservations whose owner is dead, gone or no longer holds them
   uint64_t doubled   = 0;            // two NPCs on one place
-  uint64_t bypassed  = 0;            // a reserved place taken by another NPC without a reservation
+  bool     counting  = false;        // the wakes are counted only while a journal or a contract reads them
   };
 Stats&      stats();
-void        reset();
+void        reset(); // zero counters, and count the wakes from now on
 void        countWakes(std::string_view state, uint16_t wakes, bool step);
 std::string json();
 }

@@ -132,6 +132,15 @@ int Npc::invokeRoutine(ScriptFn function) {
   return owner.rules().invokeState(this,currentOther,currentVictim,function);
   }
 
+void Npc::runStateInit() {
+  aiState.started      = true;
+  aiState.loopNextTime = owner.tickCount();
+  // WA: for gothic1 dialogs
+  perceptionNextTime   = owner.tickCount();
+  invokeRoutine(aiState.funcIni);
+  startActivityEvents();
+  }
+
 void Npc::tickRoutine() {
   if(!aiState.funcIni.isValid() && !isPlayer()) {
     auto r = currentRoutine();
@@ -150,12 +159,7 @@ void Npc::tickRoutine() {
     return;
 
   if(!aiState.started) {
-    aiState.started      = true;
-    aiState.loopNextTime = owner.tickCount();
-    // WA: for gothic1 dialogs
-    perceptionNextTime   = owner.tickCount();
-    invokeRoutine(aiState.funcIni);
-    startActivityEvents();
+    runStateInit();
     return;
     }
 

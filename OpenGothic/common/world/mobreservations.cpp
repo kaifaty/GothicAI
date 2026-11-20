@@ -41,7 +41,6 @@ bool MobReservations::reserve(Npc& npc, Interactive& mob) {
       }
   release(npc);
   reservations.push_back({&npc,&mob,until});
-  ++ActivityEvents::stats().reserved;
   return true;
   }
 
@@ -72,7 +71,6 @@ void MobReservations::attached(Npc& npc, Interactive& mob) {
       }
     if(r.mob==&mob) {
       // taken past the reservation (a script's AI_UseMob, the hero): the owner looks again
-      ++st.bypassed;
       auto* owner = r.owner;
       reservations.erase(reservations.begin()+int(i));
       owner->wakeActivity(ActivityEvents::AttachFailed);

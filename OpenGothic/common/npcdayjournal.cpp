@@ -337,6 +337,7 @@ void finish(World& w, Journal& j, const char* reason) {
   w.mobReservations().audit(true);
   writeHeader(w,j,std::string(buf)+",\"logic_audit\":"+NpcLogicAudit::stats().json()+
                   ",\"activity_events\":"+ActivityEvents::json());
+  ActivityEvents::stats().counting = false;
   // Play after the journal goes back to the shared stream. Only the streams registered here are
   // dropped: BodyArena's own isolation is a separate user (it clears all streams on reset), and the
   // two must not run in one scenario.

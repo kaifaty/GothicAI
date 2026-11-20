@@ -60,8 +60,7 @@ bool Npc::armActivityEvents() {
 void Npc::tickActivityEvents() {
   auto& s = activityEvents;
   if(s.restart) {
-    stopActivityEvents(0);
-    aiState.started = false; // Init runs on the next routine tick
+    runStateInit(); // Init again on this tick: the state stays started, an interruption still runs End
     return;
     }
   if(s.awaitQueue && aiQueue.size()==0) {
@@ -86,17 +85,29 @@ void Npc::tickActivityDeadline() {
   // checked here: its watchdog, and for a queued use also the end of the row on the perception clock.
   using ActivityEvents::Stage;
   auto& s = activityEvents;
-  if(s.activity==nullptr || s.retry || (s.stage!=Stage::Approach && s.stage!=Stage::Attach) ||
-     (aiQueue.size()==0 && go2.empty()))
+  const bool busy = aiQueue.size()>0 || !go2.empty();
+  if(aiState.started && aiState.funcIni.isValid() && s.init!=aiState.funcIni.ptr) {
+    // A loaded game: the activity's saved use or walk waits for the check after the load.
+    if(armActivityEvents() && busy)
+      dropActivityCommand();
+    return;
+    }
+  if(s.activity==nullptr || s.retry || (s.stage!=Stage::Approach && s.stage!=Stage::Attach) || !busy)
     return;
   const auto now = owner.time();
   if(s.deadline<=now) {
     fireActivityWatchdog();
     return;
     }
-  if(s.stage==Stage::Attach && aiState.loopNextTime<=owner.tickCount() && aiState.eTime<=now &&
-     currentTarget==nullptr && outputPipe->isFinished())
-    dropActivityCommand(); // the routine tick ends the row now
+  if(s.stage!=Stage::Attach)
+    return;
+  const bool rowOver = aiState.loopNextTime<=owner.tickCount() && aiState.eTime<=now &&
+                       currentTarget==nullptr && outputPipe->isFinished();
+  // The reservation of a use not yet attached expired, or another NPC took the object: the use goes, the
+  // activity looks again once the queue is empty.
+  const bool lost    = currentInteract==nullptr && owner.mobReservations().reserved(*this)==nullptr;
+  if(rowOver || lost)
+    dropActivityCommand(); // the routine tick then ends the row or looks again, once the queue is empty
   }
 
 void Npc::fireActivityWatchdog() {
@@ -106,14 +117,20 @@ void Npc::fireActivityWatchdog() {
   }
 
 void Npc::dropActivityCommand() {
-  // Only the activity's own command and its walk; a command queued behind it (AI_StartState) still runs.
+  // Only the activity's own use or its walk to the routine point: a command queued behind runs, the walk of
+  // another command goes on, a leave (AI_UseMob with another state) stays.
   const auto& a     = *activityEvents.activity;
   const auto* front = aiQueue.front();
-  if(front!=nullptr && ((front->act==AI_UseMob && front->s0==a.scheme) ||
-                        (front->act==AI_GoToPoint && front->point!=nullptr && front->point->name==hnpc->wp)))
+  const bool  use   = front!=nullptr && front->act==AI_UseMob && front->s0==a.scheme && front->i0==a.useState;
+  const bool  step  = front!=nullptr && front->act==AI_GoToPoint && front->point!=nullptr && front->point->name==hnpc->wp;
+  const bool  walk  = step || (wayPath.last()!=nullptr && wayPath.last()->name==hnpc->wp) ||
+                      (go2.wp!=nullptr && go2.wp->name==hnpc->wp);
+  if(use || step)
     aiQueue.pop();
-  clearGoTo();
-  wayPath.clear();
+  if(use || walk) {
+    clearGoTo();
+    wayPath.clear();
+    }
   owner.mobReservations().release(*this);
   }
 
@@ -121,7 +138,11 @@ void Npc::stepActivityEvents(uint16_t wakes) {
   using namespace ActivityEvents;
   auto& s = activityEvents;
   if(wakes & Watchdog) {
-    seekActivityPlace();
+    // a walk to the routine point starts over, any other wait looks for the place again
+    if(s.stage==Stage::Approach)
+      runStateInit();
+    else
+      seekActivityPlace();
     return;
     }
   if(wakes & Loaded) {
@@ -130,8 +151,7 @@ void Npc::stepActivityEvents(uint16_t wakes) {
       seekActivityPlace();
       return;
       }
-    stopActivityEvents(0);
-    aiState.started = false;
+    runStateInit();
     return;
     }
   switch(s.stage) {
@@ -146,7 +166,8 @@ void Npc::stepActivityEvents(uint16_t wakes) {
         seekActivityPlace();
       break;
     case Stage::Wait:
-      if(wakes & Freed)
+      // a freed place, or the body itself free of another object
+      if(wakes & (Freed|Detached))
         seekActivityPlace();
       break;
     case Stage::Hold:
