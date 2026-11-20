@@ -1,0 +1,27 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+
+#include "tree_bough_dissolve.glsl"
+
+// gothic-mesh-gltf-test (tests/tree_level_band_test.h): both sides of a level band's word over 64x64 cells, in the
+// main view and in the shadows. x: cells drawn by both sides or by none, y and z: cells of the coarser side
+layout(local_size_x = 1) in;
+layout(binding = 0, std430) readonly buffer Words { uint words[]; };
+layout(binding = 1, std430) writeonly buffer Result { uvec4 result[]; };
+
+void main() {
+  for(uint i=0u; i<uint(words.length()); ++i) {
+    uvec4 sides = uvec4(0);
+    for(uint scale=0u; scale<2u; ++scale) {
+      for(uint at=0u; at<4096u; ++at) {
+        const uvec2 cell = uvec2(at % 64u, at / 64u);
+        const bool fine = boughBandCovers(words[i], scale==1u, cell, 77u + i);
+        const bool coarse = boughBandCovers(words[i] | BoughBandCoarse, scale==1u, cell, 77u + i);
+        sides.x += uint(fine==coarse);
+        sides[1u + scale] += uint(coarse);
+        }
+      }
+    result[i] = sides;
+    }
+  }
