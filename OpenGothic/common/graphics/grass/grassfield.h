@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Tempest/CommandBuffer>
+#include <Tempest/DescriptorArray>
 #include <Tempest/Encoder>
 #include <Tempest/IndexBuffer>
 #include <Tempest/StorageBuffer>
@@ -80,7 +81,16 @@ class GrassField final {
     void update();
     // prepare once before the G-buffer pass, then draw the prepared list inside it
     void prepare(uint8_t fId);
+    void cull(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, const Tempest::Texture2d& hiZ,
+              float depthRoundoff);
     void draw(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool historyOwner = false);
+
+    struct CullStats final {
+      uint32_t candidates = 0;
+      uint32_t view       = 0;
+      uint32_t growth     = 0;
+      uint32_t depth      = 0;
+      };
 
     struct Stats final {
       size_t cells     = 0; // with blades
@@ -95,6 +105,7 @@ class GrassField final {
       size_t bytes     = 0; // of the buffers
       size_t waiting   = 0; // cells not built yet
       Grass::Waste waste;      // with OPENGOTHIC_GRASS_WASTE=1: of the drawn those submitted for nothing
+      CullStats cull;
       };
     Stats stats() const { return last; }
     // nothing is being built for the camera's place of the last frame, and no chunk came since; without the blades
@@ -233,6 +244,11 @@ class GrassField final {
     std::vector<uint32_t>               spanCpu;
     Tempest::StorageBuffer              spanGpu[2];      // by the frame in flight (Resources::MaxFramesInFlight)
     Tempest::StorageBuffer              indirectGpu[2];
+    struct CullFrame final {
+      Tempest::DescriptorArray cells;
+      Tempest::StorageBuffer   draws, blocks, compact, windows, stats;
+      uint32_t                 candidates = 0; // of the dispatch whose stats this slot holds
+      } cullGpu[2];
     uint32_t                            wasteFrame = 0;
     uint64_t                            prepareNs  = 0;
     uint64_t                            drawNs     = 0;

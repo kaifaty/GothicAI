@@ -106,7 +106,8 @@ class WorldView {
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId, uint8_t layer);
     void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    void prepareGrass   (uint8_t frameId);
+    void prepareGrass   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId,
+                         const Tempest::Texture2d& hiZ, float depthRoundoff = 0.f);
     void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId, bool landscapeOnly,
                          DrawCommands::HistoryDraw history = DrawCommands::HistoryDraw::Off);
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);

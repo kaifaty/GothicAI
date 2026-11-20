@@ -73,8 +73,8 @@ class Shaders {
 
     // Blood on the GBuffer (physics stage 8, step 4c): albedo RGB, and roughness with material maps
     Tempest::RenderPipeline  bloodDecal, bloodDecalAlbedo; // with and without the ORM target
-    Tempest::RenderPipeline  grass;                        // blades into the G-buffer; only with material maps
-    Tempest::RenderPipeline  grassHistoryGBuffer;
+    Tempest::RenderPipeline  grass[2], grassCulled[2];      // indexed by whether the G-buffer writes history owners
+    Tempest::ComputePipeline grassCull, grassCullFinish;
     Tempest::ComputePipeline grassContactMask;
     Tempest::RenderPipeline  sun;
     Tempest::ComputePipeline cloudsLut, fogOcclusion, fogOcclusionEmpty;
@@ -184,6 +184,7 @@ class Shaders {
     Tempest::RenderPipeline  postEffect(std::string_view name, Tempest::RenderState::ZTestMode ztest);
     Tempest::RenderPipeline  postEffect(std::string_view vs, std::string_view fs, Tempest::RenderState::ZTestMode ztest = Tempest::RenderState::ZTestMode::LEqual);
     Tempest::ComputePipeline computeShader(std::string_view name);
+    void compileGrassShaders(bool historySupported);
     Tempest::RenderPipeline  fogShader (std::string_view name);
     Tempest::RenderPipeline  inWaterShader   (std::string_view name, bool isScattering);
     Tempest::RenderPipeline  reflectionShader(std::string_view name, bool hasMeshlets);

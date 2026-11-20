@@ -1002,7 +1002,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     if(verify)
       bench->historyVerifyComplete(false);
     if(!captureLandscapeDepth)
-      wview.prepareGrass(fId);
+      wview.prepareGrass(cmd, fId, textureCast<const Texture2d&>(hiz.hiZ));
     drawGBuffer(cmd, fId, wview);
     }
   if(captureLandscapeDepth) {
