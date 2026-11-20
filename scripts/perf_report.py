@@ -201,6 +201,8 @@ def samples_from_profile(path):
                     "has_gpu": has_gpu,
                     "gpu_ms": submitted["gpu_ns"] / 1e6 if gpu_valid else None,
                     "gpu_buffers": submitted.get("gpu_buffers") if gpu_valid else None,
+                    "begin_ns": submitted["begin_ns"],
+                    "next_ns": rows[right]["begin_ns"],
                 })
                 if activity is not None:
                     target[-1]["texture_activity"] = texture_activity(activity, submitted["begin_ns"], rows[right]["begin_ns"])
@@ -517,17 +519,44 @@ def streaming_stats(rows):
     }
 
 
+GPU_GAP = "журнал GPU не покрывает"
+
+
+def find_gpu_log(path):
+    """The run's GPU clock journal: gpu.csv beside the profile or in the run folder of perf.sh's
+    $OUT/<place>/repeat-N/ layout, also when a compared leaf such as market/repeat-1 is the report folder."""
+    folders = [path.parent] + ([path.parents[2]] if len(path.parents) > 2 else [])
+    return next((folder / "gpu.csv" for folder in folders if (folder / "gpu.csv").exists()), None)
+
+
+def gpu_clock(rows):
+    """Means of the journal rows (scripts/perf_gpu_log.py) inside a view's frames; None where no row has a value."""
+    def mean(name):
+        values = [row[name] for row in rows if row[name] is not None]
+        return statistics.fmean(values) if values else None
+    return {**{name: mean(name) for name in ("sm_mhz", "mem_mhz", "temp_c", "power_w")}, "samples": len(rows)}
+
+
 def build_report(directory):
     directory = Path(directory).resolve()
-    profiles = sorted(directory.rglob("frameprofile.csv"))
+    # The warm-up games before the first place (perf.sh) are never measurements.
+    profiles = sorted(path for path in directory.rglob("frameprofile.csv")
+                      if "warmup" not in path.relative_to(directory).parts)
     if not profiles:
         raise ValueError(f"{directory}: no frameprofile.csv files")
     grouped = {}
     streaming = {}
     warnings = []
     sources = []
+    journals = {}
+    clocks = {}
     for path in profiles:
         segments, issues = samples_from_profile(path)
+        journal_path = find_gpu_log(path)
+        if journal_path is not None and journal_path not in journals:
+            import perf_gpu_log  # only runs that wrote a journal need it
+            journals[journal_path] = perf_gpu_log.read_log(journal_path)
+        journal = journals.get(journal_path)
         warnings.extend(issues)
         relative = str(path.parent.relative_to(directory))
         metadata = read_metadata(path.parent)
@@ -538,6 +567,10 @@ def build_report(directory):
             if not samples:
                 raise ValueError(f"{path}: {place}/{view} has fewer than two submitted frames")
             grouped.setdefault(place, {}).setdefault(relative, {}).setdefault(view, []).extend(samples)
+            if journal is not None:
+                first, last = min(row["begin_ns"] for row in samples), max(row["next_ns"] for row in samples)
+                clocks.setdefault(place, {}).setdefault(relative, {}).setdefault(view, []).extend(
+                    row for row in journal if first <= row["mono_ns"] <= last)
     if not grouped:
         raise ValueError(f"{directory}: no performance measurement segments")
     places = {}
@@ -573,6 +606,20 @@ def build_report(directory):
             "views": {view: summarize(rows) for view, rows in sorted(view_samples.items())},
             "repeats": repeat_reports,
         }
+        if place in clocks:
+            pooled = {}
+            for repeat in repeat_reports:
+                measured = clocks[place].get(repeat["directory"], {})
+                for view, stats in repeat["views"].items():
+                    stats["gpu_clock"] = gpu_clock(measured.get(view, []))
+                    gap = f"{GPU_GAP} {place}/{view}"
+                    if repeat["directory"] in clocks[place] and not stats["gpu_clock"]["samples"] and gap not in warnings:
+                        warnings.append(gap)
+                    pooled.setdefault(view, []).extend(measured.get(view, []))
+                repeat["summary"]["gpu_clock"] = gpu_clock([row for rows in measured.values() for row in rows])
+            for view, stats in places[place]["views"].items():
+                stats["gpu_clock"] = gpu_clock(pooled.get(view, []))
+            places[place]["summary"]["gpu_clock"] = gpu_clock([row for rows in pooled.values() for row in rows])
         measured = [repeat for repeat in repeats if streaming.get(repeat) is not None]
         if place == "streaming-flythrough" and measured:
             for view, stats in places[place]["views"].items():
@@ -580,8 +627,12 @@ def build_report(directory):
                     [row for repeat in measured for row in streaming[repeat][view]])
             places[place]["summary"]["streaming"] = streaming_stats(
                 [row for repeat in measured for rows in streaming[repeat].values() for row in rows])
-    return {"schema_version": 1, "directory": str(directory), "metadata": read_metadata(directory),
-            "timing": TIMING, "warnings": warnings, "sources": sources, "places": places}
+    # gpu_clock and warmup are optional additions, present only with a GPU clock journal.
+    report = {"schema_version": 1, "directory": str(directory), "metadata": read_metadata(directory),
+              "timing": TIMING, "warnings": warnings, "sources": sources, "places": places}
+    if journals and (directory / "warmup.json").exists():
+        report["warmup"] = json.loads((directory / "warmup.json").read_text())
+    return report
 
 
 def number(value, digits=3):
@@ -726,14 +777,45 @@ def summary_table(report):
     return "\n".join(lines)
 
 
+def warmup_line(warmup):
+    if warmup["reason"] == "skipped-recent-game":
+        return f"Прогрев GPU: пропущен, прошлая игра стенда кончилась {warmup['last_game_age_s']:.0f} с назад."
+    if warmup["reason"] in ("off", "no-gpu-log"):
+        return f"Прогрев GPU: нет ({warmup['reason']})."
+    return (f"Прогрев GPU ({warmup['mode']}): {warmup['reason']} за {warmup['seconds']:.0f} с, запусков {warmup['runs']}; "
+            f"{number(warmup['temp_start_c'], 0)} → {number(warmup['temp_end_c'], 0)} °C, "
+            f"SM {number(warmup['sm_start_mhz'], 0)} → {number(warmup['sm_end_mhz'], 0)} МГц.")
+
+
+def clock_table(report):
+    """Mean GPU clocks over each view's frames, from the run's gpu.csv; empty without a journal."""
+    lines = []
+    for place, data in report["places"].items():
+        if "gpu_clock" not in data["summary"]:
+            continue
+        lines.extend(["| Вид | SM, МГц | Память, МГц | °C | Вт |", "|---|---:|---:|---:|---:|"] if not lines else [])
+        for name, stats in [(place, data["summary"])] + [
+                (place + "/" + view, stats) for view, stats in data["views"].items()]:
+            clock = stats["gpu_clock"]
+            lines.append(f"| {name} | {number(clock['sm_mhz'], 0)} | {number(clock['mem_mhz'], 0)} | "
+                         f"{number(clock['temp_c'], 1)} | {number(clock['power_w'], 1)} |")
+    return "\n".join(lines)
+
+
 def report_markdown(report):
     lines = ["# World performance", "", f"Run: `{report['directory']}`", "",
              "Metadata: `" + json.dumps(report["metadata"], ensure_ascii=False, sort_keys=True) + "`", "",
-             report["timing"], "", summary_table(report), "",
-             "Zone times include all attempts between submitted frames. Scopes can overlap or "
-             "contain child scopes; worker elapsed sums can exceed wall time. Percentages must "
-             "not be added. GPU/CPU comparisons use the matched submitted attempt's end_ns-begin_ns; "
-             "they indicate overlap pressure, not exclusive bottleneck attribution.", ""]
+             report["timing"], "", summary_table(report), ""]
+    if "warmup" in report:
+        lines.extend([warmup_line(report["warmup"]), ""])
+    clocks = clock_table(report)
+    if clocks:
+        lines.extend(["Частоты GPU по журналу `gpu.csv`: средние отсчёты `nvidia-smi` между первым и последним кадром вида.",
+                      "", clocks, ""])
+    lines += ["Zone times include all attempts between submitted frames. Scopes can overlap or "
+              "contain child scopes; worker elapsed sums can exceed wall time. Percentages must "
+              "not be added. GPU/CPU comparisons use the matched submitted attempt's end_ns-begin_ns; "
+              "they indicate overlap pressure, not exclusive bottleneck attribution.", ""]
     for warning in report["warnings"]:
         lines.append("Warning: " + warning + "\n")
     for source in report["sources"]:
@@ -835,6 +917,14 @@ def compare_reports(a, b):
                          "p95_ms": compare(lambda stats: stats["frame_ms"]["p95"]),
                          "gpu_p50_ms": compare(gpu_p50) if all(v is not None for v in measured) else None,
                          "zones": changes}
+        # GPU Boost lowers the clock as the card heats up: a time difference can be a clock difference.
+        sm = [(data["summary"].get("gpu_clock") or {}).get("sm_mhz") for data in (left, right)]
+        if all(sm):
+            spread = abs(sm[1] - sm[0]) * 100 / sm[0]
+            places[place]["gpu_sm_mhz"] = {"a": sm[0], "b": sm[1], "delta_pct": (sm[1] - sm[0]) * 100 / sm[0]}
+            if spread > 1:
+                warnings.append(f"{place}: частоты SM расходятся на {spread:.1f} %: "
+                                "в разнице времени есть разница частоты GPU")
     if not places:
         raise ValueError("Runs have no places in common")
     return {"schema_version": 1, "a": a["directory"], "b": b["directory"],
@@ -873,6 +963,11 @@ def compare_markdown(report):
                 continue
             lines.append(f"| {place} | {gpu['a']:.3f} → {gpu['b']:.3f} | {gpu['delta']:+.3f} | "
                          f"{number(gpu['delta_pct'], 2)} | {number(gpu['noise'])} | {noise_label(gpu)} |")
+    if any("gpu_sm_mhz" in data for data in report["places"].values()):
+        lines.extend(["", "| Place | GPU SM MHz A → B | Δ % |", "|---|---:|---:|"])
+        lines.extend(f"| {place} | {data['gpu_sm_mhz']['a']:.0f} → {data['gpu_sm_mhz']['b']:.0f} | "
+                     f"{data['gpu_sm_mhz']['delta_pct']:+.1f} |"
+                     for place, data in report["places"].items() if "gpu_sm_mhz" in data)
     if report["only_a"] or report["only_b"]:
         lines.extend(["", f"Only A: {', '.join(report['only_a']) or 'none'}; "
                       f"only B: {', '.join(report['only_b']) or 'none'}."])

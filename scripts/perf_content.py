@@ -96,8 +96,10 @@ def comparison(directory, noise_pct=NOISE_PCT, threshold_pct=THRESHOLD_PCT):
     places = {}
     drawables = set()
     for side, report in sides.items():
-        if report["warnings"]:
-            raise ValueError("; ".join(report["warnings"]))
+        # A gap in the GPU clock journal is reported, never a reason to drop the measurement.
+        issues = [warning for warning in report["warnings"] if not warning.startswith(perf_report.GPU_GAP)]
+        if issues:
+            raise ValueError("; ".join(issues))
         if set(report["places"]) != set(metadata["places"]):
             raise ValueError(f"{side}: incomplete places")
         for source in report["sources"]:
@@ -224,7 +226,7 @@ def run_attempts(directory, content, args):
             env = {**base_env, "PERF_REPEAT": "1", "NO_BUILD": "1", "PERF_REMOTE": "1",
                    "OPENGOTHIC_CONTENT": selected,
                    "PERF_ENV": shlex.join([*extra, *own[side], "OPENGOTHIC_CONTENT=" + selected])}
-            out = directory / side / f"attempt-{counts[side]}"
+            out = directory / side / place / f"attempt-{counts[side]}"
             print(f"perf-content: {place} {side}={name}, repeat {counts[side]}/2", flush=True)
             subprocess.run(["bash", str(ROOT / "scripts/perf.sh"), "__run", str(out), place], env=env, check=True)
     write_report(directory, args.noise_pct, args.threshold_pct)
@@ -256,8 +258,8 @@ def launch(args):
         subprocess.run(["rsync", "-a", *flags, str(local), f"{host}:{destination}"], check=True)
     sync(str(ROOT / "OpenGothic") + "/", source + "/OpenGothic/", "--delete", "--exclude=/build*/", "--exclude=.git")
     sync(str(ROOT / "scripts/convert") + "/", source + "/scripts/convert/", "--delete", "--exclude=/build*/")
-    for name in ("perf-content.sh", "perf_content.py", "perf.sh", "perf_report.py", "ryzen_game.py", "base-ensure.sh",
-                 "ryzen-build.sh"):
+    for name in ("perf-content.sh", "perf_content.py", "perf.sh", "perf_report.py", "perf_gpu_log.py", "ryzen_game.py",
+                 "base-ensure.sh", "ryzen-build.sh"):
         sync(ROOT / "scripts" / name, source + "/scripts/")
     for scenario in (ROOT / "scripts/bench").glob("perf-*.bench"):
         sync(scenario, source + "/scripts/bench/")
@@ -276,7 +278,8 @@ def launch(args):
     settings = {key: os.environ.get(key, default) for key, default in
                 (("PERF_WINDOW", "1728x1117"), ("PERF_VID_RES", "0"),
                  ("PERF_ARGS", ""), ("PERF_ENV", ""), ("PERF_ENV_A", ""), ("PERF_ENV_B", ""),
-                 ("PERF_INI", ""))}
+                 ("PERF_INI", ""), ("PERF_WARMUP", ""), ("PERF_WARMUP_MAX", "300"),
+                 ("PERF_GPU_STAMP", ""))}
     environment = ["PERF_REMOTE=1", "OPENGOTHIC_BASE=", f"OPENGOTHIC_BASE_CACHE={task}/base-cache",
                    f"OPENGOTHIC_BASE_STORE={task}/base-store", "OPENGOTHIC_VIDEOS_FINGERPRINT=",
                    f"PERF_COMMIT={commit}", f"PERF_DIRTY={dirty}"]
@@ -300,7 +303,7 @@ def launch(args):
     (out / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     sync(out / "metadata.json", remote_out + "/")
     result = subprocess.run([*queue, "--class", "quiet", "--threads", "4", "--mem", "5G", "--gpu-mem", "4G",
-                             "--display", "--max", f"{5 + len(args.places) * 20}m", "--wait-max",
+                             "--display", "--max", f"{10 + len(args.places) * 20}m", "--wait-max",
                              os.environ.get("RYZEN_LOCK_WAIT", "3600"), "--name", "content perf ABBA",
                              "--archive", remote_out, "--", "env", *environment,
                              f"OPENGOTHIC_BASE_FINGERPRINT={base}", "python3",

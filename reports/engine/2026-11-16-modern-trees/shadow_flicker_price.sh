@@ -44,7 +44,7 @@ for i in 0 1; do
   ssh "$HOST" "mkdir -p '$source/OpenGothic' '$source/scripts/bench'"
   rsync -a --checksum --no-times --delete --exclude='build*/' --exclude='cmake-build-*/' --exclude='.git' \
     "$root/OpenGothic/" "$HOST:$source/OpenGothic/"
-  rsync -a "$root"/scripts/{ryzen-build.sh,perf.sh,perf_report.py,base-ensure.sh,ryzen_game.py} "$HOST:$source/scripts/"
+  rsync -a "$root"/scripts/{ryzen-build.sh,perf.sh,perf_report.py,perf_gpu_log.py,base-ensure.sh,ryzen_game.py} "$HOST:$source/scripts/"
   rsync -a --delete --exclude='/build*/' "$root/scripts/convert/" "$HOST:$source/scripts/convert/"
   rsync -a "$root"/scripts/bench/perf-*.bench "$HOST:$source/scripts/bench/"
   SRC[$i]="$source"
