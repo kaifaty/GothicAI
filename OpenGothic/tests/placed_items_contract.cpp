@@ -3320,6 +3320,10 @@ void animationEffects(Gothic& gothic) {
     npc->setPosition(point->position());
     auto* mob=world.availableMob(*npc,scheme);
     require(mob!=nullptr,(npcName(world,*npc)+"'s point must have a free "+scheme).c_str());
+    // the object at rest: the session comes from a load of activityEventsWorld's world, where the worker used it, and
+    // a quick detach keeps its state (a forge in S1 without its fire, which only T_S0_2_S1 lights)
+    std::printf("Animation effects: %s's %s in state %d before its rest\n",npcName(world,*npc).c_str(),scheme,mob->stateId());
+    mob->resetPositionToTA(0);
     return mob;
     };
   const auto tickUntil=[&](const std::function<bool()>& done,uint64_t ms) {
