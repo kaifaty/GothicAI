@@ -10,6 +10,7 @@
 #include "graphics/grass/grasspack.h"
 #include "graphics/grass/grassparams.h"
 #include "graphics/grass/grassplace.h"
+#include "graphics/grass/grassplots.h"
 #include "graphics/grass/grasswaste.h"
 
 #include <Tempest/Log>
@@ -21,6 +22,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <set>
@@ -906,6 +909,203 @@ void windFront() {
   require(now.pressure==before.pressure && now.swing==before.swing, "a new front has no motion behind it");
   }
 
+// ---- stalks with an ear, and the ground the content gives (grassear.h, grassplots.h) ----
+
+void earRecords() {
+  Grass::Params p;
+  require(parsed("{}",p) && p.kind==0, "a record without `kind` is of the grass's own blades");
+  require(parsed(R"({"kind":"ear","height":120})",p) && p.on && p.kind==Grass::KindEar && p.height==120.f,
+          "`kind` `ear` makes the record's blades stalks with an ear");
+  require(parsed(R"({"kind":"ear","height":160})",p) && parsed(R"({"kind":"ear","height":5})",p),
+          "a stalk with an ear is of 5 to 160 cm");
+  const Grass::Params kept = p;
+  for(const char* bad:{R"({"kind":"ear","height":161})", R"({"kind":"ear","height":4})", R"({"height":120})",
+                       R"({"kind":"rye"})", R"({"kind":2})", R"({"kind":null})"}) {
+    Grass::Params out = kept;
+    require(!parsed(bad,out) && out==kept, std::string("a kind that is not `ear` or a height out of its kind's range must be refused: ")+bad);
+    }
+  }
+
+// The meadow of placementRepeats stands as it stood before the stalks and the content's ground: every field of the
+// blades of its 25 cells and their batches, against origin/main. The facing and the map's u and v come of
+// arithmetic that another machine rounds the other way for a blade in some thousands (GCC on x86 against clang on
+// ARM: the facing of one blade of these, the u or the v of a hundred, by a step): they go by their sums. The rest
+// is the same on both and goes by its digest
+void placementKept() {
+  Grass::Summary flat;
+  addField(flat,-1600.f,-1600.f,4800.f,4800.f,0.f,0);
+  const Grass::Params par = meadow();
+  uint64_t digest = 1469598103934665603ull;
+  size_t   count  = 0;
+  int64_t  facing = 0, u = 0, v = 0;
+  const auto mix = [&](uint32_t x) { digest = (digest ^ x)*1099511628211ull; };
+  for(int32_t cz=-1; cz<4; ++cz)
+    for(int32_t cx=-1; cx<4; ++cx) {
+      const auto cell = build(flat,cx,cz,par);
+      count += cell.blades.size();
+      for(const auto& b:cell.blades) {
+        mix(b.w[0]);
+        mix(b.w[1]);
+        mix(b.w[2] & 0xFFFFFF00u);
+        mix(b.w[3] & 0xFF000000u);
+        facing += b.w[2] & 0xFFu;
+        u      += b.w[3] & 0xFFFu;
+        v      += (b.w[3] >> 12) & 0xFFFu;
+        }
+      for(const auto& bt:cell.batches)
+        for(uint32_t x:{uint32_t(bt.slot),uint32_t(bt.kind),uint32_t(bt.square),bt.first,bt.count})
+          mix(x);
+      }
+  require(count==563245u && digest==0x6664a824bcb2023full && std::abs(facing-71779365)<=1024 && std::abs(u-1156697106)<=16384 &&
+          std::abs(v-1149493537)<=16384,
+          "a meadow without `kind` and without the content's ground must keep its blades: "+std::to_string(count)+" "+
+          std::to_string(digest)+" "+std::to_string(facing)+" "+std::to_string(u)+" "+std::to_string(v));
+  }
+
+// 16 m of stalks (slot 1) beside 16 m of meadow (slot 0)
+void placementEar() {
+  Grass::Params par[2] = {meadow(),meadow()};
+  par[1].kind    = Grass::KindEar;
+  par[1].height  = 120.f;
+  par[1].density = 1.25f;
+  Grass::Summary ground;
+  addField(ground,0.f,0.f,1600.f,1600.f,0.f,1);
+  addField(ground,1600.f,0.f,3200.f,1600.f,0.f,0);
+  const Grass::Summary* list[1] = {&ground};
+
+  size_t stalks = 0, grass = 0;
+  float  low = 1e9f, high = 0.f;
+  for(int32_t cz=0; cz<2; ++cz)
+    for(int32_t cx=0; cx<4; ++cx) {
+      const auto cell = build(list,cx,cz,par);
+      require(same(cell,build(list,cx,cz,par)), "two builds of a cell of stalks must give the same blades"+at(cx,cz));
+      for(const auto& bt:cell.batches) {
+        require(bt.kind==(bt.slot==1 ? Grass::KindEar : 0), "the stalks are a kind of their own, the meadow beside keeps its"+at(cx,cz));
+        // an even stand: every square of 2 m has the record's count, 400 a m2
+        require(bt.slot!=1 || cx>1 || (bt.count>1440 && bt.count<1760), "stalks stand evenly, without tufts or bare spots"+at(cx,cz));
+        for(uint32_t i=bt.first; i<bt.first+bt.count; ++i) {
+          const auto& b    = cell.blades[i];
+          const auto  info = Grass::decode(b,cx,cz,cell.minY,bt.kind);
+          // a root on the line between the two is of either
+          require((bt.slot==1 ? info.x<=1600*U : info.x>=1600*U) && info.y==0, "each kind roots on its own ground"+at(cx,cz));
+          if(bt.slot!=1) {
+            ++grass;
+            continue;
+            }
+          ++stalks;
+          low  = std::min(low,info.height);
+          high = std::max(high,info.height);
+          require((b.w[0] >> 28)<=4u, "a stalk stands nearly upright: 8 to 18 degrees"+at(cx,cz));
+          }
+        }
+      }
+  // 0.9..1.1 of the record's 120 cm, and up to a fifth lower by spots: 86..132 cm, to a step of the byte
+  require(low>=86.f && high<=132.4f && low<96.f && high>124.f,
+          "stalks are of the record's height: "+std::to_string(low)+".."+std::to_string(high));
+  require(stalks>100000 && stalks<104800 && grass>0, "256 m2 of stalks at 400 a m2: "+std::to_string(stalks));
+
+  // the spots that lower the stand are of 6 to 10 m: along 640 m the height turns between falling and rising at
+  // some two in three of the spots' corners and nowhere between them. 52 times with the spots of 8 m; spots of 6 m
+  // would give 73 and of 10 m 38, of 4 m 112 and of 16 m 23
+  int   turns = 0, dir = 0;
+  float prev  = Grass::earHeight(0,0,0);
+  for(int32_t x=50*U; x<=64000*U; x+=50*U) {
+    const float now = Grass::earHeight(0,x,0);
+    const int   to  = now>prev ? 1 : (now<prev ? -1 : 0);
+    if(to!=0 && dir!=0 && to!=dir)
+      ++turns;
+    if(to!=0)
+      dir = to;
+    prev = now;
+    }
+  require(turns>=36 && turns<=76, "the stalks are lower by spots of 6 to 10 m: "+std::to_string(turns));
+  }
+
+// A file of worlds/<WORLD>/grass.d
+void plots() {
+  const auto slotOf = [](std::string_view material) { return material=="OWN_CROP_STAND.TGA" ? uint16_t(1) : uint16_t(-1); };
+  // a patch over the cell (1,2) of the chunk (0,0), y = 250 + (x-800)/10, its triangles wound either way; one of
+  // the chunk (1,0)
+  const char* file = R"({"format": 1, "patches": [
+    {"material": "OWN_CROP_STAND.TGA",
+     "positions": [800,250,1600, 1600,330,1600, 1600,330,2400, 800,250,2400],
+     "uvs": [0,0, 1,0, 1,1, 0,1], "triangles": [0,1,2, 0,3,2]},
+    {"material": "OWN_CROP_STAND.TGA",
+     "positions": [6500,0,100, 7300,0,100, 7300,0,900], "uvs": [0,0, 1,0, 1,1], "triangles": [0,1,2]}]})";
+  Grass::Plots plots;
+  std::string  error;
+  require(plots.empty(), "no file: no ground of the content");
+  require(plots.parse(file,slotOf,error) && error.empty() && !plots.empty(), "a file of patches must be taken: "+error);
+  Grass::Summary ground, next, none;
+  plots.addTo(ground,ChunkId::fromPosition(1200.f,2000.f));
+  plots.addTo(next,  ChunkId{1,0});
+  plots.addTo(none,  ChunkId{0,1});
+  require(ground.grass.size()==2 && next.grass.size()==1 && none.empty(), "a patch's triangle is of the chunk its centre is in");
+  for(const auto& t:ground.grass)
+    require(t.slot==1 && t.ny[0]>0.99f && t.nx[0]<0.f && t.nx[0]>-0.11f, "a patch's triangle faces up whatever its winding");
+
+  // its stalks stand on it and nowhere else
+  Grass::Params par[2] = {meadow(),meadow()};
+  par[1].kind   = Grass::KindEar;
+  par[1].height = 120.f;
+  const Grass::Summary* list[1] = {&ground};
+  size_t stalks = 0;
+  for(int32_t cz=0; cz<5; ++cz)
+    for(int32_t cx=-1; cx<4; ++cx) {
+      const auto cell = build(list,cx,cz,par);
+      stalks += cell.blades.size();
+      for(const auto& bt:cell.batches)
+        for(uint32_t i=bt.first; i<bt.first+bt.count; ++i) {
+          const auto info = Grass::decode(cell.blades[i],cx,cz,cell.minY,bt.kind);
+          require(bt.slot==1 && bt.kind==Grass::KindEar && info.x>=800*U && info.x<=1600*U && info.z>=1600*U && info.z<=2400*U &&
+                  std::abs(info.y - (250*U + (info.x-800*U)/10))<=3, "a stalk stands on its patch, at the patch's height"+at(cx,cz));
+          require(info.height>=86.f && info.height<=132.4f, "a stalk of a patch is of the record's height"+at(cx,cz));
+          }
+      }
+  // 64 m2 at the record's 320 a m2
+  require(stalks>19400 && stalks<21500, "stalks grow on the content's ground: "+std::to_string(stalks));
+
+  // a broken file is refused whole
+  for(const char* bad:{"", "{", "[]", R"({"format":2,"patches":[]})", R"({"format":1})", R"({"format":1,"patches":{}})",
+        R"({"format":1,"patches":[{"positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,2]}]})",
+        R"({"format":1,"patches":[{"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,2]}]})",
+        R"({"format":1,"patches":[{"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,"1"],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,2]}]})",
+        R"({"format":1,"patches":[{"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0],"triangles":[0,1,2]}]})",
+        R"({"format":1,"patches":[{"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1]}]})",
+        R"({"format":1,"patches":[{"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,3]}]})",
+        R"({"format":1,"patches":[{"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,2]},
+                                 {"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,-2]}]})"}) {
+    Grass::Plots broken;
+    require(!broken.parse(bad,slotOf,error) && !error.empty() && broken.empty(), std::string("a broken file of patches must be refused whole: ")+bad);
+    }
+
+  // a patch of a material without `grass` is left out and named; the file's other patches are taken
+  Grass::Plots   part;
+  Grass::Summary taken;
+  require(part.parse(R"({"format":1,"patches":[
+      {"material":"NO_SUCH.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,2]},
+      {"material":"OWN_CROP_STAND.TGA","positions":[0,0,0, 100,0,0, 0,0,100],"uvs":[0,0, 1,0, 0,1],"triangles":[0,1,2]}]})",slotOf,error) &&
+          error.find("NO_SUCH.TGA")!=std::string::npos, "a patch of an unknown material must be named");
+  part.addTo(taken,ChunkId{0,0});
+  require(taken.grass.size()==1 && taken.grass[0].slot==1, "a patch of an unknown material alone is left out");
+
+  // the folder: its *.json, a broken one among them; none without the folder
+  const auto dir = std::filesystem::temp_directory_path()/("gothic-grass-test-"+std::to_string(getpid()));
+  std::filesystem::remove_all(dir);
+  Grass::Plots absent, read;
+  absent.load(dir,slotOf);
+  require(absent.empty(), "a world without grass.d has no ground of the content");
+  std::filesystem::create_directories(dir/"grass.d");
+  std::ofstream(dir/"grass.d"/"a-broken.json") << "{";
+  std::ofstream(dir/"grass.d"/"b-field.json")  << file;
+  std::ofstream(dir/"grass.d"/"c-notes.txt")   << file;
+  read.load(dir,slotOf);
+  std::filesystem::remove_all(dir);
+  Grass::Summary fromDir;
+  read.addTo(fromDir,ChunkId{0,0});
+  require(fromDir.grass.size()==2, "the files of grass.d are read, a broken one among them is passed by");
+  }
+
 }
 
 int main() {
@@ -924,6 +1124,10 @@ int main() {
     placementGround();
     placementEdge();
     placementItems();
+    earRecords();
+    placementKept();
+    placementEar();
+    plots();
     windFront();
     assertions += grassCoverTests();
     std::cout << "{\"test\":\"grass\",\"passed\":true,\"assertions\":" << assertions << "}\n";

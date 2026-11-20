@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <string_view>
 
+#include "graphics/grass/grassear.h"
+
 // The grass system (reports/engine/2026-11-14-grass-system): the `grass` field of a ground texture's record in
 // materials.json, the switch and the numbers of the ring round the camera. The blades are placed by
 // grassplace.h, kept and drawn by grassfield.h, shaped by shader/grass/grass.vert; the ground under them is
@@ -22,6 +24,7 @@ struct Params final {
   bool  on           = false;
   float density      = 1.f;   // 0..2 of BladesPerM2
   float height       = 20.f;  // 5..60 cm: the main grass; the short one and the clumps are counted from it
+  uint8_t kind       = 0;     // KindEar: stalks with an ear (grassear.h), of a height of 5..160 cm
   float clumps       = 1.f;   // 0..1: how much of the tall clumps and of the gathering into tufts
   float slope        = 35.f;  // 0..60 degrees: none over it, thinner on the last 10
   float edge         = 150.f; // 0..400 cm: the band at an open edge where the grass is lower and thinner
@@ -59,7 +62,9 @@ bool parse(const Value& v, Params& out) {
     dst = float(x);
     return true;
     };
-  if(!number("density",p.density,0,MaxDensity) || !number("height",p.height,5,MaxHeight) ||
+  if(!parseKind(v,p.kind))
+    return false;
+  if(!number("density",p.density,0,MaxDensity) || !number("height",p.height,5,p.kind==KindEar ? EarMaxHeight : MaxHeight) ||
      !number("clumps",p.clumps,0,1) || !number("slope",p.slope,0,60) || !number("edge",p.edge,0,400) ||
      !number("wind",p.wind,0,MaxWind) || !number("translucency",p.translucency,0,1) || !number("broad",p.broad,0,1))
     return false;

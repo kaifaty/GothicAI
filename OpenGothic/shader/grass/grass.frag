@@ -5,6 +5,7 @@
 #include "scene.glsl"
 #include "common.glsl"
 #include "grass/grass_common.glsl"
+#include "grass/grass_ear.glsl"
 
 // A blade's pixel in the G-buffer (reports/engine/2026-11-14-grass-system): as a leaf's (GBufFoliageBit, the
 // share of the sun through it in the channel of metal), an own material by its mark. Needs the material maps'
@@ -14,7 +15,8 @@ layout(binding = 0, std140) uniform UboScene {
   SceneDesc scene;
   };
 
-layout(location = 0) in vec4 inColor;     // the painted ground under the root; w: 1 on a ground with its own layers
+layout(location = 0) in vec4 inColor;     // the painted ground under the root; w: 1 on a ground with its own layers,
+                                          // 2 a stalk with an ear
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec4 inShade;     // the share of the blade's length, of the sun through, the dryness, the sheen
 layout(location = 3) in vec3 inPrevStatic;
@@ -34,8 +36,10 @@ void main() {
   // of one link far away has the tone of a blade of four
   const uint  partsOff = grassPartsOff(scene.grassRing.w);
   const float t        = clamp(inShade.x, 0.0, 1.0);
-  const float tone     = grassTone(t);
-  const vec3  tip      = (partsOff & GrassPartTip)!=0u ? vec3(1.0) : mix(GrassTipGreen, GrassTipStraw, inShade.z);
+  // a stand of stalks is deep: the light reaches the ears, the stalks under them stand in each other's shade
+  const float tone     = inColor.a>1.5 ? pow(t, GrassEarDepth) : grassTone(t);
+  const vec3  tip      = (partsOff & GrassPartTip)!=0u ? vec3(1.0) :
+                         (inColor.a>1.5 ? grassEarTip(t, inShade.z) : mix(GrassTipGreen, GrassTipStraw, inShade.z));
   const float root     = (partsOff & GrassPartRoot)!=0u ? 1.0 : GrassRootShade;
   // on a ground with its own layers the root is of the sward the blade stands in, so the blade grows out of its
   // ground; the tip is what it is on a painted ground: green or straw by the blade, over the painted colours

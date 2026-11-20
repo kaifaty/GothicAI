@@ -60,6 +60,11 @@ DENSITY = 512
 FOLDER = 'crop_field'
 RYE, DRY, WEED = 'OWN_CROP_RYE', 'OWN_CROP_DRY', 'OWN_CROP_WEED'
 EARTH, LITTER = 'OWN_CROP_EARTH', 'OWN_CROP_LITTER'
+STAND = 'OWN_CROP_STAND'    # the ground under rye that stands as stalks (`--stand stalks`, stalk.md)
+# the stalks: blades of the grass system's kind `ear` on the patches of worlds/<WORLD>/grass.d/crop-field.json
+STALKS = dict(kind='ear', height=125., density=1.5, clumps=0., edge=0., slope=60., wind=1.4, translucency=.45)
+PATCH_STEP = 75.            # cm of the patches' grid
+PATCH_TILE = 2400.          # cm a repeat of the stand's map as the stalks read their colour from it: its slow tones are patches of metres
 TONES = ('', 'PALE', 'GREEN')
 WEED_ATLAS = 1024
 WEED_KINDS = ('thistle', 'cockle', 'cornflower', 'mayweed')
@@ -87,6 +92,7 @@ RAKE, SICKLE = 'ITMI_RAKE.3DS', 'ITMW_007_1H_SICKLE_01.3DS'
 STOOK_STEP = 700.           # cm between stooks along a stubble strip
 PLANT = ('NW_NATURE_PLANT_03.3DS', 'NW_NATURE_GREAT_WEED_XGROUP.3DS')    # the original's grain: clumps and groups of rows
 REACH = 8000.               # cm from the given point within which the field's triangles are looked for
+LIFT_STAND = 4.             # cm: crop_field_life.LIFT, the strip's own ground the stalks root on
 STRIPS_MAX = 12             # a big field (Onar's plots are 55 m across) is cut into more strips of the same width
 
 
@@ -330,7 +336,7 @@ def walk(node, out):
             walk(value, out)
 
 
-def place(base: Path, world: str, field, meshes: dict, seed: int, number: int, life, ground_mesh):
+def place(base: Path, world: str, field, meshes: dict, seed: int, number: int, life, ground_mesh, stalks: bool = False):
     """ground_mesh(mesh, material) -> the visual's name: writes the mesh of a piece of a strip's ground."""
     field_number = number
     census = sibling('world/world_census.py')
@@ -443,6 +449,7 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int, l
     low, high = points.min(axis=0), points.max(axis=0)
     patches = life.Patches(rng, low, high, area * 1e4)
     added, counts = [], {}
+    patch, rye_spots = [], []
 
     def record(visual, position, rotation, collision='none'):
         added.append(dict(key=f'crop-{field_number + 1}-{len(added) + 1:05d}', kind='mesh', visual=visual,
@@ -481,6 +488,8 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int, l
 
     def rye(kind, letters, p, along, jitter=8., sink=(1., 7.), low_share=1.):
         """A row or a tuft of rye: its tone and height by the patch it stands in, lying over in a lodged spot."""
+        if stalks:
+            return False                                        # the rye stands as stalks of the grass system
         visual = f'{tone_material(patches.tone_of(p, rng))}_{kind}_{letters[rng.integers(len(letters))]}'
         lodged = patches.lodge(p)
         if lodged is not None:
@@ -506,9 +515,33 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int, l
         # the strip's own ground
         ridged = kind == 'plough'
         for piece, origin in life.strip_ground(ground_mesh.cards, ground, spot, u0, u1, lo, hi, ridged, rng):
-            visual = ground_mesh(piece, EARTH if kind in ('plough', 'rye') else LITTER)
+            visual = ground_mesh(piece, STAND if stalks and kind == 'rye' else (EARTH if kind in ('plough', 'rye') else LITTER))
             record(visual, origin, np.eye(3))
 
+        if stalks and kind in ('rye', 'reaping'):
+            # the ground the stalks grow on: a grid over the strip, none where it is reaped, bare or worked
+            us = np.arange(u0, u1 + PATCH_STEP, PATCH_STEP)
+            before = len(patch)
+            for a, b in zip(us, us[1:]):
+                width = min(hi(a) - lo(a), hi(b) - lo(b)) - 30
+                for k in range(max(int(width // PATCH_STEP), 0)):
+                    share = np.array((k, k + 1)) / max(int(width // PATCH_STEP), 1)
+                    quad = [(a, lo(a) + 15 + share[0] * (hi(a) - lo(a) - 30)), (b, lo(b) + 15 + share[0] * (hi(b) - lo(b) - 30)),
+                            (b, lo(b) + 15 + share[1] * (hi(b) - lo(b) - 30)), (a, lo(a) + 15 + share[1] * (hi(a) - lo(a) - 30))]
+                    centre = np.mean(quad, axis=0)
+                    c = spot(*centre)
+                    if not standing(*centre) or patches.is_bare(c) or not clear(c):
+                        continue
+                    corners = [spot(u, w) for u, w in quad]
+                    hits = [ground.at(*q) for q in corners]
+                    if any(h is None for h in hits):
+                        continue
+                    xyz = [(q[0], h[0] + LIFT_STAND, q[1]) for q, h in zip(corners, hits)]
+                    patch.extend([xyz[0], xyz[1], xyz[2], xyz[0], xyz[2], xyz[3]])
+            if len(patch) > before:
+                middle_one = np.array(patch[before:]).reshape(-1, 3).mean(axis=0)
+                nearest = np.array(patch[before:])[np.argmin(np.linalg.norm(np.array(patch[before:]) - middle_one, axis=1))]
+                rye_spots.append([round(float(c), 1) for c in nearest] + [round(float(c), 4) for c in tangent((u0 + u1) / 2)])
         if kind in ('rye', 'reaping'):
             for w in np.arange(*span, ROW_GAP):
                 for u in np.arange(u0 + rng.uniform(0, ROW_STEP), u1, ROW_STEP):
@@ -655,8 +688,9 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int, l
                  added=len(added), by_visual={v: n for v, n in sorted(own.items())},
                  originals={v: n for v, n in counts.items() if v in (CART, RAKE, SICKLE)},
                  ground_pieces=sum(n for v, n in counts.items() if v.startswith('OWN_CROP_GROUND')),
-                 triangles=sum(meshes[v]['triangles'] * n for v, n in own.items()))
-    return added, remove, stats
+                 triangles=sum(meshes[v]['triangles'] * n for v, n in own.items()),
+                 stalk_ground_m2=round(len(patch) / 6 * PATCH_STEP ** 2 / 1e4, 1), rye_spots=rye_spots)
+    return added, remove, stats, patch
 
 
 def atlas(listing: dict, passes, names: list, side: int):
@@ -692,6 +726,8 @@ def main() -> int:
     parser.add_argument('--rerender', action='store_true')
     parser.add_argument('--seed', type=int, default=7)
     parser.add_argument('--gain', type=float, default=1., help='the atlas brighter or darker')
+    parser.add_argument('--stand', choices=('cards', 'stalks'), default='cards',
+                        help='the standing rye: rows of cards, or stalks of the grass system on patches of ground (stalk.md)')
     parser.add_argument('--preview', type=Path, help='write the atlases and the ground maps as PNG here and stop: no set')
     args = parser.parse_args()
     cards, dds, pilot = sibling('glb_cards.py'), sibling('test-material.py'), sibling('megascans_pilot.py')
@@ -724,7 +760,8 @@ def main() -> int:
                                    np.rint(weed_alpha * 255).astype(np.uint8)])).save(args.preview / 'weeds.png')
         records = life.ground_maps(dds, pilot.encode, args.source / 'materials/meadow_earth', args.preview / 'crop_ground',
                                    np.random.default_rng(args.seed))
-        for name in ('earth_albedo', 'litter_albedo', 'litter_normal'):
+        life.stand_maps(dds, pilot.encode, args.preview / 'crop_ground', np.random.default_rng(args.seed))
+        for name in ('earth_albedo', 'litter_albedo', 'litter_normal', 'stand_albedo'):
             Image.open(args.preview / 'crop_ground' / f'{name}.dds').convert('RGB').save(args.preview / f'{name}.png')
         print(json.dumps(dict(mean=mean, ground=records['means']), indent=2))
         return 0
@@ -763,6 +800,9 @@ def main() -> int:
     materials[f'{WEED}.TGA'] = dict(albedo='crop_weed/albedo.dds', orm='crop_weed/orm.dds', two_sided='same',
                                     foliage=FOLIAGE | dict(wind=1.8, anchor='line'))
     materials[f'{EARTH}.TGA'], materials[f'{LITTER}.TGA'] = ground['earth'], ground['litter']
+    if args.stand == 'stalks':
+        stand = life.stand_maps(dds, pilot.encode, work / 'materials/crop_ground', rng)
+        materials[f'{STAND}.TGA'] = stand['record'] | dict(grass=STALKS)
     table.write_text(json.dumps(materials, indent=2) + '\n')
 
     def ground_mesh(mesh, material):
@@ -773,18 +813,26 @@ def main() -> int:
 
     ground_mesh.cards = cards
     base = args.base or sibling('world/world_census.py').resolve_base(None)
-    added, removed, stats = [], [], []
+    added, removed, stats, patch = [], [], [], []
     for number, field in enumerate(args.field.split(';')):
-        more, gone, numbers = place(base, args.world, tuple(map(float, field.split(','))), meshes, args.seed, number,
-                                    life, ground_mesh)
-        added, removed, stats = added + more, removed + gone, stats + [numbers]
+        more, gone, numbers, ground_of_stalks = place(base, args.world, tuple(map(float, field.split(','))), meshes,
+                                                      args.seed, number, life, ground_mesh, args.stand == 'stalks')
+        added, removed, stats, patch = added + more, removed + gone, stats + [numbers], patch + ground_of_stalks
     index_path = work / 'meshes/meshes.json'
     index = json.loads(index_path.read_text()) if index_path.exists() else {}
     index_path.write_text(json.dumps(index | {name: dict(glb=m['glb']) for name, m in meshes.items()}, indent=2) + '\n')
     layer = work / 'worlds' / args.world / 'vobs.d/crop-field.json'
     layer.parent.mkdir(parents=True, exist_ok=True)
     layer.write_text(json.dumps(dict(format=1, add=added, remove=removed), separators=(',', ':')) + '\n')
-    report = dict(source=str(args.source), field=args.field, seed=args.seed, atlas_px=ATLAS, density_px_m=DENSITY,
+    if patch:
+        positions = np.array(patch)
+        grown = work / 'worlds' / args.world / 'grass.d/crop-field.json'
+        grown.parent.mkdir(parents=True, exist_ok=True)
+        grown.write_text(json.dumps(dict(format=1, patches=[dict(
+            material=f'{STAND}.TGA', positions=np.round(positions, 1).ravel().tolist(),
+            uvs=np.round(positions[:, (0, 2)] / PATCH_TILE, 5).ravel().tolist(),
+            triangles=list(range(len(positions))))]), separators=(',', ':')) + '\n')
+    report = dict(source=str(args.source), stand=args.stand, field=args.field, seed=args.seed, atlas_px=ATLAS, density_px_m=DENSITY,
                   gain=args.gain, mean=mean, coverage_by_mip=[round(c, 4) for c in coverage],
                   normal_up=NORMAL_UP, normal_edge=NORMAL_EDGE, foliage=FOLIAGE, ground=ground['means'],
                   meshes={name: m for name, m in meshes.items() if not name.startswith('OWN_CROP_GROUND')},
