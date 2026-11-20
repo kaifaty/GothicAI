@@ -2264,7 +2264,8 @@ void animationEffects(Gothic& gothic) {
   require(fire!=nullptr && fire->ppsIsLooping && fire->effectPrefferedTime()<5000 && sparks!=nullptr && !sparks->ppsIsLooping,
           "FIRE_HOT must loop with its own time under 5 s, ANVIL_SPARKS must not loop");
   // a worker of the scheme at his point, his routine off: the AI queue only; back where he was at the end
-  std::vector<std::pair<Npc*,Tempest::Vec3>> moved;
+  struct Moved { Npc* npc; Tempest::Vec3 at; float rotation; };
+  std::vector<Moved> moved;
   const auto worker=[&](const char* state,const char* scheme,Npc*& npc) {
     const auto init=activityPhases(script,state).init;
     std::string pointName;
@@ -2276,7 +2277,7 @@ void animationEffects(Gothic& gothic) {
     npc->setInteraction(nullptr,true);
     npc->clearAiQueue();
     npc->setExternalControl(true);
-    moved.emplace_back(npc,npc->position());
+    moved.push_back({npc,npc->position(),npc->rotation()});
     npc->setPosition(point->position());
     auto* mob=world.availableMob(*npc,scheme);
     require(mob!=nullptr,(npcName(world,*npc)+"'s point must have a free "+scheme).c_str());
@@ -2414,11 +2415,12 @@ void animationEffects(Gothic& gothic) {
   std::printf("Animation effects: ANVIL_SPARKS of a blow gone in %llu ms (own time %llu ms)\n",
               (unsigned long long)(world.tickCount()-struck),(unsigned long long)sparks->effectPrefferedTime());
   // standing where they were, out of the objects' animations: the arrows after this shoot into Harad's pose
-  for(auto& [npc,at]:moved) {
+  for(auto& [npc,at,rotation]:moved) {
     npc->setInteraction(nullptr,true);
     npc->clearAiQueue();
     npc->stopAnim("");
     npc->setPosition(at);
+    npc->setDirection(rotation);
     npc->setExternalControl(false);
     }
   }
