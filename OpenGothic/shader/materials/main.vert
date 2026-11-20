@@ -23,6 +23,13 @@ layout(triangles, max_vertices = MaxVert, max_primitives = MaxPrim) out;
 #if defined(TREE_BOUGH_JOINT)
 #include "tree_bough_dissolve.glsl"
 #endif
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY) && defined(GL_VERTEX_SHADER)
+layout(location = 9) out vec2 boughBandCellOut;
+layout(location = 10) flat out uvec2 boughBandOut;
+#elif defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+layout(location = 9) out vec2 boughBandCellOut[];
+layout(location = 10) flat out uvec2 boughBandOut[];
+#endif
 
 #if defined(VIRTUAL_SHADOW)
 layout(push_constant, std430) uniform Push {
@@ -203,6 +210,27 @@ void initVsm(uvec4 task) {
   }
 #endif
 
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+// The shadow side of a level band (tree_bough_dissolve.glsl): the instance's word and seed, and the vertex's cell
+// across the light of the view: the sun, or a lamp of the virtual shadow map's page
+uvec2 boughBandShadow(uint instanceId, uint bucketId, vec3 pos, out vec2 cell) {
+  const Instance obj  = pullInstance(instanceId);
+  const uint     word = boughBandWord(obj);
+  cell = vec2(0);
+  if(!boughBandActive(word))
+    return uvec2(0);
+  vec3 toLight = scene.sunDir;
+#if defined(VIRTUAL_SHADOW)
+  const uint data = vsm.pageList[shadowPageId];
+  if(vsmPageIsOmni(data))
+    toLight = normalize(lights[unpackLightId(data).x].pos - obj.mat[3]);
+#endif
+  const float height = (bucket[bucketId].bbox[1].y - bucket[bucketId].bbox[0].y)*length(obj.mat[1]);
+  cell = boughBandShadowCell(pos, obj.mat[3], toLight, height);
+  return uvec2(word, boughJointSeed(obj.mat[3]));
+  }
+#endif
+
 #if !defined(TREE_BOUGH_CARDS)
 uvec2 processMeshlet(const uint meshletId, const uint bucketId) {
 #if defined(BINDLESS)
@@ -293,6 +321,9 @@ void vertexShader(const uvec4 task, const uint materialRef) {
 #if defined(MAT_VARYINGS)
   shOut       = var;
 #endif
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+  boughBandOut = boughBandShadow(instanceId, bucketId, var.pos, boughBandCellOut);
+#endif
   }
 #else
 void meshShader(const uvec4 task, const uint materialRef) {
@@ -328,6 +359,11 @@ void meshShader(const uvec4 task, const uint materialRef) {
     gl_MeshVerticesEXT[laneID].gl_Position = pos;
 #if defined(TREE_BOUGH_CARDS)
     boughFadeOut[laneID] = boughFade(task, boughMaskOut[laneID]);
+#endif
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+    vec2 bandCell;
+    boughBandOut[laneID] = boughBandShadow(instanceId, bucketId, var.pos, bandCell);
+    boughBandCellOut[laneID] = bandCell;
 #endif
 #if defined(VIRTUAL_SHADOW)
     vsmClip[laneID] = pos.xyw;
@@ -429,9 +465,13 @@ void main() {
 #endif
 #endif
 
-#if defined(TREE_BOUGH_JOINT)
-  if((pullInstance(task.x).animPtr & BoughJointTag)!=0u)
-    materialRef = payloadId | BoughJointTag;
+#if defined(TREE_BOUGH_JOINT) && !defined(DEPTH_ONLY)
+  {
+    // the impostor joint or a level band: the fragment stage masks the instance's side
+    const Instance obj = pullInstance(task.x);
+    if((obj.animPtr & BoughJointTag)!=0u || boughBandActive(boughBandWord(obj)))
+      materialRef = payloadId | BoughJointTag;
+  }
 #endif
 
 #if defined(VIRTUAL_SHADOW)

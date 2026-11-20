@@ -14,6 +14,7 @@
 #include "frameprofile.h"
 #include "graphics/meshlevels.h"
 #include "graphics/treeboughasset.h"
+#include "graphics/treelevelband.h"
 #include "graphics/hizoccluders.h"
 #include <ostream>
 #include "loadprobe.h"
@@ -37,19 +38,6 @@ static RtScene::Category toRtCategory(DrawCommands::Type t) {
   return RtScene::None;
   }
 
-
-struct VisualObjects::InstanceDesc {
-  void setPosition(const Tempest::Matrix4x4& m) {
-    for(int i=0; i<4; ++i)
-      for(int r=0; r<3; ++r)
-        pos[i][r] = m.at(i,r);
-    }
-  float    pos[4][3] = {};
-  float    fatness   = 0;
-  uint32_t animPtr   = 0;
-  uint32_t deformPtr = 0;
-  uint32_t deformCount = 0;
-  };
 
 struct VisualObjects::MorphDesc final {
   uint32_t indexOffset = 0;
@@ -327,7 +315,15 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   // vertex (its own range) starts that much before its storage (uint arithmetic wraps on both sides).
   d.deformPtr = obj.objDeform.offsetId<uint32_t>() - obj.deformFirst*8u;
   d.deformCount = obj.deformCount==0 ? 0 : obj.deformFirst+obj.deformCount;
-  obj.objInstance.set(&d, 0, sizeof(d));
+  if(obj.bandCluster!=uint32_t(-1)) {
+    // a static tree's level band: the deform slot, then the second instance of the coarser side
+    d.deformPtr = obj.bandWord;
+    obj.objInstance.set(&d, 0, sizeof(d));
+    d.deformPtr = obj.bandWord==0 ? 0 : obj.bandWord | TreeLevelBand::Coarse;
+    obj.bandInstance.set(&d, 0, sizeof(d));
+    } else {
+    obj.objInstance.set(&d, 0, sizeof(d));
+    }
   if(obj.type==DrawCommands::Static && obj.bucketId->staticMesh->treeBough && TreeBough::cpuEnabled())
     drawCmd.setBoughTransform(obj.clusterId,transform);
 
@@ -365,6 +361,10 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   if(clustersMem[cId].pos != npos) {
     clustersMem[cId].pos = npos;
     clustersMem.markClusters(cId);
+    }
+  if(obj.bandCluster!=uint32_t(-1) && clustersMem[obj.bandCluster].pos!=npos) {
+    clustersMem[obj.bandCluster].pos = npos;
+    clustersMem.markClusters(obj.bandCluster);
     }
   }
 
@@ -498,6 +498,8 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     const auto& source = mesh.sub[mesh.treeBough->sourceSub];
     if(source.iboOffset==iboOff && source.iboLength==iboLen)
       drawCmd.addBough(mesh,obj.clusterId,obj.cmdId,obj.impostorShadowCmd,uint32_t(firstMeshlet),uint32_t(meshletCount));
+    if(obj.levelSub!=NoLevels)
+      allocLevelBand(obj);
     }
 
   if(type==DrawCommands::Morph) {
@@ -636,6 +638,7 @@ void VisualObjects::free(size_t id) {
   if(obj.impostorShadowCmd!=uint16_t(-1))
     setImpostorShadow(obj, false);
   drawCmd.removeBough(obj.clusterId);
+  freeLevelBand(obj);
   clustersMem.free(obj.clusterId, obj.clusterCount);
   if(Shaders::options().doRtScene) {
     // the slot goes at the next frame; a reused id is marked again by its new object
@@ -1052,6 +1055,8 @@ void VisualObjects::preFrameUpdateLevels() {
         shadowLevel = fullShadows ? 0 : MeshLevels::pickShadow(mesh->levels.size(), obj.shadowLevel, wasSeparate,
                                                              shadowHeight, shadowNear, shadowLevels);
         }
+      if(obj.bandCluster!=uint32_t(-1))
+        updateLevelBand(obj, height, height*1080.f/float(resY), shadowLevels, fullShadows, level, shadowLevel);
       if((level.impostor() || joint!=0u) && obj.levelSub==0 && obj.visible && drawStatic) {
         const Vec3 x(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2));
         const Vec3 y(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
@@ -1066,6 +1071,8 @@ void VisualObjects::preFrameUpdateLevels() {
       // The static hierarchy uses the otherwise idle animation slot for the joint fade.
       obj.animPtr = joint;
       obj.objInstance.set(&joint, offsetof(InstanceDesc,animPtr), sizeof(joint));
+      if(!obj.bandInstance.isEmpty())
+        obj.bandInstance.set(&joint, offsetof(InstanceDesc,animPtr), sizeof(joint));
       }
     if(obj.levelSub==0 && !level.impostor())
       ++count[level.glb];

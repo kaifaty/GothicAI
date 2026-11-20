@@ -291,6 +291,17 @@ add_history_frag_shaders(main_joint_g        -DGBUFFER -DGBUFFER_MOTION -DTREE_B
 add_history_frag_shaders(main_joint_g_at     -DGBUFFER -DGBUFFER_MOTION -DTREE_BOUGH_JOINT -DATEST)
 add_history_frag_shaders(main_joint_g_orm    -DGBUFFER -DGBUFFER_MOTION -DTREE_BOUGH_JOINT -DMATERIAL_MAPS)
 add_history_frag_shaders(main_joint_g_at_orm -DGBUFFER -DGBUFFER_MOTION -DTREE_BOUGH_JOINT -DATEST -DMATERIAL_MAPS)
+# The shadows of the same meshes: the level band's mask over the light (graphics/treelevelband.h).
+add_geom_shader(main_joint_d        "-DMESH_TYPE=1" -DDEPTH_ONLY -DHIZ_OCCLUDER -DTREE_BOUGH_JOINT)
+add_geom_shader(main_joint_d_at     "-DMESH_TYPE=1" -DDEPTH_ONLY -DHIZ_OCCLUDER -DATEST -DTREE_BOUGH_JOINT)
+add_geom_shader(main_joint_d_at_orm "-DMESH_TYPE=1" -DDEPTH_ONLY -DHIZ_OCCLUDER -DATEST -DMATERIAL_MAPS -DTREE_BOUGH_JOINT)
+add_geom_shader(main_joint_v        "-DMESH_TYPE=1" -DDEPTH_ONLY -DVIRTUAL_SHADOW -DTREE_BOUGH_JOINT)
+add_geom_shader(main_joint_v_at     "-DMESH_TYPE=1" -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST -DTREE_BOUGH_JOINT)
+add_frag_shader(main_joint_d        -DDEPTH_ONLY -DTREE_BOUGH_JOINT)
+add_frag_shader(main_joint_d_at     -DDEPTH_ONLY -DATEST -DTREE_BOUGH_JOINT)
+add_frag_shader(main_joint_d_at_orm -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS -DTREE_BOUGH_JOINT)
+add_frag_shader(main_joint_v        -DDEPTH_ONLY -DVIRTUAL_SHADOW -DTREE_BOUGH_JOINT)
+add_frag_shader(main_joint_v_at     -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST -DTREE_BOUGH_JOINT)
 
 # pfx geometry
 add_shader(main_pfx.vert       materials/pfx.vert   "-DMESH_TYPE=4" -DVT_COLOR)

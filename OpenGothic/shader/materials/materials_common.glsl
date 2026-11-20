@@ -81,7 +81,9 @@ const uint L_VsmLights  = L_Shadow1;
 #define MAT_NORMAL 1
 #endif
 
-#if ((defined(FLAT_NORMAL) || defined(MATERIAL_MAPS)) && !defined(DEPTH_ONLY)) || defined(FORWARD) || defined(WATER)
+// TREE_BOUGH_JOINT && DEPTH_ONLY: the shadow cell of a level band (tree_bough_dissolve.glsl)
+#if ((defined(FLAT_NORMAL) || defined(MATERIAL_MAPS)) && !defined(DEPTH_ONLY)) || defined(FORWARD) || defined(WATER) || \
+    (defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY))
 #define MAT_POSITION 1
 #endif
 
