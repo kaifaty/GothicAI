@@ -171,7 +171,7 @@ def test_bough_x4_adds_hierarchy_without_changing_the_spruce_or_its_fallbacks(tm
         write(hierarchy_root / path, path.encode())
 
     args = SimpleNamespace(config=config, control=control, impostor_from=impostor_root,
-                           k=[4], labels=None, hierarchy=[hierarchy_root], set='bough-x4/content')
+                           k=[4], labels=None, hierarchy=[hierarchy_root], set='bough-x4/content', impostor_px=None)
     fir_set.bough(args)
     content = probes / 'bough-x4/content'
     meshes = json.loads((content / 'meshes/meshes.json').read_text())
@@ -209,13 +209,32 @@ def test_bough_x4_adds_hierarchy_without_changing_the_spruce_or_its_fallbacks(tm
     write(staggered / 'OWN_TREE_FIR_A_BOUGH_S122_H.json', dict(hierarchy, glb='OWN_TREE_FIR_A_BOUGH_S122_H.glb'))
     write(staggered / 'OWN_TREE_FIR_A_BOUGH_S122_H.glb', b'glb')
     fir_set.bough(SimpleNamespace(config=config, control=control, impostor_from=impostor_root, k=[4],
-                                  labels=['X4', 'S122'], hierarchy=[hierarchy_root, staggered], set='stagger/content'))
+                                  labels=['X4', 'S122'], hierarchy=[hierarchy_root, staggered], set='stagger/content',
+                                  impostor_px=None))
     row = probes / 'stagger/content'
     materials = json.loads((row / 'materials/materials.json').read_text())
     assert materials['FIR_HIERARCHY_S122_0_2.TGA']['albedo'] == 'trees_fir/bough-s122/color.dds'
     assert materials['FIR_HIERARCHY_0_2.TGA'] == page
     placements = json.loads((row / layer / 'fir-bough-stagger.json').read_text())['add']
     assert [item['visual'] for item in placements] == [visual, 'OWN_TREE_FIR_A_BOUGH_S122']
+
+    # An early hierarchy with its own impostor threshold moves the levels in front of it, the control keeps its own.
+    early = tmp_path / 'early'
+    early.mkdir()
+    for path in ('color.dds', 'normal.dds'):
+        write(early / path, path.encode())
+    write(early / 'OWN_TREE_FIR_A_BOUGH_S122B700G0_H.json', dict(hierarchy, glb='OWN_TREE_FIR_A_BOUGH_S122B700G0_H.glb'))
+    write(early / 'OWN_TREE_FIR_A_BOUGH_S122B700G0_H.glb', b'glb')
+    fir_set.bough(SimpleNamespace(config=config, control=control, impostor_from=impostor_root, k=[4],
+                                  labels=['S122', 'S122B700G0'], hierarchy=[staggered, early], set='early/content',
+                                  impostor_px=[49., 100.]))
+    meshes = json.loads(((probes / 'early/content') / 'meshes/meshes.json').read_text())
+    assert meshes['OWN_TREE_FIR_A_BOUGH_S122'] == dict(staged_control, hierarchy='trees_fir/bough-s122/'
+                                                       'OWN_TREE_FIR_A_BOUGH_S122_H.json')
+    levels = meshes['OWN_TREE_FIR_A_BOUGH_S122B700G0']['levels']
+    assert [level.get('glb') for level in levels] == [level.get('glb') for level in staged_control['levels']]
+    assert levels[-1] == dict(impostor, px=100.)
+    assert [level['px'] for level in levels] == pytest.approx([400, 200, 100 * 50 / 49 * 56 / 46, 100 * 50 / 49, 100])
 
     grid = fir_set.forest_layout(1024)
     forest = [dict(key=f'tree-cost-{t["column"]}-{t["row"]}', visual=base,

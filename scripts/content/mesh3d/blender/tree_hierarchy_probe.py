@@ -27,6 +27,7 @@ EYE_FACTORS = (4, 8, 16)
 STAGGER_PX = (800., 50.)
 STAGGER_GAP = 2.  # octaves below the latest moment an older node may wait
 # Spruce A's impostor (49 px) takes over completely below 46 px and starts below 56 px.
+IMPOSTOR_PX = 49.
 SOLID_PX = 56
 
 
@@ -100,15 +101,32 @@ def node_levels(nodes):
     return level
 
 
-def stagger(nodes, height_m, ratio):
+def level_heights(impostor_px=IMPOSTOR_PX):
+    """The thresholds of L1-L4 in front of an impostor at impostor_px.
+
+    The loader takes an impostor only below the last level's px (meshImpostorFiles). The last level keeps the
+    50/49 of the impostor that spruce A has, and a level higher up moves only as far as its band (px * 46/49 to
+    56/49, treelevelband.h) needs to stay clear of the next one.
+    """
+    if impostor_px == IMPOSTOR_PX:
+        return LEVEL_HEIGHTS
+    heights = [*LEVEL_HEIGHTS[:-1], impostor_px * LEVEL_HEIGHTS[-1] / IMPOSTOR_PX]
+    for i in range(len(heights) - 2, -1, -1):
+        heights[i] = max(heights[i], heights[i + 1] * 56 / 46)
+    return tuple(heights)
+
+
+def stagger(nodes, height_m, ratio, px=None, gap=None):
     """Spread the merge moments of the enabled bands over the whole flight in whole-tree pixels.
 
     Each level of the hierarchy, counted up from the original cards, takes the order of its moments from
     a hash of the node IDs, so that neighbours in the crown do not merge one after another. Parents of
-    cards are spread evenly in log height over STAGGER_PX. An older node merges from zero to STAGGER_GAP
-    octaves below the latest moment at which its band stays under the lower edges of all bands below it
-    in node-local pixels, which is the loader's rule for an ancestor chain.
+    cards are spread evenly in log height over px (top, bottom; STAGGER_PX). An older node merges from zero
+    to gap (STAGGER_GAP) octaves below the latest moment at which its band stays under the lower edges of all
+    bands below it in node-local pixels, which is the loader's rule for an ancestor chain.
     """
+    top, bottom = px or STAGGER_PX
+    gap = STAGGER_GAP if gap is None else gap
     band = (ratio - 1) / (ratio + 1)
     level, ready = node_levels(nodes), {}
     order = defaultdict(list)
@@ -117,7 +135,6 @@ def stagger(nodes, height_m, ratio):
             order[level[node.id]].append(node.id)
     unit = {ident: (rank + .5) / len(ids) for ids in order.values()
             for rank, ident in enumerate(sorted(ids, key=stable_unit))}
-    top, bottom = STAGGER_PX
     for node in nodes:
         # Lowest band edge below the node in its own pixels.
         ready[node.id] = min((ready[child] for child in node.children), default=math.inf)
@@ -128,7 +145,8 @@ def stagger(nodes, height_m, ratio):
         if math.isinf(latest):
             moment = top * (bottom / top) ** unit[node.id]
         else:
-            moment = latest * 2 ** (-STAGGER_GAP * unit[node.id])
+            # At gap 0 the band touches the lowest one below it, and rounding must not lift it over that edge.
+            moment = latest * min(2 ** (-gap * unit[node.id]), 1 - 1e-9)
         node.threshold_px = moment * scale
         node.high_px = node.threshold_px * (1 + band)
         node.low_px = node.threshold_px * (1 - band)
@@ -346,25 +364,35 @@ def level_spread(nodes, height_m):
     return spread
 
 
-def band_measures(nodes, height_m, parents):
+def band_measures(nodes, height_m, parents, impostor_px=IMPOSTOR_PX):
     """Turnover per 1% of height over the 3D range and with the solid crown only, and the level spread."""
     merges, (cards, _) = lod.progressive_merges(nodes, height_m, parents)
     turnover = {}
-    for low in (30, SOLID_PX):
+    for low in (30, SOLID_PX * impostor_px / IMPOSTOR_PX):
         steps, grid = lod.turnover_steps(merges, cards, 800, low)
         regular = steps[1:-2]
         peak = int(np.argmax(regular)) + 1
-        turnover[f'{low}-800'] = dict(max_pct=100 * float(steps[peak]), p95_pct=100 * float(np.percentile(regular, 95)),
+        turnover[f'{low:g}-800'] = dict(max_pct=100 * float(steps[peak]), p95_pct=100 * float(np.percentile(regular, 95)),
                                       above_px=float(grid[peak - 1]), below_px=float(grid[peak]))
     return dict(turnover=turnover, levels=level_spread(nodes, height_m))
+
+
+def stagger_label(args):
+    """S122 for the accepted law; an early one adds its bottom and gap in hundredths, S122B600G0."""
+    label = f'S{round(100 * args.stagger)}'
+    top, bottom = args.stagger_px or STAGGER_PX
+    gap = STAGGER_GAP if args.stagger_gap is None else args.stagger_gap
+    if (top, bottom, gap) != (*STAGGER_PX, STAGGER_GAP):
+        label += (f'T{round(top)}' if top != STAGGER_PX[0] else '') + f'B{round(bottom)}G{round(100 * gap)}'
+    return label
 
 
 def bough_nodes(args, foliage):
     """Read the strict hierarchy with its bands scaled by k or rescheduled by the staggered law."""
     if args.stagger:
         nodes, roots, parents, height_m = read_eye_hierarchy(args.bough, args.glb, foliage)
-        stagger(nodes, height_m, args.stagger)
-        return nodes, roots, parents, height_m, f'S{round(100 * args.stagger)}'
+        stagger(nodes, height_m, args.stagger, args.stagger_px, args.stagger_gap)
+        return nodes, roots, parents, height_m, stagger_label(args)
     return (*read_eye_hierarchy(args.bough, args.glb, foliage, k=args.k), f'X{args.k}')
 
 
@@ -374,7 +402,7 @@ def bough(args, output):
     wood, foliage = parts_for_comparison(source, crown, dict(rgba=read_rgba(args.bark)))
     nodes, roots, parents, height_m, label = bough_nodes(args, foliage)
     if args.bands_only:
-        print(json.dumps(band_measures(nodes, height_m, parents), allow_nan=False))
+        print(json.dumps(band_measures(nodes, height_m, parents, args.impostor_px), allow_nan=False))
         return
     px_per_m = {ident: nodes[ident - 1].high_px / nodes[ident - 1].diameter for ident in parents}
     print(f'Baking all {len(parents)} parent nodes', flush=True)
@@ -387,7 +415,7 @@ def bough(args, output):
     print(f"{atlas['tiles']} cards on {len(atlas['pages'])} pages, {atlas['bytes']} DDS bytes", flush=True)
 
     level_wood = {height: len(tree_prefix.split_parts(tree_glb.read(path))[0]['index'])
-                  for height, path in zip(LEVEL_HEIGHTS, args.levels, strict=True)}
+                  for height, path in zip(level_heights(args.impostor_px), args.levels, strict=True)}
     steps = math.floor(math.log(30 / 800) / math.log(.99))
     curve = lod.progressive_curve(nodes, height_m, mapped, len(wood['index']), level_wood,
                                   sorted(set(800 * .99 ** np.arange(steps + 1)) | {30, *HEIGHTS}, reverse=True))
@@ -400,7 +428,7 @@ def bough(args, output):
     result = dict(views=views['cut'], curve=curve, coverage=coverage, atlas=atlas, sizes=sizes,
                   padded_texels=area, content_texels=unpadded)
     if args.stagger:
-        result['bands'] = band_measures(nodes, height_m, parents)
+        result['bands'] = band_measures(nodes, height_m, parents, args.impostor_px)
     (output / 'result.json').write_text(json.dumps(result, allow_nan=False, separators=(',', ':')) + '\n')
     print(f'Data and metrics in {output}', flush=True)
 
@@ -419,6 +447,12 @@ def main():
     parser.add_argument('--k', type=int, choices=EYE_FACTORS, default=4, help='tolerance multiplier for --bough')
     parser.add_argument('--stagger', type=float, metavar='RATIO',
                         help='for --bough: staggered merge moments with this high/low band ratio instead of --k')
+    parser.add_argument('--stagger-px', type=float, nargs=2, metavar=('TOP', 'BOTTOM'),
+                        help=f'for --stagger: the span of the parents of cards, default {STAGGER_PX[0]:g} {STAGGER_PX[1]:g}')
+    parser.add_argument('--stagger-gap', type=float, metavar='OCTAVES',
+                        help=f'for --stagger: how far an older node may wait below its latest moment, default {STAGGER_GAP:g}')
+    parser.add_argument('--impostor-px', type=float, default=IMPOSTOR_PX,
+                        help='for --bough: the impostor threshold that sets the level wood and the end of the 3D crown')
     parser.add_argument('--bands-only', action='store_true', help='for --bough: print the band measures and stop')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--eye', type=Path, help='read a saved hierarchy and bake and measure its relaxed cuts')
