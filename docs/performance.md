@@ -82,6 +82,7 @@ NPC прошли цикл тел теней и сверку логических
 | `fires` | `scripts/bench/perf-fires.bench` | свой огонь костров, жаровен и очагов: костёр порта в полночь с 4 м (пламя, дым, марево), он же в полдень с 2 м, жаровня города в полночь, широкий камин верхнего квартала с пятью огнями; сравнение наборов — `scripts/perf-content.sh A B fires` |
 | `firerain` | `scripts/bench/perf-firerain.bench` | огненный дождь на лугу к востоку от таверны, четыре броска по 8 с замера с падением, ударами и огнём на траве: весь дождь с 18 м ночью, у героя ночью, весь дождь днём, камера внутри дождя с взглядом вверх; сравнение наборов — `scripts/perf-content.sh A B firerain` ([заметка](../reports/content/remaster/magic-fire/rain.md)) |
 | `crops` | `scripts/bench/perf-crops.bench` | хлеба поля Лобарта в полдень: с края поля, с 15 м сверху, изнутри ржи и у края полосы; цена набора `scripts/content/crop_field_set.py`, сравнение наборов — `scripts/perf-content.sh A B crops` ([заметка](../reports/content/2026-11-19-crop-fields/README.md)) |
+| `itemfx` | `scripts/bench/perf-itemfx.bench` | эффекты предметов в полночь: стартовая комната Ксардаса (7 живых эффектов ближе 40 м), склон у выхода из города к лесу (10), стресс из 24 предметов с эффектом в 3 м от героя у таверны, герой с натянутым огненным луком у трёх воткнувшихся огненных стрел; цена эффектов — `PERF_ENV_A='OPENGOTHIC_ITEM_EFFECTS=0' scripts/perf-content.sh S S itemfx` ([заметка](../reports/engine/2026-11-19-item-effects/README.md)) |
 | `crops-onar` | `scripts/bench/perf-crops-onar.bench` | хлеба северного поля Онара, 12 тыс. предметов набора: южный край, с 15 м, внутри ржи, всё поле с верхнего края; сравнение наборов — `scripts/perf-content.sh A B crops-onar` |
 
 `shot`, `face`, `face-far` и `rock` не входят в прогон по умолчанию. `shot` снимает PNG `market-a`, `market-b`,
@@ -285,15 +286,18 @@ Vulkan-проверка подтверждает механику стенда; 
 scripts/perf-content.sh none working-8 harbour market
 scripts/perf-content.sh working-8 working-8
 scripts/perf-content.sh none working-8 harbour market --noise-pct 2 --threshold-pct 5
+PERF_ENV_A='OPENGOTHIC_ITEM_EFFECTS=0' scripts/perf-content.sh working-34 working-34 itemfx
 ```
 
 `scripts/perf-content.sh <A> <B> [места]` сравнивает наборы из
 `~/.local/share/gothic-ai/content-staging/<набор>/` на Mac; `none` задаёт
 игре пустой `OPENGOTHIC_CONTENT=`. По умолчанию места — `harbour market`;
-доступны также `harbour-night` (порт в полночь, для ночного света), `forest`, `interior`, `combat`, `xardas` (башня Ксардаса в полночь, 23 настенных факела), `temple` (храм в землях троллей, 48 факелов), `fires` (костёр, жаровня и широкий камин), `firerain` (огненный дождь на лугу ночью), `crops` (хлеба поля Лобарта), `crops-onar` (хлеба северного поля Онара). Запуск только на Ryzen, без
+доступны также `harbour-night` (порт в полночь, для ночного света), `forest`, `interior`, `combat`, `xardas` (башня Ксардаса в полночь, 23 настенных факела), `temple` (храм в землях троллей, 48 факелов), `fires` (костёр, жаровня и широкий камин), `firerain` (огненный дождь на лугу ночью), `crops` (хлеба поля Лобарта), `crops-onar` (хлеба северного поля Онара), `itemfx` (эффекты предметов ночью). Запуск только на Ryzen, без
 автоматического перехода на Mac. Окно и настройки — те же `PERF_WINDOW`,
 `PERF_VID_RES`, `PERF_ARGS`, `PERF_ENV`, `PERF_INI`, что у `perf.sh`;
 `OPENGOTHIC_CONTENT` всегда определяется аргументом A/B.
+`PERF_ENV_A` и `PERF_ENV_B` добавляют переменные только своей стороне: так цена
+выключателя меряется в одном наборе, например эффекты предметов выкл (A) и вкл (B).
 
 Скрипт копирует наборы в `~/gothic-ai/perf-content-<worktree>/content/<набор>`
 и сверяет SHA-256 относительных путей и содержимого всех файлов на обеих

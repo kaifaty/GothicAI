@@ -240,6 +240,18 @@ def test_perf_content_arguments_and_abba(monkeypatch, tmp_path):
     assert all(env["PERF_REPEAT"] == "1" and env["NO_BUILD"] == "1" and "/wrong" not in env["PERF_ENV"]
                for _, env in calls)
     assert reports == [(tmp_path, 1, 3)]
+    calls.clear()
+    monkeypatch.setenv("PERF_ENV_A", "OPENGOTHIC_ITEM_EFFECTS=0")
+    content.run_attempts(tmp_path, tmp_path / "content", content.parse_args(["working-8", "working-8", "itemfx"]))
+    assert ["OPENGOTHIC_ITEM_EFFECTS=0" in env["PERF_ENV"].split() for _, env in calls] == [True, False, False, True]
+    assert all(env["PERF_ENV"].split()[-1] == "OPENGOTHIC_CONTENT=" + str(tmp_path / "content/working-8")
+               for _, env in calls)
+    for invalid in ("OPENGOTHIC_CONTENT=/other", "rm -rf"):
+        monkeypatch.setenv("PERF_ENV_B", invalid)
+        with pytest.raises(ValueError, match="PERF_ENV_B"):
+            content.run_attempts(tmp_path, tmp_path / "content", args)
+    assert content.sides_label({"a": "s", "b": "s", "settings": {"PERF_ENV_A": "X=0", "PERF_ENV_B": ""}}) == \
+        "A: `s` + `X=0`; B: `s`"
 
 
 def test_perf_content_base_follows_stand_engine_format(monkeypatch, tmp_path):

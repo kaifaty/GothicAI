@@ -1,0 +1,94 @@
+# What the effects of items cost (reports/engine/2026-11-19-item-effects) at midnight, with the content's own weapon fire.
+# Four held views: Xardas's start room (view-1; the tower holds 10 items with an effect within 40 m, the densest real
+# place of NEWWORLD with the house of view-2), the house at the city's forest gate with 10 (view-2: potions, rings and
+# scrolls on two floors), a stress of 24 items with an effect lying within 3 m of the hero by the tavern (view-3, 2.4
+# times the densest real place), the hero with the fire bow drawn by three fire arrows stuck in the ground, 61 m away (view-4).
+# `itemfx` writes how many effects live in each view. Compare the effects off and on in one content set:
+# PERF_ENV_A='OPENGOTHIC_ITEM_EFFECTS=0' scripts/perf-content.sh S S itemfx.
+seed 73013
+cheat god
+set time 0 0
+cadence normal
+overlay off
+ui off
+view full
+cam lift off
+goto pos 29901 5198 -15441
+cam at 29901 5368 -15441 29330 5400 -15670
+# Ten real seconds after the first teleport for loading and native simulation, five after the next ones.
+wait 10000
+set time 0 0
+itemfx
+perf sample perf-itemfx/view-1
+wait 8000
+perf stop
+goto NW_CITY_TO_FOREST_04_05_01
+cam at 19226 1012 4906 19040 795 4700
+wait 5000
+itemfx
+perf sample perf-itemfx/view-2
+wait 8000
+perf stop
+cam lift on
+goto NW_TAVERNE_TROLLAREA_03
+clear 3000
+wait 2000
+set time 0 0
+watch player
+item put ItPo_Health_01 100 -40
+item put ItPo_Health_01 100 -20
+item put ItPo_Health_01 100 0
+item put ItPo_Health_01 100 20
+item put ItPo_Health_01 100 40
+item put ItPo_Mana_01 160 -40
+item put ItPo_Mana_01 160 -20
+item put ItPo_Mana_01 160 0
+item put ItPo_Mana_01 160 20
+item put ItPo_Mana_01 160 40
+item put ItSc_FireBolt 220 -30
+item put ItSc_IceBolt 220 -15
+item put ItSc_MediumHeal 220 0
+item put ItSc_Light 220 15
+item put ItSc_InstantFireball 220 30
+item put ItRi_Prot_Edge_01 130 -10
+item put ItRi_Str_01 130 10
+item put ItRu_FireBolt 190 -10
+item put ItRu_Firerain 190 10
+item put ItRw_Addon_FireArrow 270 -20
+item put ItRw_Addon_FireArrow 270 0
+item put ItRw_Addon_FireArrow 270 20
+item put ItRw_Addon_FireBow 300 0
+item put ItMw_BeliarWeapon_1H_01 250 -45
+cam follow 380 260 180
+cam look 40
+wait 2000
+cam hold
+wait 1500
+itemfx
+perf sample perf-itemfx/view-3
+wait 8000
+perf stop
+goto NW_TAVERNE_TROLLAREA_07
+clear 3000
+wait 2000
+set time 0 0
+give ItRw_Addon_FireBow
+equip ItRw_Addon_FireBow
+give ItRw_Addon_FireArrow 30
+stats str 150 dex 150 bow 100
+tap bow
+wait 2500
+sticking world
+cam follow 260 160 120
+cam look 100
+volley 3 300
+press action
+wait 1500
+itemfx
+perf sample perf-itemfx/view-4
+wait 8000
+perf stop
+release action
+wait 1500
+# the app cadence window is 30 s from `cadence normal`: let it end
+cadence wait
