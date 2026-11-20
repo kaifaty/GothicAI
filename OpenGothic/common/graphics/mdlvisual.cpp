@@ -38,15 +38,18 @@ using namespace MdlVisualInternal;
 namespace {
 class VisualAnimationPfx final : public AnimationPfx {
   public:
-    VisualAnimationPfx(World& world, MdlVisual& visual) : world(world), visual(visual) {}
+    VisualAnimationPfx(World& world, MdlVisual& visual, bool stopsOnly) : world(world), visual(visual), stopsOnly(stopsOnly) {}
 
     void animationPfx(const Animation::MdsParticleEffect& event) override {
+      if(stopsOnly && !event.pfxStop)
+        return;
       world.animationPfx(event,visual);
       }
 
   private:
     World& world;
     MdlVisual& visual;
+    bool   stopsOnly = false;
   };
 }
 
@@ -725,7 +728,7 @@ void MdlVisual::dropShield(Npc& npc) {
   npc.delItem(itm->clsId(),1);
   }
 
-void MdlVisual::startEffect(World& owner, Effect&& vfx, int32_t slot, bool noSlot) {
+void MdlVisual::startEffect(World& owner, Effect&& vfx, int32_t slot, bool noSlot, bool untilStop) {
   uint64_t timeUntil = vfx.effectPrefferedTime();
   if(timeUntil!=0)
     timeUntil+=owner.tickCount();
@@ -739,6 +742,7 @@ void MdlVisual::startEffect(World& owner, Effect&& vfx, int32_t slot, bool noSlo
   for(auto& i:effects) {
     if(i.id==slot && !i.noSlot) {
       i.timeUntil = timeUntil;
+      i.untilStop = untilStop;
       i.view = std::move(vfx);
       i.view.bindAttaches(*skInst,*skeleton);
       syncAttaches();
@@ -750,6 +754,7 @@ void MdlVisual::startEffect(World& owner, Effect&& vfx, int32_t slot, bool noSlo
   slt.id        = slot;
   slt.timeUntil = timeUntil;
   slt.noSlot    = noSlot;
+  slt.untilStop = untilStop;
   slt.view      = std::move(vfx);
   slt.view.bindAttaches(*skInst,*skeleton);
   effects.push_back(std::move(slt));
@@ -776,6 +781,14 @@ void MdlVisual::stopEffect(int32_t slot) {
       return;
       }
     }
+  }
+
+void MdlVisual::stopLoopedEffects() {
+  const auto end = std::remove_if(effects.begin(),effects.end(),[](const PfxSlot& i) { return i.untilStop; });
+  if(end==effects.end())
+    return;
+  effects.erase(end,effects.end());
+  syncAttaches();
   }
 
 void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, NpcFlag flags) {
@@ -960,13 +973,14 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
     pose.processSfx(*npc,tickCount);
   if(!pausePose && mobsi!=nullptr && world.isInSfxRange(pos3))
     pose.processSfx(*mobsi,tickCount);
-  if(!pausePose && world.isInPfxRange(pos3)) {
-    VisualAnimationPfx pfx(world,*this);
+  if(!pausePose) {
+    // out of range a stop still comes: a looped effect lives until it
+    VisualAnimationPfx pfx(world,*this,!world.isInPfxRange(pos3));
     pose.processPfx(pfx,tickCount);
     }
 
   for(size_t i=0;i<effects.size();) {
-    if(effects[i].timeUntil<tickCount) {
+    if(!effects[i].untilStop && effects[i].timeUntil<tickCount) {
       effects[i] = std::move(effects.back());
       effects.pop_back();
       } else {

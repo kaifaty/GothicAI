@@ -118,9 +118,12 @@ class MdlVisual final {
     void                           setMagicWeapon(Effect&& spell, World& owner);
     void                           setMagicWeaponKey(World& owner, SpellFxKey key, int32_t keyLvl=0);
 
-    void                           startEffect (World& owner, Effect&& pfx, int32_t slot, bool noSlot);
+    // untilStop: an animation event's looped effect, it lives until stopEffect(slot), a new effect in its slot,
+    // stopLoopedEffects or the visual's end instead of its own time
+    void                           startEffect (World& owner, Effect&& pfx, int32_t slot, bool noSlot, bool untilStop = false);
     void                           stopEffect  (const VisualFx& vfx);
     void                           stopEffect  (int32_t slot);
+    void                           stopLoopedEffects();
     // an effect of the animations' events that does not start (the native PEE while an aimed one plays)
     void                           setMutedPfx(std::string_view name) { muted = name; }
     std::string_view               mutedPfx() const { return muted; }
@@ -312,6 +315,7 @@ class MdlVisual final {
       uint64_t    timeUntil=0;
       int         id=0;
       bool        noSlot = false;
+      bool        untilStop = false;
       };
 
     struct TorchSlot {

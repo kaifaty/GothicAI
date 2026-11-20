@@ -263,6 +263,11 @@ void Interactive::tick(uint64_t dt) {
     animChanged = false;
     }
 
+  // at rest, its animation out over or skipped (the user killed, taken off, the routine's reset), the looped effects
+  // of its animations' events go out
+  if(state<=0 && world.tickCount()>=waitAnim)
+    visual.stopLoopedEffects();
+
   if(world.tickCount()<waitAnim)
     return;
 

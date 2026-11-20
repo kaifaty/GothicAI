@@ -638,6 +638,11 @@ bool ObjVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
   return false;
   }
 
+void ObjVisual::stopLoopedEffects() {
+  if(type==M_Mdl)
+    mdl.view.stopLoopedEffects();
+  }
+
 void ObjVisual::processLayers(World& world) {
   if(type==M_Mdl) {
     mdl.view.processLayers(world);
