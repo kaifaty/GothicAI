@@ -343,8 +343,23 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
                                "--max-activity-arrival-max", "-5"]) == 0
     assert json.loads(data.read_text())["result"]["activity"]["total"] == activity["by_state"]["ZS_READ"]
     assert "ZS_SMITH" in out.read_text()
+    # The activity profile also needs run B's own health counters of the activities by events.
+    assert npc_day_parity.main([str(a), str(a), "--tolerances", str(ACTIVITY), "--out", str(out),
+                                "--json", str(data)]) == 1
+    assert {c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]} == set(npc_day_parity.HEALTH)
+    healthy = {"watchdog": 0, "reservation_expired": 0, "reservation_ownerless": 0, "double_occupancy": 0,
+               "reservations": 3, "reservation_bypassed": 0,
+               "states": {"ZS_SMITH": {"steps": 4, "wakes": {"entered": 2, "queue": 2}, "record_phases": {"init": 2}}}}
+    (a / "npc-day.json").write_text(json.dumps({**header, "activity_events": healthy}))
     assert npc_day_parity.main([str(a), str(a), "--tolerances", str(ACTIVITY), "--out", str(out)]) == 0
+    assert "| ZS_SMITH | 2 / 0 / 0 | 4 | entered 2, queue 2 |" in out.read_text()
     assert npc_day_parity.main([str(a), str(b), "--tolerances", str(ACTIVITY), "--out", str(out)]) == 1
+    for counter in ("watchdog", "reservation_expired", "reservation_ownerless", "double_occupancy"):
+        (a / "npc-day.json").write_text(json.dumps({**header, "activity_events": {**healthy, counter: 1}}))
+        assert npc_day_parity.main([str(a), str(a), "--tolerances", str(ACTIVITY), "--out", str(out),
+                                    "--json", str(data)]) == 1
+        assert [c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]] == [
+            name for name, value in npc_day_parity.HEALTH.items() if value == counter]
 
 
 def test_activity_segments_repeat_after_no_routine_and_empty_metrics_fail(tmp_path):

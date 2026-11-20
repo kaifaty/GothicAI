@@ -258,6 +258,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
          * For now, if no mob found - discard command, to avoid npc soft-lock.
          */
         // queue.pushFront(std::move(act));
+        wakeActivity(ActivityEvents::AttachFailed);
         break;
         }
 

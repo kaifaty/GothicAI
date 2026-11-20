@@ -15,6 +15,10 @@ Routine activity metrics use A's nonempty TA samples, grouped by A's ZS: state,
 MOB scheme and waypoint agreement, occupancy ratio, first-MOB arrival delay and
 NPCs with no MOB sample in a reference TA segment. --activity-states limits their
 totals and checks, while the complete state table remains visible.
+The activity health checks read run B's own counters of the activities by events
+(npc-day.json "activity_events", common/world/activityevents.h): watchdog restarts,
+expired reservations, reservations without a living owner, two NPCs on one place. A run
+without these counters fails an enabled health check.
 
 The completeness gates fail a pair whose runs did not both finish (`end_reason`), stop
 early or at different times, have samples present in only one run, or end with an NPC
@@ -64,7 +68,15 @@ CHECKS = {
     "max_activity_arrival_p95": ("max", "activity: arrival delay p95, game min"),
     "max_activity_arrival_max": ("max", "activity: maximum arrival delay, game min"),
     "max_activity_stuck": ("max", "activity: NPCs missing every MOB sample in a routine segment"),
+    "max_activity_watchdog": ("max", "activity events in B: watchdog restarts"),
+    "max_activity_reservation_expired": ("max", "activity events in B: reservations expired without an attach"),
+    "max_activity_reservation_ownerless": ("max", "activity events in B: reservations without a living owner"),
+    "max_activity_double_occupancy": ("max", "activity events in B: two NPCs on one place"),
 }
+# Health check -> run B's counter in npc-day.json "activity_events".
+HEALTH = {"max_activity_watchdog": "watchdog", "max_activity_reservation_expired": "reservation_expired",
+          "max_activity_reservation_ownerless": "reservation_ownerless",
+          "max_activity_double_occupancy": "double_occupancy"}
 
 
 def opener(path):
@@ -413,6 +425,7 @@ def compare(a, b, window=60.0, min_hero_distance=0.0, activity_states=None):
         "last_t_min": last,
         "total": total.summary(),
         "activity": activity_metrics(a, b, common, activity_states),
+        "activity_events": b["header"].get("activity_events"),
         "by_tier": {tier: tally.summary() for tier, tally in sorted(by_tier.items())},
         "by_hour": {int(hour): tally.summary() for hour, tally in sorted(by_hour.items())},
         "by_movement": {name: tally.summary() for name, tally in sorted(by_movement.items())},
@@ -470,6 +483,7 @@ def check_values(result, inventory_evidence=()):
         "max_activity_arrival_p95": activity["arrival_p95"],
         "max_activity_arrival_max": activity["arrival_max"],
         "max_activity_stuck": activity["stuck_npcs"],
+        **{name: (result["activity_events"] or {}).get(counter) for name, counter in HEALTH.items()},
     }
 
 
@@ -581,6 +595,22 @@ def markdown(result, checks, label_a, label_b):
             lines.append(f"| `{entry['key']}` | {entry['state']} | `{entry['ta']}` | {entry['start_min']}–{entry['end_min']} | "
                          f"{entry['arrival_a_min']} / {entry['arrival_b_min']} | {entry['delay_min']} |")
     lines.append("")
+    events = result["activity_events"]
+    lines += [f"## Activities by events in {label_b}", ""]
+    if events is None:
+        lines += ["No `activity_events` counters in the run.", ""]
+    else:
+        lines += [f"Watchdog restarts {events.get('watchdog')}, expired reservations {events.get('reservation_expired')}, "
+                  f"reservations without a living owner {events.get('reservation_ownerless')}, two NPCs on one place "
+                  f"{events.get('double_occupancy')}; reservations made {events.get('reservations')}, taken past a "
+                  f"reservation {events.get('reservation_bypassed')}.", "",
+                  "| State | Record Init / Loop / End | Automaton steps | Wakes |", "|---|---|---|---|"]
+        for state, item in events.get("states", {}).items():
+            phases = item.get("record_phases", {})
+            wakes = ", ".join(f"{name} {count}" for name, count in item.get("wakes", {}).items() if count)
+            lines.append(f"| {state} | {phases.get('init', 0)} / {phases.get('loop', 0)} / {phases.get('end', 0)} | "
+                         f"{item.get('steps', 0)} | {wakes or '—'} |")
+        lines.append("")
     lines += [f"## By tier in {label_b}", "", "| Tier | Samples | Same ZS | Same TA | Position p50 / p95 / max, m |",
               "|---|---|---|---|---|"]
     for tier, item in result["by_tier"].items():
