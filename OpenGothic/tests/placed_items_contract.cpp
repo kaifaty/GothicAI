@@ -3446,24 +3446,6 @@ void animationEffects(Gothic& gothic) {
           "T_S1_2_S0's stop must put FIRE_HOT out at its frame while the transition plays");
   require(tickUntil([&] { return smith->interactive()==nullptr && forge->stateId()<=0; },20000) && slot(*forge,fireSlot)==nullptr,
           "the smith must leave the forge at rest without FIRE_HOT");
-  // the forge back at rest without its animation out right after the lighting (the routine's reset)
-  require(bellows(true) && inAnim("T_S0_2_S1"),"the smith must light FIRE_HOT again in T_S0_2_S1");
-  smith->setInteraction(nullptr,true);
-  forge->resetPositionToTA(0);
-  step(50);
-  require(forge->stateId()<=0 && slot(*forge,fireSlot)==nullptr,"FIRE_HOT must go out at once with the forge at rest without its animation out");
-  // lit far from the viewer: it burns when the viewer comes
-  world.setHeadlessViewer(forge->position()+Tempest::Vec3(1.e6f,0,0));
-  require(!world.isInPfxRange(forge->position()),"the forge must be out of the particles' range");
-  require(bellows(false) && tickUntil([&] { return inAnim("S_S1"); },5000),"the smith must work the bellows far from the viewer");
-  const auto farCycle=world.tickCount();
-  tickUntil([] { return false; },std::max<uint64_t>(aliveFor,1000)+100);
-  world.setHeadlessViewer(forge->position());
-  step(50);
-  require(burns(farCycle),"FIRE_HOT lit far from the viewer must burn when the viewer comes");
-  smith->setInteraction(nullptr,true);
-  forge->resetPositionToTA(0);
-  step(50);
   // particles.d "node": FIRE_HOT with node BIP01 FPLACE stands on the forge's still root, while BIP01 PFX_FIRE, the
   // event's node, goes up and down with the bellows
   {
@@ -3489,10 +3471,29 @@ void animationEffects(Gothic& gothic) {
               double(moved),double(high-low));
   require(inAnim("S_S1") && high-low>30.f && onRoot && moved<1.f,
           "FIRE_HOT with node BIP01 FPLACE must stay on it while BIP01 PFX_FIRE goes up and down in S_S1");
+  useMob(*smith,"BSFIRE",-1);
+  require(tickUntil([&] { return smith->interactive()==nullptr && forge->stateId()<=0; },20000) && slot(*forge,fireSlot)==nullptr,
+          "the smith must leave the forge at rest after FIRE_HOT on BIP01 FPLACE");
+  fireDecl.node.clear();
+  }
+  // the forge back at rest without its animation out right after the lighting (the routine's reset)
+  require(bellows(true) && inAnim("T_S0_2_S1"),"the smith must light FIRE_HOT again in T_S0_2_S1");
   smith->setInteraction(nullptr,true);
   forge->resetPositionToTA(0);
   step(50);
-  }
+  require(forge->stateId()<=0 && slot(*forge,fireSlot)==nullptr,"FIRE_HOT must go out at once with the forge at rest without its animation out");
+  // lit far from the viewer: it burns when the viewer comes
+  world.setHeadlessViewer(forge->position()+Tempest::Vec3(1.e6f,0,0));
+  require(!world.isInPfxRange(forge->position()),"the forge must be out of the particles' range");
+  require(bellows(false) && tickUntil([&] { return inAnim("S_S1"); },5000),"the smith must work the bellows far from the viewer");
+  const auto farCycle=world.tickCount();
+  tickUntil([] { return false; },std::max<uint64_t>(aliveFor,1000)+100);
+  world.setHeadlessViewer(forge->position());
+  step(50);
+  require(burns(farCycle),"FIRE_HOT lit far from the viewer must burn when the viewer comes");
+  smith->setInteraction(nullptr,true);
+  forge->resetPositionToTA(0);
+  step(50);
   std::tie(fireDecl.lightRange,fireDecl.lightColor,fireDecl.lightKeys,fireDecl.lightColors,fireDecl.lightFps,fireDecl.lightAt,
            fireDecl.lightLoop,fireDecl.node)=fireLight;
 
