@@ -926,30 +926,40 @@ void earRecords() {
     }
   }
 
-// The meadow of placementRepeats stands as it stood before the stalks and the content's ground: the roots, the
-// ranks and the batches of its 25 cells, whole numbers alone (the same on every machine), against their digest
-// from origin/main
+// The meadow of placementRepeats stands as it stood before the stalks and the content's ground: every field of the
+// blades of its 25 cells and their batches, against origin/main. The facing and the map's u and v come of
+// arithmetic that another machine rounds the other way for a blade in some thousands (GCC on x86 against clang on
+// ARM: the facing of one blade of these, the u or the v of a hundred, by a step): they go by their sums. The rest
+// is the same on both and goes by its digest
 void placementKept() {
   Grass::Summary flat;
   addField(flat,-1600.f,-1600.f,4800.f,4800.f,0.f,0);
   const Grass::Params par = meadow();
   uint64_t digest = 1469598103934665603ull;
   size_t   count  = 0;
-  const auto mix = [&](uint32_t v) { digest = (digest ^ v)*1099511628211ull; };
+  int64_t  facing = 0, u = 0, v = 0;
+  const auto mix = [&](uint32_t x) { digest = (digest ^ x)*1099511628211ull; };
   for(int32_t cz=-1; cz<4; ++cz)
     for(int32_t cx=-1; cx<4; ++cx) {
       const auto cell = build(flat,cx,cz,par);
       count += cell.blades.size();
       for(const auto& b:cell.blades) {
-        mix(b.w[0] & 0x0FFFFFFFu);
-        mix(b.w[1] & 0xFF00FFFFu);
+        mix(b.w[0]);
+        mix(b.w[1]);
+        mix(b.w[2] & 0xFFFFFF00u);
+        mix(b.w[3] & 0xFF000000u);
+        facing += b.w[2] & 0xFFu;
+        u      += b.w[3] & 0xFFFu;
+        v      += (b.w[3] >> 12) & 0xFFFu;
         }
       for(const auto& bt:cell.batches)
-        for(uint32_t v:{uint32_t(bt.slot),uint32_t(bt.kind),uint32_t(bt.square),bt.first,bt.count})
-          mix(v);
+        for(uint32_t x:{uint32_t(bt.slot),uint32_t(bt.kind),uint32_t(bt.square),bt.first,bt.count})
+          mix(x);
       }
-  require(count==563245u && digest==0xb1cc833359aa51a7ull,
-          "a meadow without `kind` and without the content's ground must keep its blades: "+std::to_string(count)+" "+std::to_string(digest));
+  require(count==563245u && digest==0x6664a824bcb2023full && std::abs(facing-71779365)<=1024 && std::abs(u-1156697106)<=16384 &&
+          std::abs(v-1149493537)<=16384,
+          "a meadow without `kind` and without the content's ground must keep its blades: "+std::to_string(count)+" "+
+          std::to_string(digest)+" "+std::to_string(facing)+" "+std::to_string(u)+" "+std::to_string(v));
   }
 
 // 16 m of stalks (slot 1) beside 16 m of meadow (slot 0)
@@ -993,6 +1003,22 @@ void placementEar() {
   require(low>=86.f && high<=132.4f && low<96.f && high>124.f,
           "stalks are of the record's height: "+std::to_string(low)+".."+std::to_string(high));
   require(stalks>100000 && stalks<104800 && grass>0, "256 m2 of stalks at 400 a m2: "+std::to_string(stalks));
+
+  // the spots that lower the stand are of 6 to 10 m: along 640 m the height turns between falling and rising at
+  // some two in three of the spots' corners and nowhere between them. 52 times with the spots of 8 m; spots of 6 m
+  // would give 73 and of 10 m 38, of 4 m 112 and of 16 m 23
+  int   turns = 0, dir = 0;
+  float prev  = Grass::earHeight(0,0,0);
+  for(int32_t x=50*U; x<=64000*U; x+=50*U) {
+    const float now = Grass::earHeight(0,x,0);
+    const int   to  = now>prev ? 1 : (now<prev ? -1 : 0);
+    if(to!=0 && dir!=0 && to!=dir)
+      ++turns;
+    if(to!=0)
+      dir = to;
+    prev = now;
+    }
+  require(turns>=36 && turns<=76, "the stalks are lower by spots of 6 to 10 m: "+std::to_string(turns));
   }
 
 // A file of worlds/<WORLD>/grass.d
