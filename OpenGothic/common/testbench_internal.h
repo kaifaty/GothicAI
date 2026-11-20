@@ -1844,6 +1844,8 @@ bool npcDayCheckpointTick(World& world);
 bool npcDayCheckpointRunning();
 // A bench reset tears the world down: a pending checkpoint's NPC and probe go with it.
 void npcDayCheckpointReset();
+// The smith of a pending checkpoint is destroyed (a loaded slot, another world): the checkpoint goes and the bench fails.
+void npcDayCheckpointForget(const Npc* npc);
 bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& line,const std::vector<std::string>& a,
                         World& w,Npc& pl,PlayerControl& ctrl);
 

@@ -39,7 +39,6 @@ enum Wake : uint16_t {
   Watchdog     = 1<<9, // a wait outlived WatchdogMs: the activity restarts from the place check
   };
 inline constexpr size_t WakeCount = 10;
-std::string_view wakeName(size_t bit);
 
 // Every wait of the automaton ends by the world clock: a lost event restarts the activity.
 inline constexpr uint64_t WatchdogMs    = 60*60*1000;

@@ -42,6 +42,13 @@ void npcDayCheckpointReset() {
   checkpoint.reset();
   }
 
+void npcDayCheckpointForget(const Npc* npc) {
+  if(!checkpoint || checkpoint->npc!=npc) return;
+  npcDayCheckpointReset();
+  if(!bench.done)
+    arenaAbort("activity checkpoint: the smith left the world before the save");
+  }
+
 bool npcDayCheckpointTick(World& w) {
   if(!checkpoint) return false;
   // By events (world/activityevents.h) the smith runs no Loop: the save point is his hold of the anvil.

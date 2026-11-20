@@ -10,10 +10,6 @@ constexpr std::array<std::string_view,ActivityEvents::WakeCount> wakeNames = {
   };
 }
 
-std::string_view ActivityEvents::wakeName(size_t bit) {
-  return bit<wakeNames.size() ? wakeNames[bit] : std::string_view("?");
-  }
-
 ActivityEvents::Stats& ActivityEvents::stats() {
   static Stats value;
   return value;

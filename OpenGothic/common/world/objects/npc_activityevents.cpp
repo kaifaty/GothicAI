@@ -135,7 +135,13 @@ void Npc::stepActivityEvents(uint16_t wakes) {
     }
   if(wakes & Loaded) {
     // after a load the saved queue and walk ran as they would with the polled Loop; now one check of the place:
-    // an NPC at an object of its scheme holds it, any other looks for one
+    // an NPC attached to an object of its scheme holds it, whatever state the object is in; any other looks for one
+    if(currentInteract!=nullptr && currentInteract->checkMobName(s.activity->scheme)) {
+      countWakes(aiState.hint,0,true);
+      s.stage    = Stage::Hold;
+      s.deadline = gtime::endOfTime();
+      return;
+      }
     seekActivityPlace();
     return;
     }

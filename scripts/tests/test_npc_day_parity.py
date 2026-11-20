@@ -378,13 +378,17 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
     assert npc_day_parity.main([str(a), str(partial), "--tolerances", str(ACTIVITY), "--out", str(out),
                                 "--json", str(data)]) == 1
     assert [c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]] == ["max_activity_reservation_expired"]
-    # ...and one bad counter in B, with A healthy, fails exactly its own check.
+    # ...one bad counter in B, with A healthy, fails exactly its own check...
     for counter, check in health.items():
         c = tmp_path / ("c-" + counter)
         journal(c, a_rows, [], {**header, "activity_events": {**healthy, counter: 1}})
         assert npc_day_parity.main([str(a), str(c), "--tolerances", str(ACTIVITY), "--out", str(out),
                                     "--json", str(data)]) == 1
         assert [c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]] == [check]
+        # ...and the same bad counter in A alone, with B healthy, fails nothing: the check shows B's 0.
+        assert npc_day_parity.main([str(c), str(a), "--tolerances", str(ACTIVITY), "--out", str(out),
+                                    "--json", str(data)]) == 0
+        assert {c["name"]: c["value"] for c in json.loads(data.read_text())["checks"]}[check] == 0
 
 
 def test_mob_mismatch_is_zero_without_occupied_samples(tmp_path):
