@@ -3292,6 +3292,12 @@ void itemEffects(World& world) {
 void animationEffects(Gothic& gothic) {
   auto& world=*gothic.world();
   auto& script=world.script();
+  // The workers go by their AI queue alone, as before activity events (world/activityevents.h): with events on, the
+  // default, a worker's routine automaton answers the cleared queue (its Init again, a dropped reservation) and takes
+  // the use over. Off for this check and the workers' automata stopped; back at its end
+  auto& activityEvents=NpcDefinitionContract::activityEventsOn(script);
+  const bool activityEventsBefore=activityEvents;
+  activityEvents=false;
   auto* session=gothic.gameSession();
   const auto step=[&](uint64_t dt) { session->tick(dt); session->updateAnimation(dt); };
   const auto* fire=GameServices::inst().loadParticleFx("FIRE_HOT");
@@ -3307,6 +3313,7 @@ void animationEffects(Gothic& gothic) {
       if(activityCandidate(*world.npcById(i)) && (point=activityRow(*world.npcById(i),init,pointName))!=nullptr)
         npc=world.npcById(i);
     require(point!=nullptr,(std::string("NEWWORLD must have an NPC with a ")+state+" row").c_str());
+    npc->stopActivityEvents(0);
     npc->setInteraction(nullptr,true);
     npc->clearAiQueue();
     npc->setExternalControl(true);
@@ -3483,6 +3490,7 @@ void animationEffects(Gothic& gothic) {
   require(!there(),"ANVIL_SPARKS must be gone right after their own time");
   std::printf("Animation effects: ANVIL_SPARKS of a blow gone in %llu ms (own time %llu ms)\n",
               (unsigned long long)(world.tickCount()-struck),(unsigned long long)sparks->effectPrefferedTime());
+  activityEvents=activityEventsBefore;
   }
 
 // Arrows (reports/engine/2026-11-19-item-effects): a shot arrow's effect at KEY_INVEST_2, at its first hit KEY_INVEST_3;
