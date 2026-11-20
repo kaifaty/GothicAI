@@ -33,6 +33,8 @@ class AiQueue {
       Npc*              nativeCombatTarget=nullptr;
       // Transient: only state changes queued by the physical-noise callback.
       bool              physicsNoiseState=false;
+      // Transient: queued by a routine activity run by events, its Init or its use (world/activityevents.h).
+      bool              activity=false;
       };
 
     void     save(Serialize& fout) const;
@@ -45,6 +47,7 @@ class AiQueue {
     void     pushFront(AiAction&& a);
     AiAction pop();
     AiAction popPhysicsNoiseState();
+    void     removeActivity();
     int      aiOutputOrderId() const;
     bool     hasItemUse() const;
     bool     nativeCombatOnly(const Npc* target) const;

@@ -137,8 +137,12 @@ void Npc::runStateInit() {
   aiState.loopNextTime = owner.tickCount();
   // WA: for gothic1 dialogs
   perceptionNextTime   = owner.tickCount();
+  // The commands of an activity by events' Init are its own: it can take them back (world/activityevents.h).
+  const auto* activity = owner.rules().eventActivity(aiState.funcIni);
+  activityCommands = activity!=nullptr;
   invokeRoutine(aiState.funcIni);
-  startActivityEvents();
+  activityCommands = false;
+  startActivityEvents(activity);
   }
 
 void Npc::tickRoutine() {

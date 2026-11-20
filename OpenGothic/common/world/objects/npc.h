@@ -402,6 +402,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     // when the state polls its Loop; stopping it gives its object's reservation up.
     void      wakeActivity(uint16_t wakes);
     void      stopActivityEvents(uint16_t why);
+    // MobReservations: the reservation of a use not yet attached expired or another NPC took the object.
+    void      loseActivityReservation();
     const ActivityEvents::State& activityEventState() const { return activityEvents; }
     // external AI control (ai_bridge): routines and script perceptions are paused
     void      setExternalControl(bool e) { externalCtrl = e; }
@@ -945,6 +947,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
       Tempest::Vec3    pos  = {};
       float            pointDistance = 0.f; // transient bench precision; zero keeps normal tolerance
       Npc*             nativeCombatTarget = nullptr; // transient provenance; not a script goto
+      bool             activity = false; // transient provenance: the walk of an activity's own command
 
       void             save(Serialize& fout) const;
       void             load(Serialize&  fin);
@@ -1021,7 +1024,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      isPlayerEnabledState(const ::AiState& st) const;
     void      tickRoutine();
     void      runStateInit();
-    void      startActivityEvents();
+    void      startActivityEvents(const ActivityDefinitions::MobActivity* activity);
     bool      armActivityEvents();
     void      tickActivityEvents();
     void      tickActivityDeadline();
@@ -1386,6 +1389,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     NpcLogicalState                logicalBody;
     AiState                        aiState;
     ActivityEvents::State          activityEvents; // transient, not serialized
+    bool                           activityCommands=false; // transient: the commands queued now are the activity's
     ScriptFn                       aiPrevState;
     AiQueue                        aiQueue;
     AiQueue                        aiQueueOverlay;

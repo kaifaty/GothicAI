@@ -73,7 +73,7 @@ void MobReservations::attached(Npc& npc, Interactive& mob) {
       // taken past the reservation (a script's AI_UseMob, the hero): the owner looks again
       auto* owner = r.owner;
       reservations.erase(reservations.begin()+int(i));
-      owner->wakeActivity(ActivityEvents::AttachFailed);
+      owner->loseActivityReservation();
       continue;
       }
     if(r.owner==&npc) {
@@ -121,7 +121,7 @@ void MobReservations::tick() {
     ++ActivityEvents::stats().expired;
     auto* owner = reservations[i].owner;
     drop(i);
-    owner->wakeActivity(ActivityEvents::AttachFailed);
+    owner->loseActivityReservation();
     }
   }
 

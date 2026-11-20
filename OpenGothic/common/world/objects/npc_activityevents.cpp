@@ -32,11 +32,11 @@ void Npc::stopActivityEvents(uint16_t why) {
   activityEvents = ActivityEvents::State();
   }
 
-void Npc::startActivityEvents() {
+void Npc::startActivityEvents(const ActivityDefinitions::MobActivity* activity) {
   // Init ran: a state with its record and events on starts at the approach, a return starts over
   stopActivityEvents(0);
   activityEvents.init     = aiState.funcIni.ptr;
-  activityEvents.activity = owner.rules().eventActivity(aiState.funcIni);
+  activityEvents.activity = activity;
   if(activityEvents.activity==nullptr)
     return;
   activityEvents.stage      = ActivityEvents::Stage::Approach;
@@ -87,9 +87,13 @@ void Npc::tickActivityDeadline() {
   auto& s = activityEvents;
   const bool busy = aiQueue.size()>0 || !go2.empty();
   if(aiState.started && aiState.funcIni.isValid() && s.init!=aiState.funcIni.ptr) {
-    // A loaded game: the activity's saved use or walk waits for the check after the load.
-    if(armActivityEvents() && busy)
-      dropActivityCommand();
+    // A loaded game. The save keeps the queue and the walk but not whose they are; in the activity's own state
+    // they are its Init's walk or its use. The activity takes them back and starts with its check.
+    if(armActivityEvents() && busy) {
+      clearGoTo();
+      wayPath.clear();
+      aiQueue.clear();
+      }
     return;
     }
   if(s.activity==nullptr || s.retry || (s.stage!=Stage::Approach && s.stage!=Stage::Attach) || !busy)
@@ -99,15 +103,16 @@ void Npc::tickActivityDeadline() {
     fireActivityWatchdog();
     return;
     }
-  if(s.stage!=Stage::Attach)
-    return;
-  const bool rowOver = aiState.loopNextTime<=owner.tickCount() && aiState.eTime<=now &&
-                       currentTarget==nullptr && outputPipe->isFinished();
-  // The reservation of a use not yet attached expired, or another NPC took the object: the use goes, the
-  // activity looks again once the queue is empty.
-  const bool lost    = currentInteract==nullptr && owner.mobReservations().reserved(*this)==nullptr;
-  if(rowOver || lost)
-    dropActivityCommand(); // the routine tick then ends the row or looks again, once the queue is empty
+  if(s.stage==Stage::Attach && aiState.loopNextTime<=owner.tickCount() && aiState.eTime<=now &&
+     currentTarget==nullptr && outputPipe->isFinished())
+    dropActivityCommand(); // the routine tick ends the row once the queue is empty
+  }
+
+void Npc::loseActivityReservation() {
+  // The use of a lost reservation goes at once: the NPC sits down only with a new one.
+  if(activityEvents.activity!=nullptr && activityEvents.stage==ActivityEvents::Stage::Attach && currentInteract==nullptr)
+    dropActivityCommand();
+  wakeActivity(ActivityEvents::AttachFailed);
   }
 
 void Npc::fireActivityWatchdog() {
@@ -117,20 +122,13 @@ void Npc::fireActivityWatchdog() {
   }
 
 void Npc::dropActivityCommand() {
-  // Only the activity's own use or its walk to the routine point: a command queued behind runs, the walk of
-  // another command goes on, a leave (AI_UseMob with another state) stays.
-  const auto& a     = *activityEvents.activity;
-  const auto* front = aiQueue.front();
-  const bool  use   = front!=nullptr && front->act==AI_UseMob && front->s0==a.scheme && front->i0==a.useState;
-  const bool  step  = front!=nullptr && front->act==AI_GoToPoint && front->point!=nullptr && front->point->name==hnpc->wp;
-  const bool  walk  = step || (wayPath.last()!=nullptr && wayPath.last()->name==hnpc->wp) ||
-                      (go2.wp!=nullptr && go2.wp->name==hnpc->wp);
-  if(use || step)
-    aiQueue.pop();
-  if(use || walk) {
+  // Only what the activity queued itself (its Init's commands, its use; AiAction::activity) and the walk such a
+  // command started (GoTo::activity): other commands and their walks stay.
+  if(go2.activity) {
     clearGoTo();
     wayPath.clear();
     }
+  aiQueue.removeActivity();
   owner.mobReservations().release(*this);
   }
 
@@ -198,7 +196,9 @@ void Npc::seekActivityPlace() {
     return;
     }
   if(mob!=nullptr && !busy && (mob==currentInteract || places.reserve(*this,*mob))) {
-    aiPush(AiQueue::aiUseMob(a.scheme,a.useState));
+    auto use = AiQueue::aiUseMob(a.scheme,a.useState);
+    use.activity = true;
+    aiPush(std::move(use));
     s.stage      = Stage::Attach;
     s.awaitQueue = (mob==currentInteract); // no attach event comes for an object already in use
     s.deadline   = after(now,WatchdogMs);
