@@ -324,7 +324,6 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
 
   private:
     friend struct WorldDataContract;
-    friend struct NpcDefinitionContract;
     friend struct WayHeightsContract;
     double               worldLoadMs = 0;
     bool                 textureLoadingPending = true;

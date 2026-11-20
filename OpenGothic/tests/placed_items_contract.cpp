@@ -139,7 +139,6 @@ struct NpcDefinitionContract {
   static const auto& effects(const MdlVisual& view) { return view.effects; }
   static size_t bone(const MdlVisual& view, std::string_view name) { return view.skeleton->findNode(name); }
   static const AnimationSolver& solver(const MdlVisual& view) { return view.solver; }
-  static void viewerOff(World& world) { world.hasHeadlessViewer=false; }
   };
 
 namespace {
@@ -2263,9 +2262,7 @@ void animationEffects(Gothic& gothic) {
   const auto* sparks=GameServices::inst().loadParticleFx("ANVIL_SPARKS");
   require(fire!=nullptr && fire->ppsIsLooping && fire->effectPrefferedTime()<5000 && sparks!=nullptr && !sparks->ppsIsLooping,
           "FIRE_HOT must loop with its own time under 5 s, ANVIL_SPARKS must not loop");
-  // a worker of the scheme at his point, his routine off: the AI queue only; back where he was at the end
-  struct Moved { Npc* npc; Tempest::Vec3 at; float rotation; };
-  std::vector<Moved> moved;
+  // a worker of the scheme at his point, his routine off: the AI queue only
   const auto worker=[&](const char* state,const char* scheme,Npc*& npc) {
     const auto init=activityPhases(script,state).init;
     std::string pointName;
@@ -2277,7 +2274,6 @@ void animationEffects(Gothic& gothic) {
     npc->setInteraction(nullptr,true);
     npc->clearAiQueue();
     npc->setExternalControl(true);
-    moved.push_back({npc,npc->position(),npc->rotation()});
     npc->setPosition(point->position());
     auto* mob=world.availableMob(*npc,scheme);
     require(mob!=nullptr,(npcName(world,*npc)+"'s point must have a free "+scheme).c_str());
@@ -2378,7 +2374,6 @@ void animationEffects(Gothic& gothic) {
   world.setHeadlessViewer(forge->position());
   step(50);
   require(burns(farCycle),"FIRE_HOT lit far from the viewer must burn when the viewer comes");
-  NpcDefinitionContract::viewerOff(world);
   smith->setInteraction(nullptr,true);
   forge->resetPositionToTA(0);
   step(50);
@@ -2386,6 +2381,7 @@ void animationEffects(Gothic& gothic) {
   // the anvil's sparks of each blow go by their own time
   Npc* harad=nullptr;
   auto* anvil=worker("ZS_SMITH_ANVIL","BSANVIL",harad);
+  world.setHeadlessViewer(anvil->position());
   const auto* hammering=NpcDefinitionContract::solver(NpcDefinitionContract::model(*anvil)).solveFrm("S_S1");
   require(hammering!=nullptr,"BSANVIL_OC must have S_S1");
   const auto striking=std::find_if(hammering->data->pfx.begin(),hammering->data->pfx.end(),[](const auto& e) {
@@ -2414,15 +2410,7 @@ void animationEffects(Gothic& gothic) {
   require(!there(),"ANVIL_SPARKS must be gone right after their own time");
   std::printf("Animation effects: ANVIL_SPARKS of a blow gone in %llu ms (own time %llu ms)\n",
               (unsigned long long)(world.tickCount()-struck),(unsigned long long)sparks->effectPrefferedTime());
-  // standing where they were, out of the objects' animations: the arrows after this shoot into Harad's pose
-  for(auto& [npc,at,rotation]:moved) {
-    npc->setInteraction(nullptr,true);
-    npc->clearAiQueue();
-    npc->stopAnim("");
-    npc->setPosition(at);
-    npc->setDirection(rotation);
-    npc->setExternalControl(false);
-    }
+  }
   }
 
 // Arrows (reports/engine/2026-11-19-item-effects): a shot arrow's effect at KEY_INVEST_2, at its first hit KEY_INVEST_3;
@@ -2997,9 +2985,10 @@ void moverChildSave() {
   // Last: it replaces the session with its own load.
   activityDefinitionsWorld(gothic);
   itemEffects(*gothic.world());
-  animationEffects(gothic);
-  // Last: it replaces the session with its own load.
+  // It replaces the session with its own load.
   arrowEffects(gothic);
+  // Last: it moves Harad between his forge and his anvil.
+  animationEffects(gothic);
   gothic.clearGame().reset();
   }
 
