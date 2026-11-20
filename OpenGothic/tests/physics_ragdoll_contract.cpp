@@ -961,19 +961,23 @@ void testProjectileWorldStopOptIn() {
     world.deleteObj(arrow);
     }
 
-  // The old speed*fraction gate moves to the wall but does not count, reflect,
-  // collide or stop for this near-contact sample. Attachment must not widen it.
+  // A touch at the very start of a step glances like any other first hard impact, with attachment ON or OFF.
   for(const bool enabled:{false,true}) {
     DynamicWorld world(nullptr,wallAt(100,asset::MaterialGroup::STONE));
     Callback callback; callback.enabled=enabled;
     auto* arrow=world.bulletObj(&callback); callback.body=arrow;
-    arrow->setPosition({95,500,0}); arrow->setDirection(direction);
+    const Tempest::Vec3 nearFrom{95,500,0};
+    const auto nearTo=nearFrom+direction*100.f-Tempest::Vec3(0,.5f*DynamicWorld::gravity*100.f*100.f,0);
+    const auto expected=world.ray(nearFrom,nearTo);
+    require(expected.hasCol && expected.mat==asset::MaterialGroup::STONE,"near contact must hit the stone wall");
+    arrow->setPosition(nearFrom); arrow->setDirection(direction);
     world.tick(100);
-    require(callback.worlds==0 && callback.materials==0 && callback.stops==0 && callback.moves==1 && callback.order=="M",
-            "near hard contact must retain the original no-callback speed/fraction gate");
-    require(arrow->hitCount()==0 && arrow->pathLength()==0,"near-contact gate must preserve hit and distance counters");
-    near((arrow->direction()-direction).length(),0,0,"near-contact gate must preserve incoming direction");
-    near(arrow->position().x,100,.0001f,"near-contact gate must still reach the original wall point");
+    require(callback.worlds==0 && callback.stops==0 && callback.materials==1 && callback.moves==1 && callback.order=="CM",
+            "near hard contact must glance as the first reflection");
+    require(arrow->hitCount()==1,"near hard contact must count one hit");
+    near(arrow->pathLength(),(nearTo-nearFrom).length()*expected.hitFraction,.0001f,"near contact must add travelled distance");
+    near((arrow->direction()-Tempest::Vec3(-1.5f,0,0)).length(),0,.000001f,"near contact must reflect at half speed");
+    near(arrow->position().x,100,.0001f,"near contact must reach the wall point");
     world.deleteObj(arrow);
     }
 

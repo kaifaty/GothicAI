@@ -2445,7 +2445,8 @@ void arrowEffects(Gothic& gothic) {
     session->tick(4);
     // a finished bullet is removed on the next tick only
     // thrown back: no longer straight down (the stone's n.y>=.7 turns a straight down flight to y>=-.02)
-    glanced=!glancing.isFinished() && Tempest::Vec3::normalize(glancing.direction()).y>-.5f &&
+    const auto d=glancing.direction();
+    glanced=!glancing.isFinished() && d.y>-.5f*d.length() &&
             glancing.itemView().level()==3 && glancing.itemView().effectKey()==hit && emitting(glancing.itemView());
     }
   require(glanced,"a fire arrow glancing off stone must fly on at KEY_INVEST_3");
@@ -2489,6 +2490,12 @@ void arrowEffects(Gothic& gothic) {
         if(t.done)
           continue;
         ++t.steps;
+        if(t.steps==1) {
+          // the first 4 ms step touches the stone: it glances up and flies on
+          const auto msg="an arrow shot down onto stone from "+std::to_string(t.height)+" cm must glance up at its "
+                         "first touch";
+          require(!t.b->isFinished() && t.b->direction().y>0.f,msg.c_str());
+          }
         if(t.b->isFinished()) {
           t.done=true;
           t.end=t.b->position();
