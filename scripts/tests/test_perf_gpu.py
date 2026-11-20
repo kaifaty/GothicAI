@@ -40,8 +40,10 @@ def test_warm_reason_needs_ninety_seconds_and_a_still_minute():
         assert gpu.warm_reason(stepped, 0, 150 * second, 300) == warm
     assert gpu.warm_reason(rising, 0, 300 * second - 1, 300) is None
     assert gpu.warm_reason(rising, 0, 300 * second, 300) == "max"
-    # A journal that stopped long ago does not cover the minute.
+    # A journal that stopped long ago does not cover the minute, nor do two fresh samples after the gap.
     assert gpu.warm_reason(rows([70.0] * 40), 0, 120 * second, 300) is None
+    resumed = rows([70.0] * 40) + [{"mono_ns": 118 * second, "temp_c": 70.0}, {"mono_ns": 119 * second, "temp_c": 70.0}]
+    assert gpu.warm_reason(resumed, 0, 120 * second, 300) is None
 
 
 SMI_LINES = r'''#!/usr/bin/env bash
@@ -60,6 +62,13 @@ SMI_LOOP = r'''#!/usr/bin/env bash
 echo $$ >"$FAKE_SMI_PID"
 while :; do echo '66, 1890, 9501, 310.5, P2, 50, 98, 0x0000000000000000'; sleep 0.2; done
 '''
+
+SMI_RISING = r'''#!/usr/bin/env bash
+[[ "${1:-}" != -L ]] || { echo 'GPU 0: Fake'; exit 0; }
+for ((temp = 40; ; temp++)); do echo "$temp, 1890, 9501, 310.5, P2, 50, 98, 0x0"; sleep 0.2; done
+'''
+
+SMI_SILENT = '#!/usr/bin/env bash\n[[ "${1:-}" != -L ]] || exit 0\nexec sleep 600\n'
 
 SMI_SLOW = SMI_LOOP.replace("while :;", "sleep 3; while :;")
 
@@ -107,6 +116,7 @@ def test_journal_stamps_rows_survives_na_and_stops_on_sigterm(tmp_path):
     assert before <= first["mono_ns"] and first["mono_ns"] + 0.4e9 <= second["mono_ns"] <= time.monotonic_ns()
     assert (first["temp_c"], first["sm_mhz"], first["mem_mhz"], first["power_w"]) == (61, 1905, 9501, 301.25)
     assert (second["temp_c"], second["sm_mhz"], second["power_w"], second["mem_mhz"]) == (None, None, None, 9501)
+    assert (first["fan_pct"], first["util_pct"], second["fan_pct"], second["util_pct"]) == (45, 99, None, 99)
     assert second["reasons"] == "0x0000000000000004"
 
 
@@ -140,7 +150,7 @@ print("[bench] drawable 1728x1117")
 '''
 
 
-def stand(tmp_path, smi, stamp_age=None, warmup=None, **extra):
+def stand(tmp_path, smi, stamp_age=None, warmup=None, slow_checks=False, **extra):
     root = tmp_path / "gothic"
     (root / "scripts/bench").mkdir(parents=True)
     (root / "OpenGothic/build-perf").mkdir(parents=True)
@@ -151,10 +161,13 @@ def stand(tmp_path, smi, stamp_age=None, warmup=None, **extra):
         shutil.copyfile(SCRIPTS / name, root / "scripts" / name)
     (root / "scripts/bench/perf-market.bench").write_text("")
     stub(tmp_path / "bin", "game", GAME)
-    path = os.environ["PATH"]
+    stub(tmp_path / "bin", "pgrep", "#!/usr/bin/env bash\nexit 1\n")
+    path = f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}"
     if smi is not None:
         stub(tmp_path / "bin", "nvidia-smi", smi)
-        path = f"{tmp_path / 'bin'}{os.pathsep}{path}"
+    if slow_checks:
+        # The build checks before the base, display and journal take 3 s.
+        stub(tmp_path / "bin", "grep", f"#!/usr/bin/env bash\nsleep 1\nexec {shutil.which('grep')} \"$@\"\n")
     stamp = tmp_path / "perf-last-game"
     if stamp_age is not None:
         stamp.touch()
@@ -178,8 +191,8 @@ def stand(tmp_path, smi, stamp_age=None, warmup=None, **extra):
 
 
 def test_fresh_stamp_skips_the_warm_up_and_journals_the_run(tmp_path):
-    # The stamp is 118 s old when the run phase begins; the journal's first sample comes 3 s later.
-    out, games, stdout, stamp = stand(tmp_path, SMI_SLOW, stamp_age=118)
+    # The stamp is 118 s old when the run phase begins; its checks take 3 s, the journal's first sample 3 s more.
+    out, games, stdout, stamp = stand(tmp_path, SMI_SLOW, stamp_age=118, slow_checks=True)
     assert re.search(r"^perf: GPU warm: last stand game ended 11[0-9] s ago, no warm-up$", stdout, re.M)
     assert [Path(leaf).relative_to(out).as_posix() for leaf, _ in games] == ["market/repeat-1"]
     assert not (out / "warmup").exists()
@@ -193,7 +206,7 @@ def test_fresh_stamp_skips_the_warm_up_and_journals_the_run(tmp_path):
 
 
 def test_old_stamp_warms_up_with_restarts_until_the_ceiling(tmp_path):
-    out, games, stdout, stamp = stand(tmp_path, SMI_LOOP, stamp_age=130)
+    out, games, stdout, stamp = stand(tmp_path, SMI_LOOP, stamp_age=122)
     warmup = json.loads((out / "warmup.json").read_text())
     assert warmup["reason"] == "max" and warmup["mode"] == "auto"
     # The first game ends by itself and is restarted; the second is stopped at the ceiling.
@@ -211,11 +224,14 @@ def test_old_stamp_warms_up_with_restarts_until_the_ceiling(tmp_path):
     assert not alive(int((tmp_path / "smi.pid").read_text()))
 
 
-def test_still_temperature_stops_the_warm_up_before_the_ceiling(tmp_path):
-    out, games, _, _ = stand(tmp_path, SMI_LOOP, stamp_age=130, PERF_WARMUP_MAX="60",
+@pytest.mark.parametrize("smi,ceiling,reason", ((SMI_LOOP, "60", "stable"), (SMI_RISING, "4", "max")))
+def test_still_temperature_stops_the_warm_up_before_the_ceiling(tmp_path, smi, ceiling, reason):
+    # A still card is warm after the minimum; a heating one past the minimum is not, until the ceiling.
+    out, games, _, _ = stand(tmp_path, smi, stamp_age=130, PERF_WARMUP_MAX=ceiling,
                              PERF_WARMUP_MIN="2", PERF_WARMUP_WINDOW="1")
     warmup = json.loads((out / "warmup.json").read_text())
-    assert warmup["reason"] == "stable" and warmup["runs"] == 2 and warmup["seconds"] < 10
+    assert warmup["reason"] == reason and warmup["runs"] == 2 and warmup["seconds"] < 10
+    assert reason == "stable" or warmup["seconds"] >= 4
     assert (tmp_path / "games.stopped").exists()
 
 
@@ -227,6 +243,7 @@ def test_without_nvidia_smi_there_is_no_journal(tmp_path, warmup):
     if warmup == "3":
         # A fixed warm-up needs no journal.
         assert json.loads((out / "warmup.json").read_text())["reason"] == "fixed"
+        assert 3 <= json.loads((out / "warmup.json").read_text())["seconds"] < 3.6
         assert len(games) == json.loads((out / "warmup.json").read_text())["runs"] + 1
         files += ["warmup", "warmup.json"]
     else:
@@ -239,9 +256,13 @@ def test_without_nvidia_smi_there_is_no_journal(tmp_path, warmup):
     assert "warmup" not in json.loads((out / "report.json").read_text())
 
 
-def test_query_without_samples_goes_on_without_a_journal(tmp_path):
-    out, games, output, _ = stand(tmp_path, SMI_NO_QUERY, stamp_age=1000)
+@pytest.mark.parametrize("smi,early", ((SMI_NO_QUERY, True), (SMI_SILENT, False)))
+def test_query_without_samples_goes_on_without_a_journal(tmp_path, smi, early):
+    started = time.monotonic()
+    out, games, output, _ = stand(tmp_path, smi, stamp_age=1000)
+    assert time.monotonic() - started < 20  # a silent query is given up after 5 s
     assert "perf: warning: no GPU clock sample in 5 s; no journal" in output
+    assert ("perf: warning: GPU clock journal stopped early (exit 9)" in output) == early
     assert not (out / "gpu.csv").exists() and len(games) == 1
     assert json.loads((out / "warmup.json").read_text())["reason"] == "no-gpu-log"
 

@@ -849,11 +849,13 @@ def test_gpu_clocks_by_view_skip_warmup_and_compare_warns(tmp_path, capsys):
         b = tmp_path / f"b-{sm}"
         for repeat in (1, 2):
             two_views(b / "market" / f"repeat-{repeat}", (repeat - 1) * 1_000_000_000)
-        gpu_journal(b, [(stamp, 60, sm, 300) for stamp in (20_000_000, 120_000_000, 1_020_000_000, 1_120_000_000)])
-        gpu_journal(a, [(stamp, 60, 2000, 300) for stamp in (20_000_000, 120_000_000, 1_020_000_000, 1_120_000_000)])
+        # view-1 (20 ms, 1020 ms) runs 40 MHz below the place's mean, view-2 (120 ms, 1120 ms) 40 MHz above.
+        for root, mean in ((a, 2000), (b, sm)):
+            gpu_journal(root, [(stamp, 60, mean + shift, 300) for stamp, shift in
+                               ((20_000_000, -40), (120_000_000, 40), (1_020_000_000, -40), (1_120_000_000, 40))])
         comparison = report.compare_reports(report.build_report(a), report.build_report(b))
         assert comparison["schema_version"] == 1
-        assert comparison["places"]["market"]["gpu_sm_mhz"]["b"] == sm
+        assert (comparison["places"]["market"]["gpu_sm_mhz"]["a"], comparison["places"]["market"]["gpu_sm_mhz"]["b"]) == (2000, sm)
         warnings = [warning for warning in comparison["warnings"] if "частоты SM" in warning]
         assert warnings == ([f"market: частоты SM расходятся на {warned} %: в разнице времени есть разница частоты GPU"]
                             if warned else [])
@@ -862,6 +864,10 @@ def test_gpu_clocks_by_view_skip_warmup_and_compare_warns(tmp_path, capsys):
     # Compared leaves find the journal of their run two folders up.
     leaves = report.compare_reports(report.build_report(a / "market/repeat-1"), report.build_report(b / "market/repeat-2"))
     assert (leaves["places"]["market"]["gpu_sm_mhz"]["a"], leaves["places"]["market"]["gpu_sm_mhz"]["b"]) == (2000, 1978)
+    # A journal that covers view-1 but not view-2 of the same repeats warns about view-2 alone.
+    gpu_journal(a, [(20_000_000, 60, 2000, 300), (1_020_000_000, 60, 2000, 300)])
+    assert [warning for warning in report.build_report(a)["warnings"] if "журнал GPU" in warning] == [
+        "журнал GPU не покрывает market/view-2"]
     # Without journals the report is as before, warm-up line included; a gpu.csv beside the run is not its journal.
     for root in (a, b):
         (root / "gpu.csv").unlink()

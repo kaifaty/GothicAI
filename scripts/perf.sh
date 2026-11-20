@@ -186,6 +186,8 @@ fi
 GAME_BIN="${GAME_BIN:-$BUILD/opengothic/Gothic2Notr}"
 GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
 if [[ "${NO_BUILD:-0}" != 1 ]]; then build_game "$OUT/build"; fi
+# The GPU stamp's age counts from entering the run phase, before base, display and journal checks.
+export PERF_RUN_STARTED_AT="$(date +%s)"
 [[ -x "$GAME_BIN" ]] || fail "missing game executable: $GAME_BIN"
 grep -qx 'CMAKE_BUILD_TYPE:STRING=RelWithDebInfo' "$BUILD/CMakeCache.txt" || fail 'build-perf must use RelWithDebInfo; rerun without NO_BUILD=1'
 for setting in OPENGOTHIC_ENABLE_FRAME_PROFILE OPENGOTHIC_ENABLE_APP_CADENCE; do
@@ -337,13 +339,14 @@ def launch(leaf, profile, done=None):
     """Exit code of one game; None when done() stopped it. RuntimeError on the timeout."""
     env, command = prepare(leaf, profile)
     deadline = time.monotonic() + timeout
-    try:
-        with (leaf / 'game.log').open('w') as log:
-            process = subprocess.Popen(command, cwd=leaf / 'run', env=env, stdout=log, stderr=subprocess.STDOUT)
-            launched.append(time.monotonic_ns())
+    with (leaf / 'game.log').open('w') as log:
+        process = subprocess.Popen(command, cwd=leaf / 'run', env=env, stdout=log, stderr=subprocess.STDOUT)
+        launched.append(time.monotonic_ns())
+        # Only a game that started refreshes the stamp, whatever way it ends.
+        try:
             while True:
                 try:
-                    return process.wait(timeout=1 if done else timeout), command
+                    return process.wait(timeout=0.2 if done else timeout), command
                 except subprocess.TimeoutExpired:
                     if done is not None and done():
                         stop(process)
@@ -351,9 +354,9 @@ def launch(leaf, profile, done=None):
                     if time.monotonic() >= deadline:
                         stop(process)
                         raise RuntimeError(f'perf: game timed out after {timeout}s; stopped only this run')
-    finally:
-        stamp.parent.mkdir(parents=True, exist_ok=True)
-        stamp.touch()
+        finally:
+            stamp.parent.mkdir(parents=True, exist_ok=True)
+            stamp.touch()
 
 
 if mode == 'measure':
@@ -429,8 +432,6 @@ else:
 PY
 }
 
-# Stamp age counts from entering the run phase, before the journal starts.
-export PERF_RUN_STARTED_AT="$(date +%s)"
 # The GPU clock journal runs over the whole run phase where nvidia-smi works (Ryzen); Mac has none.
 # It never stops a measurement: without samples the run goes on as without a journal.
 GPU_SMI=0 GPU_LOG=0 GPU_LOG_PID=''
@@ -459,9 +460,7 @@ elif [[ "$GPU_SMI" == 1 ]]; then
   if gpu_samples; then
     GPU_LOG=1
   else
-    kill -TERM "$GPU_LOG_PID" 2>/dev/null || true
-    wait "$GPU_LOG_PID" 2>/dev/null || true
-    GPU_LOG_PID=''
+    stop_gpu_log
     rm -f "$OUT/gpu.csv"
     echo 'perf: warning: no GPU clock sample in 5 s; no journal' >&2
   fi
