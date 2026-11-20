@@ -1,0 +1,59 @@
+# The rye of Onar's north field by time from the game's own camera behind the hero (docs/grass-plan.md, step 6):
+# tall dense grass, 160 cm stalks of the grass system, 480 a m². Four held views at noon, the hero standing in the
+# rye. Run with a crop set that has rye by stalks (worlds/NEWWORLD/grass.d) in PERF_ENV and OPENGOTHIC_GPU_PASSES=1;
+# a pair with OPENGOTHIC_GRASS_GPU_CULL=0. Each view also writes `grass stats` and a shot for the look.
+# @timeout 600
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+cam game
+# view 1: the middle of the field, along it to the east, uphill
+goto pos 60419 2126 -8282
+face 0
+clear 3000
+wait 20000
+grass wait
+grass stats
+perf sample perf-crops-game/view-1
+wait 8000
+perf stop
+shot view-1
+wait 300
+# view 2: the same place, to the west, downhill
+face 180
+wait 8000
+grass wait
+grass stats
+perf sample perf-crops-game/view-2
+wait 8000
+perf stop
+shot view-2
+wait 300
+# view 3: the west end, the whole field ahead up the slope
+goto pos 56359 1718 -7330
+face 0
+wait 15000
+grass wait
+grass stats
+perf sample perf-crops-game/view-3
+wait 8000
+perf stop
+shot view-3
+wait 300
+# view 4: the upper east end, down over the field
+goto pos 65087 2513 -7572
+face 180
+wait 15000
+grass wait
+grass stats
+perf sample perf-crops-game/view-4
+wait 8000
+perf stop
+shot view-4
+wait 300
