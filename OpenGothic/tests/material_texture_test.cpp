@@ -969,6 +969,7 @@ void trackRecords(Tempest::Device& device, const Fixture& fixture) {
   }
 #include "foliage_tree_test.h" // foliageTreeMaths, foliageTreeRecords
 #include "vsm_pair_cap_test.h" // vsmRecords
+#include "lights_bvh_test.h" // lightsBvhRecords
 
 // graphics/foliagewind.h: the processor's copy of the rule of shader/materials/foliage_wind.glsl
 void foliageWindMaths() {
@@ -3242,6 +3243,7 @@ int main(int argc, char** argv) {
     foliageRecords(device,fixture);
     foliageTreeRecords(device,fixture);
     vsmRecords(device);
+    lightsBvhRecords(device);
     grassRecords(device,fixture);
     groundRecords(device,fixture);
     trackRecords(device,fixture);
