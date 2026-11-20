@@ -38,18 +38,16 @@ using namespace MdlVisualInternal;
 namespace {
 class VisualAnimationPfx final : public AnimationPfx {
   public:
-    VisualAnimationPfx(World& world, MdlVisual& visual, bool stopsOnly) : world(world), visual(visual), stopsOnly(stopsOnly) {}
+    VisualAnimationPfx(World& world, MdlVisual& visual, bool inRange) : world(world), visual(visual), inRange(inRange) {}
 
     void animationPfx(const Animation::MdsParticleEffect& event) override {
-      if(stopsOnly && !event.pfxStop)
-        return;
-      world.animationPfx(event,visual);
+      world.animationPfx(event,visual,inRange);
       }
 
   private:
     World& world;
     MdlVisual& visual;
-    bool   stopsOnly = false;
+    bool   inRange = true;
   };
 }
 
@@ -974,8 +972,8 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
   if(!pausePose && mobsi!=nullptr && world.isInSfxRange(pos3))
     pose.processSfx(*mobsi,tickCount);
   if(!pausePose) {
-    // out of range a stop still comes: a looped effect lives until it
-    VisualAnimationPfx pfx(world,*this,!world.isInPfxRange(pos3));
+    // out of the particles' range stops and looped effects still come (World::animationPfx)
+    VisualAnimationPfx pfx(world,*this,world.isInPfxRange(pos3));
     pose.processPfx(pfx,tickCount);
     }
 

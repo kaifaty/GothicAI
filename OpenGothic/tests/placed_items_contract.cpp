@@ -139,6 +139,7 @@ struct NpcDefinitionContract {
   static const auto& effects(const MdlVisual& view) { return view.effects; }
   static size_t bone(const MdlVisual& view, std::string_view name) { return view.skeleton->findNode(name); }
   static const AnimationSolver& solver(const MdlVisual& view) { return view.solver; }
+  static void viewerOff(World& world) { world.hasHeadlessViewer=false; }
   };
 
 namespace {
@@ -2312,32 +2313,69 @@ void animationEffects(Gothic& gothic) {
   const int fireSlot=lighting->index;
   require(std::any_of(out->data->pfx.begin(),out->data->pfx.end(),[&](const auto& e) { return e.pfxStop && e.index==fireSlot; }),
           "T_S1_2_S0 must stop FIRE_HOT by its number");
-  const auto bellows=[&] {
+  const auto bellows=[&](bool lit) {
     useMob(*smith,"BSFIRE",1);
-    return tickUntil([&] { return forge->stateId()==forge->stateCount() && slot(*forge,fireSlot)!=nullptr; },20000);
+    return tickUntil([&] { return forge->stateId()==forge->stateCount() && (!lit || slot(*forge,fireSlot)!=nullptr); },20000);
     };
-  require(bellows(),(npcName(world,*smith)+" must work the bellows of BSFIRE with FIRE_HOT burning").c_str());
+  const auto inAnim=[&](const char* name) { return model.pose().isInAnim(name); };
+  // FIRE_HOT burns on its bone with its emitter alive past its own time and its last particle's life
+  const auto aliveFor=fire->effectPrefferedTime()+fire->maxLifetime();
+  const auto burns=[&](uint64_t since) {
+    Tempest::Vec3 at;
+    const auto* burning=slot(*forge,fireSlot);
+    return burning!=nullptr && burning->isEmitting() && burning->isAlive() && world.tickCount()>since+aliveFor &&
+           burning->emitterPosition(at) && (at-model.mapBone(fireBone)).length()<1.f;
+    };
+  require(bellows(true),(npcName(world,*smith)+" must work the bellows of BSFIRE with FIRE_HOT burning").c_str());
   const auto lit=world.tickCount();
-  require(!tickUntil([&] { return slot(*forge,fireSlot)==nullptr; },5000) && forge->stateId()==forge->stateCount(),
-          "FIRE_HOT must burn after 5 s of the bellows, not its own time");
-  Tempest::Vec3 at;
-  const auto* burning=slot(*forge,fireSlot);
-  require(burning->isEmitting() && burning->emitterPosition(at) && (at-model.mapBone(fireBone)).length()<1.f,
-          "FIRE_HOT must burn at BIP01 PFX_FIRE");
-  std::printf("Animation effects: FIRE_HOT of BSFIRE burns %llu ms of the bellows (its own time %llu ms) at %.2f cm of "
-              "BIP01 PFX_FIRE\n",(unsigned long long)(world.tickCount()-lit),(unsigned long long)fire->effectPrefferedTime(),
-              double((at-model.mapBone(fireBone)).length()));
-  // the smith goes: T_S1_2_S0 with its stop, the forge at rest
+  require(tickUntil([&] { return inAnim("S_S1"); },5000),"the forge must reach the bellows' cycle S_S1");
+  const auto cycle=world.tickCount();
+  require(!tickUntil([&] { return slot(*forge,fireSlot)==nullptr; },5000) && world.tickCount()>=cycle+5000 &&
+          forge->stateId()==forge->stateCount() && burns(lit),
+          "FIRE_HOT must burn at BIP01 PFX_FIRE with its emitter alive after 5 s of S_S1, not its own time");
+  std::printf("Animation effects: FIRE_HOT of BSFIRE burns %llu ms of S_S1, %llu ms from its lighting (its own time and "
+              "particle life %llu ms)\n",(unsigned long long)(world.tickCount()-cycle),(unsigned long long)(world.tickCount()-lit),
+              (unsigned long long)aliveFor);
+  // the smith goes: the stop at its frame of T_S1_2_S0 puts FIRE_HOT out while the transition still plays
+  const auto stopFrame=std::find_if(out->data->pfx.begin(),out->data->pfx.end(),[&](const auto& e) { return e.pfxStop && e.index==fireSlot; });
+  // an event fires once the frame after its own begins (Sequence::extractFrames)
+  const auto stopFrom=std::max(0,stopFrame->frame-int32_t(out->data->firstFrame));
+  const auto stopAt=uint64_t(float(stopFrom+1)*1000.f/out->data->fpsRate);
   useMob(*smith,"BSFIRE",-1);
+  uint64_t outFrom=0,outGone=0;
+  for(uint64_t t=0;t<20000 && outGone==0;t+=10) {
+    session->tick(10);
+    session->updateAnimation(10);
+    if(outFrom==0 && inAnim("T_S1_2_S0"))
+      outFrom=world.tickCount();
+    if(outFrom!=0 && slot(*forge,fireSlot)==nullptr)
+      outGone=world.tickCount();
+    }
+  std::printf("Animation effects: FIRE_HOT out %llu ms into T_S1_2_S0, its stop at frame %d is at %llu ms\n",
+              (unsigned long long)(outGone-outFrom),stopFrame->frame,(unsigned long long)stopAt);
+  require(outFrom!=0 && outGone!=0 && inAnim("T_S1_2_S0") && outGone+10>=outFrom+stopAt && outGone<=outFrom+stopAt+50,
+          "T_S1_2_S0's stop must put FIRE_HOT out at its frame while the transition plays");
   require(tickUntil([&] { return smith->interactive()==nullptr && forge->stateId()<=0; },20000) && slot(*forge,fireSlot)==nullptr,
-          "FIRE_HOT must go out with the smith's animation out");
-  // the forge back at rest without its animation out (the routine's reset)
-  require(bellows() && !tickUntil([&] { return slot(*forge,fireSlot)==nullptr; },2000),
-          "the smith must work the bellows again, FIRE_HOT burning");
+          "the smith must leave the forge at rest without FIRE_HOT");
+  // the forge back at rest without its animation out right after the lighting (the routine's reset)
+  require(bellows(true) && inAnim("T_S0_2_S1"),"the smith must light FIRE_HOT again in T_S0_2_S1");
   smith->setInteraction(nullptr,true);
   forge->resetPositionToTA(0);
   step(50);
-  require(forge->stateId()<=0 && slot(*forge,fireSlot)==nullptr,"FIRE_HOT must go out with the forge at rest without its animation out");
+  require(forge->stateId()<=0 && slot(*forge,fireSlot)==nullptr,"FIRE_HOT must go out at once with the forge at rest without its animation out");
+  // lit far from the viewer: it burns when the viewer comes
+  world.setHeadlessViewer(forge->position()+Tempest::Vec3(1.e6f,0,0));
+  require(!world.isInPfxRange(forge->position()),"the forge must be out of the particles' range");
+  require(bellows(false) && tickUntil([&] { return inAnim("S_S1"); },5000),"the smith must work the bellows far from the viewer");
+  const auto farCycle=world.tickCount();
+  tickUntil([] { return false; },std::max<uint64_t>(aliveFor,1000)+100);
+  world.setHeadlessViewer(forge->position());
+  step(50);
+  require(burns(farCycle),"FIRE_HOT lit far from the viewer must burn when the viewer comes");
+  NpcDefinitionContract::viewerOff(world);
+  smith->setInteraction(nullptr,true);
+  forge->resetPositionToTA(0);
+  step(50);
 
   // the anvil's sparks of each blow go by their own time
   Npc* harad=nullptr;
@@ -2355,15 +2393,19 @@ void animationEffects(Gothic& gothic) {
   for(const auto& e:NpcDefinitionContract::effects(NpcDefinitionContract::model(*anvil)))
     if(e.id==blow)
       until=e.timeUntil;
-  require(until>=struck && until<=struck+sparks->effectPrefferedTime(),"ANVIL_SPARKS must live their own time");
-  const auto gone=[&] {
+  require(until==struck+sparks->effectPrefferedTime(),"ANVIL_SPARKS must live their own time");
+  const auto there=[&] {
     for(const auto& e:NpcDefinitionContract::effects(NpcDefinitionContract::model(*anvil)))
       if(e.id==blow && e.timeUntil==until)
-        return false;
-    return true;
+        return true;
+    return false;
     };
-  require(tickUntil(gone,sparks->effectPrefferedTime()+100) && world.tickCount()<=until+50,
-          "ANVIL_SPARKS must go by their own time");
+  // to the end of their time in steps that land on it, then one step more
+  while(world.tickCount()<until)
+    step(std::min<uint64_t>(until-world.tickCount(),10));
+  require(world.tickCount()==until && there(),"ANVIL_SPARKS must be there at the end of their own time");
+  step(1);
+  require(!there(),"ANVIL_SPARKS must be gone right after their own time");
   std::printf("Animation effects: ANVIL_SPARKS of a blow gone in %llu ms (own time %llu ms)\n",
               (unsigned long long)(world.tickCount()-struck),(unsigned long long)sparks->effectPrefferedTime());
   for(auto& [npc,at]:moved) {
