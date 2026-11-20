@@ -235,6 +235,68 @@ def ground_maps(dds, encode, source: Path, directory: Path, rng, size: int = 102
                    straw_cover=round(float(cover.mean()), 3)))
 
 
+STAND_UNDER = '#4a3a1c'     # between the stalks, from above: the stand's own shade
+STAND_STALK = ('#8f7a45', '#7d6a3a', '#9c8850')
+STAND_EAR = ('#a08348', '#b0934f', '#93783f', '#b89c5c')
+STAND_MEAN = (.2, .14, .058)    # linear: a stalk of the grass system takes it and lightens it to the ear's #9a7a45
+
+
+def stand_maps(dds, encode, directory: Path, rng, size: int = 1024) -> dict:
+    """Write the maps of the ground under rye that stands as stalks (stalk.md): the rye from above, ears and stalks
+    over their own shade. A stalk reads its colour from it, the eye sees it between the stalks and beyond their ring.
+    Drawn from numbers, each stroke at the tile's nine places."""
+    from PIL import Image, ImageDraw
+    from scipy.ndimage import gaussian_filter
+    directory.mkdir(parents=True, exist_ok=True)
+    name = directory.name
+    big = size * 2
+    px = big / TILE
+    colour = Image.new('RGB', (big, big), tuple(int(v) for v in np.rint(linear(STAND_UNDER) * 255)))
+    order = Image.new('L', (big, big), 0)
+    paint, rank = ImageDraw.Draw(colour), ImageDraw.Draw(order)
+    lean = rng.uniform(0, 2 * math.pi)                   # the ears nod one way more than the others
+    stalks, ears = [linear(c) for c in STAND_STALK], [linear(c) for c in STAND_EAR]
+    count = 7000
+    for k in range(count):
+        ear = k > count * .35 and rng.random() < .75     # the ears lie over the stalks
+        length = (rng.uniform(7, 12) if ear else rng.uniform(4, 16)) * px
+        angle = lean + rng.normal(0, .9) if rng.random() < .55 else rng.uniform(0, 2 * math.pi)
+        centre = rng.uniform(0, big, 2)
+        half = np.array((math.cos(angle), math.sin(angle))) * length / 2
+        tones = ears if ear else stalks
+        shade = tones[rng.integers(len(tones))] * rng.uniform(.82, 1.12) * (.62 + .38 * k / count)
+        fill = tuple(int(v) for v in np.rint(np.clip(shade, 0, 1) * 255))
+        thick = max(int(round((rng.uniform(1.1, 1.6) if ear else rng.uniform(.4, .7)) * px)), 1)
+        for dx in (-big, 0, big):
+            for dy in (-big, 0, big):
+                a, b = centre - half + (dx, dy), centre + half + (dx, dy)
+                if max(a[0], b[0]) < 0 or min(a[0], b[0]) > big or max(a[1], b[1]) < 0 or min(a[1], b[1]) > big:
+                    continue
+                paint.line([tuple(a), tuple(b)], fill=fill, width=thick)
+                rank.line([tuple(a), tuple(b)], fill=1 + (k * 254) // count, width=thick)
+    top = halve(np.asarray(colour, np.float64) / 255, size)
+    level = halve(np.asarray(order, np.float64)[..., None] / 255, size)[..., 0]
+    # slow tones over the tile, a quarter and a half of it: patches of metres where the stalks read it wide
+    slow = sum(gaussian_filter(rng.normal(size=(size, size)), size / n, mode='wrap') for n in (3, 6))
+    slow = (slow - slow.mean()) / slow.std()
+    warm = gaussian_filter(rng.normal(size=(size, size)), size / 4, mode='wrap')
+    warm = (warm - warm.mean()) / warm.std()
+    top = top * (1 + .1 * slow[..., None]) * (1 + np.array((.03, 0., -.08)) * warm[..., None])
+    top = np.clip(top * (np.array(STAND_MEAN) / top.mean(axis=(0, 1))), 0, 1)
+    dds.write_dds(directory / 'stand_albedo.dds', (encode(top) / 255).astype(np.float32))
+    relief = 6. * level                                  # cm: flattened, the stand is no relief of the ground
+    texel = TILE / size
+    slope_x = (np.roll(relief, -1, axis=1) - np.roll(relief, 1, axis=1)) / (2 * texel)
+    slope_y = (np.roll(relief, -1, axis=0) - np.roll(relief, 1, axis=0)) / (2 * texel)
+    dds.write_dds(directory / 'stand_normal.dds', np.stack([-slope_x, -slope_y, np.ones_like(relief)], axis=2).astype(np.float32),
+                  normal=True)
+    ao = .45 + .55 * level
+    dds.write_dds(directory / 'stand_orm.dds', np.stack([ao, np.full_like(ao, .9), np.zeros_like(ao)], axis=2).astype(np.float32))
+    return dict(record=dict(albedo=f'{name}/stand_albedo.dds', normal=f'{name}/stand_normal.dds', orm=f'{name}/stand_orm.dds',
+                            scale=1., antitile='rotate', antitile_cell=1),
+                mean=top.mean(axis=(0, 1)).round(4).tolist())
+
+
 def saturate(colour: np.ndarray, amount: float) -> np.ndarray:
     grey = (colour @ np.array((.2126, .7152, .0722)))[..., None]
     return grey + (colour - grey) * amount

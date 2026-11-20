@@ -1,5 +1,5 @@
 # Onar's north field from above (reports/content/2026-11-19-crop-fields/top.md): what the top of the rye reads as.
-# Two cameras of crop-onar-alive.bench for the pairs and three new ones over a strip.
+# Two cameras of crop-onar-alive.bench for the pairs, three over a strip of rye and one beside it (stalk.md).
 #   TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_CONTENT=<set> scripts/bench.sh crop-onar-top <out>
 # @timeout 600
 seed 73013
@@ -24,18 +24,25 @@ cam at 55400 2300 -10000 59000 2050 -8000
 wait 6000
 shot corner
 wait 300
-# from 10 m over a strip, steeply down along it
-cam at 57800 3100 -10600 57800 2030 -8600
+# The three below stand over the second strip of rye of the set built with seed 7 (its middle 58682 2101 -7633, the
+# strip runs along 0.25 0 -0.97): the pairs with the concepts onar-top-{high,plan,near}-1
+# from 10 m, steeply down along the strip
+cam at 58559 3067 -7148 58682 2201 -7633
 wait 6000
 shot high
 wait 300
-# from 20 m, further along the strips
-cam at 57800 4000 -11600 57800 2030 -8200
+# from 35 m: the strips as a plan
+cam at 58387 5391 -6470 58682 2101 -7633
 wait 6000
 shot plan
 wait 300
-# from 3.5 m at a strip, down at 45 degrees
-cam at 57600 2400 -9800 58200 2060 -9300
+# from 3 m, down at 45 degrees
+cam at 58630 2413 -7427 58682 2201 -7633
 wait 6000
 shot near
+wait 300
+# from a man's height beside the strip, along its wall
+cam at 58971 2271 -6941 58829 2190 -8215
+wait 6000
+shot eye
 wait 300
