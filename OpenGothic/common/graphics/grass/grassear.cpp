@@ -19,8 +19,10 @@ float earHeight(uint64_t h, int32_t x, int32_t z) {
   return own*(1.f - 0.2f*spot);
   }
 
-void earLean(uint64_t h, float& angle, float& lean) {
-  angle = float((h >> 43) & 0xFFu)*(6.2831853f/256.f);
+void earLean(uint64_t h, int32_t x, int32_t z, float& angle, float& lean) {
+  // the ears of a place hang to one side, as the wind has combed them: the side turns slowly over spots of 15 m
+  const float place = float(valueNoise(x,z,1500*Unit,0xE7u))/65280.f;
+  angle = 0.9f + (place-0.5f)*2.4f + (float((h >> 43) & 0xFFu)/255.f-0.5f)*0.9f;
   lean  = 8.f + 10.f*float((h >> 51) & 0x3Fu)/63.f;
   }
 

@@ -291,9 +291,10 @@ def stand_maps(dds, encode, directory: Path, rng, size: int = 1024) -> dict:
     dds.write_dds(directory / 'stand_normal.dds', np.stack([-slope_x, -slope_y, np.ones_like(relief)], axis=2).astype(np.float32),
                   normal=True)
     ao = .45 + .55 * level
+    # no antitile: the engine drops a record with both `grass` and `antitile`
     dds.write_dds(directory / 'stand_orm.dds', np.stack([ao, np.full_like(ao, .9), np.zeros_like(ao)], axis=2).astype(np.float32))
     return dict(record=dict(albedo=f'{name}/stand_albedo.dds', normal=f'{name}/stand_normal.dds', orm=f'{name}/stand_orm.dds',
-                            scale=1., antitile='rotate', antitile_cell=1),
+                            scale=1.),
                 mean=top.mean(axis=(0, 1)).round(4).tolist())
 
 

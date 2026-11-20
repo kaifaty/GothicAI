@@ -46,3 +46,10 @@ cam at 58971 2271 -6941 58829 2190 -8215
 wait 6000
 shot eye
 wait 300
+# clip: a gust over the strip of rye, from 10 m (the camera of `high`)
+cam at 58559 3067 -7148 58682 2201 -7633
+foliage wait-gust 4000 -7600
+rec gust-high
+wait 12000
+stop
+wait 500

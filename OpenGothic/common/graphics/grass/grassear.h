@@ -38,7 +38,8 @@ Tuft  evenTuft(const Tuft& t);
 // Against the record's height: 0.9..1.1 by the node's hash `h`, and up to a fifth lower by spots of 8 m (the root
 // in units)
 float earHeight(uint64_t h, int32_t x, int32_t z);
-// At rest: the side it leans to, radians, and by how much, 8..18 degrees
-void  earLean(uint64_t h, float& angle, float& lean);
+// At rest: the side it leans to, radians, and by how much, 8..18 degrees. The side is the place's (the root in
+// units), within a quarter of a radian of it either way
+void  earLean(uint64_t h, int32_t x, int32_t z, float& angle, float& lean);
 
 }

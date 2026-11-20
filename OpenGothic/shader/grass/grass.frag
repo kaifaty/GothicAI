@@ -36,7 +36,8 @@ void main() {
   // of one link far away has the tone of a blade of four
   const uint  partsOff = grassPartsOff(scene.grassRing.w);
   const float t        = clamp(inShade.x, 0.0, 1.0);
-  const float tone     = grassTone(t);
+  // a stand of stalks is deep: the light reaches the ears, the stalks under them stand in each other's shade
+  const float tone     = inColor.a>1.5 ? pow(t, GrassEarDepth) : grassTone(t);
   const vec3  tip      = (partsOff & GrassPartTip)!=0u ? vec3(1.0) :
                          (inColor.a>1.5 ? grassEarTip(t, inShade.z) : mix(GrassTipGreen, GrassTipStraw, inShade.z));
   const float root     = (partsOff & GrassPartRoot)!=0u ? 1.0 : GrassRootShade;

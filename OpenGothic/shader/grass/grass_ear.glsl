@@ -9,9 +9,9 @@
 
 const uint  GrassKindEar       = 2u;    // Push::kind of grass.vert (Grass::KindEar)
 const float GrassEarHeightStep = 0.75;  // cm of the height's byte (Grass::EarHeightStep)
-const float GrassEarFrom       = 0.80;  // of the height: the ear starts
-const float GrassEarFull       = 0.87;  // and is as wide as it gets
-const float GrassEarDroopFrom  = 0.75;  // the stalk bends under the ear from here
+const float GrassEarFrom       = 0.86;  // of the height: the ear starts
+const float GrassEarFull       = 0.90;  // and is as wide as it gets
+const float GrassEarDroopFrom  = 0.78;  // the stalk bends under the ear from here
 
 // The tip's tone of a stalk's pixel at `t` of its height (grass.frag)
 vec3 grassEarTip(float t, float dry) {
@@ -27,7 +27,7 @@ float grassEarAt(int k, int n) {
   if(k>=n)
     return 1.0;
   if(n==2)
-    return 0.82;
+    return 0.86;
   const int i = k + 4 - n;
   return i==1 ? 0.45 : (i==2 ? GrassEarFrom : GrassEarFull);
   }

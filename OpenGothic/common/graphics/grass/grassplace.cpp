@@ -640,7 +640,7 @@ CellBlades buildCell(const CellInput& in) {
         lean  = 8.f + 12.f*float((h >> 51) & 0x3Fu)/63.f;
         }
       if(ear)
-        earLean(h,angle,lean);
+        earLean(h,fx,fz,angle,lean);
       if(edge!=nullptr && edgeShare<1.f) {
         const float out = std::atan2(edge->outZ,edge->outX);
         float d = angle-out;
