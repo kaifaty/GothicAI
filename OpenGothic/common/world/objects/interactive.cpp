@@ -892,6 +892,14 @@ bool Interactive::isAttached(const Npc& to) {
   return false;
   }
 
+size_t Interactive::userCount() const {
+  size_t count = 0;
+  for(auto& i:attPos)
+    if(i.user!=nullptr)
+      ++count;
+  return count;
+  }
+
 bool Interactive::setPos(Npc &npc,const Tempest::Vec3& pos) {
   auto prev = npc.position();
   npc.setPosition(pos);
