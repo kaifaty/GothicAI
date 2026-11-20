@@ -7,16 +7,16 @@
 The pilot of reports/content/2026-11-19-crop-fields (intent.md): the two plots of Lobart's main field. Copies a content set and adds,
 without touching what it copies:
 
-- one atlas of card pictures, `materials/crop_field/`: rows of rye, stubble and a bound sheaf drawn from numbers
+- one atlas of card pictures, `materials/crop_field/`: rows of rye and stubble drawn from numbers
   (mesh3d/blender/crop_cards.py; rendered once into the work folder, `--rerender` to render again). Alpha is the
   texel's coverage in every mip (glb_cards.write_cutout);
 - two records of that atlas: `OWN_CROP_RYE` is foliage, the wind leans the stalks about the row's root line (the
-  engine's `line` anchor: the roots on the mesh's X); `OWN_CROP_DRY` stands still, for the stooks. Both are
+  engine's `line` anchor: the roots on the mesh's X); `OWN_CROP_DRY` stands still, for the swaths. Both are
   `"two_sided": "same"`;
 - the meshes, `meshes/crop_field/`: a row of rye is three cards 10 cm apart, 1.5 m long, bent in four links, with
   five cards of ears laid over its top every way; a tuft is two crossed cards of a few stalks, for the reaped edge;
-  a row of stubble two cards; a stook six to eight sheaves leant into a tent, each sheaf a body of eight sides with
-  a fan of three cards of ears;
+  a row of stubble two cards. Stooks and lying sheaves are the original's straw (NW_MISC_STRAW_*), none nearer
+  than STRAW_CLEAR to one the original has put on the field itself;
 - the places, `worlds/<WORLD>/vobs.d/crop-field.json`: a field is cut across its long axis into three to five strips
   about 6.5 m wide (rye, stubble, rye, plough, stubble, the next field a strip on; or the mirror of it, whichever
   leaves more of the original's work spots and items in the open); rows of rye stand 30 cm apart along the strip with rows across them, the last EDGE of a strip is
@@ -31,7 +31,7 @@ Since step A of alive.md (crop_field_life.py holds its numbers and maps) the fie
 - weeds, an atlas of their own (`OWN_CROP_WEED`): cornflower, corncockle and mayweed at the edges of the rye and in
   its bare spots, thistle and mayweed along the field's border;
 - one strip of rye is being reaped: a ragged front across it, loose swaths behind the front, bound sheaves lying
-  further, then stooks, a cart with sheaves, a rake and a sickle;
+  further, then stooks, a cart with a sheaf, a rake and a sickle;
 - every strip has a ground of its own, a mesh over the field's triangles: ridges of plough, straw litter under
   the stubble, earth under the rye (`OWN_CROP_EARTH`, `OWN_CROP_LITTER`).
 
@@ -90,6 +90,11 @@ SWATHS, SHEAVES = 350., 1000.   # cm behind the front: loose swaths to here, lyi
 CART = 'NW_CITY_CART_01.3DS'
 RAKE, SICKLE = 'ITMI_RAKE.3DS', 'ITMW_007_1H_SICKLE_01.3DS'
 STOOK_STEP = 700.           # cm between stooks along a stubble strip
+# the original's straw, taken as it is for the stooks and the lying sheaves (the user, 2026-11-20: our own stood beside
+# the original's and looked worse): the visual and its origin over its foot, cm
+STOOK, STOOK_ORIGIN, STOOK_LAID = 'NW_MISC_STRAW_02.3DS', 93., 40.    # a bound sheaf; laid on its side, its axis over the ground
+STRAW = (STOOK, 'NW_MISC_STRAW_01.3DS', 'NW_MISC_STRAW_GROUP_01.3DS')    # the sheaf, the bale and the stack of bales
+STRAW_CLEAR = 450.          # cm: no straw of ours nearer to one the original has put on the field
 PLANT = ('NW_NATURE_PLANT_03.3DS', 'NW_NATURE_GREAT_WEED_XGROUP.3DS')    # the original's grain: clumps and groups of rows
 REACH = 8000.               # cm from the given point within which the field's triangles are looked for
 LIFT_STAND = 4.             # cm: crop_field_life.LIFT, the strip's own ground the stalks root on
@@ -175,54 +180,6 @@ def tilted(mesh, cell: dict, x: float, y: float, z: float, yaw: float, tilt: flo
                (foot + rise * height - along * half, normal, (u0, cell['v_tip']), open)], out, both=True)
 
 
-# share of the picture's height, radius in cm: thinner than the picture's sheaf, whose loose straws stand out of it
-SHEAF_BODY = ((0., 12.5), (.3, 8.), (.54, 5.), (.64, 6.))
-SHEAF_SIDES = 8
-
-
-def sheaf(mesh, cell: dict, foot, top, turn: float, centre) -> None:
-    """A sheaf from its foot to its top (cm, the mesh's axes): a body of eight sides from the butts to over the
-    band, the straw of the picture's middle wrapped round it, and the fan of ears above as three crossed cards.
-    centre: the stook's middle, the normals lean away from it."""
-    foot, top = np.asarray(foot, np.float64), np.asarray(top, np.float64)
-    axis = unit(top - foot)
-    length = np.linalg.norm(top - foot)
-    first = unit(np.cross(axis, (0., 1., 0.)))
-    second = np.cross(axis, first)
-    away = unit((foot - np.asarray(centre)) * (1, 0, 1) + (1e-3, 0, 0))
-    middle = (cell['u'][0] + cell['u'][1]) / 2
-    per_cm = (cell['u'][1] - cell['u'][0]) / cell['width_cm']
-    rings = []
-    for share, radius in SHEAF_BODY:
-        v = cell['v_root'] + (cell['v_tip'] - cell['v_root']) * share
-        ring = []
-        for k in range(SHEAF_SIDES + 1):
-            angle = 2 * math.pi * k / SHEAF_SIDES + math.radians(turn)
-            around = first * math.cos(angle) + second * math.sin(angle)
-            # the picture's straw is as wide as the sheaf is there: its middle goes round, there and back
-            u = middle + (radius * .8 * per_cm) * (1 if k % 2 else -1)
-            ring.append((foot + axis * length * share + around * radius,
-                         unit(.55 * around + .25 * away + .2 * np.array((0., 1., 0.))), (u, v)))
-        rings.append(ring)
-    for low, high in zip(rings, rings[1:]):
-        for k in range(SHEAF_SIDES):
-            face = unit(low[k][1] + low[k + 1][1])
-            mesh.quad((low[k], low[k + 1], high[k + 1], high[k]), face)
-    half = cell['width_cm'] / 2
-    for k in range(3):
-        # the cards run the sheaf's whole length: loose straws stand out of the body's outline
-        start = 0.
-        v0 = cell['v_root'] + (cell['v_tip'] - cell['v_root']) * start
-        angle = math.pi * k / 3 + math.radians(turn)
-        across = first * math.cos(angle) + second * math.sin(angle)
-        out = np.cross(across, axis)
-        normal = unit(.5 * np.array((0., 1., 0.)) + .5 * away)
-        low_at, high_at = foot + axis * length * start, foot + axis * length
-        mesh.quad([(low_at - across * half, normal, (cell['u'][0], v0)), (low_at + across * half, normal, (cell['u'][1], v0)),
-                   (high_at + across * half, normal, (cell['u'][1], cell['v_tip'])),
-                   (high_at - across * half, normal, (cell['u'][0], cell['v_tip']))], out, both=True)
-
-
 def build_meshes(cards, cells: dict, weeds: dict, directory: Path, rng) -> dict:
     """name -> dict(glb, triangles, material)."""
     made = {}
@@ -261,27 +218,6 @@ def build_meshes(cards, cells: dict, weeds: dict, directory: Path, rng) -> dict:
         card(mesh, cells[a], -8., turn=-7., links=1, lean=-3.)
         card(mesh, cells[b], 8., turn=6., links=1, mirror=True, lean=3.)
         write(f'{RYE}_STUBBLE_{name}', mesh, RYE)
-    height = cells['sheaf']['height_cm']
-    for name, count in (('A', 7), ('B', 6), ('C', 8)):
-        mesh = cards.Mesh()
-        for k in range(count):
-            angle = 2 * math.pi * (k + rng.uniform(-.2, .2)) / count
-            radius = rng.uniform(40, 52)
-            foot = np.array((math.cos(angle) * radius, 0., math.sin(angle) * radius))
-            reach = rng.uniform(.94, 1.)
-            tilt = math.asin(min((radius - rng.uniform(6, 12)) / (height * reach), .9))
-            top = foot * (1 - math.sin(tilt) * height * reach / radius) + (0., math.cos(tilt) * height * reach, 0.)
-            sheaf(mesh, cells['sheaf'], foot, top, rng.uniform(0, 45), (0., 0., 0.))
-        write(f'{DRY}_STOOK_{name}', mesh, DRY)
-    for name, lying in (('A', ((0., 0., 4.),)), ('B', ((-8., -24., -6.), (10., 26., 9.)))):
-        mesh = cards.Mesh()                     # bound sheaves lying where they were tied: along the mesh's X
-        for shift, z, turn in lying:
-            c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
-            way = np.array((c, 0., s))
-            middle = np.array((shift, 15., z))
-            sheaf(mesh, cells['sheaf'], middle - way * height / 2, middle + way * height / 2 + (0., 3., 0.),
-                  rng.uniform(0, 45), middle - (0., 200., 0.))
-        write(f'{DRY}_SHEAF_{name}', mesh, DRY)
     for name, lay in (('A', (('rye_a', -6., 84.), ('rye_c', 9., 87.))), ('B', (('rye_b', 7., 86.), ('rye_a', -11., 82.),
                                                                               ('tuft_b', 30., 80.)))):
         mesh = cards.Mesh()                     # a swath: cut rye laid down unbound, the stalks along the mesh's Z
@@ -401,9 +337,11 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int, l
 
     vobs = []
     walk(json.loads((base / 'worlds' / world / 'vobs.json').read_text()), vobs)
-    keep, remove = [], []
+    keep, remove, straw = [], [], []
     for vob in vobs:
         x, _, z = vob['position']
+        if vob.get('visual_name') in STRAW:
+            straw.append((x, z))
         if ground.at(x, z) is None:
             continue
         name = str(vob.get('vob_name') or '')
@@ -412,6 +350,10 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int, l
         elif name.startswith('FP_') or vob.get('type') == 'oCItem':
             keep.append((x, z))
     keep = np.array(keep).reshape(-1, 2)
+    straw = np.array(straw).reshape(-1, 2)
+
+    def no_straw(p):
+        return not len(straw) or float(np.hypot(*(straw - np.asarray(p)).T).min()) > STRAW_CLEAR
 
     def strip_at(p):
         u = float((p - middle) @ u_axis)
@@ -482,6 +424,16 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int, l
             out = np.cross(side, up)
         record(visual, (x, hit[0] - sink, z), np.stack([side, up, out], axis=1), collision)
         return True
+
+    def lay(x, z):
+        """The original's sheaf on its side at (x, z), its top a little down, turned any way."""
+        hit = ground.at(x, z)
+        if hit is None or not no_straw((x, z)):
+            return
+        way = unit(rng.normal(0, 1, 2))
+        axis = unit((way[0], -rng.uniform(.05, .16), way[1]))
+        out = unit(np.cross((0., 1., 0.), axis))
+        record(STOOK, (x, hit[0] + STOOK_LAID, z), np.stack([np.cross(axis, out), axis, out], axis=1))
 
     def clear(p, radius=CLEAR):
         return not len(keep) or np.hypot(*(keep - p).T).min() > radius
@@ -616,12 +568,12 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int, l
                 if kind == 'reaping' and behind(uu, ww) < SHEAVES:
                     continue
                 p = spot(uu, ww)
-                if clear(p, 200):
-                    add(f'{DRY}_STOOK_{"ABC"[rng.integers(3)]}', *p, unit(rng.normal(0, 1, 2)), jitter=180.,
-                        lean=(unit(rng.normal(0, 1, 2)), math.radians(rng.uniform(0, 7))), collision='mesh')
+                if clear(p, 200) and no_straw(p):
+                    add(STOOK, *p, unit(rng.normal(0, 1, 2)), jitter=180., sink=3. - STOOK_ORIGIN,
+                        lean=(unit(rng.normal(0, 1, 2)), math.radians(rng.uniform(0, 4))), collision='mesh')
                     if rng.random() < .3:                       # a sheaf that fell out of it, or was not stood yet
-                        q = p + unit(rng.normal(0, 1, 2)) * rng.uniform(95, 140)
-                        add(f'{DRY}_SHEAF_A', *q, unit(rng.normal(0, 1, 2)), jitter=180., sink=0.)
+                        q = p + unit(rng.normal(0, 1, 2)) * rng.uniform(170, 230)
+                        lay(*q)
             if rng.random() < .5:                               # a rake left against... the ground by a stook
                 uu = rng.uniform(u0 + 300, u1 - 300)
                 p = spot(uu, (lo(uu) + hi(uu)) / 2 + rng.normal(0, 80))
@@ -643,10 +595,10 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int, l
                     if lo(uu) + 40 < ww2 < hi(uu) - 40:
                         add(f'{DRY}_SWATH_{"AB"[rng.integers(2)]}', *spot(uu, ww2), across(uu), jitter=14., sink=0.)
             # bound sheaves lying where they were tied
-            for _ in range(round((SHEAVES - SWATHS) * width / 1e4 / 2.6)):
+            for _ in range(round((SHEAVES - SWATHS) * width / 1e4 / 6.)):
                 uu, ww = at_front(rng.uniform(SWATHS, SHEAVES), rng.uniform(bounds[strip] + 60, bounds[strip + 1] - 60))
                 if lo(uu) + 40 < ww < hi(uu) - 40:
-                    add(f'{DRY}_SHEAF_{"AAB"[rng.integers(3)]}', *spot(uu, ww), across(uu), jitter=35., sink=0.)
+                    lay(*spot(uu, ww))
             # the cart that takes them, a few sheaves in it, a sickle by the swaths
             uu, ww = at_front(SHEAVES * .75, (bounds[strip] + bounds[strip + 1]) / 2)
             p = spot(uu, ww)
@@ -657,10 +609,7 @@ def place(base: Path, world: str, field, meshes: dict, seed: int, number: int, l
                 out = np.cross(side, (0., 1., 0.))
                 frame = np.stack([side, np.array((0., 1., 0.)), out], axis=1)
                 record(CART, (p[0], hit[0] + 49., p[1]), frame, 'mesh')
-                for k, (dx, dy, dz) in enumerate(((-28., 62., -20.), (26., 64., 10.), (0., 88., -5.))):
-                    q = np.array((p[0], hit[0] + 49. + dy, p[1])) + side * dx + out * dz
-                    lay = np.stack([out, np.array((0., 1., 0.)), -side], axis=1)     # the sheaf's X along the cart
-                    record(f'{DRY}_SHEAF_A', q - (0., 15., 0.), lay)
+                record(STOOK, (p[0], hit[0] + 49. + 45. + STOOK_LAID, p[1]), np.stack([np.array((0., 1., 0.)), out, side], axis=1))
             uu, ww = at_front(SWATHS * .5, bounds[strip] + width * .3)
             add(SICKLE, *spot(uu, ww), unit(rng.normal(0, 1, 2)), jitter=180., sink=-3.)
 
