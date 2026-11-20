@@ -8,7 +8,6 @@ namespace {
 constexpr std::array<std::string_view,ActivityEvents::WakeCount> wakeNames = {
   "entered","loaded","queue","attached","attach_failed","detached","freed","row_end","interrupted","watchdog",
   };
-constexpr std::array<std::string_view,3> phaseNames = {"init","loop","end"};
 }
 
 std::string_view ActivityEvents::wakeName(size_t bit) {
@@ -38,15 +37,6 @@ void ActivityEvents::countWakes(std::string_view state, uint16_t wakes, bool ste
     ++st.watchdog;
   }
 
-void ActivityEvents::countPhase(std::string_view state, size_t phase) {
-  auto& st = stats();
-  auto  it = st.states.find(state);
-  if(it==st.states.end())
-    it = st.states.emplace(std::string(state),StateStats()).first;
-  if(phase<phaseNames.size())
-    ++it->second.phases[phase];
-  }
-
 std::string ActivityEvents::json() {
   const auto& st = stats();
   std::string ret = "{\"watchdog\":"+std::to_string(st.watchdog)+",\"reservation_expired\":"+std::to_string(st.expired)+
@@ -59,9 +49,6 @@ std::string ActivityEvents::json() {
     first = false;
     for(size_t i=0; i<WakeCount; ++i)
       ret += (i ? "," : "")+jsonEscape(wakeNames[i])+":"+std::to_string(s.wakes[i]);
-    ret += "},\"record_phases\":{";
-    for(size_t i=0; i<phaseNames.size(); ++i)
-      ret += (i ? "," : "")+jsonEscape(phaseNames[i])+":"+std::to_string(s.phases[i]);
     ret += "}}";
     }
   return ret+"}}";

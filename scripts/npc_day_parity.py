@@ -356,7 +356,8 @@ def activity_metrics(a, b, common, states):
                 "mob_samples_a": counts["mob_a"], "mob_samples_b": counts["mob_b"],
                 "same_mob": share(counts["same_mob"], counts["mob_a"]),
                 # A count, not a share: a share of one state set's few samples admits no mismatch at all.
-                "mob_mismatch": counts["mob_a"] - counts["same_mob"] if counts["mob_a"] else None,
+                # Undefined only for an empty selection; samples without any occupied MOB in A give 0.
+                "mob_mismatch": counts["mob_a"] - counts["same_mob"] if counts["samples"] else None,
                 "extra_mob": share(counts["extra_mob"], counts["samples"] - counts["mob_a"]),
                 "mob_time_ratio": share(counts["mob_b"], counts["mob_a"]),
                 "arrival_segments": len(arrivals),
@@ -608,12 +609,10 @@ def markdown(result, checks, label_a, label_b):
                   f"reservations without a living owner {events.get('reservation_ownerless')}, two NPCs on one place "
                   f"{events.get('double_occupancy')}; reservations made {events.get('reservations')}, taken past a "
                   f"reservation {events.get('reservation_bypassed')}.", "",
-                  "| State | Record Init / Loop / End | Automaton steps | Wakes |", "|---|---|---|---|"]
+                  "| State | Place checks | Wakes |", "|---|---|---|"]
         for state, item in events.get("states", {}).items():
-            phases = item.get("record_phases", {})
             wakes = ", ".join(f"{name} {count}" for name, count in item.get("wakes", {}).items() if count)
-            lines.append(f"| {state} | {phases.get('init', 0)} / {phases.get('loop', 0)} / {phases.get('end', 0)} | "
-                         f"{item.get('steps', 0)} | {wakes or '—'} |")
+            lines.append(f"| {state} | {item.get('steps', 0)} | {wakes or '—'} |")
         lines.append("")
     lines += [f"## By tier in {label_b}", "", "| Tier | Samples | Same ZS | Same TA | Position p50 / p95 / max, m |",
               "|---|---|---|---|---|"]

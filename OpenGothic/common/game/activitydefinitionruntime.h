@@ -26,7 +26,6 @@ struct Phase {
   const ActivityDefinitions::MobActivity* activity = nullptr;
   ActivityDefinitions::Phase              phase = ActivityDefinitions::Phase::Init;
   uint32_t                                helper = 0;
-  std::string_view                        state;  // the key of `activity` in Definitions
   };
 // Phases point into `activities`: moving keeps the nodes, a copy would not.
 struct Definitions {

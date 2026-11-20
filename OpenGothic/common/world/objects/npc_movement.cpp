@@ -714,6 +714,11 @@ void Npc::clearAiQueue() {
     owner.mobReservations().release(*this);
     wakeActivity(ActivityEvents::AttachFailed);
     }
+  else if(activityEvents.stage==ActivityEvents::Stage::Approach) {
+    // the walk to the routine point is gone: an empty queue is no arrival, the activity starts over with Init
+    stopActivityEvents(0);
+    aiState.started = false;
+    }
   stopPhysicsInvestigation(false);
   currentLookAt    = nullptr;
   currentLookAtNpc = nullptr;

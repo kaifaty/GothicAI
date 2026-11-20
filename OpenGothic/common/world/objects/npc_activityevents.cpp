@@ -6,7 +6,8 @@
 #include "world/world.h"
 
 // The automaton of a routine activity at an object (world/activityevents.h). Its code runs only
-// in stepActivityEvents(), for a wake; tickActivityEvents() between wakes compares times.
+// in stepActivityEvents(), for a wake; tickActivityEvents() between wakes compares a time. The end of
+// the row is Npc::tickRoutine's, as for a polled Loop.
 
 namespace {
 gtime after(gtime now, uint64_t ms) {
@@ -21,6 +22,8 @@ void Npc::wakeActivity(uint16_t wakes) {
   }
 
 void Npc::stopActivityEvents(uint16_t why) {
+  if(activityEvents.init==size_t(-1))
+    return; // nothing set up: no reservation, no wait
   if(activityEvents.activity!=nullptr && why!=0)
     ActivityEvents::countWakes(aiState.hint,why,false);
   auto& places = owner.mobReservations();
@@ -42,7 +45,7 @@ void Npc::startActivityEvents() {
   ActivityEvents::countWakes(aiState.hint,ActivityEvents::Entered,false);
   }
 
-bool Npc::tickActivityEvents() {
+bool Npc::armActivityEvents() {
   auto& s = activityEvents;
   if(s.init!=aiState.funcIni.ptr) {
     // the state runs without its Init here: a loaded game
@@ -51,37 +54,23 @@ bool Npc::tickActivityEvents() {
     s.activity = owner.rules().eventActivity(aiState.funcIni);
     s.pending  = ActivityEvents::Loaded;
     }
-  if(s.activity==nullptr)
-    return false;
+  return s.activity!=nullptr;
+  }
 
-  const auto now = owner.time();
+void Npc::tickActivityEvents() {
+  auto& s = activityEvents;
   if(s.awaitQueue && aiQueue.size()==0) {
     s.awaitQueue = false;
     s.pending   |= ActivityEvents::QueueDone;
     }
-  if(s.pending==0 && s.deadline<=now)
+  if(s.pending==0 && s.deadline<=owner.time())
     s.pending = ActivityEvents::Watchdog;
-  if(s.pending!=0) {
-    const uint16_t wakes = s.pending;
-    s.pending = 0;
-    ActivityEvents::countWakes(aiState.hint,wakes,true);
-    stepActivityEvents(wakes);
-    if(s.activity==nullptr)
-      return true;
-    }
-  // The end of the routine row is noticed on the NPC's perception clock, where the polled Loop noticed it,
-  // so the day keeps its timing and the shared random stream its order. Between the clock's ticks two times
-  // are compared and nothing of the activity runs. ZS_TALK and ZS_ATTACK are not cut, as before.
-  if(aiState.loopNextTime<=owner.tickCount()) {
-    aiState.loopNextTime = owner.tickCount()+perceptionTimeClampt();
-    if(aiState.eTime<=now && currentTarget==nullptr && outputPipe->isFinished()) {
-      stopActivityEvents(ActivityEvents::RowEnd);
-      clearState(false);
-      currentOther  = nullptr;
-      currentVictim = nullptr;
-      }
-    }
-  return true;
+  if(s.pending==0)
+    return;
+  const uint16_t wakes = s.pending;
+  s.pending = 0;
+  ActivityEvents::countWakes(aiState.hint,wakes,false);
+  stepActivityEvents(wakes);
   }
 
 void Npc::stepActivityEvents(uint16_t wakes) {
@@ -133,6 +122,7 @@ void Npc::seekActivityPlace() {
   auto&       places = owner.mobReservations();
   const auto& a      = *s.activity;
   const auto  now    = owner.time();
+  ActivityEvents::countWakes(aiState.hint,0,true);
   places.unwait(*this);
   auto*      mob  = owner.availableMob(*this,a.scheme);
   const bool busy = ActivityDefinitions::bodyStateContains(int32_t(bodyState()),a.busyBodyState);

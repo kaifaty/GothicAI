@@ -1,7 +1,6 @@
 #include "activitydefinitionruntime.h"
 
 #include "game/npcactivityhost.h"
-#include "world/activityevents.h"
 
 #include <array>
 #include <cstdlib>
@@ -64,14 +63,14 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
       continue;
     try {
       const auto* helper = function(script,activity.perceptions,false);
-      const auto& [key,stored] = *definitions.activities.emplace(name,activity).first;
+      const auto& stored = definitions.activities.emplace(name,activity).first->second;
       const std::array phases = {
         std::pair{function(script,name,false),ActivityDefinitions::Phase::Init},
         std::pair{function(script,name+"_LOOP",true),ActivityDefinitions::Phase::Loop},
         std::pair{function(script,name+"_END",false),ActivityDefinitions::Phase::End},
         };
       for(const auto& [symbol,phase]:phases)
-        definitions.phases.emplace(symbol->index(),Phase{&stored,phase,helper->index(),key});
+        definitions.phases.emplace(symbol->index(),Phase{&stored,phase,helper->index()});
       }
     catch(const std::exception& e) { throw std::runtime_error("activity definitions: "+name+": "+e.what()); }
     }
@@ -92,7 +91,6 @@ const ActivityDefinitionRuntime::Phase* ActivityDefinitionRuntime::find(const De
   }
 
 int ActivityDefinitionRuntime::run(daedalus::DaedalusVm& vm, World& world, Npc& npc, const Phase& entry) {
-  ActivityEvents::countPhase(entry.state,size_t(entry.phase));
   NpcActivityHost host(world,npc,[&vm,&entry](std::string_view) {
     vm.call_function<void>(vm.find_symbol_by_index(entry.helper));
     });

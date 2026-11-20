@@ -55,11 +55,11 @@ struct State final {
   gtime    deadline   = gtime::endOfTime(); // the watchdog of the current wait
   };
 
-// Day counters (bench npcday: npc-day.json "activity_events"). Reset by the journal.
+// Day counters (bench npcday: npc-day.json "activity_events"). Reset by the journal. The calls of each
+// phase, Loop among them, are the probe's (npc-day-script.json).
 struct StateStats final {
   uint64_t wakes[WakeCount] = {};
-  uint64_t steps = 0;                // automaton steps; one step may handle several wakes
-  uint64_t phases[3] = {};           // Init, Loop, End run from the record
+  uint64_t steps = 0;                // place checks: each runs the activity's code once
   };
 struct Stats final {
   std::map<std::string,StateStats,std::less<>> states;
@@ -73,6 +73,5 @@ struct Stats final {
 Stats&      stats();
 void        reset();
 void        countWakes(std::string_view state, uint16_t wakes, bool step);
-void        countPhase(std::string_view state, size_t phase);
 std::string json();
 }

@@ -804,6 +804,8 @@ void WorldObjects::removeNpc(Npc& npc) {
   if(ptr==nullptr)
     return;
   npc.stopActivityEvents(ActivityEvents::Interrupted);
+  // The removed NPC is kept for dangling references, not destroyed: its object is free for others now.
+  npc.setInteraction(nullptr,true);
   npc.endMeleeAiSpecial();
   BodyObservations::forget(&npc);
   auto& point = owner.deadPoint();

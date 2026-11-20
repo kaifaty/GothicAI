@@ -159,15 +159,14 @@ void Npc::tickRoutine() {
     return;
     }
 
-  // A routine activity run by events runs no Loop (world/activityevents.h).
-  if(tickActivityEvents())
-    return;
-
+  // A routine activity run by events (world/activityevents.h) runs no Loop: its automaton wakes on events
+  // below. The end of its row stays here, on the same perception clock as a polled Loop's.
+  const bool events = armActivityEvents();
   const bool fastPath = (aiPolicy==NpcProcessPolicy::AiFar2 && routines.empty()); //HACK: don't process far away Npc
   if(aiState.loopNextTime<=owner.tickCount()) {
     aiState.loopNextTime = owner.tickCount() + perceptionTimeClampt();
     int loop = LOOP_CONTINUE;
-    if(aiState.funcLoop.isValid()) {
+    if(!events && aiState.funcLoop.isValid()) {
       static const float MAX_DIST = 300;
       if(fastPath && currentFp!=nullptr && qDistTo(currentFp) < MAX_DIST*MAX_DIST) {
         loop = LOOP_CONTINUE;
@@ -179,7 +178,8 @@ void Npc::tickRoutine() {
       else {
         loop = invokeRoutine(aiState.funcLoop);
         }
-      } else {
+      }
+    else if(!events) {
       // ZS_DEATH   have no loop-function, in G1, G2-classic
       // ZS_GETMEAT have no loop-function, in G2-notr
       loop = 1;
@@ -192,11 +192,16 @@ void Npc::tickRoutine() {
       }
 
     if(loop!=LOOP_CONTINUE) {
+      if(events)
+        stopActivityEvents(ActivityEvents::RowEnd);
       clearState(false);
       currentOther  = nullptr;
       currentVictim = nullptr;
+      return;
       }
     }
+  if(events)
+    tickActivityEvents();
   }
 
 void Npc::forEachRoutine(const std::function<void(const RoutineInfo&)>& f) const {
