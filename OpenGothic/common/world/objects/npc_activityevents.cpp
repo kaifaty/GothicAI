@@ -6,7 +6,7 @@
 #include "world/world.h"
 
 // The automaton of a routine activity at an object (world/activityevents.h). Its code runs only
-// in stepActivityEvents(), for a wake; tickActivityEvents() between wakes compares two times.
+// in stepActivityEvents(), for a wake; tickActivityEvents() between wakes compares times.
 
 namespace {
 gtime after(gtime now, uint64_t ms) {
@@ -55,27 +55,32 @@ bool Npc::tickActivityEvents() {
     return false;
 
   const auto now = owner.time();
-  // The end of the routine row, on the same condition as the polled Loop: ZS_TALK and ZS_ATTACK are not cut.
-  if(aiState.eTime<=now && currentTarget==nullptr && outputPipe->isFinished()) {
-    stopActivityEvents(ActivityEvents::RowEnd);
-    clearState(false);
-    currentOther  = nullptr;
-    currentVictim = nullptr;
-    return true;
-    }
   if(s.awaitQueue && aiQueue.size()==0) {
     s.awaitQueue = false;
     s.pending   |= ActivityEvents::QueueDone;
     }
-  if(s.pending==0) {
-    if(now<s.deadline)
-      return true;
+  if(s.pending==0 && s.deadline<=now)
     s.pending = ActivityEvents::Watchdog;
+  if(s.pending!=0) {
+    const uint16_t wakes = s.pending;
+    s.pending = 0;
+    ActivityEvents::countWakes(aiState.hint,wakes,true);
+    stepActivityEvents(wakes);
+    if(s.activity==nullptr)
+      return true;
     }
-  const uint16_t wakes = s.pending;
-  s.pending = 0;
-  ActivityEvents::countWakes(aiState.hint,wakes,true);
-  stepActivityEvents(wakes);
+  // The end of the routine row is noticed on the NPC's perception clock, where the polled Loop noticed it,
+  // so the day keeps its timing and the shared random stream its order. Between the clock's ticks two times
+  // are compared and nothing of the activity runs. ZS_TALK and ZS_ATTACK are not cut, as before.
+  if(aiState.loopNextTime<=owner.tickCount()) {
+    aiState.loopNextTime = owner.tickCount()+perceptionTimeClampt();
+    if(aiState.eTime<=now && currentTarget==nullptr && outputPipe->isFinished()) {
+      stopActivityEvents(ActivityEvents::RowEnd);
+      clearState(false);
+      currentOther  = nullptr;
+      currentVictim = nullptr;
+      }
+    }
   return true;
   }
 
