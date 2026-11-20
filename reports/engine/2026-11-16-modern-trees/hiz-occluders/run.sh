@@ -25,7 +25,7 @@ ssh "$HOST" "mkdir -p '$SOURCE/OpenGothic' '$SOURCE/scripts/bench' '$REMOTE_OUT'
   [ -d '$CONTENT/tree-cost-1024' ] || cp -a ~/gothic-ai/tree-cost/content/tree-cost-1024 '$CONTENT/'"
 rsync -a --checksum --no-times --delete --exclude='build*/' --exclude='cmake-build-*/' --exclude='.git' \
   "$ROOT/OpenGothic/" "$HOST:$SOURCE/OpenGothic/"
-rsync -a "$ROOT"/scripts/{ryzen-build.sh,perf.sh,perf_report.py,base-ensure.sh,ryzen_game.py} "$HOST:$SOURCE/scripts/"
+rsync -a "$ROOT"/scripts/{ryzen-build.sh,perf.sh,perf_report.py,perf_gpu_log.py,base-ensure.sh,ryzen_game.py} "$HOST:$SOURCE/scripts/"
 rsync -a --delete --exclude='/build*/' "$ROOT/scripts/convert/" "$HOST:$SOURCE/scripts/convert/"
 rsync -a "$ROOT"/scripts/bench/perf-*.bench "$HOST:$SOURCE/scripts/bench/"
 
