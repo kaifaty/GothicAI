@@ -103,6 +103,11 @@ class Encoder<Tempest::CommandBuffer> {
 
     void drawIndirect(const StorageBuffer& indirect, size_t offset);
 
+    // Reads one DrawIndexedIndirectCommand at the byte offset, without a vertex buffer.
+    template<class I>
+    void drawIndexedIndirect(const IndexBuffer<I>& ibo, const StorageBuffer& indirect, size_t offset)
+      { implDrawIndexedIndirect(ibo.impl, Detail::indexCls<I>(), indirect, offset); }
+
     void dispatchMesh(size_t x, size_t y=1, size_t z=1);
     void dispatchMeshIndirect(const StorageBuffer& indirect, size_t offset);
     void dispatchMeshThreads(size_t x, size_t y=1, size_t z=1);
@@ -152,6 +157,7 @@ class Encoder<Tempest::CommandBuffer> {
     void         implDraw(const Detail::VideoBuffer& vbo, size_t stride, size_t offset, size_t size, size_t firstInstance, size_t instanceCount);
     void         implDraw(const Detail::VideoBuffer& vbo, size_t stride, const Detail::VideoBuffer &ibo, Detail::IndexClass index,
                           size_t offset, size_t size, size_t firstInstance, size_t instanceCount);
+    void         implDrawIndexedIndirect(const Detail::VideoBuffer& ibo, Detail::IndexClass index, const StorageBuffer& indirect, size_t offset);
     void         implBindBuffer(size_t id, const Detail::VideoBuffer& buf);
 
   friend class CommandBuffer;

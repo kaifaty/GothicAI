@@ -35,6 +35,7 @@
 #include "utils/string_frm.h"
 #include "settings.h"
 #include "gameservices.h"
+#include "graphics/pfx/particlefx.h"
 #include "game/gamehost.h"
 #include "focus.h"
 #include "resources.h"
@@ -2147,15 +2148,23 @@ void World::probeMemory(std::string_view stage) const {
                  rules().scriptVmMemorySize());
   }
 
-void World::animationPfx(const Animation::MdsParticleEffect& p, MdlVisual& visual) {
+void World::animationPfx(const Animation::MdsParticleEffect& p, MdlVisual& visual, bool inPfxRange) {
   if(p.pfxStop) {
     visual.stopEffect(p.index);
     }
   else if(!p.name.empty()) {
     if(p.name==visual.mutedPfx())
       return;
-    Effect e(PfxEmitter(*this,p.name),p.position);
+    // a looped one (FIRE_HOT of the forge) emits and lives until its stop, its slot's next effect, its object's rest
+    // or its visual's end; the others live their own time (docs/map/engine.md). Far a looped one starts too: it burns
+    // when the viewer comes, its emitter makes no particles out of range
+    const auto* decl = GameServices::inst().loadParticleFx(p.name);
+    const bool  loop = decl!=nullptr && decl->ppsIsLooping;
+    if(!inPfxRange && !loop)
+      return;
+    Effect e(PfxEmitter(*this,decl),p.position);
     e.setActive(true);
-    visual.startEffect(*this,std::move(e),p.index,false);
+    e.setLooped(loop);
+    visual.startEffect(*this,std::move(e),p.index,false,loop);
     }
   }

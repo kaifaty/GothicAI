@@ -231,6 +231,8 @@ void Interactive::resetPositionToTA(int32_t state) {
   if(state>0)
     buf = string_frm("S_S",int(state));
   visual.startAnimAndGet(buf,world.tickCount(),true);
+  if(state<=0)
+    visual.stopLoopedEffects(); // at rest without an animation out, also in the middle of a transition
   setState(state);
   }
 
@@ -262,6 +264,11 @@ void Interactive::tick(uint64_t dt) {
     visual.syncPhysics();
     animChanged = false;
     }
+
+  // at rest, its animation out over (the user killed or taken off), the looped effects of its animations' events go
+  // out; resetPositionToTA and setMobState put them out at once
+  if(state<=0 && world.tickCount()>=waitAnim)
+    visual.stopLoopedEffects();
 
   if(world.tickCount()<waitAnim)
     return;
@@ -495,6 +502,8 @@ bool Interactive::setMobState(std::string_view scheme, int32_t st) {
 
   string_frm name("S_S",st);
   if(visual.startAnimAndGet(name,world.tickCount())!=nullptr || !visual.hasAnim(name)) {
+    if(st<=0)
+      visual.stopLoopedEffects(); // at rest without an animation out
     setState(st);
     return ret;
     }

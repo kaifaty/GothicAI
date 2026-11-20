@@ -875,6 +875,17 @@ void MtCommandBuffer::drawIndirect(const AbstractGraphicsApi::Buffer& indirect, 
   encDraw->drawPrimitives(topology, ind.impl.get(), offset);
   }
 
+void MtCommandBuffer::drawIndexedIndirect(const AbstractGraphicsApi::Buffer& iibo, Detail::IndexClass cls,
+                                          const AbstractGraphicsApi::Buffer& indirect, size_t offset) {
+  T_SKIP_PASS();
+  auto& ibo = reinterpret_cast<const MtBuffer&>(iibo);
+  auto& ind = reinterpret_cast<const MtBuffer&>(indirect);
+  implSetUniforms(S_Graphics);
+  implSetPushData(S_Graphics);
+  T_PROFILE_DRAW();
+  encDraw->drawIndexedPrimitives(topology, nativeFormat(cls), ibo.impl.get(), 0, ind.impl.get(), offset);
+  }
+
 void MtCommandBuffer::dispatchMesh(size_t x, size_t y, size_t z) {
   T_SKIP_PASS();
   if(x==0 || y==0 || z==0)
