@@ -43,7 +43,7 @@ bool Grass::gpuCullEnabled() {
     if(env==nullptr || env[0]!='1' || env[1]!='\0')
       return false;
     if(!Resources::device().properties().descriptors.nonUniformIndexing) {
-      Log::w("Grass GPU culling requires storage buffer descriptor arrays");
+      Log::e("Grass GPU culling requires storage buffer descriptor arrays");
       return false;
       }
     return true;
