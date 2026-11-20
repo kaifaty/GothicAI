@@ -2,7 +2,7 @@
 """Find one-frame jumps of each spruce in a fir-bough-lod recording.
 
     uv run --offline --no-project --with numpy python scripts/content/fir_bough_pops.py \
-      <set> <bench output> <csv> --visuals NAME...
+      <set> <bench output> <csv> --visuals NAME... [--name fir-bough-near]
 
 The clip is read in grey at 1/8 of its size: a jump of a level or of a shadow is a large patch, the grass and the
 encoder's noise are fine detail. For each spruce the frame difference is the mean absolute change of its box on screen
@@ -11,7 +11,8 @@ is that difference over the median of the 61 frames around it. A jump is a score
 4 frames and above every score 8 to 60 frames away. The script prints the jumps while the spruce is in 3D, then a row
 for every threshold of the hard level and shadow switches it crosses (falling 800 px and the px of its four levels,
 400, 200, 100, 50 for spruce A, rising 1.1 times those): the highest score within 4 frames of the crossing and the highest one 8 to 60 frames away.
-<csv> is the table of fir_bough_frames.py for the same recording; the heights and frames are its own.
+<csv> is the table of fir_bough_frames.py for the same recording; the heights and frames are its own. --name is the
+scenario and its recording when they are not fir-bough-lod.
 """
 from __future__ import annotations
 
@@ -26,25 +27,26 @@ import numpy as np
 from fir_eye_frames import FOV_DEGREES, HYSTERESIS, camera_path, tree_bounds
 
 NAME = 'fir-bough-lod'
-SCENARIO = Path(__file__).resolve().parents[1] / 'bench' / f'{NAME}.bench'
+BENCH = Path(__file__).resolve().parents[1] / 'bench'
 WIDTH, HEIGHT = 240, 135
 SHADOW_PX = 800
 NEAR, RING, WINDOW = 4, (8, 60), 30
 
 
-def eyes(run: Path) -> tuple[list[tuple[float, ...]], tuple[float, ...]]:
+def eyes(run: Path, name: str) -> tuple[list[tuple[float, ...]], tuple[float, ...]]:
     """The camera of every recorded frame and the point it looks at, as fir_bough_frames.py places them."""
     events = [json.loads(line) for line in (run / 'events.jsonl').read_text().splitlines()]
-    events = [event for event in events if event['seg'] == NAME]
+    events = [event for event in events if event['seg'] == name]
     (record,) = [event for event in events if event['kind'] == 'rec']
-    positions, durations, starts = camera_path(SCENARIO, events, 'fir-bough')
-    first = next(line.split() for line in SCENARIO.read_text().splitlines() if line.startswith('cam at '))
+    scenario = BENCH / f'{name}.bench'
+    positions, durations, starts = camera_path(scenario, events, 'fir-bough')
+    first = next(line.split() for line in scenario.read_text().splitlines() if line.startswith('cam at '))
     target = tuple(map(float, first[5:8]))
     out, leg = [], -1
     eye = origin = positions[0]
     with (run / 'metrics.csv').open(newline='') as stream:
         for sample in csv.DictReader(stream):
-            if sample['seg'] != NAME:
+            if sample['seg'] != name:
                 continue
             time = record['t'] + int(sample['t'])
             if leg + 1 < len(starts) and time == starts[leg + 1]:
@@ -135,18 +137,19 @@ def crossings(heights: list[float], thresholds) -> list[tuple[str, float, int]]:
     return out
 
 
-def report(content: Path, run: Path, table: Path, layer: str, visuals: list[str], ratio: float) -> list[dict]:
+def report(content: Path, run: Path, table: Path, layer: str, visuals: list[str], ratio: float,
+           name: str = NAME) -> list[dict]:
     with table.open(newline='') as stream:
         rows = list(csv.DictReader(stream))
     names = [visual.rsplit('_', 1)[-1].lower() for visual in visuals]
     heights = [[float(row[f'{name}_height_px']) for row in rows] for name in names]
     stages = [[int(row[f'{name}_stage']) for row in rows] for name in names]
-    cameras, target = eyes(run)
+    cameras, target = eyes(run, name)
     if len(cameras) != len(rows):
         raise ValueError(f'{len(cameras)} camera samples for {len(rows)} rows of {table}')
     trees = tree_bounds(content, layer, visuals)
     boxes = [[box(eye, target, middle, height) for middle, height, _ in trees] for eye in cameras]
-    diff = differences(run / f'{NAME}.mp4', boxes)
+    diff = differences(run / f'{name}.mp4', boxes)
     result = []
     for k, name in enumerate(names):
         score = scores([row[k] for row in diff])
@@ -172,5 +175,6 @@ if __name__ == '__main__':
     parser.add_argument('--layer', default='fir-bough-stagger')
     parser.add_argument('--visuals', nargs='+', required=True)
     parser.add_argument('--ratio', type=float, default=1.5)
+    parser.add_argument('--name', default=NAME, help='the scenario and its recording')
     args = parser.parse_args()
-    report(args.content, args.run, args.csv, args.layer, args.visuals, args.ratio)
+    report(args.content, args.run, args.csv, args.layer, args.visuals, args.ratio, args.name)

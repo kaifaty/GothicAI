@@ -1,0 +1,64 @@
+# The near approach to the first two spruces of the row of fir-bough-lod.bench (`fir_set.py bough --labels`): the
+# camera stands on the line of that bench's view (20 degrees down, square to the row) through the middle between
+# the two and backs away and returns, 905 -> 540 -> 905 px of height for the second spruce (897 -> 537 px for the
+# first), 3.7 to 3.9 % of height a second, never above 4.3 (the first legs of fir-bough-lod.bench: 4.3 to 4.5 on
+# average for its middle spruce). The legs join at 840, 748 and 648 px, between the thresholds 880, 800, 700 and
+# 600 px. It looks 60 cm below the middle, so the lower tiers stay in the frame: above 810 px the frame cuts the
+# tips of the crowns. The third spruce of the row is cut by the right edge. Keep each wait equal to its cam fly.
+# BASE=~/.local/share/gothic-ai/remaster/trees-fir/bough-early
+# RYZEN_TASK="$(ssh ryzen 'printenv HOME')/gothic-ai/tree-bough-b-accept"
+# WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT="$BASE/content" OPENGOTHIC_TEXTURES= \
+#   OPENGOTHIC_TREE_BOUGH_LOD=1 OPENGOTHIC_MESH_LEVELS=1 OPENGOTHIC_IMPOSTORS=1 \
+#   OPENGOTHIC_FRAME_PROFILE="$BASE/run-near/frameprofile.csv" OPENGOTHIC_BENCH_REALTIME=1 \
+#   OPENGOTHIC_BENCH_ENCODER='-c:v h264_nvenc -preset p4 -b:v 24M' TEMPEST_WINDOW_SIZE=1920x1080 \
+#   BENCH_HOST=ryzen RYZEN_BENCH_WINDOW=1 RYZEN_LOCK_WAIT=1200 \
+#   RYZEN_BENCH_ARCHIVE="$RYZEN_TASK/run-near-$(date -u +%Y%m%dT%H%M%SZ)" \
+#   scripts/bench.sh fir-bough-near "$BASE/run-near"
+# @timeout 600
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+set time 12 0
+
+goto pos 42700 3517 -2230
+clear 3000
+streaming wait
+grass wait
+cam at 46145.88 7552.17 -131.92 47556.51 6960.63 246.06
+wait 5000
+rec fir-bough-near
+wait 1000
+
+# Away from the two spruces.
+cam fly 46022.86 7598.52 -164.89 47556.51 6960.63 246.06 2000
+mark fir-bough-leg
+wait 2000
+cam fly 45814.47 7677.05 -220.72 47556.51 6960.63 246.06 3000
+mark fir-bough-leg
+wait 3000
+cam fly 45524.24 7786.41 -298.49 47556.51 6960.63 246.06 3700
+mark fir-bough-leg
+wait 3700
+cam fly 45094.67 7948.27 -413.59 47556.51 6960.63 246.06 4700
+mark fir-bough-leg
+wait 4700
+wait 2000
+
+# Back to them.
+cam fly 45524.24 7786.41 -298.49 47556.51 6960.63 246.06 4700
+mark fir-bough-leg
+wait 4700
+cam fly 45814.47 7677.05 -220.72 47556.51 6960.63 246.06 3700
+mark fir-bough-leg
+wait 3700
+cam fly 46022.86 7598.52 -164.89 47556.51 6960.63 246.06 3000
+mark fir-bough-leg
+wait 3000
+cam fly 46145.88 7552.17 -131.92 47556.51 6960.63 246.06 2000
+mark fir-bough-leg
+wait 2000
+mark fir-bough-returned
+wait 1000
+stop
