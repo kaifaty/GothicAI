@@ -1,7 +1,7 @@
 # The near approach to the first two spruces of the row of fir-bough-lod.bench (`fir_set.py bough --labels`): the
 # camera stands on the line of that bench's view (20 degrees down, square to the row) through the middle between
 # the two and backs away and returns, 905 -> 540 -> 905 px of height for the second spruce (897 -> 537 px for the
-# first), 3.7 to 3.9 % of height a second, never above 4.3 (the first legs of fir-bough-lod.bench: 4.3 to 4.5 on
+# first), 3.7 to 3.9 % of height a second, at most 4.4 (the first legs of fir-bough-lod.bench: 4.3 to 4.5 on
 # average for its middle spruce). The legs join at 840, 748 and 648 px, between the thresholds 880, 800, 700 and
 # 600 px. It looks 60 cm below the middle, so the lower tiers stay in the frame: above 810 px the frame cuts the
 # tips of the crowns. The third spruce of the row is cut by the right edge. Keep each wait equal to its cam fly.
