@@ -54,6 +54,7 @@ struct Push final {
   Vec4     shape;                  // the width at the root and per step, cm; the ring's full and fade, 0 the scene's
   float    swardK       = 0.f;     // repeats of the sward's map in a cm, by the world's x and z; 0 without own layers
   uint32_t pack         = 1;
+  uint32_t kind         = 0;     // Grass::KindEar: stalks with an ear (grass_ear.glsl)
   };
 
 int32_t floorDiv(int32_t a, int32_t b) {
@@ -63,7 +64,7 @@ int32_t floorDiv(int32_t a, int32_t b) {
 
 }
 
-GrassField::GrassField(SceneGlobals& scene, std::vector<ChunkId> ids)
+GrassField::GrassField(SceneGlobals& scene, std::vector<ChunkId> ids, const std::filesystem::path& worldContentDir)
   :scene(scene) {
   const auto sw = Grass::enabled();
   ring   = Grass::ring(sw.mode);
@@ -76,8 +77,17 @@ GrassField::GrassField(SceneGlobals& scene, std::vector<ChunkId> ids)
   // six more maps a ground: with bindless textures alone (DrawBuckets::commit)
   layers = Shaders::options().doBindless;
   scene.setGrassRing(Vec4(ring.full, ring.fadeFrom, ring.radius, blades ? 1.f : 0.5f));
-  if(blades || layers)
+  if(blades || layers) {
+    {
+    std::lock_guard guard(sync);
+    plots.load(worldContentDir, [this](std::string_view material) {
+      asset::Material m;
+      m.texture = std::string(material);
+      return slotOf(m);
+      });
+    }
     worker = std::thread([this] { run(); });
+    }
   }
 
 GrassField::~GrassField() {
@@ -221,6 +231,7 @@ void GrassField::addChunk(ChunkId id, const asset::WorldMesh& mesh) {
     else
       Grass::addGrass(*summary,pos,uv,normal,slot[m]);
     }
+  plots.addTo(*summary,id);
 
   std::lock_guard guard(sync);
   auto& c   = chunks[key(id.x,id.z)];
@@ -411,6 +422,10 @@ void GrassField::upload(Cell& c, Done&& d) {
   if(c.count==0)
     return;
   c.batches = std::move(d.blades.batches);
+  c.reach   = 80.f;
+  for(const auto& b:c.batches)
+    if(b.kind==Grass::KindEar)
+      c.reach = Grass::EarTop;
   c.ranks.resize(c.count);
   for(size_t i=0; i<c.count; ++i)
     c.ranks[i] = uint8_t(d.blades.blades[i].w[1] >> 24);
@@ -615,7 +630,6 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
     return;
     }
   const auto& fr  = scene.frustrum[SceneGlobals::V_Main];
-  const float pad = float(Grass::CellMargin/Grass::Unit) + 80.f;
   const bool  squares = !Grass::squaresOff();
   const Vec3  cam     = scene.camPos();
 
@@ -646,8 +660,9 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
     st.bytes  += size_t(c.count)*sizeof(Grass::Blade);
     if(c.dist>ring.radius)
       continue;
+    const float pad = float(Grass::CellMargin/Grass::Unit) + c.reach;
     const Vec3 min(float(c.cx)*CellCm-pad,   float(c.minY)/float(Grass::Unit)-10.f, float(c.cz)*CellCm-pad);
-    const Vec3 max(float(c.cx+1)*CellCm+pad, float(c.maxY)/float(Grass::Unit)+80.f, float(c.cz+1)*CellCm+pad);
+    const Vec3 max(float(c.cx+1)*CellCm+pad, float(c.maxY)/float(Grass::Unit)+c.reach, float(c.cz+1)*CellCm+pad);
     const auto cellView = fr.testBbox(min,max);
     if(cellView==Frustrum::T_Invisible)
       continue;
@@ -702,6 +717,7 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
         rule.rankShare   = RankShare;
         rule.rootsBeyond = RootsBeyond;
         rule.fine        = fine;
+        rule.heightStep  = Grass::heightStep(b.kind);
         Grass::WasteCell wc;
         wc.origin = Vec3(float(c.cx)*CellCm - float(Grass::CellMargin/Grass::Unit), float(c.minY)/float(Grass::Unit),
                          float(c.cz)*CellCm - float(Grass::CellMargin/Grass::Unit));
@@ -762,6 +778,7 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
       push.table        = dr.table;
       push.segments     = dr.links;
       push.pack         = st.pack;
+      push.kind         = p.kind;
       push.shape        = dr.fine ? Vec4(FineWidth,FineWidthStep,FineFull,FineFade) : Vec4(0.f,0.f,0.f,0.f);
       const auto* sward = slotSward[dr.slot];
       push.swardK       = (sward!=nullptr && p.tile>0.f) ? 1.f/p.tile : 0.f;

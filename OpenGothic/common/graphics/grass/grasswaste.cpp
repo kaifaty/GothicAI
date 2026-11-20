@@ -92,7 +92,7 @@ void countWaste(Waste& out, const Frustrum& fr, const Vec3& cam, const WasteRule
     const Vec3  root(cell.origin.x + lx, cell.origin.y + float((b.w[1] & 0xFFFFu)*2u)/float(Unit), cell.origin.z + lz);
     const uint32_t r    = b.w[1] >> 24;
     const float    rank = (float(r)+0.5f)/256.f;
-    float          h    = float((b.w[1] >> 16) & 0xFFu)*0.25f;
+    float          h    = float((b.w[1] >> 16) & 0xFFu)*rule.heightStep;
 
     // grass.vert
     const float d    = (root-cam).length();

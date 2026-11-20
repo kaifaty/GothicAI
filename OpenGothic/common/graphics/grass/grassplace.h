@@ -69,7 +69,7 @@ void addBeside(Summary& out, const float pos[3][3], const float normal[3][3]);
 
 // 16 bytes of a blade (shader/grass/grass_common.glsl):
 //   w0: x 14 | z 14 | lean 4          root in units from the cell's corner less CellMargin
-//   w1: y 16 | height 8 | rank 8      y in 1/8 cm over CellBlades::minY; height in 1/4 cm
+//   w1: y 16 | height 8 | rank 8      y in 1/8 cm over CellBlades::minY; height in 1/4 cm, of KindEar in 3/4 cm
 //   w2: facing 8 | phase 8 | nx 8 | nz 8
 //   w3: u 12 | v 12 | width 4 | tint 4
 struct Blade final {
@@ -78,7 +78,8 @@ struct Blade final {
 
 struct Batch final {
   uint16_t slot  = 0;
-  uint8_t  kind  = 0;          // 1: the fine blades of the short sward (Params::fine), a ring of their own
+  uint8_t  kind  = 0;          // 1: the fine blades of the short sward (Params::fine), a ring of their own;
+                               // KindEar: stalks with an ear (grassear.h)
   uint8_t  square= 0;          // x*CellSquares+z of the square its roots are in; of the margin's the nearest one
   uint32_t first = 0;
   uint32_t count = 0;
@@ -115,6 +116,6 @@ struct BladeInfo final {
   float   height = 0.f;         // cm
   uint8_t rank   = 0;
   };
-BladeInfo decode(const Blade& b, int32_t cx, int32_t cz, int32_t minY);
+BladeInfo decode(const Blade& b, int32_t cx, int32_t cz, int32_t minY, uint8_t kind = 0); // kind: its batch's
 
 }

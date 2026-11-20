@@ -28,6 +28,7 @@
 #include "graphics/grass/grassdiag.h"
 #include "graphics/grass/grasspack.h"
 #include "graphics/grass/grassplace.h"
+#include "graphics/grass/grassplots.h"
 #include "graphics/grass/grasswaste.h"
 #include "worldchunkmanifest.h"
 
@@ -65,7 +66,8 @@ class GrassField final {
     // the things to pick up in a rectangle of the world, cm: the grass round them is low
     using Items = std::function<void(float x0, float z0, float x1, float z1, std::vector<Grass::Disc>& out)>;
 
-    GrassField(SceneGlobals& scene, std::vector<ChunkId> chunks);
+    // worldContentDir: of the content's world, for the ground it gives to the grass (grassplots.h)
+    GrassField(SceneGlobals& scene, std::vector<ChunkId> chunks, const std::filesystem::path& worldContentDir);
     ~GrassField();
 
     void setItems(Items fn) { items = std::move(fn); }
@@ -129,6 +131,7 @@ class GrassField final {
       std::vector<Grass::Batch> batches;
       std::vector<Grass::Blade> cpu;             // with OPENGOTHIC_GRASS_WASTE=1 alone (grasswaste.h)
       int32_t                   minY = 0, maxY = 0;
+      float                     reach = 0;       // cm: no blade's tip is further from its root
       uint32_t                  count = 0;
       std::vector<uint8_t>      ranks;           // of each blade: within a batch they rise
       float                     dist = 0;        // cm: from the camera to the nearest of the cell, in x and z
@@ -174,6 +177,7 @@ class GrassField final {
     bool                                layers = false; // the grounds' own layers and their borders
     Items                               items;
     std::unordered_set<uint64_t>        world;   // the chunks the world has
+    Grass::Plots                        plots;   // read once, before the worker
 
     mutable std::mutex                  sync;    // chunks, slots, jobs, done
     std::condition_variable             wake;
