@@ -15,6 +15,12 @@ constexpr uint8_t KindEar       = 2;                  // Params::kind and Batch:
 constexpr float   EarMaxHeight  = 160.f;              // cm, the record's
 constexpr float   EarHeightStep = 0.75f;              // cm of the blade's height byte (GrassEarHeightStep)
 constexpr float   EarTop        = 255.f*EarHeightStep; // cm: the tallest the byte holds
+constexpr int32_t EarLodgeStep  = 700;                // cm of the noise of the lodged spots
+constexpr float   EarLodgeFrom  = 0.66f;              // of the noise: the stand starts to lie over
+constexpr float   EarLodgeFull  = 0.82f;              // and lies
+constexpr float   EarLodgeLean  = 46.f;               // degrees from upright in a lodged spot's middle
+constexpr float   EarEdgeLower  = 0.15f;              // of the height is gone at an open edge of the stand
+constexpr float   EarEdgeLean   = 26.f;               // degrees: the stalks of the edge lean out towards it
 
 // cm of a step of the height byte of a blade of the kind
 constexpr float heightStep(uint8_t kind) { return kind==KindEar ? EarHeightStep : 0.25f; }
@@ -39,7 +45,7 @@ Tuft  evenTuft(const Tuft& t);
 // in units)
 float earHeight(uint64_t h, int32_t x, int32_t z);
 // At rest: the side it leans to, radians, and by how much, 8..18 degrees. The side is the place's (the root in
-// units), within a quarter of a radian of it either way
+// units), within 0.45 of a radian of it either way. In a lodged spot the stand lies over, up to EarLodgeLean
 void  earLean(uint64_t h, int32_t x, int32_t z, float& angle, float& lean);
 
 }

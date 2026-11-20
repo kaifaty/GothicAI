@@ -1,5 +1,7 @@
 #include "grassear.h"
 
+#include <algorithm>
+
 #include "graphics/grass/grassplace.h"
 
 namespace Grass {
@@ -24,6 +26,12 @@ void earLean(uint64_t h, int32_t x, int32_t z, float& angle, float& lean) {
   const float place = float(valueNoise(x,z,1500*Unit,0xE7u))/65280.f;
   angle = 0.9f + (place-0.5f)*2.4f + (float((h >> 43) & 0xFFu)/255.f-0.5f)*0.9f;
   lean  = 8.f + 10.f*float((h >> 51) & 0x3Fu)/63.f;
+  // a lodged spot, a few metres across, one in some five of the noise's squares: the stand lies over to the place's
+  // side, the more the nearer the spot's middle, and its stalks agree on the side
+  const float spot   = float(valueNoise(x,z,EarLodgeStep*Unit,0xEAu))/65280.f;
+  const float lodged = std::clamp((spot-EarLodgeFrom)/(EarLodgeFull-EarLodgeFrom),0.f,1.f);
+  angle = angle - (float((h >> 43) & 0xFFu)/255.f-0.5f)*0.6f*lodged;
+  lean  = lean + (EarLodgeLean-lean)*lodged*lodged*(3.f-2.f*lodged);
   }
 
 }

@@ -1120,7 +1120,7 @@ void placementEar() {
           ++stalks;
           low  = std::min(low,info.height);
           high = std::max(high,info.height);
-          require((b.w[0] >> 28)<=4u, "a stalk stands nearly upright: 8 to 18 degrees"+at(cx,cz));
+          require((b.w[0] >> 28)<=14u, "a stalk leans by 8 to 18 degrees, to 46 in a lodged spot"+at(cx,cz));
           }
         }
       }
@@ -1144,6 +1144,22 @@ void placementEar() {
     prev = now;
     }
   require(turns>=36 && turns<=76, "the stalks are lower by spots of 6 to 10 m: "+std::to_string(turns));
+
+  // a lodged spot: the stand lies over, to no more than EarLodgeLean, at a part of the places and upright at the rest
+  int   lodged = 0, places = 0;
+  float most   = 0.f;
+  for(int32_t z=0; z<=6400*U; z+=160*U)
+    for(int32_t x=0; x<=6400*U; x+=160*U) {
+      float angle = 0.f, lean = 0.f;
+      Grass::earLean(0,x,z,angle,lean);
+      require(lean>=8.f, "a stalk leans by 8 degrees at the least");
+      most = std::max(most,lean);
+      ++places;
+      if(lean>18.f)
+        ++lodged;
+      }
+  require(most>30.f && most<=Grass::EarLodgeLean && lodged*50>places && lodged*3<places,
+          "the stand lies over in spots: "+std::to_string(lodged)+" of "+std::to_string(places)+", "+std::to_string(most));
   }
 
 // A file of worlds/<WORLD>/grass.d

@@ -62,7 +62,7 @@ RYE, DRY, WEED = 'OWN_CROP_RYE', 'OWN_CROP_DRY', 'OWN_CROP_WEED'
 EARTH, LITTER = 'OWN_CROP_EARTH', 'OWN_CROP_LITTER'
 STAND = 'OWN_CROP_STAND'    # the ground under rye that stands as stalks (`--stand stalks`, stalk.md)
 # the stalks: blades of the grass system's kind `ear` on the patches of worlds/<WORLD>/grass.d/crop-field.json
-STALKS = dict(kind='ear', height=125., density=1.5, clumps=0., edge=0., slope=60., wind=1.4, translucency=.45)
+STALKS = dict(kind='ear', height=125., density=2., clumps=0., edge=50., slope=60., wind=1.4, translucency=.45)
 PATCH_STEP = 75.            # cm of the patches' grid
 PATCH_TILE = 2400.          # cm a repeat of the stand's map as the stalks read their colour from it: its slow tones are patches of metres
 TONES = ('', 'PALE', 'GREEN')
