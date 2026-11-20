@@ -137,7 +137,7 @@ def test_remote_perf_uses_setup_cache_unless_caller_overrides(monkeypatch, cache
         monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", cache)
     harness = r'''
 set -euo pipefail
-for name in PERF_VID_RES PERF_INI PERF_WINDOW PERF_REPEAT PERF_WAIT PERF_ARGS PERF_ENV PERF_COMMIT PERF_DIRTY PERF_SOURCE_FINGERPRINT; do
+for name in PERF_VID_RES PERF_INI PERF_WINDOW PERF_REPEAT PERF_WAIT PERF_WARMUP PERF_WARMUP_MAX PERF_ARGS PERF_ENV PERF_COMMIT PERF_DIRTY PERF_SOURCE_FINGERPRINT; do
   printf -v "$name" '%s' fixture
 done
 TASK=/remote/task
@@ -794,3 +794,49 @@ def test_segment_takes_a_fifth_view_and_a_view_measured_again():
     assert report.segment_parts("perf-meadow/view-5-") is None
     assert report.segment_parts("perf-meadow/view-5-No Road") is None
     assert report.segment_parts("meadow/view-5") is None
+
+
+def gpu_journal(directory, samples):
+    lines = ["mono_ns,temp_c,sm_mhz,mem_mhz,power_w,pstate,fan_pct,util_pct,reasons"]
+    lines += [f"{stamp},{temp},{sm},9501,{power},P2,50,99,0x0" for stamp, temp, sm, power in samples]
+    (directory / "gpu.csv").write_text("\n".join(lines) + "\n")
+
+
+def test_gpu_clocks_by_view_skip_warmup_and_compare_warns(tmp_path, capsys):
+    a, b = tmp_path / "a", tmp_path / "b"
+    for root, sm in ((a, 1900), (b, 1850)):
+        for repeat in (1, 2):
+            # Repeat 2's frames start 1 s later; the journal row at 1 s is outside repeat 1's 0..40 ms frames.
+            offset = (repeat - 1) * 1_000_000_000
+            profile(root / "market" / f"repeat-{repeat}", [{"begin_ns": offset + index * 10_000_000}
+                                                           for index in range(5)])
+        gpu_journal(root, [(20_000_000, 60, sm, 300), (1_000_000_000, 70, sm + 20, "[N/A]"),
+                           (1_030_000_000, "[N/A]", sm + 40, 310), (5_000_000_000, 99, 999, 999)])
+    # The warm-up games are not measurements, even with a profile.
+    profile(a / "warmup/run-1", cadence_rows(1))
+    (a / "warmup.json").write_text(json.dumps({"mode": "auto", "reason": "stable", "seconds": 121.4, "runs": 2,
+                                               "temp_start_c": 55, "temp_end_c": 70, "sm_start_mhz": 1995,
+                                               "sm_end_mhz": 1905, "last_game_age_s": None}))
+    assert report.main(["run", str(a)]) == 0
+    result = json.loads((a / "report.json").read_text())
+    assert [source["directory"] for source in result["sources"]] == ["market/repeat-1", "market/repeat-2"]
+    first, second = (repeat["views"]["view-1"]["gpu_clock"] for repeat in result["places"]["market"]["repeats"])
+    assert first == {"sm_mhz": 1900, "mem_mhz": 9501, "temp_c": 60, "power_w": 300, "samples": 1}
+    assert second == {"sm_mhz": 1930, "mem_mhz": 9501, "temp_c": 70, "power_w": 310, "samples": 2}
+    assert result["places"]["market"]["summary"]["gpu_clock"]["sm_mhz"] == pytest.approx(1920)
+    markdown = (a / "report.md").read_text()
+    assert "| market/view-1 | 1920 | 9501 | 65.0 | 305.0 |" in markdown
+    assert "Прогрев GPU (auto): stable за 121 с, запусков 2; 55 → 70 °C, SM 1995 → 1905 МГц." in markdown
+
+    comparison = report.compare_reports(report.build_report(a), report.build_report(b))
+    assert comparison["places"]["market"]["gpu_sm_mhz"]["a"] == pytest.approx(1920)
+    assert comparison["warnings"][-1] == "market: частоты SM расходятся на 2.6 %: в разнице времени есть разница частоты GPU"
+    assert report.main(["compare", str(a), str(b)]) == 0
+    assert "| market | 1920 → 1870 | -2.6 |" in capsys.readouterr().out
+    # Without journals the report is as before.
+    for root in (a, b):
+        (root / "gpu.csv").unlink()
+    comparison = report.compare_reports(report.build_report(a), report.build_report(b))
+    assert "gpu_sm_mhz" not in comparison["places"]["market"]
+    assert not any("частоты SM" in warning for warning in comparison["warnings"])
+    assert "gpu_clock" not in report.build_report(b)["places"]["market"]["summary"]
