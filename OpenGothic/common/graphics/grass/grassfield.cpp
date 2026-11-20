@@ -638,15 +638,6 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
   // into the ground are not submitted with the rest of the cell. The squares of a ground and a kind go in one draw:
   // its blades are packed in the order of the squares, and the span table maps them to the cell buffer (grass.vert).
   // The links of a blade are the cell's, as before the squares.
-  struct Draw final {
-    const Cell* cell  = nullptr;
-    uint16_t    slot  = 0;
-    bool        fine  = false;
-    uint8_t     links = 0;
-    uint32_t    count = 0;
-    uint32_t    table = 0;
-    uint32_t    instances = 0;
-    };
   std::vector<Draw> draws;
   draws.reserve(128);
   spanCpu.clear();
@@ -761,6 +752,7 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
       }
     buf.update(spanCpu.data(), 0, bytes);
 
+    const auto* indirect = uploadIndirect(draws, fId, st.pack);
     const auto& shaders = Shaders::inst();
     cmd.setPipeline(historyOwner ? shaders.grassHistoryGBuffer : shaders.grass);
     cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
@@ -792,7 +784,10 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
         slotBound = dr.slot;
         }
       cmd.setPushData(push);
-      cmd.draw(nullptr, ibo, Grass::packIndexOffset(dr.links, st.pack), Grass::packIndexCount(dr.links, st.pack), 0, dr.instances);
+      if(indirect!=nullptr)
+        cmd.drawIndexedIndirect(ibo, *indirect, st.draws*sizeof(DrawIndexedIndirectCommand));
+      else
+        cmd.draw(nullptr, ibo, Grass::packIndexOffset(dr.links, st.pack), Grass::packIndexCount(dr.links, st.pack), 0, dr.instances);
       ++st.draws;
       }
     }
