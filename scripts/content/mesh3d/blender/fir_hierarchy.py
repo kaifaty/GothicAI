@@ -148,8 +148,13 @@ def leaf_part(foliage: dict, nodes: list[Node], ids) -> dict:
     return part
 
 
+def parent_material(page: int, primitive: int, k: int) -> str:
+    prefix = 'FIR_HIERARCHY' if k == 4 else f'FIR_HIERARCHY_X{k}'
+    return f'{prefix}_{page}_{primitive}'
+
+
 def export(path: Path, source_parts: list[dict], nodes: list[Node], roots: tuple[int, ...],
-           parents: dict[int, dict], atlas, *, metadata: dict | None = None) -> dict:
+           parents: dict[int, dict], atlas, *, metadata: dict | None = None, k: int = 4) -> dict:
     """Write a GLB with source parts first and atlas-page primitives after them."""
     wood, foliage = tree_prefix.split_parts(source_parts)
     original = [n for n in nodes if not n.children]
@@ -167,7 +172,7 @@ def export(path: Path, source_parts: list[dict], nodes: list[Node], roots: tuple
         nonlocal vertices, indices, geometry_bytes
         if not batch:
             return
-        name = f'FIR_HIERARCHY_{page}_{len(parts)}'
+        name = parent_material(page, len(parts), k)
         part = dict(name=name, group='UNDEF', cutout=True, two_sided=True)
         for field in (*VERTEX_FIELDS, 'index'):
             part[field] = np.concatenate([item[field] for item in batch])

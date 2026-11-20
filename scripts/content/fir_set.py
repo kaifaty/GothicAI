@@ -58,8 +58,8 @@ to the instance matrices in the content's world override, since the additive lay
 `eye-threshold` copies the current probe set and places the original spruce A and three relaxed cuts from
 `tree_hierarchy_probe.py --eye` in one row. All four use the same existing impostor.
 
-`bough-x4` stages the progressive hierarchy and a control in the first two places of the same row.
-Both use the current spruce A and its mesh levels and impostor.
+`bough --k 4` stages a progressive hierarchy and a control in the first two places of the same row.
+`bough --k 4 8 16` stages the three hierarchies left to right. All use the same spruce A, mesh levels and impostor.
 """
 from __future__ import annotations
 
@@ -428,10 +428,13 @@ def eye_threshold(args) -> int:
     return 0
 
 
-def stage_bough_hierarchy(work: Path, config: dict, source: Path) -> str:
-    sidecar = f'{VISUAL}_BOUGH_X4_H.json'
+def stage_bough_hierarchy(work: Path, config: dict, source: Path, k: int = 4) -> str:
+    sys.path.insert(0, str(BLENDER))
+    from fir_hierarchy import parent_material
+
+    sidecar = f'{VISUAL}_BOUGH_X{k}_H.json'
     hierarchy = json.loads((source / sidecar).read_text())
-    relative = Path(FOLDER) / 'bough-x4'
+    relative = Path(FOLDER) / f'bough-x{k}'
     meshes_dir = work / 'meshes' / relative
     materials_dir = work / 'materials' / relative
     meshes_dir.mkdir()
@@ -453,17 +456,17 @@ def stage_bough_hierarchy(work: Path, config: dict, source: Path) -> str:
     fallback = {key: value for key, value in boughs.items() if key != 'orm'}
     page_primitives = {(geometry['page'], geometry['primitive']) for node in hierarchy['nodes']
                        if (geometry := node['geometry']) and 'page' in geometry}
-    rewrite(material_index, {f'FIR_HIERARCHY_{page}_{primitive}.TGA': dict(fallback, **pages[page])
+    rewrite(material_index, {f'{parent_material(page, primitive, k)}.TGA': dict(fallback, **pages[page])
                              for page, primitive in sorted(page_primitives)})
     return (relative / sidecar).as_posix()
 
 
-def bough_x4(args) -> int:
-    """Stage a progressive spruce A next to its control with their shared fallback levels."""
+def bough(args) -> int:
+    """Stage one hierarchy with a control, or all three hierarchies, with shared fallback levels."""
+    if len(args.k) != len(args.hierarchy) or (len(args.k) != 1 and args.k != [4, 8, 16]):
+        raise ValueError('Supply one hierarchy per factor for a single factor or for 4, 8 and 16 in order')
     config = json.loads(args.config.read_text())
     base_visual = f'{VISUAL}_4'
-    visual = f'{VISUAL}_BOUGH_X4'
-    control_visual = f'{VISUAL}_BOUGH_CONTROL'
     control_root = args.control.resolve()
     control = json.loads((control_root / 'meshes/meshes.json').read_text())[base_visual]
     impostor_source = json.loads((args.impostor_from / 'meshes/meshes.json').read_text())[base_visual]
@@ -479,15 +482,23 @@ def bough_x4(args) -> int:
         target.unlink(missing_ok=True)
         shutil.copyfile(args.impostor_from / 'meshes' / file, target)
 
-    hierarchy = stage_bough_hierarchy(work, config, args.hierarchy)
     entry = dict(control, levels=[*levels, impostor])
-    rewrite(mesh_index, {control_visual: entry, visual: dict(entry, hierarchy=hierarchy)})
+    if len(args.k) == 1:
+        entries = {f'{VISUAL}_BOUGH_CONTROL': entry}
+        layer = f'fir-bough-x{args.k[0]}'
+    else:
+        entries = {}
+        layer = 'fir-bough-relax'
+    for k, source in zip(args.k, args.hierarchy, strict=True):
+        hierarchy = stage_bough_hierarchy(work, config, source, k)
+        entries[f'{VISUAL}_BOUGH_X{k}'] = dict(entry, hierarchy=hierarchy)
+    rewrite(mesh_index, entries)
     layers = work / 'worlds' / WORLD / 'vobs.d'
     (layers / 'fir-probe.json').unlink()
-    placements = [dict(key=f'fir-bough-x4-{i}', kind='mesh', visual=name, position=position,
+    placements = [dict(key=f'{layer}-{i}', kind='mesh', visual=name, position=position,
                        yaw_deg=0, collision='none')
-                  for i, (name, position) in enumerate(zip((control_visual, visual), EYE_ROW[:2], strict=True))]
-    (layers / 'fir-bough-x4.json').write_text(json.dumps(dict(format=1, add=placements), indent=1) + '\n')
+                  for i, (name, position) in enumerate(zip(entries, EYE_ROW[:len(entries)], strict=True))]
+    (layers / f'{layer}.json').write_text(json.dumps(dict(format=1, add=placements), indent=1) + '\n')
     work.rename(output)
     print(output)
     return 0
@@ -745,14 +756,15 @@ def main() -> int:
     command.add_argument('--control', type=Path, required=True)
     command.add_argument('--impostor-from', type=Path, required=True)
     command.add_argument('--variants', type=Path, required=True)
-    command = commands.add_parser('bough-x4', help='stage the progressive hierarchy and the current spruce')
+    command = commands.add_parser('bough', aliases=['bough-x4'], help='stage the progressive spruce hierarchies')
     command.add_argument('set')
     command.add_argument('--control', type=Path, required=True)
     command.add_argument('--impostor-from', type=Path, required=True)
-    command.add_argument('--hierarchy', type=Path, required=True)
+    command.add_argument('--k', type=int, choices=(4, 8, 16), nargs='+', default=[4])
+    command.add_argument('--hierarchy', type=Path, nargs='+', required=True)
     args = parser.parse_args()
     return {'textures': textures, 'probe': probe, 'forest': forest,
-            'eye-threshold': eye_threshold, 'bough-x4': bough_x4}[args.command](args)
+            'eye-threshold': eye_threshold, 'bough': bough, 'bough-x4': bough}[args.command](args)
 
 
 if __name__ == '__main__':

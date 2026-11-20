@@ -170,8 +170,9 @@ def test_bough_x4_adds_hierarchy_without_changing_the_spruce_or_its_fallbacks(tm
     for path in ('color.dds', 'normal.dds', hierarchy['glb']):
         write(hierarchy_root / path, path.encode())
 
-    fir_set.bough_x4(SimpleNamespace(config=config, control=control, impostor_from=impostor_root,
-                                    hierarchy=hierarchy_root, set='bough-x4/content'))
+    args = SimpleNamespace(config=config, control=control, impostor_from=impostor_root,
+                           k=[4], hierarchy=[hierarchy_root], set='bough-x4/content')
+    fir_set.bough(args)
     content = probes / 'bough-x4/content'
     meshes = json.loads((content / 'meshes/meshes.json').read_text())
     staged_control = dict(full, levels=[*full['levels'], impostor])

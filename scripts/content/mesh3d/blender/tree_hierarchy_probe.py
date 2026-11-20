@@ -165,7 +165,7 @@ def parts_for_comparison(parts, crown, bark):
             for part in parts]
 
 
-def read_eye_hierarchy(directory, source_path, foliage, *, threshold_scale=1):
+def read_eye_hierarchy(directory, source_path, foliage, *, k=1):
     """Recover the exact saved cut thresholds and parent geometry from the hierarchy probe."""
     saved = json.loads((directory / 'hierarchy.json').read_text())
     if hashlib.sha256(source_path.read_bytes()).hexdigest() != saved['source']['source']:
@@ -196,9 +196,8 @@ def read_eye_hierarchy(directory, source_path, foliage, *, threshold_scale=1):
         nodes.append(fir_hierarchy.Node(ident, record['kind'], children, leaves, record['branch'],
                                        rest_low, rest_high, low, high, first, count, first_index,
                                        index_count, max_px=record['max_px'],
-                                       threshold_px=threshold_scale * record['threshold_px'],
-                                       high_px=threshold_scale * record['high_px'],
-                                       low_px=threshold_scale * record['low_px']))
+                                       threshold_px=k * record['threshold_px'], high_px=k * record['high_px'],
+                                       low_px=k * record['low_px']))
     return nodes, saved['roots'], parents, saved['source']['height_m']
 
 
@@ -274,18 +273,20 @@ def eye_levels(args, output):
             print(json.dumps(dict(k=k, height=height, views=len(rows), **costs[k][height], **ranges)), flush=True)
 
 
-def bough_x4(args, output):
+def bough(args, output):
+    k = args.k
     source = tree_glb.read(args.glb)
     crown = dict(rgba=read_rgba(args.atlas), tangent_normal=read_normal(args.normal))
     wood, foliage = parts_for_comparison(source, crown, dict(rgba=read_rgba(args.bark)))
-    nodes, roots, parents, height_m = read_eye_hierarchy(args.bough_x4, args.glb, foliage, threshold_scale=4)
+    nodes, roots, parents, height_m = read_eye_hierarchy(args.bough, args.glb, foliage, k=k)
     px_per_m = {ident: nodes[ident - 1].high_px / nodes[ident - 1].diameter for ident in parents}
     print(f'Baking all {len(parents)} parent nodes', flush=True)
     fits = bake.rebake_cards(foliage, nodes, parents, px_per_m, jobs=args.jobs, samples=4)
     mapped, atlas, textures, coverage, area = bake.pack_bough(output, fits, parents)
     unpadded = sum(card['rgba'].shape[0] * card['rgba'].shape[1] for cards in fits.values() for card in cards)
-    sizes = fir_hierarchy.export(output / 'OWN_TREE_FIR_A_BOUGH_X4_H.glb', source, nodes, roots, mapped, atlas,
-                                 metadata=dict(height_m=height_m, source=hashlib.sha256(args.glb.read_bytes()).hexdigest()))
+    sizes = fir_hierarchy.export(output / f'OWN_TREE_FIR_A_BOUGH_X{k}_H.glb', source, nodes, roots, mapped, atlas,
+                                 metadata=dict(height_m=height_m, source=hashlib.sha256(args.glb.read_bytes()).hexdigest()),
+                                 k=k)
     print(f"{atlas['tiles']} cards on {len(atlas['pages'])} pages, {atlas['bytes']} DDS bytes", flush=True)
 
     level_wood = {height: len(tree_prefix.split_parts(tree_glb.read(path))[0]['index'])
@@ -297,7 +298,7 @@ def bough_x4(args, output):
             for height in HEIGHTS if height != 800}
     print(f'Measuring hard centre cuts at {len(cuts)} heights in 24 cameras', flush=True)
     views = raster.tree_comparisons([wood, foliage], {'cut': cuts}, jpeg_dir=args.sheets,
-                                    sheet_prefix='tree-bough-x4', sheet_label='Cut ×4')
+                                    sheet_prefix=f'tree-bough-x{k}', sheet_label=f'Cut ×{k}')
     result = dict(views=views['cut'], curve=curve, coverage=coverage, atlas=atlas, sizes=sizes,
                   padded_texels=area, content_texels=unpadded)
     (output / 'result.json').write_text(json.dumps(result, allow_nan=False, separators=(',', ':')) + '\n')
@@ -315,17 +316,18 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--sheets', type=Path)
     parser.add_argument('--jobs', type=int, default=1)
+    parser.add_argument('--k', type=int, choices=EYE_FACTORS, default=4, help='tolerance multiplier for --bough')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--eye', type=Path, help='read a saved hierarchy and bake and measure its relaxed cuts')
-    mode.add_argument('--bough-x4', type=Path, help='reprint all parents from a saved hierarchy for its 4x bands')
+    mode.add_argument('--bough', '--bough-x4', type=Path, help='reprint all parents for the scaled bands')
     args = parser.parse_args()
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)
     if args.eye:
         eye_levels(args, output)
         return
-    if args.bough_x4:
-        bough_x4(args, output)
+    if args.bough:
+        bough(args, output)
         return
     if args.sheets:
         args.sheets.mkdir(parents=True, exist_ok=True)
