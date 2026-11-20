@@ -85,6 +85,15 @@ const float GrassRootAo      = 0.35;
 const float GrassWidth       = 1.3;                      // cm at the root, and per step of the blade's four bits
 const float GrassWidthStep   = 0.11;
 const float GrassTaper       = 0.7;                      // of the width is gone at the tip
+// A stalk with an ear (grass_ear.glsl; the record's "kind": "ear"): of the ground's colour too, the stalk as straw,
+// the ear as gold, paler by the tuft's dryness
+const vec3  GrassEarStalk      = vec3(1.15);
+const vec3  GrassEarGold       = vec3(1.45, 1.32, 0.85);
+const vec3  GrassEarPale       = vec3(1.52, 1.44, 1.08);
+const float GrassEarStalkWidth = 0.45;                   // cm
+const float GrassEarWidth      = 1.5;
+const float GrassEarDroopMin   = 1.0;                    // the ear hangs over by 45 to 65 degrees, by the stalk: tangents
+const float GrassEarDroopMax   = 2.1445;
 // The ground. Seen from above it lies between the blades in their shade. Seen along the meadow it stands for the
 // blades the eye would meet behind the ones that are drawn, and from afar for all of them: it takes what the
 // grass looks like together. The share of that look: by the eye's direction against the ground, from GrassGrazeTo

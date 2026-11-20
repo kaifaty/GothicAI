@@ -551,7 +551,8 @@ WorldView::WorldView(const PackedMesh& wmesh, std::string_view skyPreset)
 
 WorldView::WorldView(std::pair<Vec3,Vec3> bounds, std::string_view skyPreset)
     : aabb(bounds), gSky(skyPreset), gLights(sGlobal), houses(Resources::worldOverrideDir(skyPreset)),
-    visuals(sGlobal,bounds), objGroup(visuals), pfxGroup(*this,sGlobal,visuals) {
+    visuals(sGlobal,bounds), objGroup(visuals), pfxGroup(*this,sGlobal,visuals),
+    worldContent(Resources::worldOverrideDir(skyPreset)) {
   pfxGroup.resetTicks();
   // how open a fire's place is to the wind (particles.d "wind"): none under a roof within 30 m, a third behind a
   // wall within 6 m upwind. Static geometry only; without a physics world every place is open
@@ -599,7 +600,7 @@ void WorldView::startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency&
     for(auto& e:residency.table().entries)
       if(e.triangleCount!=0)
         ids.push_back(e.id);
-    grass=std::make_unique<GrassField>(sGlobal,std::move(ids));
+    grass=std::make_unique<GrassField>(sGlobal,std::move(ids),worldContent);
     }
   streaming=std::make_unique<LandscapeStreaming>(*this,std::move(mesh),residency,preloadMs);
   }

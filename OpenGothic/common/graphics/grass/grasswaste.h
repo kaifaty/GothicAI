@@ -57,6 +57,7 @@ struct WasteRule final {
   float          rankShare = 0.f;
   float          rootsBeyond = 0.f;
   bool           fine      = false;
+  float          heightStep= 0.25f; // cm of the height byte (Grass::heightStep)
 
   size_t  ranks(float dist) const;
   uint8_t links(float dist) const;

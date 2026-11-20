@@ -153,6 +153,7 @@ class WorldView {
     PfxObjects    pfxGroup;
     std::unique_ptr<Landscape> land;
     std::unique_ptr<Landscape> originalCloth;
+    std::filesystem::path       worldContent; // of the content's world: the ground it gives to the grass
     std::unique_ptr<GrassField> grass; // before `streaming`: the packing gives it the chunks
     struct LandscapeStreaming;
     std::unique_ptr<LandscapeStreaming> streaming;
