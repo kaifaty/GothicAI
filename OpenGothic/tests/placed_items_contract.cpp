@@ -2413,9 +2413,11 @@ void animationEffects(Gothic& gothic) {
   require(!there(),"ANVIL_SPARKS must be gone right after their own time");
   std::printf("Animation effects: ANVIL_SPARKS of a blow gone in %llu ms (own time %llu ms)\n",
               (unsigned long long)(world.tickCount()-struck),(unsigned long long)sparks->effectPrefferedTime());
+  // standing where they were, out of the objects' animations: the arrows after this shoot into Harad's pose
   for(auto& [npc,at]:moved) {
     npc->setInteraction(nullptr,true);
     npc->clearAiQueue();
+    npc->stopAnim("");
     npc->setPosition(at);
     npc->setExternalControl(false);
     }
