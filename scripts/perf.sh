@@ -83,6 +83,8 @@ if [[ "${1:-}" != __build && "${1:-}" != __run && "${BENCH_HOST:-local}" == ryze
   mkdir -p "$ROOT/.bench"
   PERF_STAND_LOCKED="$ROOT" exec python3 "$ROOT/scripts/perf_lock.py" "$ROOT/.bench/perf-ryzen.lock" bash "$0" "$@"
 fi
+# The GPU stamp's age counts from entering the stand, before hashing the sources (see run_game warmup).
+export PERF_RUN_STARTED_AT="$(date +%s)"
 # perf-content.sh also calls the queue entry points directly in its own source tree.
 PERF_SOURCE_FINGERPRINT="${PERF_SOURCE_FINGERPRINT:-$(source_fingerprint)}"
 export PERF_SOURCE_FINGERPRINT
@@ -185,9 +187,8 @@ if [[ "$REMOTE_RUN" == 1 ]]; then
 fi
 GAME_BIN="${GAME_BIN:-$BUILD/opengothic/Gothic2Notr}"
 GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
-if [[ "${NO_BUILD:-0}" != 1 ]]; then build_game "$OUT/build"; fi
-# The GPU stamp's age counts from entering the run phase, before base, display and journal checks.
-export PERF_RUN_STARTED_AT="$(date +%s)"
+# A local build takes minutes: the stamp's age then counts from its end.
+if [[ "${NO_BUILD:-0}" != 1 ]]; then build_game "$OUT/build"; PERF_RUN_STARTED_AT="$(date +%s)"; fi
 [[ -x "$GAME_BIN" ]] || fail "missing game executable: $GAME_BIN"
 grep -qx 'CMAKE_BUILD_TYPE:STRING=RelWithDebInfo' "$BUILD/CMakeCache.txt" || fail 'build-perf must use RelWithDebInfo; rerun without NO_BUILD=1'
 for setting in OPENGOTHIC_ENABLE_FRAME_PROFILE OPENGOTHIC_ENABLE_APP_CADENCE; do

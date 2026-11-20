@@ -147,6 +147,7 @@ Path(profile).write_text("\n".join(lines) + "\n")
 (out / "appcadence.csv.json").write_text(json.dumps({"complete": True, "frames": 72, "overflow": 0}))
 (out / "events.jsonl").write_text(json.dumps({"kind": "perf_segment", "segment": "perf-market/view-1"}) + "\n")
 print("[bench] drawable 1728x1117")
+time.sleep(1.5)  # the first view's frames span this second and a half
 '''
 
 
@@ -166,8 +167,11 @@ def stand(tmp_path, smi, stamp_age=None, warmup=None, slow_checks=False, **extra
     if smi is not None:
         stub(tmp_path / "bin", "nvidia-smi", smi)
     if slow_checks:
-        # The build checks before the base, display and journal take 3 s.
+        # Hashing the sources takes 3 s, the build checks before the base, display and journal 3 s more.
         stub(tmp_path / "bin", "grep", f"#!/usr/bin/env bash\nsleep 1\nexec {shutil.which('grep')} \"$@\"\n")
+        stub(tmp_path / "bin", "python3", "#!/usr/bin/env bash\n"
+             "[[ \"$1 $2\" != *' '*/OpenGothic ]] || sleep 3\n"
+             f"exec {shutil.which('python3')} \"$@\"\n")
     stamp = tmp_path / "perf-last-game"
     if stamp_age is not None:
         stamp.touch()
@@ -191,8 +195,8 @@ def stand(tmp_path, smi, stamp_age=None, warmup=None, slow_checks=False, **extra
 
 
 def test_fresh_stamp_skips_the_warm_up_and_journals_the_run(tmp_path):
-    # The stamp is 118 s old when the run phase begins; its checks take 3 s, the journal's first sample 3 s more.
-    out, games, stdout, stamp = stand(tmp_path, SMI_SLOW, stamp_age=118, slow_checks=True)
+    # The stamp is 118 s old on entering the stand; hashing, checks and the journal's first sample take 9 s.
+    out, games, stdout, stamp = stand(tmp_path, SMI_SLOW, stamp_age=118, slow_checks=True, PERF_SOURCE_FINGERPRINT="")
     assert re.search(r"^perf: GPU warm: last stand game ended 11[0-9] s ago, no warm-up$", stdout, re.M)
     assert [Path(leaf).relative_to(out).as_posix() for leaf, _ in games] == ["market/repeat-1"]
     assert not (out / "warmup").exists()
@@ -201,8 +205,9 @@ def test_fresh_stamp_skips_the_warm_up_and_journals_the_run(tmp_path):
     assert gpu.read_log(out / "gpu.csv")
     assert not alive(int((tmp_path / "smi.pid").read_text()))
     assert time.time() - stamp.stat().st_mtime < 30
+    # The journal keeps sampling during the measured game.
     clock = json.loads((out / "report.json").read_text())["places"]["market"]["views"]["view-1"]["gpu_clock"]
-    assert set(clock) == {"sm_mhz", "mem_mhz", "temp_c", "power_w", "samples"}
+    assert clock["samples"] > 0 and (clock["sm_mhz"], clock["temp_c"]) == (1890, 66)
 
 
 def test_old_stamp_warms_up_with_restarts_until_the_ceiling(tmp_path):

@@ -860,7 +860,9 @@ def test_gpu_clocks_by_view_skip_warmup_and_compare_warns(tmp_path, capsys):
         assert warnings == ([f"market: частоты SM расходятся на {warned} %: в разнице времени есть разница частоты GPU"]
                             if warned else [])
     assert report.main(["compare", str(a), str(b)]) == 0
-    assert "| market | 2000 → 1978 | -1.1 |" in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    assert "| market | 2000 → 1978 | -1.1 |" in printed
+    assert "частоты SM расходятся на 1.1 %: в разнице времени есть разница частоты GPU" in printed
     # Compared leaves find the journal of their run two folders up.
     leaves = report.compare_reports(report.build_report(a / "market/repeat-1"), report.build_report(b / "market/repeat-2"))
     assert (leaves["places"]["market"]["gpu_sm_mhz"]["a"], leaves["places"]["market"]["gpu_sm_mhz"]["b"]) == (2000, 1978)
