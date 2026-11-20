@@ -180,10 +180,6 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path, monkeyp
     height = 4 * by_kind['hang'].threshold_px / by_kind['hang'].diameter
     strict = tree_hierarchy_probe.cut(nodes, roots, height, 1.)
     assert tree_hierarchy_probe.cut(nodes, roots, height, 1., k=1) == strict
-    relaxed = tree_hierarchy_probe.cut(nodes, roots, height, 1., k=8)
-    assert relaxed != strict
-    assert relaxed == tree_hierarchy_probe.cut(nodes, roots, height / 8, 1.)
-    assert sorted(leaf for ident in relaxed for leaf in nodes[ident - 1].leaves) == sorted(cut)
     for node in nodes:
         if node.children:
             assert 0 < node.low_px < node.threshold_px < node.high_px <= node.max_px
@@ -205,8 +201,7 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path, monkeyp
             assert expected[field].tobytes() == stored[field].tobytes()
 
     records = json.loads(exported.with_suffix('.json').read_text())['nodes']
-    scaled, scaled_roots, stored_parents, _ = tree_hierarchy_probe.read_eye_hierarchy(
-        tmp_path, source, parts[1], threshold_scale=4)
+    scaled, scaled_roots, stored_parents, _ = tree_hierarchy_probe.read_eye_hierarchy(tmp_path, source, parts[1], k=4)
     assert list(roots) == scaled_roots
     assert tree_hierarchy_probe.cut(scaled, roots, height, 1.) == tree_hierarchy_probe.cut(nodes, roots, height, 1., k=4)
     for original, node in zip(nodes, scaled, strict=True):
@@ -217,6 +212,16 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path, monkeyp
             if child.children:
                 assert node.high_px < child.low_px
 
+    relaxed, relaxed_roots, _, _ = tree_hierarchy_probe.read_eye_hierarchy(tmp_path, source, parts[1], k=8)
+    relaxed_cut = tree_hierarchy_probe.cut(relaxed, relaxed_roots, height, 1.)
+    assert relaxed_cut != strict
+    assert relaxed_cut == tree_hierarchy_probe.cut(nodes, roots, height / 8, 1.)
+    centres = sorted({0., *(node.threshold_px / node.diameter for node in relaxed if node.children), 1e6})
+    for below, above in zip(centres, centres[1:]):
+        for screen_height in (below, (below + above) / 2):
+            selected = tree_hierarchy_probe.cut(relaxed, relaxed_roots, screen_height, 1.)
+            assert sorted(leaf for ident in selected for leaf in relaxed[ident - 1].leaves) == sorted(cut)
+
     bake = tree_hierarchy_probe.bake
     monkeypatch.setattr(bake, 'BOUGH_SIDE', 128)
     tile = np.ones((12, 16, 4), np.float32)
@@ -225,8 +230,12 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path, monkeyp
     mapped, atlas, _, _, _ = bake.pack_bough(tmp_path, fits, stored_parents)
     assert atlas['tiles'] == len(parents)
     assert set(mapped) == set(parents)
-    tiles = {(p['page'], *p['uv'][0]) for p in mapped.values()}
-    assert len(tiles) == len(parents)
+    # The old ×4 skyline places these same-size tiles in ID order, at four per row.
+    tiles = [(mapped[ident]['page'], *(mapped[ident]['uv'][0] * 128)) for ident in sorted(parents)]
+    assert tiles == [(0, 8 + 32 * (i % 4), 8 + 32 * (i // 4)) for i in range(len(parents))]
+    assert fir_hierarchy.parent_material(0, 2, 4) == 'FIR_HIERARCHY_0_2'
+    assert fir_hierarchy.parent_material(0, 2, 8) == 'FIR_HIERARCHY_X8_0_2'
+    assert fir_hierarchy.parent_material(0, 2, 16) == 'FIR_HIERARCHY_X16_0_2'
     for ident, parent in mapped.items():
         assert parent['position'].tobytes() == stored_parents[ident]['position'].tobytes()
         assert parent['colour'][:, :3].tobytes() == stored_parents[ident]['colour'][:, :3].tobytes()

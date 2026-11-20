@@ -898,7 +898,12 @@ def bough_layout(fits, side):
 
 def pack_bough(output, fits, parents):
     """Keep the card geometry and wind bytes, replacing only tile UVs and openness."""
-    layout = bough_layout(fits, BOUGH_SIDE)
+    for side in (BOUGH_SIDE, 2 * BOUGH_SIDE, 4 * BOUGH_SIDE):
+        layout = bough_layout(fits, side)
+        if len(layout) == 1:
+            break
+    else:
+        raise ValueError(f'Parent tiles exceed one {side}-pixel atlas page')
     pages, textures, diagnostics = [], [], []
     mapped = {}
     area = 0
@@ -908,15 +913,15 @@ def pack_bough(output, fits, parents):
         for ident, i, x, y, width, height in tiles:
             card = fits[ident][i]
             h, w = card['rgba'].shape[:2]
-            uv[ident][i] = (np.array((x + BOUGH_PAD, y + BOUGH_PAD)) + card['uv'] * (w, h)) / BOUGH_SIDE
+            uv[ident][i] = (np.array((x + BOUGH_PAD, y + BOUGH_PAD)) + card['uv'] * (w, h)) / side
             placements.append((card, x, y, width, height))
             area += width * height
-        metrics, mips = write_bough_atlas(output, BOUGH_SIDE, placements, page=page)
+        metrics, mips = write_bough_atlas(output, side, placements, page=page)
         textures.append(dict(mips[0], rgba_mips=tuple(mip['rgba'] for mip in mips),
                              normal_mips=tuple(mip['tangent_normal'] for mip in mips)))
         diagnostics.append(metrics)
         files = dict(rgba=f'hierarchy-color-{page:03d}.dds', attributes=f'hierarchy-normal-{page:03d}.dds')
-        pages.append(dict(**files, width=BOUGH_SIDE, height=BOUGH_SIDE,
+        pages.append(dict(**files, width=side, height=side,
                           bytes=sum((output / name).stat().st_size for name in files.values())))
         for ident, coords in uv.items():
             cards = fits[ident]
@@ -924,5 +929,5 @@ def pack_bough(output, fits, parents):
                                  uv=np.concatenate([coords[i] for i in range(len(cards))]).astype(np.float32),
                                  colour=np.concatenate([card['colour'] for card in cards]))
     atlas = dict(pages=pages, pad_px=BOUGH_PAD, tiles=sum(map(len, fits.values())),
-                 bytes=sum(page['bytes'] for page in pages), raw_bytes=len(pages) * BOUGH_SIDE ** 2 * 8)
+                 bytes=sum(page['bytes'] for page in pages), raw_bytes=len(pages) * side ** 2 * 8)
     return mapped, atlas, textures, diagnostics, area
