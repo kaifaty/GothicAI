@@ -15,9 +15,8 @@ The forge (a bed of charcoal about 45 cm wide under a hood): low tongues licking
 flame, a few sparks of burning fines and a thin smoke into the hood. The tongues and sparks swell at every push of the
 bellows and settle between them: the loop S_S1 is 62 frames at 25 a second, 2.48 s; the fire starts at frame 11 of
 T_S0_2_S1, 26 frames before the loop, and the push (its sound FORGE_FIRE) comes 7 frames into the loop, so the first
-push is 1.32 s after the fire starts. No column of flame: the fire stays in the coals. No light of its own yet: an
-effect's light (particles.d "light") stands at the emitter, here inside the forge's base, and plays its keys once; the
-smithy's lamp of the world lights the place.
+push is 1.32 s after the fire starts. No column of flame: the fire stays in the coals. Its light (particles.d "light")
+comes out of the bed, about 3 m, warmer between the pushes and yellower at each, on the same keys as the tongues.
 
 The anvil (a blow on iron at forging heat): a handful of flakes of scale, dark orange, thrown sideways and down at a
 few metres a second; they fall, land on the floor (particles.d "land") and glow out there. No shower of bright sparks:
@@ -41,18 +40,22 @@ LOOP_S = 62 / 25.0           # the bellows' loop S_S1
 FIRST_PUSH_S = (26 + 7) / 25.0
 KEYS = 31                    # keys over one loop
 FPS = KEYS / LOOP_S          # 12.5 keys a second: the keys repeat with the bellows
-BED = 22                     # cm: the radius of the burning part of the bed
-# cm in the forge's bone PFX_FIRE (it stands 10 cm over the floor inside the forge's base; its X points where the smith
-# stands, BSFIRE_OC.MDH). The up-facing stones of the bowl (BSFIRE_OC.MDM, MOSTSTONES02) have their centre at
-# (-8, 77, 1) in it: the fire stands there, its tongues born just under the bowl's mean surface. The game's FIRE_HOT
-# reaches the coals from the bone with tongues of 60 cm thrown up at 2 m/s.
-COALS = 74.0
-FRONT = -8.0
+BED = 18                     # cm: the radius of the burning part of the bed
+# The forge's animation event puts FIRE_HOT on the bone PFX_FIRE, and the bellows' loop moves that bone up and down
+# between 12 and 57 cm over the floor (BSFIRE_OC-S_S1.MAN): the game threw its tall flame up at every push. The coals
+# do not move, so the fire stands on the forge's root BIP01 FPLACE (particles.d "node"), which no animation of the
+# forge moves; its axes are the mesh's (BSFIRE_OC.MDM). The bed is a heap of stones (MOSTSTONES02) whose top is
+# 99 cm over the floor round its middle, (1, 6) cm in x and z, and 94 cm at the edge of the burning part; in the game
+# a dot at (1, h, 6) goes under the coals below 96 cm.
+NODE = 'BIP01 FPLACE'
+MIDDLE_X = 1.0
+MIDDLE_Z = 6.0
+COALS = 95.0                 # cm: the tongues are born here, a few cm into the heap, so their feet hide in the coals
 
 
 def over(height: float) -> str:
-    """An offset in the bone's frame: so on every forge, however it is turned."""
-    return f'{FRONT:g} {height:g} 0'
+    """An offset in the forge's root frame: so on every forge, however it is turned."""
+    return f'{MIDDLE_X:g} {height:g} {MIDDLE_Z:g}'
 
 
 def pulse(low: float, high: float, rise_s: float = 0.25, fall_s: float = 1.1) -> list[float]:
@@ -76,6 +79,22 @@ def looping(values) -> dict:
     return {'ppsScaleKeys_S': keys(values), 'ppsIsLooping': 1, 'ppsIsSmooth': 1, 'ppsFPS': round(FPS, 4)}
 
 
+# cm: the smith, the hood and the wall behind. The light casts no shadow, so it reaches the floor at the forge's foot
+# through the base: at 320 cm a warm pool lies there and the far wall glows (variant B of the light round)
+GLOW_RANGE = 240.0
+GLOW_LOW = (225, 105, 35)      # the coals between the pushes, about 1000 C
+GLOW_HIGH = (255, 165, 70)     # the bed's middle under the blast, 1100-1200 C
+
+
+def glow() -> dict:
+    """The forge's light out of the bed, over the tongues' middle, pulsing and yellowing with each push in step with
+    the tongues' keys: one loop of keys, repeated."""
+    shape = pulse(0.0, 1.0, rise_s=0.3, fall_s=1.2)
+    colors = [[round(lo + (hi - lo) * s) for lo, hi in zip(GLOW_LOW, GLOW_HIGH)] for s in shape]
+    return {'range': GLOW_RANGE, 'color': list(GLOW_HIGH), 'at': [MIDDLE_X, COALS + 12, MIDDLE_Z],
+            'keys': [round(0.8 + 0.3 * s, 3) for s in shape], 'colors': colors, 'fps': round(FPS, 4), 'loop': True}
+
+
 def forge() -> list:
     bed = {'shpType_S': 'CIRCLE', 'shpFOR_S': 'OBJECT', 'shpIsVolume': 1, 'shpDim_S': f'{BED} 0 {BED}',
            'shpOffsetVec_S': over(COALS)}
@@ -88,7 +107,7 @@ def forge() -> list:
         # glowing bits of coal on the bed: still points that glow up and out, more of them at a push; they tie the
         # tongues to the coals (round 2: the tongues alone hung over a dark bowl)
         {'name': 'OWN_FORGE_COALS', 'base': 'FIRE_SPARKS',
-         'set': {**bed, **looping(pulse(0.6, 1.5)), 'shpOffsetVec_S': over(COALS - 2), 'ppsValue': 30.0,
+         'set': {**bed, **looping(pulse(0.6, 1.5)), 'shpOffsetVec_S': over(COALS + 2), 'ppsValue': 30.0,
                  'dirMode_S': 'NONE', 'velAvg': 0.0, 'velVar': 0.0, 'flyGravity_S': '0 0 0', 'lspPartAvg': 1300.0,
                  'lspPartVar': 500.0, 'visOrientation_S': 'NONE', 'visSizeStart_S': '2.5 2.5', 'visSizeEndScale': 0.7,
                  'visTexColorStart_S': '255 130 35', 'visTexColorEnd_S': '170 35 0', 'visAlphaStart': 210.0,
@@ -106,7 +125,8 @@ def forge() -> list:
          'with': ['OWN_FORGE_FLAME', 'OWN_FORGE_COALS', 'OWN_FORGE_SPARKS', 'OWN_FORGE_SMOKE', 'OWN_FORGE_HAZE'],
          'set': {**bed, **up, **looping(pulse(0.55, 1.4)), 'ppsValue': 55.0, 'dirAngleElevVar': 12.0,
                  'visSizeStart_S': '15 25', 'visSizeEndScale': 0.5, 'velAvg': 0.035, 'velVar': 0.015,
-                 'lspPartAvg': 420.0, 'lspPartVar': 120.0}},
+                 'lspPartAvg': 420.0, 'lspPartVar': 120.0},
+         'node': NODE, 'light': glow()},
     ]
 
 
