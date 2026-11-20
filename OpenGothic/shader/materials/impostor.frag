@@ -4,7 +4,9 @@
 
 #include "common.glsl"
 #include "impostor_common.glsl"
+#if defined(TREE_BOUGH_JOINT)
 #include "tree_bough_dissolve.glsl"
+#endif
 #include "lighting/crown_light.glsl"
 
 layout(binding = 2) uniform sampler2D atlasAlbedo;
@@ -122,12 +124,17 @@ void main() {
   const vec3 dx = dFdx(centeredPosition)*scene.mipGradScale;
   const vec3 dy = dFdy(centeredPosition)*scene.mipGradScale;
   const float lastMip = float(min(4, textureQueryLevels(atlasSurface)-1));
+#if defined(TREE_BOUGH_JOINT)
   const ImpostorInstance instance = instances[instanceId];
   if(!boughJointCovers(boughJointFade(instance.info.z), instance.objectToWorld[3].xyz, gl_FragCoord.xy, scene))
     discard;
+#endif
   const ViewSample a = sampleView(cell, ray, dx, dy, lastMip);
   const ViewSample b = sampleView(cell + middle, ray, dx, dy, lastMip);
   const ViewSample c = sampleView(cell + 1, ray, dx, dy, lastMip);
+#if !defined(TREE_BOUGH_JOINT)
+  const ImpostorInstance instance = instances[instanceId];
+#endif
   vec3 weights = angular*vec3(a.albedo.a, b.albedo.a, c.albedo.a);
   const float coverage = weights.x + weights.y + weights.z;
   float threshold = 0.5;

@@ -272,7 +272,13 @@ uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId
   const bool bindlessSys = Shaders::options().doBindless;
   const bool bindless    = bindlessSys && (!m.hasFrameAnimation() || type==Landscape);
 
-  auto pMain    = shadowOnly ? nullptr : Shaders::inst().materialPipeline(m, type, Shaders::T_Main, bindless);
+  auto bough = Shaders::Bough::None;
+  if(!shadowOnly && type==Static && !m.isGhost && (m.alpha==Material::Solid || m.alpha==Material::AlphaTest)) {
+    const auto* mesh = buckets[bucketId].staticMesh;
+    if(mesh!=nullptr && mesh->treeBough && mesh->impostor.px>0.f)
+      bough = Shaders::Bough::Joint;
+    }
+  auto pMain    = shadowOnly ? nullptr : Shaders::inst().materialPipeline(m, type, Shaders::T_Main, bindless, bough);
   auto pShadow  = Shaders::inst().materialPipeline(m, type, Shaders::T_Shadow, bindless);
   auto pVsm     = Shaders::inst().materialPipeline(m, type, Shaders::T_Vsm,    bindless);
   auto pHiZ     = shadowOnly ? nullptr : Shaders::inst().materialPipeline(m, type, Shaders::T_Depth, bindless);
@@ -295,9 +301,9 @@ uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId
   cx.pVsm        = pVsm;
   cx.pHiZ        = pHiZ;
   if(pMain!=nullptr && (m.alpha==Material::Solid || m.alpha==Material::AlphaTest) && treeHistoryEnabled()) {
-    cx.pHistoryGBuffer = Shaders::inst().materialPipeline(m, type, Shaders::T_HistoryGBuffer, bindless);
-    cx.pHistoryDepth   = Shaders::inst().materialPipeline(m, type, Shaders::T_HistoryDepth, bindless);
-    cx.pHistoryVerify  = Shaders::inst().materialPipeline(m, type, Shaders::T_HistoryDepthVerify, bindless);
+    cx.pHistoryGBuffer = Shaders::inst().materialPipeline(m, type, Shaders::T_HistoryGBuffer, bindless, bough);
+    cx.pHistoryDepth   = Shaders::inst().materialPipeline(m, type, Shaders::T_HistoryDepth, bindless, bough);
+    cx.pHistoryVerify  = Shaders::inst().materialPipeline(m, type, Shaders::T_HistoryDepthVerify, bindless, bough);
     }
   cx.bucketId    = bindless ? 0xFFFFFFFF : bucketId;
   cx.type        = type;
@@ -426,9 +432,8 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
       float znear;
       uint32_t ownMeshMask;
       alignas(16) LodPush lod;
-      uint32_t boughToken;
       } push = {};
-    static_assert(offsetof(Push,lod)==16 && offsetof(Push,boughToken)==64);
+    static_assert(offsetof(Push,lod)==16 && sizeof(Push)==64);
     push.firstMeshlet = 0;
     push.meshletCount = uint32_t(clusters.size());
     push.znear        = scene.znear;
@@ -474,22 +479,32 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
     cmd.setBinding(9,         clusters.levelsSsbo());
     if(order!=nullptr)
       cmd.setBinding(T_Order,  *order);
-    if(viewport==SceneGlobals::V_Main) {
+    if(boughs && viewport==SceneGlobals::V_Main) {
       boughExpanded = false;
       boughHistoryToken = 0;
       }
     const bool boughCull = boughs && boughs->ready() && ((hiddenTypes >> Static) & 1u)==0u &&
                           (viewport==SceneGlobals::V_Main || viewport==SceneGlobals::V_HiZ);
-    if(boughCull)
-      pso = &boughs->cull(cmd, viewport==SceneGlobals::V_HiZ, scene.isTreeOcclusionProbe(), useHistory, ordered, push.boughToken);
-    cmd.setPushData(&push, boughCull ? offsetof(Push,boughToken)+sizeof(push.boughToken) : offsetof(Push,boughToken));
+    if(!boughCull) {
+      cmd.setPushData(push);
+      cmd.setPipeline(*pso);
+      cmd.dispatchThreads(ordered ? 1 : push.meshletCount);
+      continue;
+      }
+
+    struct BoughPush {
+      Push     lod;
+      uint32_t token;
+      } boughPush = {push, 0u};
+    pso = &boughs->cull(cmd, viewport==SceneGlobals::V_HiZ, scene.isTreeOcclusionProbe(), useHistory, ordered, boughPush.token);
+    cmd.setPushData(&boughPush, offsetof(BoughPush,token)+sizeof(boughPush.token));
     cmd.setPipeline(*pso);
     cmd.dispatchThreads(ordered ? 1 : push.meshletCount);
-    if(push.boughToken!=0u) {
+    if(boughPush.token!=0u) {
       if(useHistory) {
-        boughHistoryToken = push.boughToken;
+        boughHistoryToken = boughPush.token;
         } else {
-        boughs->expand(cmd,push.boughToken,false);
+        boughs->expand(cmd,boughPush.token,false);
         boughExpanded = true;
         }
       }

@@ -194,7 +194,6 @@ class VisualObjects final {
       DrawBuckets::Id     bucketId;
       uint16_t            cmdId     = uint16_t(-1);
       uint16_t            impostorShadowCmd = uint16_t(-1);
-      uint32_t            impostorJoint = 0;
       uint32_t            clusterId = 0;
       uint32_t            clusterCount = 1;
       uint64_t            timeShift = 0;

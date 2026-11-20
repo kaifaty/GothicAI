@@ -65,7 +65,8 @@ TreeBoughRender::~TreeBoughRender() {
 uint32_t TreeBoughRender::command(const Material& material, uint16_t bucket, uint32_t indices) {
   const bool bindless = Shaders::options().doBindless && !material.hasFrameAnimation();
   const uint32_t bucketId = bindless ? uint32_t(-1) : bucket;
-  const auto pso = Shaders::inst().materialPipeline(material, DrawCommands::Static, Shaders::T_Main, bindless, true);
+  const auto pso = Shaders::inst().materialPipeline(material, DrawCommands::Static,
+                                                   Shaders::T_Main, bindless, Shaders::Bough::Cards);
   for(uint32_t i=0; i<commands.size(); ++i)
     if(commands[i].draw.pMain==pso && commands[i].draw.bucketId==bucketId && commands[i].vertexCount==indices)
       return i;
@@ -75,7 +76,7 @@ uint32_t TreeBoughRender::command(const Material& material, uint16_t bucket, uin
   dest.draw.pMain = pso;
   if(DrawCommands::treeHistoryEnabled())
     dest.draw.pHistoryGBuffer = Shaders::inst().materialPipeline(material, DrawCommands::Static,
-                                                                  Shaders::T_HistoryGBuffer, bindless, true);
+                                                                  Shaders::T_HistoryGBuffer, bindless, Shaders::Bough::Cards);
   dest.draw.alpha = material.alpha;
   dest.draw.type = DrawCommands::Static;
   dest.draw.bucketId = bucketId;
