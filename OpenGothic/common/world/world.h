@@ -70,7 +70,8 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     size_t wakeItems(const Tempest::Vec3& min, const Tempest::Vec3& max, size_t budget) override;
     void itemHit(Item& item, asset::MaterialGroup material, float impulse, float mass) override;
 
-    void animationPfx(const Animation::MdsParticleEffect& event, MdlVisual& visual);
+    // inPfxRange: the visual is in the particles' range; out of it only stops and looped effects come
+    void animationPfx(const Animation::MdsParticleEffect& event, MdlVisual& visual, bool inPfxRange);
 
     void probeMemory(std::string_view stage) const;
 
