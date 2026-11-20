@@ -325,18 +325,13 @@ void vertexShader(const uvec4 task, const uint materialRef) {
   boughBandOut = boughBandShadow(instanceId, bucketId, var.pos, boughBandCellOut);
 #endif
   }
-#else
+#elif !defined(TREE_BOUGH_CARDS)
 void meshShader(const uvec4 task, const uint materialRef) {
   const uint  instanceId = task.x;
   const uint  meshletId  = task.y;
 
-#if defined(TREE_BOUGH_CARDS)
-  const uint  bucketId   = boughBucket(task);
-  const uvec2 mesh       = boughMeshlet(task, bucketId);
-#else
   const uint  bucketId   = task.z;
   const uvec2 mesh       = processMeshlet(meshletId, bucketId);
-#endif
   const uint  vertCount  = mesh.x;
   const uint  primCount  = mesh.y;
 
@@ -357,9 +352,6 @@ void meshShader(const uvec4 task, const uint materialRef) {
 #endif
     vec4 pos = processVertex(var, instanceId, meshletId, bucketId, laneID);
     gl_MeshVerticesEXT[laneID].gl_Position = pos;
-#if defined(TREE_BOUGH_CARDS)
-    boughFadeOut[laneID] = boughFade(task, boughMaskOut[laneID]);
-#endif
 #if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
     vec2 bandCell;
     boughBandOut[laneID] = boughBandShadow(instanceId, bucketId, var.pos, bandCell);
@@ -369,33 +361,7 @@ void meshShader(const uvec4 task, const uint materialRef) {
     vsmClip[laneID] = pos.xyw;
 #endif
 
-    /*
-        Workaround the AMD driver issue where assigning to a vec3 output results in a driver crash.
-        Here we unroll the shOut[laneID] = var assignment into individual fields and apply the workaround.
-        Once AMD fixes the issue the original code can be restored.
-        Original code: 
-            #if defined(MAT_VARYINGS)
-                shOut[laneID] = var;
-            #endif
-        Link to the discussion on AMD forums: https://community.amd.com/t5/newcomers-start-here/driver-crash-when-using-vk-ext-mesh-shader/m-p/667490
-        Link to the github issue: https://github.com/Try/OpenGothic/issues/577
-    */
-#if defined(MAT_COLOR)
-    shOut[laneID].color = var.color;
-#endif
-#if defined(MAT_UV)
-    shOut[laneID].uv = var.uv;
-#endif
-#if defined(MAT_POSITION)
-    shOut[laneID].pos.xyz = var.pos; // pos is vec3, applying the workaround
-#endif
-#if defined(MAT_NORMAL)
-    shOut[laneID].normal.xyz = var.normal; // normal is vec3, applying the workaround
-#endif
-#if defined(MAT_MOTION)
-    shOut[laneID].prevStatic.xyz = var.prevStatic; // vec3, the same workaround
-    shOut[laneID].prevDelta.xyz  = var.prevDelta;
-#endif
+#include "mesh_varyings.glsl"
     }
 
 #if defined(VIRTUAL_SHADOW)
@@ -429,6 +395,9 @@ void meshShader(const uvec4 task, const uint materialRef) {
   }
 #endif
 
+#if defined(TREE_BOUGH_CARDS) && !defined(GL_VERTEX_SHADER)
+#include "tree_bough_mesh.glsl"
+#else
 void main() {
 #if defined(GL_VERTEX_SHADER)
   const uint workIndex = gl_InstanceIndex;
@@ -484,3 +453,4 @@ void main() {
   meshShader(task, materialRef);
 #endif
   }
+#endif

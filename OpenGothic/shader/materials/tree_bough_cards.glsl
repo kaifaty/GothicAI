@@ -4,8 +4,8 @@
 #include "tree_bough_dissolve.glsl"
 
 #if !defined(GL_VERTEX_SHADER)
-layout(local_size_x = 32) in;
-layout(triangles, max_vertices = 32, max_primitives = 16) out;
+layout(local_size_x = 64) in;
+layout(triangles, max_vertices = MaxVert, max_primitives = MaxPrim) out;
 layout(location = 7) flat out uvec3 boughFadeOut[];
 layout(location = 8) flat out vec3 boughMaskOut[];
 #endif
@@ -29,12 +29,6 @@ uint boughIndexCount(uvec4 task) {
 
 uint boughFirstVertex(uint firstIndex, uint bucketId) {
   return boughIndex(bucketId, firstIndex) >> 16u;
-  }
-
-uvec2 boughMeshlet(uvec4 task, uint bucketId) {
-  const uint vertices = boughIndex(bucketId, task.y) & 0xffffu;
-  const uint prims    = boughIndexCount(task)/3u;
-  return uvec2(vertices, prims);
   }
 
 uvec3 processPrimitive(uint firstIndex, uint bucketId, uint primitive) {

@@ -12,6 +12,7 @@
 #include "graphics/shaders.h"
 #include "graphics/treeboughasset.h"
 #include "graphics/treeboughdraw.h"
+#include "graphics/treeboughgroups.h"
 #include "graphics/visualobjects.h"
 #include "shader.h"
 
@@ -62,13 +63,13 @@ TreeBoughRender::~TreeBoughRender() {
     demandProxyTextures(*mesh->treeBough,false);
   }
 
-uint32_t TreeBoughRender::command(const Material& material, uint16_t bucket, uint32_t indices) {
+uint32_t TreeBoughRender::command(const Material& material, uint16_t bucket, uint32_t unit) {
   const bool bindless = Shaders::options().doBindless && !material.hasFrameAnimation();
   const uint32_t bucketId = bindless ? uint32_t(-1) : bucket;
   const auto pso = Shaders::inst().materialPipeline(material, DrawCommands::Static,
                                                    Shaders::T_Main, bindless, Shaders::Bough::Cards);
   for(uint32_t i=0; i<commands.size(); ++i)
-    if(commands[i].draw.pMain==pso && commands[i].draw.bucketId==bucketId && commands[i].vertexCount==indices)
+    if(commands[i].draw.pMain==pso && commands[i].draw.bucketId==bucketId && commands[i].unit==unit)
       return i;
   if(commands.size()>=65536)
     throw std::runtime_error("Too many compact foliage draw commands");
@@ -80,7 +81,7 @@ uint32_t TreeBoughRender::command(const Material& material, uint16_t bucket, uin
   dest.draw.alpha = material.alpha;
   dest.draw.type = DrawCommands::Static;
   dest.draw.bucketId = bucketId;
-  dest.vertexCount = indices;
+  dest.unit = unit;
   return uint32_t(commands.size()-1);
   }
 
@@ -98,7 +99,7 @@ void TreeBoughRender::registerAsset(const StaticMesh& mesh, Asset& asset) {
     auto pos = perClass.lower_bound({range.primitive,0});
     if(pos==perClass.end() || pos->first.first!=range.primitive)
       bucket = owner.buckets.alloc(page.material,mesh,&page);
-    const uint32_t count = Shaders::options().doMeshShading ? TreeBough::MaxIndices :
+    const uint32_t count = Shaders::options().doMeshShading ? TreeBough::groupSize(range) :
       *std::lower_bound(TreeBough::indexClasses.begin(), TreeBough::indexClasses.end(), range.indexCount);
     auto [at, newClass] = perClass.try_emplace({range.primitive,count},0);
     if(newClass)
@@ -214,9 +215,12 @@ void TreeBoughRender::uploadData() {
     words.insert(words.end(),source.roots.begin(),source.roots.end());
     words.resize(ranges);
     std::memcpy(words.data()+nodes,source.nodes.data(),source.nodes.size()*sizeof(TreeBough::Node));
+    const bool packed = Shaders::options().doMeshShading;
     for(size_t i=0; i<source.ranges.size(); ++i) {
       const auto& r = source.ranges[i];
-      words.insert(words.end(),{r.firstIndex,r.indexCount,asset.rangeCommands[i],r.cardCount});
+      // tree_bough_mesh.glsl: a mesh workgroup lays out its nodes without reading their index headers
+      const uint32_t first = packed ? r.firstIndex | (r.vertexCount << TreeBough::FirstIndexBits) : r.firstIndex;
+      words.insert(words.end(),{first,r.indexCount,asset.rangeCommands[i],r.cardCount});
       }
     asset.offset = base;
     }
@@ -245,8 +249,9 @@ void TreeBoughRender::uploadData() {
   for(auto& c:commands) {
     const bool mesh = c.draw.isMeshShader();
     c.draw.firstPayload = uint32_t(capacity);
-    capacity += c.draw.maxPayload;
-    draws.push_back({c.vertexCount,0,mesh ? 1u : 0u,mesh ? 1u : 0u,c.draw.firstPayload});
+    // The last mesh workgroup of a command is padded to whole c.unit nodes.
+    capacity += mesh ? TreeBough::groupSlots(c.draw.maxPayload,c.unit) : c.draw.maxPayload;
+    draws.push_back({c.unit,0,mesh ? 1u : 0u,mesh ? 1u : 0u,c.draw.firstPayload});
     }
   Resources::recycle(std::move(indirect));
   indirect = device.ssbo(draws);
@@ -331,7 +336,7 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
   flags |= FrameProfile::enabled() ? 2u : 0u;
   flags |= scene.isTreeOcclusionProbe() ? 4u : 0u;
   flags |= lateHiZ ? 8u : 0u;
-  struct Push { uint32_t token, flags; float nearZ; uint32_t init; };
+  struct Push { uint32_t token, flags; float nearZ; uint32_t stage; };
   enc.setBinding(0,scene.uboGlobal[SceneGlobals::V_Main]);
   enc.setBinding(1,view.visClusters);
   enc.setBinding(2,owner.owner.instanceSsbo());
@@ -348,6 +353,10 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
   enc.dispatchThreads(std::max<size_t>(StatsCount,commands.size()));
   enc.setPushData(Push{token,flags,scene.znear,0});
   enc.dispatch(entries.size());
+  if(Shaders::options().doMeshShading) {
+    enc.setPushData(Push{token,flags,scene.znear,2});
+    enc.dispatchThreads(commands.size());
+    }
   }
 
 void TreeBoughRender::draw(Encoder<CommandBuffer>& enc, DrawCommands::HistoryDraw history) {
@@ -358,7 +367,7 @@ void TreeBoughRender::draw(Encoder<CommandBuffer>& enc, DrawCommands::HistoryDra
       continue;
     owner.setBindings(enc,c,SceneGlobals::V_Main);
     enc.setBinding(DrawCommands::L_Payload,payload);
-    const uint32_t push[] = {c.firstPayload,c.maxPayload};
+    const uint32_t push[] = {c.firstPayload,c.isMeshShader() ? commands[i].unit : c.maxPayload};
     enc.setPushData(push);
     enc.setPipeline(*pso);
     const size_t offset = i*sizeof(DrawCommands::IndirectCmd);
@@ -410,6 +419,7 @@ void DrawCommands::setBoughTransform(uint32_t cluster, const Matrix4x4& transfor
 void DrawCommands::finishBoughVisibility(Encoder<CommandBuffer>& enc, uint8_t fId, bool late) {
   if(boughHistoryToken==0u)
     return;
+  enc.setDebugMarker("Bough-cut");
   boughs->expand(enc,boughHistoryToken,late);
   boughHistoryToken = 0;
   boughExpanded = true;
