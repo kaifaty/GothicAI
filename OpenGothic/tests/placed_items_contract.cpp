@@ -2411,7 +2411,6 @@ void animationEffects(Gothic& gothic) {
   std::printf("Animation effects: ANVIL_SPARKS of a blow gone in %llu ms (own time %llu ms)\n",
               (unsigned long long)(world.tickCount()-struck),(unsigned long long)sparks->effectPrefferedTime());
   }
-  }
 
 // Arrows (reports/engine/2026-11-19-item-effects): a shot arrow's effect at KEY_INVEST_2, at its first hit KEY_INVEST_3;
 // stuck it goes with the arrow, in a body with its bone, and fades in 20 s of the game's time while the arrow stays.
