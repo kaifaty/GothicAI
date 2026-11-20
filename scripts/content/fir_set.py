@@ -59,7 +59,9 @@ to the instance matrices in the content's world override, since the additive lay
 `tree_hierarchy_probe.py --eye` in one row. All four use the same existing impostor.
 
 `bough --k 4` stages a progressive hierarchy and a control in the first two places of the same row.
-`bough --k 4 8 16` stages the three hierarchies left to right. All use the same spruce A, mesh levels and impostor.
+`bough --k 4 8 16` stages the three hierarchies left to right. `bough --labels X4 S122 S150` stages any printed
+hierarchies left to right by the labels of their files (`tree_hierarchy_probe.py --bough --k` or `--stagger`).
+All use the same spruce A, mesh levels and impostor.
 """
 from __future__ import annotations
 
@@ -428,13 +430,13 @@ def eye_threshold(args) -> int:
     return 0
 
 
-def stage_bough_hierarchy(work: Path, config: dict, source: Path, k: int = 4) -> str:
+def stage_bough_hierarchy(work: Path, config: dict, source: Path, label: str = 'X4') -> str:
     sys.path.insert(0, str(BLENDER))
     from fir_hierarchy import parent_material
 
-    sidecar = f'{VISUAL}_BOUGH_X{k}_H.json'
+    sidecar = f'{VISUAL}_BOUGH_{label}_H.json'
     hierarchy = json.loads((source / sidecar).read_text())
-    relative = Path(FOLDER) / f'bough-x{k}'
+    relative = Path(FOLDER) / f'bough-{label.lower()}'
     meshes_dir = work / 'meshes' / relative
     materials_dir = work / 'materials' / relative
     meshes_dir.mkdir()
@@ -456,15 +458,22 @@ def stage_bough_hierarchy(work: Path, config: dict, source: Path, k: int = 4) ->
     fallback = {key: value for key, value in boughs.items() if key != 'orm'}
     page_primitives = {(geometry['page'], geometry['primitive']) for node in hierarchy['nodes']
                        if (geometry := node['geometry']) and 'page' in geometry}
-    rewrite(material_index, {f'{parent_material(page, primitive, k)}.TGA': dict(fallback, **pages[page])
+    rewrite(material_index, {f'{parent_material(page, primitive, label)}.TGA': dict(fallback, **pages[page])
                              for page, primitive in sorted(page_primitives)})
     return (relative / sidecar).as_posix()
 
 
 def bough(args) -> int:
-    """Stage one hierarchy with a control, or all three hierarchies, with shared fallback levels."""
-    if len(args.k) != len(args.hierarchy) or (len(args.k) != 1 and args.k != [4, 8, 16]):
-        raise ValueError('Supply one hierarchy per factor for a single factor or for 4, 8 and 16 in order')
+    """Stage one hierarchy with a control, or a row of hierarchies, with shared fallback levels."""
+    if args.labels:
+        labels, layer = args.labels, 'fir-bough-stagger'
+    elif len(args.k) == 1 or args.k == [4, 8, 16]:
+        labels = [f'X{k}' for k in args.k]
+        layer = f'fir-bough-x{args.k[0]}' if len(args.k) == 1 else 'fir-bough-relax'
+    else:
+        raise ValueError('Supply a single factor or 4, 8 and 16 in order')
+    if len(labels) != len(args.hierarchy):
+        raise ValueError('Supply one hierarchy per factor or label')
     config = json.loads(args.config.read_text())
     base_visual = f'{VISUAL}_4'
     control_root = args.control.resolve()
@@ -483,15 +492,10 @@ def bough(args) -> int:
         shutil.copyfile(args.impostor_from / 'meshes' / file, target)
 
     entry = dict(control, levels=[*levels, impostor])
-    if len(args.k) == 1:
-        entries = {f'{VISUAL}_BOUGH_CONTROL': entry}
-        layer = f'fir-bough-x{args.k[0]}'
-    else:
-        entries = {}
-        layer = 'fir-bough-relax'
-    for k, source in zip(args.k, args.hierarchy, strict=True):
-        hierarchy = stage_bough_hierarchy(work, config, source, k)
-        entries[f'{VISUAL}_BOUGH_X{k}'] = dict(entry, hierarchy=hierarchy)
+    entries = {f'{VISUAL}_BOUGH_CONTROL': entry} if len(labels) == 1 and not args.labels else {}
+    for label, source in zip(labels, args.hierarchy, strict=True):
+        hierarchy = stage_bough_hierarchy(work, config, source, label)
+        entries[f'{VISUAL}_BOUGH_{label}'] = dict(entry, hierarchy=hierarchy)
     rewrite(mesh_index, entries)
     layers = work / 'worlds' / WORLD / 'vobs.d'
     (layers / 'fir-probe.json').unlink()
@@ -760,7 +764,9 @@ def main() -> int:
     command.add_argument('set')
     command.add_argument('--control', type=Path, required=True)
     command.add_argument('--impostor-from', type=Path, required=True)
-    command.add_argument('--k', type=int, choices=(4, 8, 16), nargs='+', default=[4])
+    factors = command.add_mutually_exclusive_group()
+    factors.add_argument('--k', type=int, choices=(4, 8, 16), nargs='+', default=[4])
+    factors.add_argument('--labels', nargs='+', help='file labels of the hierarchies, staged left to right')
     command.add_argument('--hierarchy', type=Path, nargs='+', required=True)
     args = parser.parse_args()
     return {'textures': textures, 'probe': probe, 'forest': forest,
