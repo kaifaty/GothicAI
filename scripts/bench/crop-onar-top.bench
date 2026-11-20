@@ -1,0 +1,41 @@
+# Onar's north field from above (reports/content/2026-11-19-crop-fields/top.md): what the top of the rye reads as.
+# Two cameras of crop-onar-alive.bench for the pairs and three new ones over a strip.
+#   TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_CONTENT=<set> scripts/bench.sh crop-onar-top <out>
+# @timeout 600
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+goto pos 57094 1850 -11100
+# from 30 m over the south side: both plots (crop-onar-alive's `over`)
+cam at 61400 5100 -12500 61400 2100 -7600
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot over
+wait 300
+# from 6 m over the west corner across the plot (crop-onar-alive's `corner`)
+cam at 55400 2300 -10000 59000 2050 -8000
+wait 6000
+shot corner
+wait 300
+# from 10 m over a strip, steeply down along it
+cam at 57800 3100 -10600 57800 2030 -8600
+wait 6000
+shot high
+wait 300
+# from 20 m, further along the strips
+cam at 57800 4000 -11600 57800 2030 -8200
+wait 6000
+shot plan
+wait 300
+# from 3.5 m at a strip, down at 45 degrees
+cam at 57600 2400 -9800 58200 2060 -9300
+wait 6000
+shot near
+wait 300
