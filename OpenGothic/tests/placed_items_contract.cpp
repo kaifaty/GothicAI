@@ -138,6 +138,7 @@ struct NpcDefinitionContract {
   static const MdlVisual& model(const Interactive& mob) { return mob.objVisual().mdl.view; }
   static const auto& effects(const MdlVisual& view) { return view.effects; }
   static size_t bone(const MdlVisual& view, std::string_view name) { return view.skeleton->findNode(name); }
+  static const AnimationSolver& solver(const MdlVisual& view) { return view.solver; }
   };
 
 namespace {
@@ -2261,7 +2262,8 @@ void animationEffects(Gothic& gothic) {
   const auto* sparks=GameServices::inst().loadParticleFx("ANVIL_SPARKS");
   require(fire!=nullptr && fire->ppsIsLooping && fire->effectPrefferedTime()<5000 && sparks!=nullptr && !sparks->ppsIsLooping,
           "FIRE_HOT must loop with its own time under 5 s, ANVIL_SPARKS must not loop");
-  // a worker of the scheme at his point, his routine off: the AI queue only
+  // a worker of the scheme at his point, his routine off: the AI queue only; back where he was at the end
+  std::vector<std::pair<Npc*,Tempest::Vec3>> moved;
   const auto worker=[&](const char* state,const char* scheme,Npc*& npc) {
     const auto init=activityPhases(script,state).init;
     std::string pointName;
@@ -2273,6 +2275,7 @@ void animationEffects(Gothic& gothic) {
     npc->setInteraction(nullptr,true);
     npc->clearAiQueue();
     npc->setExternalControl(true);
+    moved.emplace_back(npc,npc->position());
     npc->setPosition(point->position());
     auto* mob=world.availableMob(*npc,scheme);
     require(mob!=nullptr,(npcName(world,*npc)+"'s point must have a free "+scheme).c_str());
@@ -2298,16 +2301,27 @@ void animationEffects(Gothic& gothic) {
   const auto& model=NpcDefinitionContract::model(*forge);
   const auto fireBone=NpcDefinitionContract::bone(model,"BIP01 PFX_FIRE");
   require(fireBone!=size_t(-1),"BSFIRE_OC must have BIP01 PFX_FIRE");
+  // the number of the effect: FIRE_HOT on the bone in T_S0_2_S1, its stop in T_S1_2_S0
+  const auto& solver=NpcDefinitionContract::solver(model);
+  const auto* in=solver.solveFrm("T_S0_2_S1");
+  const auto* out=solver.solveFrm("T_S1_2_S0");
+  require(in!=nullptr && out!=nullptr,"BSFIRE_OC must have T_S0_2_S1 and T_S1_2_S0");
+  const auto lighting=std::find_if(in->data->pfx.begin(),in->data->pfx.end(),[](const auto& e) {
+    return !e.pfxStop && e.name=="FIRE_HOT" && e.position=="BIP01 PFX_FIRE"; });
+  require(lighting!=in->data->pfx.end(),"T_S0_2_S1 must light FIRE_HOT at BIP01 PFX_FIRE");
+  const int fireSlot=lighting->index;
+  require(std::any_of(out->data->pfx.begin(),out->data->pfx.end(),[&](const auto& e) { return e.pfxStop && e.index==fireSlot; }),
+          "T_S1_2_S0 must stop FIRE_HOT by its number");
   const auto bellows=[&] {
     useMob(*smith,"BSFIRE",1);
-    return tickUntil([&] { return forge->stateId()==forge->stateCount() && slot(*forge,1)!=nullptr; },20000);
+    return tickUntil([&] { return forge->stateId()==forge->stateCount() && slot(*forge,fireSlot)!=nullptr; },20000);
     };
   require(bellows(),(npcName(world,*smith)+" must work the bellows of BSFIRE with FIRE_HOT burning").c_str());
   const auto lit=world.tickCount();
-  require(!tickUntil([&] { return slot(*forge,1)==nullptr; },5000) && forge->stateId()==forge->stateCount(),
+  require(!tickUntil([&] { return slot(*forge,fireSlot)==nullptr; },5000) && forge->stateId()==forge->stateCount(),
           "FIRE_HOT must burn after 5 s of the bellows, not its own time");
   Tempest::Vec3 at;
-  const auto* burning=slot(*forge,1);
+  const auto* burning=slot(*forge,fireSlot);
   require(burning->isEmitting() && burning->emitterPosition(at) && (at-model.mapBone(fireBone)).length()<1.f,
           "FIRE_HOT must burn at BIP01 PFX_FIRE");
   std::printf("Animation effects: FIRE_HOT of BSFIRE burns %llu ms of the bellows (its own time %llu ms) at %.2f cm of "
@@ -2315,15 +2329,15 @@ void animationEffects(Gothic& gothic) {
               double((at-model.mapBone(fireBone)).length()));
   // the smith goes: T_S1_2_S0 with its stop, the forge at rest
   useMob(*smith,"BSFIRE",-1);
-  require(tickUntil([&] { return smith->interactive()==nullptr && forge->stateId()<=0; },20000) && slot(*forge,1)==nullptr,
+  require(tickUntil([&] { return smith->interactive()==nullptr && forge->stateId()<=0; },20000) && slot(*forge,fireSlot)==nullptr,
           "FIRE_HOT must go out with the smith's animation out");
   // the forge back at rest without its animation out (the routine's reset)
-  require(bellows(),"the smith must work the bellows again");
+  require(bellows() && !tickUntil([&] { return slot(*forge,fireSlot)==nullptr; },2000),
+          "the smith must work the bellows again, FIRE_HOT burning");
   smith->setInteraction(nullptr,true);
   forge->resetPositionToTA(0);
   step(50);
-  require(forge->stateId()<=0 && slot(*forge,1)==nullptr,"FIRE_HOT must go out with the forge at rest without its animation out");
-  smith->setExternalControl(false);
+  require(forge->stateId()<=0 && slot(*forge,fireSlot)==nullptr,"FIRE_HOT must go out with the forge at rest without its animation out");
 
   // the anvil's sparks of each blow go by their own time
   Npc* harad=nullptr;
@@ -2351,9 +2365,12 @@ void animationEffects(Gothic& gothic) {
           "ANVIL_SPARKS must go by their own time");
   std::printf("Animation effects: ANVIL_SPARKS of a blow gone in %llu ms (own time %llu ms)\n",
               (unsigned long long)(world.tickCount()-struck),(unsigned long long)sparks->effectPrefferedTime());
-  useMob(*harad,"BSANVIL",-1);
-  tickUntil([&] { return harad->interactive()==nullptr; },20000);
-  harad->setExternalControl(false);
+  for(auto& [npc,at]:moved) {
+    npc->setInteraction(nullptr,true);
+    npc->clearAiQueue();
+    npc->setPosition(at);
+    npc->setExternalControl(false);
+    }
   }
 
 // Arrows (reports/engine/2026-11-19-item-effects): a shot arrow's effect at KEY_INVEST_2, at its first hit KEY_INVEST_3;
