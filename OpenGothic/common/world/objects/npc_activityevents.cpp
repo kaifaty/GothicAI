@@ -120,7 +120,9 @@ void Npc::stepActivityEvents(uint16_t wakes) {
 
 void Npc::seekActivityPlace() {
   // The polled Loop's check, once per wake: use a free object of the scheme unless the body already
-  // uses one. A new use reserves its object first; a taken scheme waits for a freed place.
+  // uses one. A new use reserves its object first; a taken scheme waits for a freed place. An object
+  // in use at the use's state is held even when the body state is not the record's busy one (the
+  // water pipe): the script would queue the same finished AI_UseMob again on every Loop.
   using namespace ActivityEvents;
   auto&       s      = activityEvents;
   auto&       places = owner.mobReservations();
@@ -129,6 +131,12 @@ void Npc::seekActivityPlace() {
   places.unwait(*this);
   auto*      mob  = owner.availableMob(*this,a.scheme);
   const bool busy = ActivityDefinitions::bodyStateContains(int32_t(bodyState()),a.busyBodyState);
+  if(mob!=nullptr && mob==currentInteract && (busy || mob->stateId()==a.useState)) {
+    places.release(*this);
+    s.stage    = Stage::Hold;
+    s.deadline = gtime::endOfTime();
+    return;
+    }
   if(mob!=nullptr && !busy && (mob==currentInteract || places.reserve(*this,*mob))) {
     aiPush(AiQueue::aiUseMob(a.scheme,a.useState));
     s.stage      = Stage::Attach;
@@ -137,11 +145,6 @@ void Npc::seekActivityPlace() {
     return;
     }
   places.release(*this);
-  if(mob!=nullptr && mob==currentInteract) {
-    s.stage    = Stage::Hold;
-    s.deadline = gtime::endOfTime();
-    return;
-    }
   places.wait(*this,a.scheme);
   s.stage    = Stage::Wait;
   s.deadline = after(now,WatchdogMs);
