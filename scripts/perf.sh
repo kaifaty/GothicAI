@@ -384,13 +384,28 @@ def launch(leaf, profile, done=None):
 
 if mode == 'measure':
     leaf = Path(leaf)
+    # The stall is the stand's, not the game's (the window iconified under Xwayland, issue #1686), and a new game
+    # has so far run at full speed: one restart instead of losing the job. The stalled game's files stay beside it.
+    restarts = 0
     try:
-        code, command = launch(leaf, True, stall_guard(leaf))
-        if code is None:
-            raise RuntimeError(f'perf: stand failure: {place} stayed at or below 2 FPS for two heartbeat intervals')
+        while True:
+            code, command = launch(leaf, True, stall_guard(leaf))
+            if code is not None:
+                break
+            failure = f'{place} stayed at or below 2 FPS for two heartbeat intervals'
+            if restarts == 1:
+                raise RuntimeError(f'perf: stand failure: {failure}')
+            restarts += 1
+            kept = leaf / f'stalled-{restarts}'
+            kept.mkdir()
+            for path in leaf.iterdir():
+                if path != kept:
+                    path.rename(kept / path.name)
+            print(f'perf: stand stall: {failure}; restarting the game once, its files are in {kept}',
+                  file=sys.stderr, flush=True)
     except RuntimeError as error:
         raise SystemExit(str(error))
-    meta.update(place=place, repeat=int(extra), command=command, exit_code=code)
+    meta.update(place=place, repeat=int(extra), command=command, exit_code=code, stall_restarts=restarts)
     (leaf / 'metadata.json').write_text(json.dumps(meta, indent=2) + '\n')
     if code:
         raise SystemExit(f'perf: {place} exited {code}; see {leaf / "game.log"}')
