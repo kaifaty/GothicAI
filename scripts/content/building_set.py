@@ -389,7 +389,8 @@ def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:
     materials. Entries of one part may share files: the barrel's wood and iron use one atlas. A part's
     world chunk edits (`worlds/<WORLD>/chunks/*.glb`, like the harbour stairs) and vob layer files
     (`worlds/<WORLD>/vobs.d/*.json`, like the harbour's traces of life) and its houses
-    (`worlds/<WORLD>/houses.d/*.json`, OpenGothic/common/graphics/houselights.h) come along too; such a part may have no
+    (`worlds/<WORLD>/houses.d/*.json`, OpenGothic/common/graphics/houselights.h) and its patches of ground for the
+    grass system (`worlds/<WORLD>/grass.d/*.json`, the rye of a crop field) come along too; such a part may have no
     materials at all. Particle descriptions (`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`)
     come along as well; file and effect names must belong to one part only. A part may be a composed set
     itself: `compose working-16 working-15 torch-fire-1` is the working set with one more part, its files byte
@@ -410,7 +411,7 @@ def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:
         indexes[part] = json.loads(material_index.read_text()) if material_index.is_file() else {}
         worlds = staging / part / 'worlds'
         chunks[part] = sorted(f.relative_to(worlds) for f in worlds.rglob('*') if f.is_file() and (
-            f.suffix == '.glb' or f.suffix == '.json' and f.parent.name in ('vobs.d', 'houses.d'))) if worlds.is_dir() else []
+            f.suffix == '.glb' or f.suffix == '.json' and f.parent.name in ('vobs.d', 'houses.d', 'grass.d'))) if worlds.is_dir() else []
         mesh_index = staging / part / 'meshes/meshes.json'
         meshes[part] = json.loads(mesh_index.read_text()) if mesh_index.is_file() else {}
         particle_dir = staging / part / 'particles.d'

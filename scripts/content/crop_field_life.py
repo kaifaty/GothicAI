@@ -14,6 +14,7 @@ No pixel of the original goes into a map.
 """
 from __future__ import annotations
 
+import shutil
 import math
 from pathlib import Path
 
@@ -224,12 +225,15 @@ def ground_maps(dds, encode, source: Path, directory: Path, rng, size: int = 102
     slope_y = (np.roll(relief, -1, axis=0) - np.roll(relief, 1, axis=0)) / (2 * texel)
     normal = np.stack([-slope_x, -slope_y, np.ones_like(relief)], axis=2)
     dds.write_dds(directory / 'litter_normal.dds', normal.astype(np.float32), normal=True)
+    # the earth keeps the meadow earth's relief as a file of its own: a part of a composed set shares no file with
+    # another part (building_set.compose)
+    shutil.copyfile(source / 'normal.dds', directory / 'earth_normal.dds')
     ao = np.clip(orm[..., 0] * (.72 + .28 * height) * (1 - cover) * shadow + cover * (.8 + .2 * level), 0, 1)
     rough = .95 * (1 - cover) + .78 * cover
     dds.write_dds(directory / 'litter_orm.dds', np.stack([ao, rough, np.zeros_like(ao)], axis=2).astype(np.float32))
     common = dict(scale=1., antitile='rotate', antitile_cell=1)
     return dict(
-        earth=dict(albedo=f'{name}/earth_albedo.dds', normal=f'{source.name}/normal.dds', orm=f'{name}/earth_orm.dds') | common,
+        earth=dict(albedo=f'{name}/earth_albedo.dds', normal=f'{name}/earth_normal.dds', orm=f'{name}/earth_orm.dds') | common,
         litter=dict(albedo=f'{name}/litter_albedo.dds', normal=f'{name}/litter_normal.dds', orm=f'{name}/litter_orm.dds') | common,
         means=dict(earth=plough.mean(axis=(0, 1)).round(4).tolist(), litter=litter.mean(axis=(0, 1)).round(4).tolist(),
                    straw_cover=round(float(cover.mean()), 3)))
