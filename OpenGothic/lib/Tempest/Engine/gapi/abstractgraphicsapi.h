@@ -651,6 +651,7 @@ namespace Tempest {
                                   size_t firstInstance, size_t instanceCount) = 0;
 
         virtual void drawIndirect(const Buffer& indirect, size_t offset) = 0;
+        virtual void drawIndexedIndirect(const Buffer& ibo, Detail::IndexClass cls, const Buffer& indirect, size_t offset) = 0;
 
         virtual void dispatchMesh(size_t x, size_t y, size_t z);
         virtual void dispatchMeshIndirect(const Buffer& indirect, size_t offset);

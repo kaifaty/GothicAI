@@ -143,6 +143,16 @@ class GrassField final {
       uint64_t                  reqEpoch = 0;
       };
 
+    struct Draw final {
+      const Cell* cell      = nullptr;
+      uint16_t    slot      = 0;
+      bool        fine      = false;
+      uint8_t     links     = 0;
+      uint32_t    count     = 0;
+      uint32_t    table     = 0;
+      uint32_t    instances = 0;
+      };
+
     struct Job final {
       int32_t                                            cx = 0, cz = 0;
       uint8_t                                            level = 0;
@@ -170,6 +180,7 @@ class GrassField final {
     void            run();
     void            upload(Cell& c, Done&& d);
     void            release(Cell& c);
+    const Tempest::StorageBuffer* uploadIndirect(const std::vector<Draw>& draws, uint8_t fId, uint32_t pack);
 
     SceneGlobals&                       scene;
     Grass::Ring                         ring;
@@ -211,6 +222,7 @@ class GrassField final {
     // a frame's draws and the table of their spans (draw)
     std::vector<uint32_t>               spanCpu;
     Tempest::StorageBuffer              spanGpu[2];      // by the frame in flight (Resources::MaxFramesInFlight)
+    Tempest::StorageBuffer              indirectGpu[2];
     uint32_t                            wasteFrame = 0;
     uint64_t                            drawNs     = 0;
     uint32_t                            drawFrames = 0;

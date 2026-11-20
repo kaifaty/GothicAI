@@ -181,6 +181,18 @@ void Encoder<Tempest::CommandBuffer>::drawIndirect(const StorageBuffer& indirect
   impl->drawIndirect(*indirect.impl.impl.handler, offset);
   }
 
+void Encoder<Tempest::CommandBuffer>::implDrawIndexedIndirect(const Detail::VideoBuffer& ibo, Detail::IndexClass icls,
+                                                              const StorageBuffer& indirect, size_t offset) {
+  if(state.stage!=Rendering)
+    throw std::system_error(Tempest::GraphicsErrc::DrawCallWithoutFbo);
+  if(!ibo.impl)
+    return;
+  const auto size = indirect.byteSize();
+  if(offset%4 != 0 || offset > size || size - offset < sizeof(DrawIndexedIndirectCommand))
+    throw std::system_error(Tempest::GraphicsErrc::InvalidStorageBuffer);
+  impl->drawIndexedIndirect(*ibo.impl.handler, icls, *indirect.impl.impl.handler, offset);
+  }
+
 void Encoder<Tempest::CommandBuffer>::dispatchMesh(size_t x, size_t y, size_t z) {
   if(state.stage!=Rendering)
     throw std::system_error(Tempest::GraphicsErrc::DrawCallWithoutFbo);
