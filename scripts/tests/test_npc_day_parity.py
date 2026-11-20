@@ -354,9 +354,12 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
     assert json.loads(data.read_text())["result"]["activity"]["total"] == activity["by_state"]["ZS_READ"]
     assert "ZS_SMITH" in out.read_text()
     # The activity profile also needs run B's own health counters of the activities by events.
+    health = {"watchdog": "max_activity_watchdog", "reservation_expired": "max_activity_reservation_expired",
+              "reservation_ownerless": "max_activity_reservation_ownerless",
+              "double_occupancy": "max_activity_double_occupancy"}
     assert npc_day_parity.main([str(a), str(a), "--tolerances", str(ACTIVITY), "--out", str(out),
                                 "--json", str(data)]) == 1
-    assert {c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]} == set(npc_day_parity.HEALTH)
+    assert {c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]} == set(health.values())
     healthy = {"watchdog": 0, "reservation_expired": 0, "reservation_ownerless": 0, "double_occupancy": 0,
                "reservations": 3, "reservation_bypassed": 0,
                "states": {"ZS_SMITH": {"steps": 4, "wakes": {"entered": 2, "queue": 2}}}}
@@ -364,14 +367,19 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
     assert npc_day_parity.main([str(a), str(a), "--tolerances", str(ACTIVITY), "--out", str(out)]) == 0
     assert "| ZS_SMITH | 4 | entered 2, queue 2 |" in out.read_text()
     assert npc_day_parity.main([str(a), str(b), "--tolerances", str(ACTIVITY), "--out", str(out)]) == 1
-    # The counters are run B's: A stays healthy, B carries the same samples and one bad counter.
-    for counter in ("watchdog", "reservation_expired", "reservation_ownerless", "double_occupancy"):
+    # The counters are run B's: the same samples with healthy counters only in A fail every health check...
+    bare = tmp_path / "bare"
+    journal(bare, a_rows, [], header)
+    assert npc_day_parity.main([str(a), str(bare), "--tolerances", str(ACTIVITY), "--out", str(out),
+                                "--json", str(data)]) == 1
+    assert {c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]} == set(health.values())
+    # ...and one bad counter in B, with A healthy, fails exactly its own check.
+    for counter, check in health.items():
         c = tmp_path / ("c-" + counter)
         journal(c, a_rows, [], {**header, "activity_events": {**healthy, counter: 1}})
         assert npc_day_parity.main([str(a), str(c), "--tolerances", str(ACTIVITY), "--out", str(out),
                                     "--json", str(data)]) == 1
-        assert [c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]] == [
-            name for name, value in npc_day_parity.HEALTH.items() if value == counter]
+        assert [c["name"] for c in json.loads(data.read_text())["checks"] if not c["pass"]] == [check]
 
 
 def test_mob_mismatch_is_zero_without_occupied_samples(tmp_path):

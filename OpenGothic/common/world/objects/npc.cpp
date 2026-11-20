@@ -1111,6 +1111,9 @@ void Npc::tick(uint64_t dt) {
   if(tickPhysicsInvestigation(dt))
     return;
 
+  // Ahead of the walk and the queue, which keep the routine tick out (world/activityevents.h).
+  tickActivityDeadline();
+
   if(aniWaitTime<owner.tickCount() && aniWaitTime==logicalBody.nativeWaitEnd)
     logicalBody.waitReleased(owner.tickCount());
   if(waitTime>=owner.tickCount() || aniWaitTime>=owner.tickCount() || outWaitTime>owner.tickCount()) {

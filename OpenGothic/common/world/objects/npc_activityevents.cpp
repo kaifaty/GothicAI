@@ -59,18 +59,62 @@ bool Npc::armActivityEvents() {
 
 void Npc::tickActivityEvents() {
   auto& s = activityEvents;
+  if(s.restart) {
+    stopActivityEvents(0);
+    aiState.started = false; // Init runs on the next routine tick
+    return;
+    }
   if(s.awaitQueue && aiQueue.size()==0) {
     s.awaitQueue = false;
     s.pending   |= ActivityEvents::QueueDone;
     }
-  if(s.pending==0 && s.deadline<=owner.time())
-    s.pending = ActivityEvents::Watchdog;
-  if(s.pending==0)
+  if(!s.retry && s.pending==0 && s.deadline<=owner.time())
+    fireActivityWatchdog();
+  if(!s.retry && s.pending==0)
     return;
   const uint16_t wakes = s.pending;
+  const bool     retry = s.retry;
   s.pending = 0;
-  ActivityEvents::countWakes(aiState.hint,wakes,false);
-  stepActivityEvents(wakes);
+  s.retry   = false;
+  if(wakes!=0)
+    ActivityEvents::countWakes(aiState.hint,wakes,false);
+  stepActivityEvents(retry ? uint16_t(wakes|ActivityEvents::Watchdog) : wakes);
+  }
+
+void Npc::tickActivityDeadline() {
+  // The routine tick runs only with an empty queue and no walk. A wait that a queued use or a walk holds is
+  // checked here: its watchdog, and for a queued use also the end of the row on the perception clock.
+  using ActivityEvents::Stage;
+  auto& s = activityEvents;
+  if(s.activity==nullptr || s.retry || (s.stage!=Stage::Approach && s.stage!=Stage::Attach) ||
+     (aiQueue.size()==0 && go2.empty()))
+    return;
+  const auto now = owner.time();
+  if(s.deadline<=now) {
+    fireActivityWatchdog();
+    return;
+    }
+  if(s.stage==Stage::Attach && aiState.loopNextTime<=owner.tickCount() && aiState.eTime<=now &&
+     currentTarget==nullptr && outputPipe->isFinished())
+    dropActivityCommand(); // the routine tick ends the row now
+  }
+
+void Npc::fireActivityWatchdog() {
+  ActivityEvents::countWakes(aiState.hint,ActivityEvents::Watchdog,false);
+  dropActivityCommand();
+  activityEvents.retry = true;
+  }
+
+void Npc::dropActivityCommand() {
+  // Only the activity's own command and its walk; a command queued behind it (AI_StartState) still runs.
+  const auto& a     = *activityEvents.activity;
+  const auto* front = aiQueue.front();
+  if(front!=nullptr && ((front->act==AI_UseMob && front->s0==a.scheme) ||
+                        (front->act==AI_GoToPoint && front->point!=nullptr && front->point->name==hnpc->wp)))
+    aiQueue.pop();
+  clearGoTo();
+  wayPath.clear();
+  owner.mobReservations().release(*this);
   }
 
 void Npc::stepActivityEvents(uint16_t wakes) {

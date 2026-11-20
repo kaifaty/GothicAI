@@ -52,6 +52,8 @@ struct State final {
   Stage    stage      = Stage::Off;
   uint16_t pending    = 0;                  // Wake bits not yet handled
   bool     awaitQueue = false;              // QueueDone when the queue is empty next time
+  bool     restart    = false;              // the walk to the point was reset: start over with Init
+  bool     retry      = false;              // the watchdog fired and was counted: look for the place again
   gtime    deadline   = gtime::endOfTime(); // the watchdog of the current wait
   };
 

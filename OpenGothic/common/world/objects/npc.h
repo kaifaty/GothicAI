@@ -1023,6 +1023,9 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      startActivityEvents();
     bool      armActivityEvents();
     void      tickActivityEvents();
+    void      tickActivityDeadline();
+    void      fireActivityWatchdog();
+    void      dropActivityCommand();
     void      stepActivityEvents(uint16_t wakes);
     void      seekActivityPlace();
     int       invokeRoutine(ScriptFn function);

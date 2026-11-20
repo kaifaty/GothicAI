@@ -715,9 +715,10 @@ void Npc::clearAiQueue() {
     wakeActivity(ActivityEvents::AttachFailed);
     }
   else if(activityEvents.stage==ActivityEvents::Stage::Approach) {
-    // the walk to the routine point is gone: an empty queue is no arrival, the activity starts over with Init
-    stopActivityEvents(0);
-    aiState.started = false;
+    // the walk to the routine point is gone: an empty queue is no arrival. The automaton starts over with Init
+    // on its next step, unless a new state replaces it first (startState: its End still runs).
+    activityEvents.restart    = true;
+    activityEvents.awaitQueue = false;
     }
   stopPhysicsInvestigation(false);
   currentLookAt    = nullptr;

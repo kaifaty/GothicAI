@@ -172,13 +172,6 @@ bool Npc::implAiTick(uint64_t dt) {
       nextAiAction(aiQueue,dt);
     return false;
     }
-  // A queued use of an activity by events that never attaches (a blocked attach point) holds the queue, and
-  // with it the routine tick: its watchdog drops the queue, and the activity looks for its place again.
-  if(activityEvents.stage==ActivityEvents::Stage::Attach && activityEvents.deadline<=owner.time()) {
-    clearAiQueue();
-    wakeActivity(ActivityEvents::Watchdog);
-    return false;
-    }
   nextAiAction(aiQueue,dt);
   return true;
   }
