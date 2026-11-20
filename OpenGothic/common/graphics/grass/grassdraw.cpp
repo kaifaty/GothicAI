@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include "graphics/dynamic/frustrum.h"
+#include "graphics/grass/grasscull.h"
 #include "graphics/sceneglobals.h"
 #include "graphics/shaders.h"
 #include "resources.h"
@@ -22,10 +23,7 @@ constexpr uint32_t WasteEvery  = 30;       // frames between two counts of Grass
 
 // The fine blades of the short sward (Grass::Params::fine): a ring of their own, cm. All of them to FineFull, a
 // share FineFull/d from there, into the ground between FineFade and FineRadius; two links near, one further
-constexpr float   FineFade     = 1600.f;
 constexpr float   FineRadius   = 2000.f;
-constexpr float   FineWidth    = 0.5f;     // cm at the root, and per step of the blade's three bits
-constexpr float   FineWidthStep= 0.036f;
 
 struct Push final {
   Vec4     origin;
@@ -140,7 +138,7 @@ void GrassField::prepare(uint8_t fId) {
       if(waste && !c.cpu.empty()) {
         Grass::WasteRule rule;
         rule.full        = fine ? FineFull   : ring.full;
-        rule.fadeFrom    = fine ? FineFade   : ring.fadeFrom;
+        rule.fadeFrom    = fine ? Grass::FineFade : ring.fadeFrom;
         rule.radius      = fine ? FineRadius : ring.radius;
         rule.cellRadius  = ring.radius;
         rule.rankShare   = RankShare;
@@ -182,13 +180,15 @@ void GrassField::prepare(uint8_t fId) {
     auto&        ibo    = packBuffers[size_t(packAt-Grass::PackSizes.begin())];
     if(ibo.isEmpty())
       ibo = device.ibo(Grass::packIndices(st.pack));
-    auto&        buf    = spanGpu[fId];
-    const size_t bytes  = spanCpu.size()*sizeof(uint32_t);
-    if(buf.byteSize()<bytes) {
-      Resources::recycle(std::move(buf));
-      buf = device.ssbo(BufferHeap::Upload, Uninitialized, std::max<size_t>(bytes+bytes/2, 4096));
+    if(!Grass::gpuCullEnabled()) {
+      auto&        buf    = spanGpu[fId];
+      const size_t bytes  = spanCpu.size()*sizeof(uint32_t);
+      if(buf.byteSize()<bytes) {
+        Resources::recycle(std::move(buf));
+        buf = device.ssbo(BufferHeap::Upload, Uninitialized, std::max<size_t>(bytes+bytes/2, 4096));
+        }
+      buf.update(spanCpu.data(), 0, bytes);
       }
-    buf.update(spanCpu.data(), 0, bytes);
 
     drawIbo = &ibo;
     drawIndirect = uploadIndirect(draws, fId, st.pack);
@@ -206,9 +206,13 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
     const auto& ibo = *drawIbo;
     const auto  pack = last.pack;
     const auto& shaders = Shaders::inst();
-    cmd.setPipeline(historyOwner ? shaders.grassHistoryGBuffer : shaders.grass);
+    const bool cull = Grass::gpuCullEnabled();
+    const auto& grass = cull ? shaders.grassCulled : shaders.grass;
+    cmd.setPipeline(grass[historyOwner]);
     cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-    cmd.setBinding(4, spanGpu[fId]);
+    cmd.setBinding(4, cull ? cullGpu[fId].compact : spanGpu[fId]);
+    if(cull)
+      cmd.setBinding(5, cullGpu[fId].windows);
     const Cell* cellBound = nullptr;
     size_t      slotBound = size_t(-1);
     for(size_t i=0; i<draws.size(); ++i) {
@@ -216,15 +220,14 @@ void GrassField::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, bool historyOwne
       const auto& c = *dr.cell;
       const auto& p = slotParams[dr.slot];
       Push push;
-      push.origin       = Vec4(float(c.cx)*CellCm - float(Grass::CellMargin/Grass::Unit), float(c.minY)/float(Grass::Unit),
-                               float(c.cz)*CellCm - float(Grass::CellMargin/Grass::Unit), 0.f);
+      push.origin       = Grass::bladeOrigin(c.cx, c.cz, c.minY);
       push.wind         = p.wind;
       push.translucency = p.translucency;
-      push.table        = dr.table;
+      push.table        = cull ? uint32_t(i) : dr.table;
       push.segments     = dr.links;
       push.pack         = pack;
       push.kind         = p.kind;
-      push.shape        = dr.fine ? Vec4(FineWidth,FineWidthStep,FineFull,FineFade) : Vec4(0.f,0.f,0.f,0.f);
+      push.shape        = Grass::bladeShape(dr.fine, FineFull);
       const auto* sward = slotSward[dr.slot];
       push.swardK       = (sward!=nullptr && p.tile>0.f) ? 1.f/p.tile : 0.f;
       if(cellBound!=&c) {

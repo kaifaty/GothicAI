@@ -1,0 +1,175 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_nonuniform_qualifier : require
+
+#include "common.glsl"
+#include "scene.glsl"
+#include "grass/grass_blade.glsl"
+
+layout(local_size_x = 64) in;
+
+struct Draw {
+  vec4 origin;
+  vec4 shape;
+  uint cell;
+  uint kind;
+  };
+
+layout(binding = 0, std140) uniform UboScene { SceneDesc scene; };
+layout(binding = 1, std430) readonly buffer Blades { uvec4 blade[]; } cells[];
+layout(binding = 2, std430) readonly buffer Draws { Draw draws[]; };
+layout(binding = 3, std430) readonly buffer Blocks { uvec4 blocks[]; }; // draw, first blade, count
+layout(binding = 4) uniform sampler2D hiZ;
+layout(binding = 5, std430) writeonly buffer Compacted { uint compact[]; };
+layout(binding = 6, std430) buffer Windows { uvec2 windows[]; }; // start, survivor count
+#if defined(GRASS_CULL_STATS)
+layout(binding = 7, std430) buffer Stats { uint rejected[3]; };
+shared uint reasons[3];
+#endif
+
+layout(push_constant, std430) uniform Push {
+  uint blocks;
+  float znear;
+  uint rawDepth;
+  float depthRoundoff;
+  } push;
+
+const uint CullView   = 0u;
+const uint CullGrowth = 1u;
+const uint CullDepth  = 2u;
+const uint CullKeep   = 3u;
+const float Epsilon = 1.1920928955078125e-7;
+
+shared uint survivors;
+shared uint appendBase;
+
+ivec2 tileSize() {
+  if(push.rawDepth==0u)
+    return scene.hiZTileSize;
+  const ivec2 power = findMSB(uvec2(scene.screenRes - 1)) + 1;
+  return (ivec2(1) << power) / textureSize(hiZ, 0);
+  }
+
+bool hiZVisible(vec4 rect, float depth) {
+  // The R16 pyramid packs depth below 0.95 into the same bin. Keep bounds touching that zone.
+  if(depth<=0.95)
+    return true;
+
+  // Same precise mip selection and max-depth test as for clusters. Include a pixel for raster rounding.
+  const vec4 pixels = (rect*0.5 + 0.5)*vec2(scene.screenRes).xyxy;
+  const vec2 last = vec2(scene.screenRes - 1);
+  const ivec2 tile = tileSize();
+  ivec2 lo = ivec2(clamp(pixels.xy - 1.0, vec2(0), last)) / tile;
+  ivec2 hi = ivec2(clamp(pixels.zw + 1.0, vec2(0), last)) / tile;
+  const ivec2 span = hi - lo;
+  int mip = findMSB(max(1, max(span.x, span.y)));
+  lo >>= mip;
+  hi >>= mip;
+  if(any(greaterThan(hi - lo, ivec2(1)))) {
+    ++mip;
+    lo >>= 1;
+    hi >>= 1;
+    }
+
+  float furthest = texelFetch(hiZ, lo, mip).x;
+  if(lo.x!=hi.x)
+    furthest = max(furthest, texelFetch(hiZ, ivec2(hi.x, lo.y), mip).x);
+  if(lo.y!=hi.y)
+    furthest = max(furthest, texelFetch(hiZ, ivec2(lo.x, hi.y), mip).x);
+  if(lo.x!=hi.x && lo.y!=hi.y)
+    furthest = max(furthest, texelFetch(hiZ, hi, mip).x);
+  const float nearest = min(push.rawDepth!=0u ? depth : packHiZ(depth), 1.0);
+  return !(nearest>furthest);
+  }
+
+uint classifyBlade(const Draw draw, const uvec4 b) {
+  const vec3 root = grassBladeRoot(b, draw.origin.xyz);
+  const bool ear = draw.kind==GrassKindEar;
+  const vec4 ring = grassBladeRing(draw.shape, scene.grassRing);
+  const float d = distance(root, scene.camPos);
+  const float height = grassBladeHeight(b, ear, grassBladeRank(b), ring, d);
+  if(!grassBladeGrown(height, ring, grassPartsOff(ring.w)))
+    return CullGrowth;
+
+  const mat4 project = scene.viewProject;
+  const float rootW = (project*vec4(root,1.0)).w;
+  const float widen = grassBladeWiden(d, ring.x);
+  const float thin = grassBladeThin(rootW, scene.project[1][1], scene.screenRes.y);
+  const float width = ear ? max(GrassEarStalkWidth, GrassEarWidth) : grassBladeWidth(b, draw.shape);
+  const float halfWidth = GrassCullHalfWidthScale*max(width*widen, thin);
+  // All links, including those of an ear, clamp the tilt tangent to 2.4. Their total horizontal
+  // reach is bounded under any wind. Only an ear's strip can extend vertically.
+  const float reach = GrassCullHorizontalReach*height + halfWidth;
+  const vec3 extent = vec3(reach, ear ? halfWidth : 0.0, reach);
+  vec3 lo = root - extent;
+  vec3 hi = root + extent + vec3(0.0, height, 0.0);
+
+  // Budget rounding at the blade's world coordinates and in the separate clip transformations.
+  const vec3 worldPad = (max(abs(lo), abs(hi)) + 1.0)*(8.0*Epsilon);
+  lo -= worldPad;
+  hi += worldPad;
+  const vec3 magnitude = max(abs(lo), abs(hi));
+  const vec4 clipPad = (abs(project[0])*magnitude.x + abs(project[1])*magnitude.y +
+                        abs(project[2])*magnitude.z + abs(project[3]) + 1.0)*(8.0*Epsilon);
+
+  vec4 rect = vec4(2.0, 2.0, -2.0, -2.0);
+  float nearDepth = 2.0;
+  for(uint corner=0u; corner<8u; ++corner) {
+    const vec3 p = mix(lo, hi, notEqual(uvec3(corner) & uvec3(1,2,4), uvec3(0)));
+    const vec4 clip = project*vec4(p,1.0);
+    const vec4 clipLo = clip - clipPad, clipHi = clip + clipPad;
+    if(clipLo.w<=push.znear || clipLo.z<=0.0)
+      return CullKeep;
+    const vec3 low = min(clipLo.xyz/clipLo.w, clipLo.xyz/clipHi.w);
+    const vec2 high = max(clipHi.xy/clipLo.w, clipHi.xy/clipHi.w);
+    rect = vec4(min(rect.xy, low.xy), max(rect.zw, high));
+    nearDepth = min(nearDepth, low.z);
+    }
+
+  if(any(lessThan(rect.zw, vec2(-1))) || any(greaterThan(rect.xy, vec2(1))) || nearDepth>1.0)
+    return CullView;
+  return hiZVisible(rect, nearDepth - push.depthRoundoff) ? CullKeep : CullDepth;
+  }
+
+void main() {
+  const uint group = gl_WorkGroupID.x + gl_WorkGroupID.y*gl_NumWorkGroups.x;
+  if(group>=push.blocks)
+    return;
+  const uvec4 block = blocks[group];
+  const uint lane = gl_LocalInvocationID.x;
+  if(lane==0u)
+    survivors = 0u;
+#if defined(GRASS_CULL_STATS)
+  if(lane<CullKeep)
+    reasons[lane] = 0u;
+#endif
+  barrier();
+
+  uint dst = 0u;
+  bool visible = false;
+  const uint index = block.y + lane;
+  if(lane<block.z) {
+    const Draw draw = draws[block.x];
+    const uint reason = classifyBlade(draw, cells[nonuniformEXT(draw.cell)].blade[index]);
+    visible = reason==CullKeep;
+    if(visible)
+      dst = atomicAdd(survivors, 1u);
+#if defined(GRASS_CULL_STATS)
+    else
+      atomicAdd(reasons[reason], 1u);
+#endif
+    }
+  barrier();
+
+  // One reserve per block. Draw windows never overlap, including when every candidate survives.
+  if(lane==0u && survivors>0u)
+    appendBase = windows[block.x].x + atomicAdd(windows[block.x].y, survivors);
+#if defined(GRASS_CULL_STATS)
+  if(lane<CullKeep && reasons[lane]>0u)
+    atomicAdd(rejected[lane], reasons[lane]);
+#endif
+  barrier();
+
+  if(visible)
+    compact[appendBase + dst] = index;
+  }

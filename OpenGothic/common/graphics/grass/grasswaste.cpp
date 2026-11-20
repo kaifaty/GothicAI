@@ -91,14 +91,8 @@ void countWaste(Waste& out, const Frustrum& fr, const Vec3& cam, const WasteRule
     const float lx = float(b.w[0] & 0x3FFFu)/float(Unit), lz = float((b.w[0] >> 14) & 0x3FFFu)/float(Unit);
     const Vec3  root(cell.origin.x + lx, cell.origin.y + float((b.w[1] & 0xFFFFu)*2u)/float(Unit), cell.origin.z + lz);
     const uint32_t r    = b.w[1] >> 24;
-    const float    rank = (float(r)+0.5f)/256.f;
-    float          h    = float((b.w[1] >> 16) & 0xFFu)*rule.heightStep;
-
-    // grass.vert
-    const float d    = (root-cam).length();
-    const float grow = std::clamp((rule.full/std::max(d,1.f)*1.12f - rank)/0.12f, 0.f, 1.f);
-    const float t    = std::clamp((d-rule.fadeFrom)/(rule.radius-rule.fadeFrom), 0.f, 1.f);
-    h *= grow*(1.f - t*t*(3.f-2.f*t));
+    const float    d    = (root-cam).length();
+    const float    h    = rule.height(r, d, float((b.w[1] >> 16) & 0xFFu)*rule.heightStep);
     bool shown = false;
     if(h<=0.05f) {
       ++out.gone;

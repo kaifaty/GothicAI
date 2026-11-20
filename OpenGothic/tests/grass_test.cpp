@@ -14,6 +14,7 @@
 #include "graphics/grass/grasswaste.h"
 
 #include <Tempest/Log>
+#include <Tempest/Matrix4x4>
 #include <rapidjson/document.h>
 
 #include <algorithm>
@@ -41,6 +42,10 @@
 size_t grassCoverTests();
 
 namespace {
+namespace Shader {
+#include <grass/grass_blade_limits.glsl>
+}
+
 size_t assertions = 0;
 
 void require(bool condition, const std::string& message) {
@@ -258,6 +263,119 @@ std::string at(int32_t cx, int32_t cz) {
   }
 
 constexpr int32_t U = Grass::Unit;
+
+// CPU cull bounds, with geometry generated independently at each node.
+void grassCull() {
+  using namespace Tempest;
+  const Grass::WasteRule broad{.full=1000.f, .fadeFrom=4800.f, .radius=6400.f, .rankShare=1.12f, .rootsBeyond=100.f};
+  const Grass::WasteRule fine {.full=400.f,  .fadeFrom=1600.f, .radius=2000.f, .rankShare=1.12f, .rootsBeyond=100.f};
+  for(const auto& ring : {broad,fine}) {
+    for(float distance : {1.f, ring.full, 1.237f*ring.full, 2.242f*ring.full, ring.fadeFrom, (ring.fadeFrom+ring.radius)*0.5f}) {
+      const size_t placed = ring.ranks(distance+ring.rootsBeyond);
+      size_t growingRanks = 0;
+      for(uint32_t rank=0; rank<256; ++rank) {
+        if(ring.height(rank,distance,1.f)>0.f) {
+          ++growingRanks;
+          require(rank<placed, "the draw's rank cutoff must include every rank with growth");
+          }
+        }
+      // Placement rounds up to whole rank bins. The shader evaluates the center of each bin.
+      require(placed>=growingRanks && placed-growingRanks<=1, "growth must agree with the rank cutoff to one half-bin");
+      }
+    require(ring.height(0,ring.fadeFrom,40.f)>0.05f && ring.height(0,ring.radius,40.f)==0.f,
+            "the lowest rank must still grow at the start of fade and disappear at the end of the ring");
+    }
+
+  const Vec3 root(123.f, 45.f, -180.f);
+  Matrix4x4 projection;
+  projection.perspective(67.5f, 16.f/9.f, 10.f, 100000.f);
+  size_t nearBoxes = 0, distantBoxes = 0;
+  for(const Vec3& offset : {Vec3(0,2,-12), Vec3(25,80,-250), Vec3(-425,120,-1300), Vec3(800,350,-5100)}) {
+    const Vec3 camera = root + offset;
+    const float distance = offset.length();
+    auto view = Matrix4x4::mkIdentity();
+    view.translate(-camera);
+    const auto project = projection*view;
+    const float thin = 1.3f*2.f*std::max((project*Vec4(root.x,root.y,root.z,1.f)).w,1.f)/(std::abs(projection.at(1,1))*1440.f);
+    const Vec3 horizontal = Vec3::normalize({-offset.z,0.f,offset.x});
+    for(int kind=0; kind<3; ++kind) {
+      const bool ear = kind==2;
+      const auto& ring = kind==1 ? fine : broad;
+      const float widen = std::clamp(distance/ring.full, 1.f, 8.f);
+      const float width = kind==1 ? 0.5f + 7.f*0.036f : 1.3f + 15.f*0.11f;
+      const float height = ring.height(36,distance,ear ? Grass::EarTop : (kind==1 ? 13.f : 60.f));
+      if(height<=0.05f)
+        continue;
+      const float boundWidth = ear ? std::max(Shader::GrassEarStalkWidth, Shader::GrassEarWidth) : width;
+      const float halfWidth = Shader::GrassCullHalfWidthScale*std::max(boundWidth*widen, thin);
+      const float reach = Shader::GrassCullHorizontalReach*height + halfWidth;
+      const float verticalPad = ear ? halfWidth : 0.f;
+      const auto min = root - Vec3(reach, verticalPad, reach);
+      const auto max = root + Vec3(reach, height+verticalPad, reach);
+
+      // Perspective preserves these extrema when the entire box lies beyond the near plane.
+      bool crossesNear = false;
+      Vec3 ndcMin(1e6f), ndcMax(-1e6f);
+      for(const float x : {min.x,max.x})
+        for(const float y : {min.y,max.y})
+          for(const float z : {min.z,max.z}) {
+            const auto c = project*Vec4(x,y,z,1.f);
+            crossesNear |= c.w<=0.f || c.z<=0.f;
+            if(crossesNear)
+              continue;
+            ndcMin = {std::min(ndcMin.x,c.x/c.w), std::min(ndcMin.y,c.y/c.w), std::min(ndcMin.z,c.z/c.w)};
+            ndcMax = {std::max(ndcMax.x,c.x/c.w), std::max(ndcMax.y,c.y/c.w), std::max(ndcMax.z,c.z/c.w)};
+            }
+      nearBoxes += size_t(crossesNear);
+      distantBoxes += size_t(!crossesNear);
+      const auto contains = [](const Vec3& lo, const Vec3& hi, const Vec3& p) {
+        constexpr float Eps = 1e-5f;
+        return lo.x-Eps<=p.x && p.x<=hi.x+Eps && lo.y-Eps<=p.y && p.y<=hi.y+Eps && lo.z-Eps<=p.z && p.z<=hi.z+Eps;
+        };
+
+      for(int links=1; links<=4; ++links) {
+        const auto node = [&](int k) {
+          constexpr float EarNodes[] = {0.45f,0.86f,0.90f};
+          if(ear && k>0 && k<links)
+            return links==2 ? EarNodes[1] : EarNodes[k+3-links];
+          return float(k)/float(links);
+          };
+        // Exercise the link's tilt clamp in each horizontal direction, independent of the wind phase.
+        for(const Vec2& wind : {Vec2(0), Vec2(8,0), Vec2(-8,0), Vec2(0,8), Vec2(0,-8)}) {
+          const auto direction = [&](float t) {
+            Vec2 tilt = Vec2(0.8f,0.6f)*(0.35f + 0.9f*t) + wind*t;
+            if(ear)
+              tilt += Vec2(0.8f,0.6f)*(2.1445f*std::clamp((t-0.78f)/0.22f,0.f,1.f));
+            if(tilt.length()>2.4f)
+              tilt *= 2.4f/tilt.length();
+            return Vec3::normalize({tilt.x,1.f,tilt.y});
+            };
+          Vec3 center = root;
+          for(int k=0; k<=links; ++k) {
+            const float t = node(k);
+            if(k>0)
+              center += direction(0.5f*(node(k-1)+t))*(height*(t-node(k-1)));
+            const Vec3 axis = ear ? Vec3::normalize(Vec3::crossProduct(direction(t),Vec3::normalize(camera-center)) + horizontal*1e-3f)
+                                 : horizontal;
+            const float vertexWidth = ear ? std::max((t>0.87f ? Shader::GrassEarWidth : Shader::GrassEarStalkWidth)*widen, thin)
+                                          : std::max(width*widen,thin)*(1.f-0.7f*t);
+            const bool tip = ear && links==1 ? k==0 : k==links;
+            const Vec3 off = axis*(tip ? 0.f : 0.5f*vertexWidth);
+            for(const Vec3& vertex : {center-off,center+off}) {
+              require(contains(min,max,vertex), "the grass cull box must cover each vertex under extreme tilt");
+              if(!crossesNear) {
+                const auto c = project*Vec4(vertex.x,vertex.y,vertex.z,1.f);
+                require(c.w>0.f && c.z>0.f && contains(ndcMin,ndcMax,Vec3(c.x,c.y,c.z)/c.w),
+                        "the projected grass cull box must cover each vertex and its depth");
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  require(nearBoxes>0 && distantBoxes>0, "grass cull views must include boxes crossing and beyond the near plane");
+  }
 
 void drawOrder(bool disabled) {
   struct Cell final {
@@ -1127,6 +1245,7 @@ int main() {
     drawOrder(false);
     packSpans();
     packIndices();
+    grassCull();
     placementRepeats();
     placementGround();
     placementEdge();

@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include "graphics/grass/grassdiag.h"
+#include "graphics/grass/grasscull.h"
 #include "graphics/grass/grassgrounddiag.h"
 #include "graphics/grass/grassfield.h"
 #include "graphics/grass/grasswaste.h"
@@ -39,6 +40,12 @@ std::string grassFields(const GrassField* field) {
                ",\"shown\":"+std::to_string(w.bandShown[i])+",\"triangles\":"+sets(w.bandTriangles,i)+
                ",\"shown_triangles\":"+sets(w.bandShownTriangles,i)+"}";
     waste += "]}";
+    if(Grass::gpuCullEnabled()) {
+      const auto& c = st.cull;
+      waste += ",\"cull\":{\"candidates\":"+std::to_string(c.candidates)+",\"view\":"+std::to_string(c.view)+
+               ",\"growth\":"+std::to_string(c.growth)+",\"depth\":"+std::to_string(c.depth)+
+               ",\"surviving\":"+std::to_string(c.candidates-c.view-c.growth-c.depth)+"}";
+      }
     }
   return "\"field\":true,\"ready\":"+std::string(field->ready() ? "true" : "false")+
          ",\"cells\":"+std::to_string(st.cells)+",\"blades_stored\":"+std::to_string(st.stored)+

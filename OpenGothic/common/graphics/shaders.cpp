@@ -158,24 +158,8 @@ void Shaders::compileShaders() noexcept {
   impostorPipeline(false, false);
   if(historySupported)
     impostorPipeline(true, false);
-  if(opts.doMaterialMaps) {
-    // Grass (graphics/grass/grassfield.h): the main pass' depth test; a blade is seen from both sides
-    RenderState state;
-    state.setCullFaceMode (RenderState::CullMode::NoCull);
-    state.setZTestMode    (RenderState::ZTestMode::LEqual);
-    state.setZWriteEnabled(true);
-    auto sh = GothicShader::get("grass.vert.sprv");
-    auto vs = device.shader(sh.data,sh.len);
-    sh      = GothicShader::get("grass.frag.sprv");
-    auto fs = device.shader(sh.data,sh.len);
-    grass   = device.pipeline(Triangles,state,vs,fs);
-    if(historySupported) {
-      sh = GothicShader::get("grass_hist.frag.sprv");
-      fs = device.shader(sh.data, sh.len);
-      grassHistoryGBuffer = device.pipeline(Triangles, state, vs, fs);
-      }
-    grassContactMask = computeShader("grass_contact_mask.comp.sprv");
-    }
+  if(opts.doMaterialMaps)
+    compileGrassShaders(historySupported);
 
   directLight      = postEffect(string_frm("direct_light", materialMaps),    RenderState::ZTestMode::NoEqual);
   directLightSh    = postEffect(string_frm("direct_light_sh", materialMaps), RenderState::ZTestMode::NoEqual);

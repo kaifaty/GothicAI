@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 
+#include "graphics/grass/grasscull.h"
 #include "resources.h"
 
 using namespace Tempest;
@@ -13,7 +14,8 @@ const StorageBuffer* GrassField::uploadIndirect(const std::vector<Draw>& draws, 
     const char* env = std::getenv("OPENGOTHIC_GRASS_INDIRECT");
     return env!=nullptr && env[0]=='1' && env[1]=='\0';
     }();
-  if(!enabled)
+  const bool cull = Grass::gpuCullEnabled();
+  if(!enabled && !cull)
     return nullptr;
 
   std::vector<DrawIndexedIndirectCommand> records;
@@ -21,7 +23,7 @@ const StorageBuffer* GrassField::uploadIndirect(const std::vector<Draw>& draws, 
   for(const auto& draw:draws) {
     DrawIndexedIndirectCommand record;
     record.indexCount    = uint32_t(Grass::packIndexCount(draw.links, pack));
-    record.instanceCount = draw.instances;
+    record.instanceCount = cull ? 0u : draw.instances;
     record.firstIndex    = uint32_t(Grass::packIndexOffset(draw.links, pack));
     records.push_back(record);
     }

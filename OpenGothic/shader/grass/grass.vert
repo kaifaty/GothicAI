@@ -19,14 +19,19 @@ layout(binding = 1, std430) readonly buffer Blades { uvec4 blade[]; };
 layout(binding = 2) uniform sampler2D ground;
 // of a ground with its own layers the sward's map, by the world's x and z (grass_layers.glsl); else the same texture
 layout(binding = 3) uniform sampler2D sward;
+#if defined(GRASS_GPU_CULL)
+layout(binding = 4, std430) readonly buffer Compacted { uint compact[]; };
+layout(binding = 5, std430) readonly buffer Windows { uvec2 windows[]; };
+#else
 // the frame's table of the draws' spans
 layout(binding = 4, std430) readonly buffer Spans { uint span[]; };
+#endif
 
 layout(push_constant, std430) uniform Push {
   vec4  origin;       // cm: the corner of the cell less its margin, its lowest root in y
   float wind;         // the record's
   float translucency;
-  uint  table;        // of the draw's spans in `span`
+  uint  table;        // of the draw's spans, or the draw index with GRASS_GPU_CULL
   uint  segments;     // links of a blade in this cell: 4, 3, 2 or 1
   // The fine blades of the short sward (GrassField): x the width at the root, cm, y per step of the blade's bits;
   // z their own ring's full count to here, w into the ground from here to a quarter further. 0: a blade of the
@@ -115,6 +120,7 @@ vec3 bladePoint(Tilt tilt, int k, int n, float height) {
 
 #define GRASS_EAR_SHAPE 1
 #include "grass/grass_ear.glsl"
+#include "grass/grass_blade.glsl"
 
 void hideBlade() {
   gl_Position   = vec4(uintBitsToFloat(0x7fc00000));
@@ -127,10 +133,28 @@ void hideBlade() {
   }
 
 void main() {
-  // Each of the draw's 16 spans stores the exclusive instance end and the blade offset.
-  // Packed spans also store the exclusive blade end, so the last pack cannot read past it.
   const uint inst     = uint(gl_InstanceIndex);
   const bool isPacked = push.pack!=1u;
+  const int n = int(push.segments);
+  int vertex = gl_VertexIndex;
+  uint bladeIndex;
+#if defined(GRASS_GPU_CULL)
+  const uvec2 window = windows[push.table];
+  uint at = inst*push.pack;
+  if(isPacked) {
+    const int verts = 2*n+1;
+    const int copy  = vertex/verts;
+    vertex -= copy*verts;
+    at += uint(copy);
+    if(at>=window.y) {
+      hideBlade();
+      return;
+      }
+    }
+  bladeIndex = compact[window.x+at];
+#else
+  // Each of the draw's 16 spans stores the exclusive instance end and the blade offset.
+  // Packed spans also store the exclusive blade end, so the last pack cannot read past it.
   const uint stride   = isPacked ? 3u : 2u;
   uint       at       = push.table;
   if(inst>=span[at + stride*7u]) at += stride*8u;
@@ -138,10 +162,8 @@ void main() {
   if(inst>=span[at + stride])    at += stride*2u;
   if(inst>=span[at])             at += stride;
 
-  const int n = int(push.segments);
-  int vertex = gl_VertexIndex;
   const uint bladeOffset = span[at+1u];
-  uint bladeIndex = inst + bladeOffset;
+  bladeIndex = inst + bladeOffset;
   if(isPacked) {
     const int verts = 2*n+1;
     const int copy  = vertex/verts;
@@ -152,38 +174,33 @@ void main() {
       return;
       }
     }
+#endif
   const uvec4 b = blade[bladeIndex];
 
-  const vec3  root   = push.origin.xyz + vec3(float(b.x & 0x3FFFu), float((b.y & 0xFFFFu)*2u), float((b.x >> 14) & 0x3FFFu))*(1.0/16.0);
+  const vec3  root   = grassBladeRoot(b, push.origin.xyz);
   const float lean0  = radians(8.0 + float(b.x >> 28)*(40.0/15.0));
-  const float rank   = (float(b.y >> 24) + 0.5)/256.0;
+  const float rank   = grassBladeRank(b);
   const float facing = float(b.z & 0xFFu)*(6.2831853/256.0);
   const float tuft   = float((b.z >> 8) & 0xFFu)/256.0;
   const vec2  gxz    = vec2(float((b.z >> 16) & 0xFFu) - 128.0, float(b.z >> 24) - 128.0)/127.0;
   const vec3  gn     = vec3(gxz.x, sqrt(max(1.0 - dot(gxz,gxz), 0.04)), gxz.y);
   const vec2  uv     = vec2(float(b.w & 0xFFFu), float((b.w >> 12) & 0xFFFu))/4096.0;
   const float dry    = float(b.w >> 28)/15.0;
-  const bool  fine   = push.shape.x>0.0;
-  float       width  = fine ? push.shape.x + float((b.w >> 24) & 0xFu)*push.shape.y
-                            : GrassWidth   + float((b.w >> 24) & 0xFu)*GrassWidthStep;
   const bool  ear    = push.kind==GrassKindEar;
-  float       height = float((b.y >> 16) & 0xFFu)*(ear ? GrassEarHeightStep : 0.25);
 
-  // The ring: past `full` a share full/d of the blades is left, each d/full wider; a blade of a rank over the
-  // share has shrunk into the ground before it is dropped, so nothing pops while walking
-  const vec4  ring = fine ? vec4(push.shape.z, push.shape.w, push.shape.w*1.25, scene.grassRing.w) : scene.grassRing;
+  const vec4  ring = grassBladeRing(push.shape, scene.grassRing);
   const float d    = distance(root, scene.camPos);
-  const float grow = clamp((ring.x/max(d,1.0)*1.12 - rank)/0.12, 0.0, 1.0);
-  height *= grow*(1.0 - smoothstep(ring.y, ring.z, d));
+  const float height = grassBladeHeight(b, ear, rank, ring, d);
   const uint  partsOff = grassPartsOff(ring.w);
-  if(height<=0.05 || ring.w<0.75 || (partsOff & GrassPartHide)!=0u) {
+#if !defined(GRASS_GPU_CULL)
+  if(!grassBladeGrown(height, ring, partsOff)) {
     hideBlade();
     return;
     }
+#endif
   const float depth = (scene.viewProject*vec4(root,1.0)).w;
-  const float pixel = 2.0*max(depth,1.0)/(abs(scene.project[1][1])*float(scene.screenRes.y));
-  const float widen = clamp(d/ring.x, 1.0, 8.0), thin = 1.3*pixel;
-  width = max(width*widen, thin);
+  const float widen = grassBladeWiden(d, ring.x), thin = grassBladeThin(depth, scene.project[1][1], scene.screenRes.y);
+  const float width = max(grassBladeWidth(b, push.shape)*widen, thin);
 
   // the vertex: two at each link, one at the tip
   int   k    = min(vertex >> 1, n);
