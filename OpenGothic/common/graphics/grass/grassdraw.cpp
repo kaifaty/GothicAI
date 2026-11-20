@@ -47,7 +47,6 @@ void GrassField::prepare(uint8_t fId) {
   Stats st;
   st.pack = Grass::packSize();
   st.waiting = last.waiting;
-  st.cull = last.cull;
   // the count of the blades submitted for nothing walks every drawn blade: one frame of WasteEvery, kept between
   const bool waste = Grass::wasteOn() && (wasteFrame++ % WasteEvery)==0;
   if(!waste)
