@@ -15,8 +15,8 @@ without touching what it copies:
   `"two_sided": "same"`;
 - the meshes, `meshes/crop_field/`: a row of rye is three cards 10 cm apart, 1.5 m long, bent in four links, with
   five cards of ears laid over its top every way; a tuft is two crossed cards of a few stalks, for the reaped edge;
-  a row of stubble two cards; a sheaf is a body baked from a sheaf modelled straw by straw with a ring of cards
-  of ears (mesh3d/blender/sheaf_model.py, sheaf.md), a stook five or six of them leant together. The original's
+  a row of stubble two cards; a sheaf is one surface baked from a sheaf modelled straw by straw, ears and all
+  (mesh3d/blender/sheaf_model.py, sheaf.md), a stook five or six of them leant together. The original's
   sheaves on a field (NW_MISC_STRAW_02) give their places to our stooks; its bales stay;
 - the places, `worlds/<WORLD>/vobs.d/crop-field.json`: a field is cut across its long axis into three to five strips
   about 6.5 m wide (rye, stubble, rye, plough, stubble, the next field a strip on; or the mirror of it, whichever
@@ -91,9 +91,9 @@ SWATHS, SHEAVES = 350., 1000.   # cm behind the front: loose swaths to here, lyi
 CART = 'NW_CITY_CART_01.3DS'
 RAKE, SICKLE = 'ITMI_RAKE.3DS', 'ITMW_007_1H_SICKLE_01.3DS'
 STOOK_STEP = 700.           # cm between stooks along a stubble strip
-# # our own sheaf (sheaf.md): a body baked from a sheaf modelled straw by straw, a ring of cards of ears round its top
-SHEAF, SHEAF_WORK = 'OWN_CROP_SHEAF', HOME / 'crop-fields/work/sheaf-1'
-SHEAF_MEAN = (.36, .27, .12)    # linear, the body's mean: dry straw, a step paler than the standing rye
+# # our own sheaf (sheaf.md): one surface baked from a sheaf modelled straw by straw, ears and all
+SHEAF, SHEAF_WORK = 'OWN_CROP_SHEAF', HOME / 'crop-fields/work/sheaf-2'
+SHEAF_MEAN = (.36, .27, .12)    # linear, the sheaf's mean: dry straw, a step paler than the standing rye
 SHEAF_ORIGINAL = 'NW_MISC_STRAW_02.3DS'     # the original's sheaf: on a field ours stands in its place
 BALES = ('NW_MISC_STRAW_01.3DS', 'NW_MISC_STRAW_GROUP_01.3DS')    # the original's bale and stack of bales stay
 BALE_CLEAR = 250.           # cm: no sheaf of ours nearer to one of them
@@ -129,9 +129,9 @@ def render_sheaf(folder: Path, seed: int) -> None:
                     '--out', str(folder), '--seed', str(seed)], check=True)
 
 
-def sheaf(mesh, model, cells: dict, rng, foot, axis, turn: float) -> None:
+def sheaf(mesh, model, foot, axis, turn: float) -> None:
     """A sheaf of sheaf_model.py into the mesh: its foot's middle at `foot` (cm, the mesh's axes), its length along
-    the unit vector `axis`, turned about it by `turn` radians; the ears stand in a ring round the top."""
+    the unit vector `axis`, turned about it by `turn` radians."""
     foot, axis = np.asarray(foot, np.float64), np.asarray(axis, np.float64)
     b = np.cross(axis, (0., 0., 1.) if abs(axis[2]) < .9 else (1., 0., 0.))
     b /= np.linalg.norm(b)
@@ -141,20 +141,7 @@ def sheaf(mesh, model, cells: dict, rng, foot, axis, turn: float) -> None:
     position, normal = foot + model['position'] * 100 @ frame.T, model['normal'] @ frame.T
     for triangle in model['index']:
         mesh.triangle([(position[k], normal[k], model['uv'][k]) for k in triangle], normal[triangle].sum(axis=0))
-    top = float(model['position'][:, 2].max()) * 100
-    ring = [(2 * math.pi * (k + rng.uniform(-.3, .3)) / 9, 11., rng.uniform(18, 38)) for k in range(9)]
-    ring += [(rng.uniform(0, 2 * math.pi), 0., rng.uniform(-8, 8)) for _ in range(3)]      # and the middle of it
-    for number, (angle, reach, lean) in enumerate(ring):
-        cell = cells[('ears_a', 'ears_b')[number % 2]]
-        out = b * math.cos(angle) + c * math.sin(angle)
-        along = np.cross(axis, out) * cell['width_cm'] / 2
-        rise = (axis * math.cos(math.radians(lean)) + out * math.sin(math.radians(lean))) * cell['height_cm']
-        low = foot + axis * (top - 9.) + out * reach
-        lit = unit(out * .6 + axis * .8)
-        u0, u1 = cell['u'][::-1] if rng.random() < .5 else cell['u']
-        mesh.quad([(low - along, lit, (u0, cell['v_root'])), (low + along, lit, (u1, cell['v_root'])),
-                   (low + along + rise, lit, (u1, cell['v_tip'])), (low - along + rise, lit, (u0, cell['v_tip']))],
-                  out, both=True)
+    mesh.two_sided = True                               # the collars of ears are seen from inside as well
 
 
 def pack(sizes: dict, side: int) -> dict:
@@ -216,7 +203,7 @@ def tilted(mesh, cell: dict, x: float, y: float, z: float, yaw: float, tilt: flo
                (foot + rise * height - along * half, normal, (u0, cell['v_tip']), open)], out, both=True)
 
 
-def build_meshes(cards, cells: dict, weeds: dict, sheaf_model, sheaf_cells: dict, directory: Path, rng) -> dict:
+def build_meshes(cards, cells: dict, weeds: dict, sheaf_model, directory: Path, rng) -> dict:
     """name -> dict(glb, triangles, material)."""
     made = {}
 
@@ -260,11 +247,11 @@ def build_meshes(cards, cells: dict, weeds: dict, sheaf_model, sheaf_cells: dict
             angle = 2 * math.pi * (k + rng.uniform(-.2, .2)) / count
             out, reach = np.array((math.cos(angle), 0., math.sin(angle))), rng.uniform(42, 50)
             tilt = math.asin((reach - rng.uniform(10, 16)) / 110.)
-            sheaf(mesh, sheaf_model, sheaf_cells, rng, out * reach + (0., 5., 0.),
+            sheaf(mesh, sheaf_model, out * reach + (0., 5., 0.),
                   np.array((0., 1., 0.)) * math.cos(tilt) - out * math.sin(tilt), rng.uniform(0, 2 * math.pi))
         write(f'{SHEAF}_STOOK_{name}', mesh, SHEAF)
     mesh = cards.Mesh()                         # a sheaf lying where it was bound: along the mesh's X, on its two rims
-    sheaf(mesh, sheaf_model, sheaf_cells, rng, (-58., 24., 0.), unit((110., -5., 0.)), rng.uniform(0, 2 * math.pi))
+    sheaf(mesh, sheaf_model, (-69., 25., 0.), unit((138., 5., 0.)), rng.uniform(0, 2 * math.pi))
     write(f'{SHEAF}_LYING', mesh, SHEAF)
     for name, lay in (('A', (('rye_a', -6., 84.), ('rye_c', 9., 87.))), ('B', (('rye_b', 7., 86.), ('rye_a', -11., 82.),
                                                                               ('tuft_b', 30., 80.)))):
@@ -778,8 +765,7 @@ def main() -> int:
         render_sheaf(args.sheaf, args.seed)
     sheaf_model = {name: value.astype(np.float64) if name != 'index' else value
                    for name, value in np.load(args.sheaf / 'sheaf.npz').items()}
-    sheaf_cells = json.loads((args.sheaf / 'sheaf.json').read_text())['cells']
-    meshes = build_meshes(cards, cells, weed_cells, sheaf_model, sheaf_cells, work / 'meshes' / FOLDER, rng)
+    meshes = build_meshes(cards, cells, weed_cells, sheaf_model, work / 'meshes' / FOLDER, rng)
 
     small = ATLAS // 512
 
@@ -811,9 +797,8 @@ def main() -> int:
     directory = work / 'materials/crop_sheaf'
     directory.mkdir(parents=True)
     ao, cover = sheaf_model['ao'], sheaf_model['alpha']
-    body = cover > .999
     shaded = sheaf_model['colour'] * (.55 + .45 * ao[..., None])
-    shaded[body] *= np.array(SHEAF_MEAN) / shaded[body].mean(axis=0)
+    shaded *= np.array(SHEAF_MEAN) / shaded[cover > .5].mean(axis=0)     # one gain: straws and ears keep their ratio
     cards.write_cutout(dds, pilot.encode, directory / 'albedo.dds', np.clip(shaded, 0, 1), cover)
     relief = sheaf_model['tangent_normal'] * 2 - 1
     dds.write_dds(directory / 'normal.dds', (relief * (1., -1., 1.)).astype(np.float32), normal=True)   # Blender's green is up

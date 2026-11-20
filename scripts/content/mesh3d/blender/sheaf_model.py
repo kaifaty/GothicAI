@@ -3,14 +3,15 @@
     blender -b -P sheaf_model.py -- --out work/sheaf [--size 1024] [--seed 7]
 
 reports/content/2026-11-19-crop-fields/sheaf.md. The sheaf is modelled as it is bound: some 900 straws from the
-splayed butts through the waist under a band of twisted straw to the flared top, over a dark core. The game's mesh
-is a lathe round that body with a cap at each end; colour, relief and the shade between the straws are baked on it
-from the straws. The ears are no part of the body: two cards of the straws' tops with necks and ears
-(crop_cards.ears) are baked beside it, the builder stands them in a ring round the top.
+splayed butts through the waist under a band of twisted straw to the flared top, each ending in its neck and its
+ear, over a dark core. The game's mesh is one surface round that model: a lathe with a cap at each end up to where
+the straws part, and the same lathe going on as an open collar through the ears, with a second collar inside it.
+Colour, relief and the shade between the straws are baked on it from the straws; over the collars the bake's
+coverage is the cut-out. So the ears stand on the straws the body shows, in one texture (the user, 2026-11-20:
+a ring of separate cards of ears read as another thing stuck on the body).
 
 Writes `sheaf.npz`: `position`, `normal` (metres, Z up, the sheaf's foot at 0), `uv` (the image's, v down),
-`index` of the body; `colour` (linear), `alpha`, `tangent_normal` (0..1), `ao`, top row first; and `sheaf.json`:
-the profile and the cells of the two cards.
+`index`; `colour` (linear), `alpha`, `tangent_normal` (0..1), `ao`, top row first; and `sheaf.json`.
 """
 import argparse
 import json
@@ -24,18 +25,21 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent))
 import crop_cards as cc  # noqa: E402
 
-# height in metres, radius: the butts splay on the ground, the band sits at the waist
-PROFILE = ((0., .245), (.12, .215), (.4, .15), (.64, .098), (.72, .086), (.8, .098), (.98, .15), (1.1, .185))
+# height in metres, radius: the butts splay on the ground, the band sits at the waist; from BODY_TOP the surface
+# is a collar through the ears
+PROFILE = ((0., .245), (.12, .215), (.4, .15), (.64, .098), (.72, .086), (.8, .098), (.95, .14), (1.04, .165),
+           (1.12, .205), (1.21, .25), (1.3, .285), (1.38, .3))
+BODY_TOP = 1.04
+INNER = ((1.04, .07), (1.14, .1), (1.24, .135), (1.33, .15))     # the collar inside: the ears of the middle
+INNER_SIDES = 8
 BAND = .72
 SIDES = 14
 STRAWS = 900
 STUBS = 420                 # short ends that fill the butt and the top between the straws: what the caps show
 STRAW_RADIUS = .0026
-BODY = (0., .75)            # the body's share of the atlas along u
+BODY = (0., .75)            # the surface's share of the atlas along u
 CAPS = ((.875, .875), (.875, .625), .115)     # centres of the butt's and the top's discs, their radius, Blender's uv
-CARD = .42                  # m: a card of ears is square
-CARD_CELLS = ((.775, .26), (.775, .01), .22)  # the low corners of the two cards and their side, Blender's uv:
-                                              # clear of the body and of the atlas' edge, whose texels the mips mix in
+INNER_CELL = ((.775, .01), (.22, .46))        # the inner collar's low corner and size, Blender's uv
 EAR_TONE = cc.linear('#9a7a45')               # the ear of a stalk on the field (crop_field_life.STAND_MEAN's note)
 DARK = cc.linear('#3a2f1c')
 
@@ -46,18 +50,18 @@ def radius(z):
 
 
 def tube(points, colours, faces, line, thick, colour, sides=5, capped=True):
-    """A tube along `line` (n, 3) with a colour per ring."""
+    """A tube along `line` (n, 3) with a colour per ring; thick: its radius, one or per ring."""
     line = np.asarray(line, np.float64)
     along = np.gradient(line, axis=0)
     along /= np.linalg.norm(along, axis=1, keepdims=True)
     first = len(points)
-    for at, way, tone in zip(line, along, colour):
+    for at, way, tone, wide in zip(line, along, colour, np.broadcast_to(thick, len(line))):
         a = np.cross(way, (.3, .5, .81))
         a /= np.linalg.norm(a)
         b = np.cross(way, a)
         for k in range(sides):
             angle = 2 * math.pi * k / sides
-            points.append(tuple(at + (a * math.cos(angle) + b * math.sin(angle)) * thick))
+            points.append(tuple(at + (a * math.cos(angle) + b * math.sin(angle)) * wide))
             colours.append((*tone, 1.))
     for ring in range(len(line) - 1):
         for k in range(sides):
@@ -70,10 +74,10 @@ def tube(points, colours, faces, line, thick, colour, sides=5, capped=True):
 
 def straws(rng):
     points, colours, faces = [], [], []
-    top = PROFILE[-1][0]
+    top = BODY_TOP
     for _ in range(STRAWS):
         share, angle = rng.random() ** .3, rng.uniform(0, 2 * math.pi)     # most of them near the outside
-        end = top + rng.uniform(-.03, .035)
+        end = top + rng.uniform(-.06, .15)        # a ragged head: the straws are of many lengths
         heights = np.array((rng.uniform(0, .035) * share, .12, .4, .64, BAND, .8, .98, end))
         twist = angle + rng.normal(0, .05) + (heights - BAND) * rng.normal(0, .5)
         reach = radius(heights) * share * (1 + rng.normal(0, .025, len(heights)))
@@ -84,6 +88,32 @@ def straws(rng):
         colour = (cc.STEM_LOW * (1 - rise) + cc.STEM_HIGH * rise) * tone * 1.25
         colour[0] *= 1.25                                                  # the cut end is paler
         tube(points, colours, faces, line, STRAW_RADIUS * rng.uniform(.8, 1.2), colour)
+        # its neck goes over, outwards for the outer straws, and the ear hangs from it
+        way = line[-1] - line[-2]
+        way /= np.linalg.norm(way)
+        turn = twist[-1] + rng.normal(0, .5 + 2.5 * (1 - share))
+        aim = np.array((math.cos(turn), math.sin(turn), rng.uniform(-.5, .3)))
+        aim /= np.linalg.norm(aim)
+        nod, at, head = rng.uniform(.25, .85) * (.5 + .5 * share), line[-1].copy(), [line[-1].copy()]
+        for k in range(1, 15):
+            bend = nod * min(k / 6, 1.) + (.12 * (k - 6) / 8 if k > 6 else 0.)
+            ahead = way * (1 - bend) + aim * bend
+            at = at + ahead / np.linalg.norm(ahead) * (rng.uniform(.07, .1) / 6 if k <= 6 else rng.uniform(.095, .125) / 8)
+            head.append(at.copy())
+        head = np.array(head)
+        ear = (cc.STEM_HIGH + EAR_TONE) / 2 * tone * 1.6
+        tube(points, colours, faces, head[:7], STRAW_RADIUS * .8, np.tile(cc.STEM_HIGH * tone * 1.25, (7, 1)), capped=False)
+        grain = np.where(np.arange(9) % 2 == 0, 1., .8)[:, None]
+        tube(points, colours, faces, head[6:], np.array((.0025, .0048, .0058, .006, .006, .0056, .005, .004, .002)),
+             ear * grain, sides=4)
+        for k in range(7, 14):
+            along = head[k + 1] - head[k]
+            along /= np.linalg.norm(along)
+            for _ in range(2):
+                out = np.cross(along, rng.normal(0, 1, 3))
+                tip = head[k] + (along + out / np.linalg.norm(out) * rng.uniform(.3, .5)) * rng.uniform(.04, .075)
+                tube(points, colours, faces, (head[k], tip), np.array((.0011, .0006)), np.tile(ear * 1.08, (2, 1)),
+                     sides=3, capped=False)
     for _ in range(STUBS):
         share, angle = math.sqrt(rng.random()) * .88, rng.uniform(0, 2 * math.pi)
         for low, high in ((rng.uniform(0, .03), .09), (top - .09, top - rng.uniform(.005, .05))):
@@ -102,12 +132,12 @@ def straws(rng):
             tube(points, colours, faces, line + shift, .006, np.tile(cc.BAND * (1. - .12 * strand), (len(line), 1)),
                  capped=False)
     # the dark between the straws
-    rings = [(z, radius(z) * .8) for z, _ in PROFILE]
+    rings = [(z, radius(z) * .8) for z, _ in PROFILE if z <= BODY_TOP]
     first = len(points)
     for z, reach in rings:
         for k in range(24):
             points.append((math.cos(2 * math.pi * k / 24) * reach, math.sin(2 * math.pi * k / 24) * reach,
-                           float(np.clip(z, .07, top - .08))))     # behind the stubs of both ends
+                           float(np.clip(z, .05, top - .05))))     # behind the stubs of both ends
             colours.append((*DARK, 1.))
     for ring in range(len(rings) - 1):
         for k in range(24):
@@ -121,22 +151,28 @@ def straws(rng):
 def body():
     """The game's mesh: position, normal, uv (Blender's), triangles."""
     position, normal, uv, index = [], [], [], []
-    profile = np.asarray(PROFILE)
-    slope = np.gradient(profile[:, 1], profile[:, 0])
-    top = profile[-1, 0]
-    for (z, reach), lean in zip(profile, slope):
-        for k in range(SIDES + 1):
-            angle = 2 * math.pi * k / SIDES
-            out = np.array((math.cos(angle), math.sin(angle), -lean))
-            position.append((math.cos(angle) * reach, math.sin(angle) * reach, z))
-            normal.append(tuple(out / np.linalg.norm(out)))
-            uv.append((BODY[0] + (BODY[1] - BODY[0]) * k / SIDES, z / top))
-    for ring in range(len(profile) - 1):
-        for k in range(SIDES):
-            a, b = ring * (SIDES + 1) + k, ring * (SIDES + 1) + k + 1
-            index += [(a, b, b + SIDES + 1), (a, b + SIDES + 1, a + SIDES + 1)]
-    for (z, reach), centre, up in ((profile[0], CAPS[0], -1.), (profile[-1], CAPS[1], 1.)):
-        first = len(position)
+    top = PROFILE[-1][0]
+
+    def lathe(rings, sides, corner, size):
+        rings = np.asarray(rings)
+        first, slope = len(position), np.gradient(rings[:, 1], rings[:, 0])
+        for (z, reach), lean in zip(rings, slope):
+            for k in range(sides + 1):
+                angle = 2 * math.pi * k / sides
+                out = np.array((math.cos(angle), math.sin(angle), -lean))
+                position.append((math.cos(angle) * reach, math.sin(angle) * reach, z))
+                normal.append(tuple(out / np.linalg.norm(out)))
+                uv.append((corner[0] + size[0] * k / sides,
+                           corner[1] + size[1] * (z - rings[0, 0]) / (rings[-1, 0] - rings[0, 0])))
+        for ring in range(len(rings) - 1):
+            for k in range(sides):
+                a, b = first + ring * (sides + 1) + k, first + ring * (sides + 1) + k + 1
+                index.extend([(a, b, b + sides + 1), (a, b + sides + 1, a + sides + 1)])
+
+    lathe(PROFILE, SIDES, (BODY[0], 0.), (BODY[1] - BODY[0], 1.))
+    lathe(INNER, INNER_SIDES, *INNER_CELL)
+    for z, centre, up in ((0., CAPS[0], -1.), (BODY_TOP, CAPS[1], 1.)):
+        first, reach = len(position), float(radius(z))
         position.append((0., 0., z))
         normal.append((0., 0., up))
         uv.append(centre)
@@ -199,24 +235,8 @@ def main():
     high = [placed('straws', points, faces, colours)]
     for polygon in high[0].data.polygons:
         polygon.use_smooth = True
-    cells = {}
     position, normal, uv, index = body()
     low_points, low_faces, low_uv = [tuple(p) for p in position], [tuple(t) for t in index], [tuple(t) for t in uv]
-    for number, (name, corner) in enumerate(zip(('ears_a', 'ears_b'), CARD_CELLS[:2])):
-        sheet = cc.Sheet()
-        cc.ears(sheet, rng, CARD, CARD, 13 + number * 3)
-        ears = bpy.data.objects.new(name, sheet.mesh(name))
-        scene.collection.objects.link(ears)
-        ears.location = (3. + number, 0., -1.2)
-        high.append(ears)
-        # the card the ears are baked on: in front of them, facing the way crop_cards' camera looks from
-        first, side = len(low_points), CARD_CELLS[2]
-        for dx, dz in ((-.5, 0.), (.5, 0.), (.5, 1.), (-.5, 1.)):
-            low_points.append((3. + number + dx * CARD, -.07, dz * CARD - cc.MARGIN))
-            low_uv.append((corner[0] + (dx + .5) * side, corner[1] + dz * side))
-        low_faces += [(first, first + 1, first + 2), (first, first + 2, first + 3)]
-        cells[name] = dict(u=(corner[0], corner[0] + side), v_root=1 - corner[1], v_tip=1 - corner[1] - side,
-                           width_cm=CARD * 100, height_cm=CARD * 100)
     low = placed('low', low_points, low_faces, uv=low_uv)
     for polygon in low.data.polygons:
         polygon.use_smooth = True
@@ -234,7 +254,7 @@ def main():
     bake = scene.render.bake
     bake.use_selected_to_active = True
     bake.cage_extrusion = .035
-    bake.max_ray_distance = .16
+    bake.max_ray_distance = .09      # a collar takes the ears of its own depth: the head stays loose
     bake.margin = 8
     bake.normal_space = 'TANGENT'
     bpy.ops.object.select_all(action='DESELECT')
@@ -259,28 +279,31 @@ def main():
         return pixels.reshape(args.size, args.size, 4)[::-1, :, :3]
 
     colour = baked('colour', 4, coloured)
-    bake.margin = 0             # the margin would grow the ears of the cards
+    bake.margin = 0             # the margin would grow the ears
     alpha = baked('cover', 4, white)[..., 0]
     bake.margin = 8
     tangent = baked('NORMAL', 4)
     ao = baked('AO', 96)[..., 0]
 
-    # the cards: no relief, the ears in the tone the field's stalks end in; the body: opaque
-    rows = np.arange(args.size)[:, None] / args.size
-    columns = np.arange(args.size)[None, :] / args.size
-    card = (columns >= BODY[1] + .005) & (rows >= 1 - CARD_CELLS[0][1] - CARD_CELLS[2] - .01)
-    light = colour @ np.array((.2126, .7152, .0722))
-    toned = light[..., None] * EAR_TONE / (EAR_TONE @ np.array((.2126, .7152, .0722)))
-    colour = np.where(card[..., None], colour * .35 + toned * .65, colour)
-    alpha = np.where(card, alpha, 1.)
-    tangent = np.where(card[..., None], np.array((.5, .5, 1.)), tangent)
-    ao = np.where(card, 1., ao)
+    # the surface is opaque up to where the straws part, and on its caps; over the collars the bake's cover cuts it
+    rows = 1 - (np.arange(args.size)[:, None] + .5) / args.size        # Blender's v of a row
+    columns = (np.arange(args.size)[None, :] + .5) / args.size
+    solid = ((columns < BODY[1]) & (rows < BODY_TOP / PROFILE[-1][0])) | ((columns > BODY[1] + .005) & (rows > .5))
+    alpha = np.where(solid, 1., alpha)
+    # the head is open to the sky: the ears shade each other less than the bake of so dense a model says, and
+    # their relief is too fine for the light to follow
+    # (rising over the last of the body, so no line shows where the surface opens)
+    top = PROFILE[-1][0]
+    head = np.clip((rows - (BODY_TOP - .14) / top) / (.18 / top), 0, 1) * np.ones_like(columns)
+    head = np.where(columns < BODY[1], head * head * (3 - 2 * head), np.where(solid, 0., 1.))
+    ao = ao + (1 - ao) * .45 * head
+    tangent = tangent + (np.array((.5, .5, 1.)) - tangent) * .6 * head[..., None]
 
     np.savez(out / 'sheaf.npz', position=position, normal=normal, uv=np.stack([uv[:, 0], 1 - uv[:, 1]], axis=1),
              index=index, colour=colour.astype(np.float16), alpha=alpha.astype(np.float16),
              tangent_normal=tangent.astype(np.float16), ao=ao.astype(np.float16))
     (out / 'sheaf.json').write_text(json.dumps(dict(size=args.size, seed=args.seed, profile=PROFILE, band_m=BAND,
-                                                    straws=STRAWS + 2 * STUBS, triangles=len(index), cells=cells), indent=2) + '\n')
+                                                    straws=STRAWS + 2 * STUBS, triangles=len(index), body_top_m=BODY_TOP), indent=2) + '\n')
     preview = bpy.data.images.new('preview', args.size, args.size, alpha=True)
     lit = np.clip(colour * (.45 + .55 * ao[..., None]), 0, 1) ** (1 / 2.2)
     preview.pixels.foreach_set(np.concatenate([lit, alpha[..., None]], axis=2)[::-1].astype(np.float32).ravel())
