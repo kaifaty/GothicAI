@@ -96,8 +96,10 @@ def comparison(directory, noise_pct=NOISE_PCT, threshold_pct=THRESHOLD_PCT):
     places = {}
     drawables = set()
     for side, report in sides.items():
-        if report["warnings"]:
-            raise ValueError("; ".join(report["warnings"]))
+        # A gap in the GPU clock journal is reported, never a reason to drop the measurement.
+        issues = [warning for warning in report["warnings"] if not warning.startswith(perf_report.GPU_GAP)]
+        if issues:
+            raise ValueError("; ".join(issues))
         if set(report["places"]) != set(metadata["places"]):
             raise ValueError(f"{side}: incomplete places")
         for source in report["sources"]:

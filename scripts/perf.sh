@@ -373,18 +373,23 @@ out = Path(leaf)
 setting, limit = os.environ['PERF_WARMUP'], int(os.environ['PERF_WARMUP_MAX'])
 result = dict(mode=setting, reason=None, seconds=0.0, runs=0, temp_start_c=None, temp_end_c=None,
               sm_start_mhz=None, sm_end_mhz=None, last_game_age_s=None)
-age = time.time() - stamp.stat().st_mtime if stamp.exists() else None
-if extra != '1':
-    result['reason'] = 'no-gpu-log'
-elif setting == '0':
+# The stamp's age when the run phase began, before the journal's own start-up.
+age = int(os.environ['PERF_RUN_STARTED_AT']) - stamp.stat().st_mtime if stamp.exists() else None
+journal = out / 'gpu.csv' if extra == '1' else None
+if setting == '0':
     result['reason'] = 'off'
+elif setting == 'auto' and journal is None:
+    result['reason'] = 'no-gpu-log'
 elif setting == 'auto' and age is not None and age < 120:
     result.update(reason='skipped-recent-game', last_game_age_s=round(age, 1))
     print(f'perf: GPU warm: last stand game ended {age:.0f} s ago, no warm-up', flush=True)
 else:
-    sys.path.insert(0, str(scripts))
-    import perf_gpu_log as gpu
-    journal = out / 'gpu.csv'
+    if journal is not None:
+        sys.path.insert(0, str(scripts))
+        import perf_gpu_log as gpu
+        # Only the stand's own tests shorten these; Ryzen runs keep perf_gpu_log's defaults.
+        warm = dict(min_s=int(os.environ.get('PERF_WARMUP_MIN', gpu.WARM_MIN_S)),
+                    window_s=int(os.environ.get('PERF_WARMUP_WINDOW', gpu.WARM_WINDOW_S)))
     fixed = None if setting == 'auto' else int(setting)
 
     def done():
@@ -393,7 +398,7 @@ else:
         if fixed is not None:
             result['reason'] = 'fixed' if now - started >= fixed * 1e9 else None
         else:
-            result['reason'] = gpu.warm_reason(gpu.read_log(journal), started, now, limit)
+            result['reason'] = gpu.warm_reason(gpu.read_log(journal), started, now, limit, **warm)
         return result['reason'] is not None
 
     print(f'perf: GPU warm-up ({setting}) on {place}', flush=True)
@@ -413,7 +418,7 @@ else:
     ended = time.monotonic_ns()
     started = launched[0] if launched else ended
     result['seconds'] = round((ended - started) / 1e9, 1)
-    rows = [row for row in gpu.read_log(journal) if started <= row['mono_ns'] <= ended]
+    rows = [] if journal is None else [row for row in gpu.read_log(journal) if started <= row['mono_ns'] <= ended]
     if rows:
         result.update(temp_start_c=rows[0]['temp_c'], temp_end_c=rows[-1]['temp_c'],
                       sm_start_mhz=rows[0]['sm_mhz'], sm_end_mhz=rows[-1]['sm_mhz'])
@@ -424,45 +429,62 @@ else:
 PY
 }
 
+# Stamp age counts from entering the run phase, before the journal starts.
+export PERF_RUN_STARTED_AT="$(date +%s)"
 # The GPU clock journal runs over the whole run phase where nvidia-smi works (Ryzen); Mac has none.
-GPU_LOG=0 GPU_LOG_PID=''
-if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then GPU_LOG=1; fi
+# It never stops a measurement: without samples the run goes on as without a journal.
+GPU_SMI=0 GPU_LOG=0 GPU_LOG_PID=''
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then GPU_SMI=1; fi
+gpu_samples() { [[ -f "$OUT/gpu.csv" ]] && (( $(wc -l <"$OUT/gpu.csv") >= 2 )); }
 stop_gpu_log() {
   [[ -n "$GPU_LOG_PID" ]] || return 0
-  kill -TERM "$GPU_LOG_PID" 2>/dev/null || true
-  wait "$GPU_LOG_PID" 2>/dev/null || true
+  local alive=0 code=0
+  if kill -0 "$GPU_LOG_PID" 2>/dev/null; then alive=1; kill -TERM "$GPU_LOG_PID" 2>/dev/null || true; fi
+  wait "$GPU_LOG_PID" 2>/dev/null || code=$?
   GPU_LOG_PID=''
+  [[ "$alive" == 1 && "$code" == 0 ]] || echo "perf: warning: GPU clock journal stopped early (exit $code)" >&2
 }
-if [[ "$GPU_LOG" == 1 ]]; then
-  [[ -r "$ROOT/scripts/perf_gpu_log.py" ]] || fail "missing $ROOT/scripts/perf_gpu_log.py; upload it with the other stand scripts"
+if [[ "$GPU_SMI" == 1 && ! -r "$ROOT/scripts/perf_gpu_log.py" ]]; then
+  echo "perf: warning: missing $ROOT/scripts/perf_gpu_log.py; no journal" >&2
+elif [[ "$GPU_SMI" == 1 ]]; then
   trap stop_gpu_log EXIT
   trap 'exit 143' TERM
   python3 "$ROOT/scripts/perf_gpu_log.py" "$OUT/gpu.csv" &
   GPU_LOG_PID=$!
-  # nvidia-smi -L can work while the query fails: without samples there is no journal to warm up by.
   for ((tries = 0; tries < 50; tries++)); do
-    (( $(wc -l <"$OUT/gpu.csv" 2>/dev/null || echo 0) < 2 )) || break
+    ! gpu_samples || break
     kill -0 "$GPU_LOG_PID" 2>/dev/null || break
     sleep 0.1
   done
-  (( $(wc -l <"$OUT/gpu.csv" 2>/dev/null || echo 0) >= 2 )) || fail "nvidia-smi gave no GPU clock sample in 5 s; see $OUT/gpu.csv"
+  if gpu_samples; then
+    GPU_LOG=1
+  else
+    kill -TERM "$GPU_LOG_PID" 2>/dev/null || true
+    wait "$GPU_LOG_PID" 2>/dev/null || true
+    GPU_LOG_PID=''
+    rm -f "$OUT/gpu.csv"
+    echo 'perf: warning: no GPU clock sample in 5 s; no journal' >&2
+  fi
 fi
-[[ -n "$PERF_WARMUP" ]] || PERF_WARMUP=$([[ "$GPU_LOG" == 1 ]] && echo auto || echo 0)
+[[ -n "$PERF_WARMUP" ]] || PERF_WARMUP=$([[ "$GPU_SMI" == 1 ]] && echo auto || echo 0)
 export PERF_WARMUP PERF_WARMUP_MAX
-if [[ "$GPU_LOG" == 1 || "$PERF_WARMUP" != 0 ]]; then
+wait_mac_game() {
+  [[ "$(uname -s)" == Darwin ]] || return 0
+  local started=$SECONDS
+  while pgrep -x Gothic2Notr >/dev/null; do
+    (( SECONDS - started < PERF_WAIT )) || fail "another Gothic2Notr is still running after ${PERF_WAIT}s; close it and rerun"
+    if (( SECONDS == started )); then echo 'perf: waiting for the other Mac game to close'; fi
+    sleep 1
+  done
+}
+if [[ "$PERF_WARMUP" != 0 || "$GPU_LOG" == 1 ]]; then
+  wait_mac_game
   run_game warmup "$ROOT/scripts/bench/perf-${PLACES[0]}.bench" "$OUT" "${PLACES[0]}" "$GPU_LOG"
 fi
 
 for place in "${PLACES[@]}"; do
   for ((repeat=1; repeat<=PERF_REPEAT; repeat++)); do
-    if [[ "$(uname -s)" == Darwin ]]; then
-      started=$SECONDS
-      while pgrep -x Gothic2Notr >/dev/null; do
-        (( SECONDS - started < PERF_WAIT )) || fail "another Gothic2Notr is still running after ${PERF_WAIT}s; close it and rerun"
-        if (( SECONDS == started )); then echo 'perf: waiting for the other Mac game to close'; fi
-        sleep 1
-      done
-    fi
+    wait_mac_game
     LEAF="$OUT/$place/repeat-$repeat"
     mkdir -p "$LEAF/run"
     echo "perf: $place, repeat $repeat/$PERF_REPEAT"

@@ -51,18 +51,18 @@ def read_log(path):
     return rows
 
 
-def warm_reason(rows, started_ns, now_ns, limit_s):
+def warm_reason(rows, started_ns, now_ns, limit_s, min_s=WARM_MIN_S, window_s=WARM_WINDOW_S):
     """'stable' when the card is warm, 'max' at the warm-up ceiling, else None.
 
-    Warm: at least WARM_MIN_S since the first warm-up launch and, over the journal's last
-    WARM_WINDOW_S, max - min temperature within WARM_SPREAD_C.
+    Warm: at least min_s since the first warm-up launch and, over the journal's last
+    window_s, max - min temperature within WARM_SPREAD_C.
     """
     elapsed = (now_ns - started_ns) / 1e9
-    if elapsed >= WARM_MIN_S:
-        window = [row for row in rows if now_ns - WARM_WINDOW_S * 1e9 <= row["mono_ns"] <= now_ns
+    if elapsed >= min_s:
+        window = [row for row in rows if now_ns - window_s * 1e9 <= row["mono_ns"] <= now_ns
                   and row["temp_c"] is not None]
         # The window must really span the minute, not a few samples after a gap.
-        if (len(window) >= 2 and (window[-1]["mono_ns"] - window[0]["mono_ns"]) / 1e9 >= WARM_WINDOW_S - 2
+        if (len(window) >= 2 and (window[-1]["mono_ns"] - window[0]["mono_ns"]) / 1e9 >= window_s - 2
                 and max(row["temp_c"] for row in window) - min(row["temp_c"] for row in window) <= WARM_SPREAD_C):
             return "stable"
     return "max" if elapsed >= limit_s else None
