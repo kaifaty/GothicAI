@@ -23,7 +23,7 @@ HEIGHTS = (800, 400, 300, 200, 150, 100, 70, 50)
 LEVEL_HEIGHTS = (400, 200, 100, 50)
 EYE_FACTORS = (4, 8, 16)
 # Merge moments of the parents of original cards, log-uniform in whole-tree pixels.
-# The geometric mean, 200 px, stays at the median of the accepted ×4 hang and end bands.
+# Their geometric mean, 200 px, stays near the 210 px of the accepted ×4 parents of cards.
 STAGGER_PX = (800., 50.)
 STAGGER_GAP = 2.  # octaves below the latest moment an older node may wait
 # Spruce A's impostor (49 px) takes over completely below 46 px and starts below 56 px.
@@ -92,6 +92,14 @@ def stable_unit(ident):
     return (z ^ z >> 31) / 2 ** 64
 
 
+def node_levels(nodes):
+    """Height of each node above the original cards, which are level 0."""
+    level = {}
+    for node in nodes:
+        level[node.id] = 1 + max(level[child] for child in node.children) if node.children else 0
+    return level
+
+
 def stagger(nodes, height_m, ratio):
     """Spread the merge moments of the enabled bands over the whole flight in whole-tree pixels.
 
@@ -102,9 +110,7 @@ def stagger(nodes, height_m, ratio):
     in node-local pixels, which is the loader's rule for an ancestor chain.
     """
     band = (ratio - 1) / (ratio + 1)
-    level, ready = {}, {}
-    for node in nodes:
-        level[node.id] = 1 + max(level[child] for child in node.children) if node.children else 0
+    level, ready = node_levels(nodes), {}
     order = defaultdict(list)
     for node in nodes:
         if node.children and node.high_px:
@@ -326,9 +332,8 @@ def eye_levels(args, output):
 
 def level_spread(nodes, height_m):
     """Merge moments in whole-tree pixels per level, counted up from the original cards."""
-    level, moments = {}, defaultdict(list)
+    level, moments = node_levels(nodes), defaultdict(list)
     for node in nodes:
-        level[node.id] = 1 + max(level[child] for child in node.children) if node.children else 0
         if node.children and node.high_px:
             moments[level[node.id]].append(node.threshold_px * height_m / node.diameter)
     spread = {}

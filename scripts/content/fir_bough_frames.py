@@ -16,8 +16,8 @@ import argparse
 import csv
 import json
 import math
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 from fir_eye_frames import FOV_DEGREES, camera_path, tree_bounds
 
