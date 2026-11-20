@@ -225,9 +225,25 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path, monkeyp
 
     # The staggered law keeps each band under the bands below it and spreads the parents of cards evenly.
     monkeypatch.setattr(tree_hierarchy_probe, 'STAGGER_PX', (800., 100.))
-    for ratio in (11 / 9, 1.5):
+    levels = tree_hierarchy_probe.node_levels(nodes)
+
+    def older_low_px(spread):
+        return [node.low_px / node.diameter for node in spread if node.children and levels[node.id] > 1]
+
+    for ratio, px, gap in ((11 / 9, None, None), (1.5, None, None), (11 / 9, (800., 600.), 0.)):
         spread, spread_roots, _, _ = tree_hierarchy_probe.read_eye_hierarchy(tmp_path, source, parts[1])
-        tree_hierarchy_probe.stagger(spread, 1., ratio)
+        tree_hierarchy_probe.stagger(spread, 1., ratio, px, gap)
+        if px:
+            # Older levels end their merges in whole-tree pixels above an 80 px impostor; the default law leaves
+            # most of them below it.
+            assert np.mean(np.array(older_low_px(spread)) > 80) == 1
+            assert np.mean(np.array(older_low_px(default)) > 80) < .5
+        elif ratio < 1.3:
+            default = spread
+            # Without the new parameters the moments are those of the accepted law.
+            assert [node.threshold_px for node in spread if node.children] == pytest.approx(
+                [70.77026266230362, 162.58736860579253, 28.951471089124205, 107.26766425753912,
+                 246.43635724824597, 373.5276692716413, 11.84378362736899], rel=1e-15)
 
         def chain(ident, upper):
             node = spread[ident - 1]
@@ -241,9 +257,13 @@ def test_hierarchy_leaf_cut_and_export_keep_the_original_cards(tmp_path, monkeyp
             chain(root, 0.)
         cards = [node.threshold_px / node.diameter for node in spread
                  if node.children and not any(spread[i - 1].children for i in node.children)]
-        octaves = np.log2(800 / np.array(cards))
-        assert np.all((octaves > 0) & (octaves < 3))
-        assert max(np.count_nonzero((octaves >= i) & (octaves < i + 1)) for i in range(3)) <= math.ceil(len(cards) / 3)
+        top, bottom = px or (800., 100.)
+        octaves = np.log2(top / np.array(cards))
+        span = math.log2(top / bottom)
+        assert np.all((octaves > 0) & (octaves < span))
+        if not px:
+            assert max(np.count_nonzero((octaves >= i) & (octaves < i + 1))
+                       for i in range(3)) <= math.ceil(len(cards) / 3)
         centres = sorted({0., *(node.threshold_px / node.diameter for node in spread if node.children), 1e6})
         for below, above in zip(centres, centres[1:]):
             for screen_height in (below, (below + above) / 2):

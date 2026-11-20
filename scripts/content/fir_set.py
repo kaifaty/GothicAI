@@ -61,7 +61,8 @@ to the instance matrices in the content's world override, since the additive lay
 `bough --k 4` stages a progressive hierarchy and a control in the first two places of the same row.
 `bough --k 4 8 16` stages the three hierarchies left to right. `bough --labels X4 S122 S150` stages any printed
 hierarchies left to right by the labels of their files (`tree_hierarchy_probe.py --bough --k` or `--stagger`).
-All use the same spruce A, mesh levels and impostor.
+All use the same spruce A, mesh levels and impostor. `--impostor-px` gives each hierarchy its own impostor
+threshold; the levels in front of it move as tree_hierarchy_probe.level_heights() places them.
 """
 from __future__ import annotations
 
@@ -472,8 +473,8 @@ def bough(args) -> int:
         layer = f'fir-bough-x{args.k[0]}' if len(args.k) == 1 else 'fir-bough-relax'
     else:
         raise ValueError('Supply a single factor or 4, 8 and 16 in order')
-    if len(labels) != len(args.hierarchy):
-        raise ValueError('Supply one hierarchy per factor or label')
+    if len(labels) != len(args.hierarchy) or args.impostor_px and len(args.impostor_px) != len(labels):
+        raise ValueError('Supply one hierarchy and at most one impostor threshold per factor or label')
     config = json.loads(args.config.read_text())
     base_visual = f'{VISUAL}_4'
     control_root = args.control.resolve()
@@ -493,9 +494,17 @@ def bough(args) -> int:
 
     entry = dict(control, levels=[*levels, impostor])
     entries = {f'{VISUAL}_BOUGH_CONTROL': entry} if len(labels) == 1 and not args.labels else {}
-    for label, source in zip(labels, args.hierarchy, strict=True):
+    sys.path.insert(0, str(BLENDER))
+    from tree_hierarchy_probe import level_heights
+
+    for i, (label, source) in enumerate(zip(labels, args.hierarchy, strict=True)):
         hierarchy = stage_bough_hierarchy(work, config, source, label)
-        entries[f'{VISUAL}_BOUGH_{label}'] = dict(entry, hierarchy=hierarchy)
+        own = entry
+        if args.impostor_px:
+            px = args.impostor_px[i]
+            own = dict(entry, levels=[*(dict(level, px=height) for level, height in zip(levels, level_heights(px))),
+                                      dict(impostor, px=px)])
+        entries[f'{VISUAL}_BOUGH_{label}'] = dict(own, hierarchy=hierarchy)
     rewrite(mesh_index, entries)
     layers = work / 'worlds' / WORLD / 'vobs.d'
     (layers / 'fir-probe.json').unlink()
@@ -768,6 +777,7 @@ def main() -> int:
     factors.add_argument('--k', type=int, choices=(4, 8, 16), nargs='+', default=[4])
     factors.add_argument('--labels', nargs='+', help='file labels of the hierarchies, staged left to right')
     command.add_argument('--hierarchy', type=Path, nargs='+', required=True)
+    command.add_argument('--impostor-px', type=float, nargs='+', help='the impostor threshold of each hierarchy')
     args = parser.parse_args()
     return {'textures': textures, 'probe': probe, 'forest': forest,
             'eye-threshold': eye_threshold, 'bough': bough, 'bough-x4': bough}[args.command](args)
