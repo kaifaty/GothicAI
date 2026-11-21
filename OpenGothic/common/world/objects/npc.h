@@ -29,6 +29,7 @@
 #include "world/activityevents.h"
 #include "world/aiqueue.h"
 #include "world/npclogicalstate.h"
+#include "world/npcsimtick.h"
 #include "world/objects/attention.h"
 #include "world/objects/archer.h"
 #include "world/objects/npcroutinetable.h"
@@ -234,6 +235,9 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool       animationLodPinned() const;
     void       setAnimationLodTargeted(bool t) { animLodTargeted = t; }
     uint32_t   animationLodSeed() const { return animLodSeed; }
+    // Far NPC tick (world/npcsimtick.h): world time not yet handed to tick(), its rhythm. Runtime only, not saved.
+    auto       simTick() -> NpcSimTick::State& { return simTickState; }
+    auto       simTick() const -> const NpcSimTick::State& { return simTickState; }
 
     std::string_view displayName() const;
     auto       displayPosition() const -> Tempest::Vec3;
@@ -1125,6 +1129,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     uint64_t                       animLodPendingDt = 0;
     bool                           animLodTargeted = false;
     uint32_t                       animLodSeed = 0;
+    NpcSimTick::State              simTickState;
     Tempest::Vec3                  characterVisualSamplePosition;
     Tempest::Vec3                  characterVisualSampleNormal;
     uint64_t                       characterVisualSampleTick = 0;

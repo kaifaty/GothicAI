@@ -553,55 +553,7 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   const auto pl      = owner.player();
   // Body training with a frozen world: other NPCs (but the hero) and interactive objects stand still.
   const bool frozen  = BodyArena::frozenWorld();
-  // One clock read per run of consecutive NPCs of the same tier keeps the cost
-  // proportional to tier changes along the array, not to the NPC count.
-  using Clock = std::chrono::steady_clock;
-  std::optional<FrameProfile::Scope> tierZone;
-  NpcSimTier        runTier  = NpcSimTier::Full;
-  bool              runOpen  = false;
-  Clock::time_point runStart;
-  double            tierMs[2] = {};
-  uint64_t          tierTicks[2] = {};
-  for(size_t i=0; i<npcArr.size(); ++i) {
-    auto& npc = *npcArr[i];
-    uint64_t d = (pl==&npc ? dtPlayer : dt);
-    if(freeCam && pl==&npc)
-      continue;
-    if(frozen && pl!=&npc && !BodyArena::isActor(npc))
-      continue;
-    const auto tier = npc.simTier();
-    if(!runOpen || tier!=runTier) {
-      const auto now = Clock::now();
-      if(runOpen)
-        tierMs[size_t(runTier)] += std::chrono::duration<double,std::milli>(now-runStart).count();
-      tierZone.reset();
-      tierZone.emplace(tier==NpcSimTier::Full ? FrameProfile::Zone::NpcFullTick : FrameProfile::Zone::NpcSimplifiedTick);
-      runTier  = tier;
-      runStart = now;
-      runOpen  = true;
-      }
-    ++tierTicks[size_t(tier)];
-    const bool nativeCombat=tier==NpcSimTier::Simplified && npc.nativeCombatMovement();
-    const bool nativeMobsi=tier==NpcSimTier::Simplified && npc.nativeMobsiApproach();
-    const bool graphFallback=npc.graphMovementFallback();
-    npc.tick(d);
-    if(tier==NpcSimTier::Simplified && (nativeCombat || npc.nativeCombatMovement()))
-      ++simTiers.nativeCombatNpcTicks;
-    if(tier==NpcSimTier::Simplified && (nativeMobsi || npc.nativeMobsiApproach()))
-      ++simTiers.nativeMobsiApproachNpcTicks;
-    if(graphFallback || npc.graphMovementFallback())
-      ++simTiers.graphFallbackNpcTicks;
-    }
-  if(runOpen)
-    tierMs[size_t(runTier)] += std::chrono::duration<double,std::milli>(Clock::now()-runStart).count();
-  tierZone.reset();
-  simTiers.fullTickMs             = tierMs[size_t(NpcSimTier::Full)];
-  simTiers.simplifiedTickMs       = tierMs[size_t(NpcSimTier::Simplified)];
-  simTiers.fullTickMsTotal       += simTiers.fullTickMs;
-  simTiers.simplifiedTickMsTotal += simTiers.simplifiedTickMs;
-  simTiers.fullNpcTicks         += tierTicks[size_t(NpcSimTier::Full)];
-  simTiers.simplifiedNpcTicks   += tierTicks[size_t(NpcSimTier::Simplified)];
-  ++simTiers.ticks;
+  tickNpcs(dt,dtPlayer,pl,freeCam,frozen);
   FrameProfile::add(FrameProfile::Amount::NpcLogicSamples,logic.ticks-logicBefore[0]);
   FrameProfile::add(FrameProfile::Amount::NpcLogicBodyMismatch,logic.bodyMismatch-logicBefore[1]);
   FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponMismatch,logic.weaponMismatch-logicBefore[2]);
