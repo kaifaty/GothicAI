@@ -75,6 +75,7 @@
 | Солнце, его блик и просвет | `direct_light.frag` |
 | Лампы, их блик и просвет (новый) | `light.frag` |
 | Небо, постоянная добавка, отражение неба и просвет неба (новый), без GI | `ambient_light.frag` |
+| Рассеянный свет от сурфелей, умноженный на затенение из G-буфера | `ambient_light.frag`, вариант `SURFEL_GI` |
 | Пробы GI, отражения и просвет проб (новый) | `rt/probe_ambient.frag` |
 
 Формулы рассеянного света — как на `main`: AO карты по-прежнему гасит только небо.
@@ -115,6 +116,8 @@
 | `OpenGothic/shader/lighting/direct_light.frag`, `light.frag`, `ambient_light.frag`, `rt/probe_ambient.frag` | затенение и просвет в четырёх проходах света |
 | `OpenGothic/common/graphics/drawbuckets.*`, `sceneglobals.*`, `shader/scene.glsl`, `common/settings.cpp` | бит корзины `BK_CROWN`, бит кадра `VF_CROWN_MASK`, ключ `crownLight` |
 | `OpenGothic/tests/foliage_tree_test.h` | `crownLightMaths` в `gothic-material-texture-test` |
+| `OpenGothic/tests/crown_light_test.h` | `gothic-material-texture-test --crown-light` рисует треугольник через шейдер материала и проход `SURFEL_GI` |
+| `scripts/tests/test_crown_light.py` | сверяет константы GLSL с эталоном на C++ до округления в G-буфере |
 | `scripts/bench/crown-light.bench`, [`crown-light-lamp.json`](crown-light-lamp.json) | сумерки и ночь у огня; слой предметов с огнём |
 
 Числа: дно затенения 0,25; порог полной открытости 0,9; лепесток неба 0,4; код альфы 0,49 — тот же, что у свечения. Тест на процессоре проверяет разбор флага, кто считается кроной, путь A через длину нормали и через восемь бит альфы, A = 1 без изменений и границы лепестка неба. Нового поля записи нет.
@@ -234,6 +237,8 @@
 - **Тусклые блики против елей оригинала.** Это цвет атласа лап, а не свет.
 
 ### Как повторить
+
+`gothic-material-texture-test --crown-light` работает с Vulkan без игровых данных. Он задаёт три значения альфы вершины (0, 114 и 255), читает бит кроны и альфу ORM из G-буфера и сравнивает рассеянный свет с открытым краем. При `OPENGOTHIC_FOLIAGE=wind` даже вершина с нулевой альфой получает полный свет.
 
 ```
 SET=$HOME/.local/share/gothic-ai/remaster/trees-fir/fir-probe-4
