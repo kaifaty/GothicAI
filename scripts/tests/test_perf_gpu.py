@@ -194,6 +194,14 @@ def stand(tmp_path, smi, stamp_age=None, warmup=None, slow_checks=False, **extra
     return out, games, result.stdout + result.stderr, stamp
 
 
+def test_perf_env_resolves_content_in_the_game_hosts_home(tmp_path):
+    out, _, _, _ = stand(tmp_path, None, warmup="0",
+                         PERF_ENV="OPENGOTHIC_CONTENT='~/forest sets/spruce' LABEL='forest | spruce'")
+    settings = json.loads((out / "metadata.json").read_text())["game_env"]
+    assert settings["OPENGOTHIC_CONTENT"] == str(Path.home() / "forest sets/spruce")
+    assert settings["LABEL"] == "forest | spruce"
+
+
 def test_fresh_stamp_skips_the_warm_up_and_journals_the_run(tmp_path):
     # The stamp is 118 s old on entering the stand; hashing, checks and the journal's first sample take 9 s.
     out, games, stdout, stamp = stand(tmp_path, SMI_SLOW, stamp_age=118, slow_checks=True, PERF_SOURCE_FINGERPRINT="")
