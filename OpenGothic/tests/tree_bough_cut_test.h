@@ -179,7 +179,7 @@ void treeBoughRasterCases(Tempest::Device& device) {
         }
       std::cout << "tree bough mesh packing: " << groupPixels << " pixels of four nodes in one workgroup\n";
       // The lanes above 32: eight cards with a node of 32 vertices, then the two nodes of 32 of one command.
-      for(const auto [first,size] : {std::pair(wideCards,9u), std::pair(wideNode,2u)}) {
+      for(const auto& [first,size] : {std::pair(wideCards,9u), std::pair(wideNode,2u)}) {
         uint32_t groupVertices = 0, groupTriangles = 0;
         for(uint32_t i=first; i<first+size; ++i) {
           groupVertices += meshTasks[i][1] >> TreeBough::FirstIndexBits;
