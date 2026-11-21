@@ -239,6 +239,7 @@ size_t PfxBucket::allocEmitter() {
       b.airRate = {};
       b.grownMs = 0;
       b.spent   = false;
+      b.born    = parent.now;
       updateTextureDemand(i);
       return i;
       }
@@ -247,6 +248,7 @@ size_t PfxBucket::allocEmitter() {
   auto& e = impl.back();
   e.block = size_t(-1); // no backup memory
   e.st    = S_Inactive;
+  e.born  = parent.now;
   updateTextureDemand(impl.size()-1);
   for(size_t i=0; i<Resources::MaxFramesInFlight; ++i)
     forceUpdate[i] = true;
@@ -401,9 +403,7 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
   switch(decl.shpFOR) {
     case ParticleFx::Frame::Object:
     case ParticleFx::Frame::Node: {
-      p.pos += emitter.direction[0]*decl.shpOffsetVec.x +
-               emitter.direction[1]*decl.shpOffsetVec.y +
-               emitter.direction[2]*decl.shpOffsetVec.z;
+      p.pos += ParticleFx::inAxes(emitter.direction,decl.shpOffsetVec);
       break;
       }
     case ParticleFx::Frame::World: {
@@ -755,7 +755,14 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
 
     if(emitter.st==S_Active && nearby) {
       auto& p = getBlock(emitter);
-      auto dE = decl.flipSteady ? (p.count==0 && !emitter.spent ? uint64_t(blockSize) : 0) : ppsDiff(decl,emitter.isLoop,p.timeTotal,p.timeTotal+dt);
+      uint64_t dE = 0;
+      if(decl.flipSteady) {
+        dE = p.count==0 && !emitter.spent ? uint64_t(blockSize) : 0;
+        } else {
+        // a looped pulse counts from the emitter's birth, not from its block (ParticleFx::keySpan)
+        const auto keys = decl.keySpan(emitter.isLoop,emitter.born,parent.now,dt,p.timeTotal);
+        dE = ppsDiff(decl,emitter.isLoop,keys.first,keys.second);
+        }
       tickEmit(p,emitter,dE);
       }
 

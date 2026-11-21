@@ -3,10 +3,12 @@
 #include <Tempest/Log>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 #include <string_view>
 
 #include "settings.h"
@@ -32,6 +34,8 @@ constexpr uint32_t ImpostorMipCount  = 5;
 // A level gives way to the finer one only at this many times its pixels: a height on a threshold does not switch the
 // level back and forth
 constexpr float  Hysteresis = 1.1f;
+constexpr float  ShadowNearDefaultPx = 800.f;
+constexpr float  ShadowFarPx = 400.f;
 
 struct Selection {
   uint8_t stage = 0;
@@ -85,6 +89,47 @@ inline bool shadowLevelsEnabled() {
   return on;
   }
 
+inline std::optional<float> parseShadowNearPx(std::string_view text) {
+  if(text.empty())
+    return std::nullopt;
+  float value = 0.f;
+  const auto end = text.data() + text.size();
+  const auto [next, error] = std::from_chars(text.data(), end, value);
+  if(next!=end || error!=std::errc{} || !std::isfinite(value))
+    return std::nullopt;
+  return std::max(value, ShadowFarPx);
+  }
+
+inline float shadowNearPx() {
+  static const float px = [] {
+    if(const char* env = std::getenv("OPENGOTHIC_SHADOW_LEVEL_NEAR_PX"))
+      if(auto value = parseShadowNearPx(env))
+        return *value;
+    if(::Settings::exists())
+      if(auto value = parseShadowNearPx(::Settings::getS("INTERNAL","shadowLevelNearPx")))
+        return *value;
+    return ShadowNearDefaultPx;
+    }();
+  return px;
+  }
+
+inline bool vsmFrameStatsEnabled() {
+  static const bool enabled = [] {
+    const char* value = std::getenv("OPENGOTHIC_VSM_STATS");
+    return value!=nullptr && std::string_view(value)=="frames";
+    }();
+  return enabled;
+  }
+
+inline std::optional<float> shadowProbePx() {
+  static const auto px = []() -> std::optional<float> {
+    if(const char* env = std::getenv("OPENGOTHIC_SHADOW_LEVEL_PROBE_PX"))
+      return parseShadowNearPx(env);
+    return std::nullopt;
+    }();
+  return px;
+  }
+
 // The pixels of the main view an object `height` high is `distance` from the camera, in the same units; projY: the
 // projection's [1][1], screenH: the view's height in pixels. As the size of a motion in the fade of a tree's wind
 // (FoliageTree::fadeScale)
@@ -103,13 +148,16 @@ inline uint8_t pick(const float* px, size_t count, uint8_t current, float height
   return uint8_t(level);
   }
 
-// Leave the visual GLB below 800 pixels at 1080p and return to it at 880. Farther out, sun and lamps share
-// the coarser scale based on the main view's field of view. Neither shadow path takes the impostor card.
-inline uint8_t pickShadow(size_t count, uint8_t current, bool wasSeparate, float heightAt1080, uint8_t visualGlb, bool enabled) {
-  constexpr float closeUpPx = 800.f;
-  constexpr float px[MaxLevels] = {2400.f, 1400.f, closeUpPx, 400.f};
-  const float visualThreshold = wasSeparate ? closeUpPx*Hysteresis : closeUpPx;
-  if(!enabled || heightAt1080>=visualThreshold)
+inline bool shadowUsesVisual(float heightAt1080, bool wasSeparate, float nearPx) {
+  return heightAt1080 >= (wasSeparate ? nearPx*Hysteresis : nearPx);
+  }
+
+// Leave the visual GLB below the near threshold at 1080p and return at Hysteresis times that size.
+// Farther out, sun and lamps share the coarser scale. Neither shadow path takes the impostor card.
+inline uint8_t pickShadow(size_t count, uint8_t current, bool wasSeparate, float heightAt1080, uint8_t visualGlb,
+                          bool enabled, float nearPx) {
+  const float px[MaxLevels] = {2400.f, 1400.f, nearPx, ShadowFarPx};
+  if(!enabled || shadowUsesVisual(heightAt1080, wasSeparate, nearPx))
     return visualGlb;
   return pick(px, std::min(count, MaxLevels), current, heightAt1080);
   }

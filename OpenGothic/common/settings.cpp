@@ -4,6 +4,7 @@
 #include <cassert>
 
 #include "gamebasecontent.h"
+#include "graphics/meshlevels.h"
 #include "resources.h"
 #include "utils/inifile.h"
 
@@ -201,6 +202,7 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
   defaults->set("INTERNAL",     "treeBoughLodCpu", 0);
   defaults->set("INTERNAL",     "impostors", 1); // graphics/meshlevels.h
   defaults->set("INTERNAL",     "shadowLevels", 1); // graphics/meshlevels.h
+  defaults->set("INTERNAL",     "shadowLevelNearPx", MeshLevels::ShadowNearDefaultPx);
 
   defaults->set("VIDEO", "zVidBrightness", 0.5f);
   defaults->set("VIDEO", "zVidContrast",   0.5f);

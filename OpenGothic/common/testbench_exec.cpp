@@ -266,6 +266,14 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     else
       arenaAbort("shadow levels expects on, off, full, or auto");
     }
+  else if(c=="shadow" && a.size()==3 && a[1]=="near") {
+    if(a[2]=="auto")
+      VisualObjects::benchShadowNearPx.reset();
+    else if(auto px = MeshLevels::parseShadowNearPx(a[2]))
+      VisualObjects::benchShadowNearPx = px;
+    else
+      arenaAbort("shadow near expects a pixel height or auto");
+    }
   else if(c=="grass" && grassCommand(a,w)) return;
   else if(waterCommand(bench.water,waterContext(),a,w,pl,ctrl)) return;
   else if(c=="item-save" && a.size()==2 && a[1]=="initial") {

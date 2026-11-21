@@ -7,7 +7,6 @@
 layout(local_size_x = 1) in;
 layout(binding = 0, std430) readonly buffer Nodes { BoughNode nodes[]; };
 layout(binding = 1, std430) readonly buffer Views { BoughProjection views[]; };
-layout(binding = 2, std430) readonly buffer Roots { uint roots[]; };
 layout(binding = 3, std430) writeonly buffer Cuts { uvec4 cuts[]; };
 layout(binding = 4, std430) readonly buffer JointWeights { uint joints[]; };
 
@@ -47,13 +46,15 @@ void main() {
     const uint joint = boughJointFade(joints[sampleId]);
     if(joint!=0u)
       maskFailures += coverageFailures(joint, 123u);
+    // The slices of the expansion in their order, at varying sizes: they have to give the cut of one walk.
+    const uint nodeCount = uint(nodes.length()), slice = 1u + sampleId % 7u;
     bool compact = false;
-    for(uint root = 0; root < uint(roots.length()); ++root) {
-      if(boughWalk(roots[root], views[sampleId], false))
+    for(uint at = 0u; at < nodeCount; at += slice) {
+      if(boughMerges(at, min(at+slice, nodeCount), views[sampleId]))
         compact = true;
       }
-    for(uint root = 0; root < uint(roots.length()); ++root)
-      boughWalk(roots[root], views[sampleId], true);
+    for(uint at = 0u; at < nodeCount; at += slice)
+      boughWalkSlice(at, min(at+slice, nodeCount), views[sampleId]);
     cuts[first] = uvec4(count, uint(compact), maskFailures, joint);
     }
   }

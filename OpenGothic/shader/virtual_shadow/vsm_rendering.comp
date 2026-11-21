@@ -52,22 +52,7 @@ uvec2 pullMeshlet(const uint meshletId, const uint bucketId) {
   nonuniformEXT uint bId = bucketId;
 
   const uint iboOffset = meshletId * MaxPrim + MaxPrim - 1;
-  const uint bits      = ibo[bId].indexes[iboOffset];
-  uvec4 prim;
-  prim.x = ((bits >>  0) & 0xFF);
-  prim.y = ((bits >>  8) & 0xFF);
-
-  uint vertCount = MaxVert;
-  uint primCount = MaxPrim;
-  if(prim.x==prim.y) {
-    // last dummy triangle encodes primitive count
-    prim.z = ((bits >> 16) & 0xFF);
-    prim.w = ((bits >> 24) & 0xFF);
-
-    primCount = prim.z;
-    vertCount = prim.w;
-    }
-  return uvec2(vertCount, primCount);
+  return vsmMeshletCounts(ibo[bId].indexes[iboOffset], MaxVert, MaxPrim);
   }
 
 uvec3 pullPrimitive(const uint meshletId, const uint bucketId, const uint laneId) {

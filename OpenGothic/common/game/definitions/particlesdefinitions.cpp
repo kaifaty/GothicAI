@@ -63,6 +63,8 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
     }
   if(const auto l=content.land.find(cname); l!=content.land.end())
     p->land = implGet(l->second,relaxed);
+  if(const auto n=content.nodes.find(cname); n!=content.nodes.end())
+    p->node = n->second;
   if(const auto m=content.motions.find(cname); m!=content.motions.end()) {
     // particles.d units to the engine's cm and ms
     const auto& own = m->second;
@@ -87,7 +89,11 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
     p->lightRange          = own.lightRange;
     p->lightColor          = Tempest::Vec3(own.lightColor[0],own.lightColor[1],own.lightColor[2]);
     p->lightKeys           = own.lightKeys;
+    for(const auto& c:own.lightColors)
+      p->lightColors.emplace_back(c[0],c[1],c[2]);
     p->lightFps            = own.lightFps;
+    p->lightAt             = Tempest::Vec3(own.lightAt[0],own.lightAt[1],own.lightAt[2]);
+    p->lightLoop           = own.lightLoop;
     p->hdrFrom             = own.hdrFrom;
     p->hdrTo               = own.hdrTo;
     p->hdrEdge             = own.hdrEdge;

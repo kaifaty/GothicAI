@@ -16,6 +16,12 @@ Effect::Effect(PfxEmitter&& pfx, std::string_view node)
   pos.identity();
   }
 
+Effect::Effect(World& owner, const ParticleFx* decl, std::string_view node)
+  :Effect(PfxEmitter(owner,decl),node) {
+  ownPfx = decl;
+  setupOwnLight(owner);
+  }
+
 Effect::Effect(const VisualFx& vfx, World& owner, const Npc& src, SpellFxKey key)
   :Effect(vfx, owner, src.centerPosition(), key) {
   }
@@ -33,31 +39,65 @@ Effect::~Effect() {
   sfx.setLooping(false);
   }
 
+bool Effect::ownLight(OwnLight& out) const {
+  if(!givenLight)
+    return false;
+  out = *givenLight;
+  return true;
+  }
+
+bool Effect::setupOwnLight(World& owner) {
+  givenLight.reset();
+  if(ownPfx==nullptr || ownPfx->lightRange<=0)
+    return false;
+  const auto& decl = *ownPfx;
+  const auto  rgb  = [](const Vec3& c) { return asset::Color(uint8_t(c.x),uint8_t(c.y),uint8_t(c.z),255); };
+  // a point a metre wide
+  asset::LightPreset own;
+  own.light_type             = asset::LightType::POINT;
+  own.range                  = decl.lightRange;
+  own.color                  = rgb(decl.lightColor);
+  own.quality                = asset::LightQuality::LOW;
+  own.on                     = true;
+  own.range_animation_scale  = decl.lightKeys;
+  own.range_animation_fps    = decl.lightFps;
+  own.range_animation_smooth = true;
+  for(const auto& c:decl.lightColors)
+    own.color_animation_list.push_back(rgb(c));
+  own.color_animation_fps    = decl.lightFps;
+  own.color_animation_smooth = true;
+  own.can_move               = true;
+  // its keys count from now, as its looped emitter's do (PfxEmitter's birth, ParticleFx::keySpan)
+  light      = owner.addLight(own);
+  givenLight = OwnLight{own,false,Vec3()};
+  // without "loop" the keys are the fire's stages: the last one stays when the particles outlive it
+  giveKeysOnce(!decl.lightLoop);
+  givePosition(lightPos);
+  return true;
+  }
+
+void Effect::giveKeysOnce(bool once) {
+  light.setKeysOnce(once);
+  if(givenLight)
+    givenLight->loop = !once;
+  }
+
+void Effect::givePosition(const Vec3& at) {
+  light.setPosition(at);
+  if(givenLight)
+    givenLight->at = at;
+  }
+
 void Effect::setupLight(World& owner) {
+  // an own effect's light (particles.d "light") instead of the game's preset
+  if(setupOwnLight(owner))
+    return;
+
   auto* lightPresetName = &root->lightPresetName;
   if(key!=nullptr && !key->lightPresetName.empty())
     lightPresetName = &key->lightPresetName;
 
   Vec3 pos3 = {pos.at(3,0),pos.at(3,1),pos.at(3,2)};
-  if(ownPfx!=nullptr && ownPfx->lightRange>0) {
-    const auto* pfxDecl = ownPfx;
-    // an own effect's light (particles.d "light") instead of the game's preset, a point a metre wide
-    asset::LightPreset own;
-    own.light_type              = asset::LightType::POINT;
-    own.range                   = pfxDecl->lightRange;
-    own.color                   = asset::Color(uint8_t(pfxDecl->lightColor.x),uint8_t(pfxDecl->lightColor.y),uint8_t(pfxDecl->lightColor.z),255);
-    own.quality                 = asset::LightQuality::LOW;
-    own.on                      = true;
-    own.range_animation_scale   = pfxDecl->lightKeys;
-    own.range_animation_fps     = pfxDecl->lightFps;
-    own.range_animation_smooth  = true;
-    own.can_move                = true;
-    light = owner.addLight(own);
-    light.setRangeOnce(true);  // the keys are the fire's stages: the last one stays when the particles outlive it
-    light.setPosition(pos3);
-    return;
-    }
-
   if(lightPresetName->empty()) {
     light = LightGroup::Light();
     return;
@@ -227,8 +267,13 @@ void Effect::syncAttachesSingle(const Matrix4x4& inPos) {
 
   p.set(3,1, p.at(3,1)+emTrjTargetElev);
   Vec3  pos3 = {p.at(3,0),p.at(3,1),p.at(3,2)};
+  // the own light stands at its "at" in the node's axes, as the emitter places shpOffsetVec_S
+  const Vec3 axes[3] = {{p.at(0,0),p.at(0,1),p.at(0,2)}, {p.at(1,0),p.at(1,1),p.at(1,2)}, {p.at(2,0),p.at(2,1),p.at(2,2)}};
+  lightPos = pos3;
+  if(ownPfx!=nullptr && ownPfx->lightRange>0)
+    lightPos += ParticleFx::inAxes(axes,ownPfx->lightAt);
   pfx  .setObjMatrix(p);
-  light.setPosition(pos3);
+  givePosition(lightPos);
   sfx  .setPosition(pos3);
   }
 

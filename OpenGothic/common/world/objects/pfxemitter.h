@@ -49,6 +49,9 @@ class PfxEmitter {
     bool     isAlive() const;
 
   private:
+    // the world's time it was born: its looped pulse counts from it, as its light's keys do (graphics/effect)
+    void     setBorn(uint64_t worldTime);
+
     // The headless adapter retains the declared effect's gameplay collision zone;
     // it never constructs a PfxObjects bucket or emits rendering particles.
     const ParticleFx* cpuDecl = nullptr;
