@@ -430,7 +430,8 @@ def test_point_metrics_and_threshold_boundaries(tmp_path):
         ta = "first NW_A" if t < 45 else "second NW_A"
         a_rows.append(row(t, "GUARD#0", ta=ta, zs="ZS_STAND_GUARDING", fp="STAND" if t >= 5 else "-",
                           fp_x=100, on_fp=int(t >= 5), aivar_19=0 if t >= 5 else 2, fp_available=1))
-        b_rows.append(row(t, "GUARD#0", ta=ta, zs="ZS_STAND_GUARDING", fp="STAND" if 10 <= t < 45 else "-",
+        # End/Init can briefly leave ZS empty while the NPC still holds the point and pose.
+        b_rows.append(row(t, "GUARD#0", ta=ta, zs="-" if t == 30 else "ZS_STAND_GUARDING", fp="STAND" if 10 <= t < 45 else "-",
                           fp_x=200 if t == 20 else 100, on_fp=int(10 <= t < 45),
                           aivar_19=0 if 10 <= t < 45 else 2, fp_available=1))
         # Collision with an NPC outside the selected activity must still be seen.

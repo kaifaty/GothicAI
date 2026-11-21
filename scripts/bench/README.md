@@ -2025,11 +2025,13 @@ python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
   --out /absolute/activity.md --json /absolute/activity.json
 ```
 
-Point activities use `npc-day-parity.tolerances-points.json` (E2.1, **uncalibrated draft**).
-It currently holds exact control-against-itself bounds, with no noise allowance: seed 73106 completed,
-but the seed 73107 day was externally cancelled at minute 995/1440. A replacement day and lead
-approval are required before using it for E2.2 acceptance. Use `--activity-states` for the states being
-changed. [Measurements and pending calibration](../../reports/engine/2026-11-14-npc-data/e2-tolerance.md).
+Point activities use `npc-day-parity.tolerances-points.json` (E2.1, **draft; lead approval required**),
+calibrated on complete shared-stream days with seeds 73106 and 73107 using the same frozen engine.
+The cancelled prefix is excluded. The profile covers the five measured forms, pooled and individually:
+held FP agreement >=94%, pose time 0.99..1.01, arrival p95 <=5 / maximum <=10 game minutes,
+zero missed segments, stuck NPCs and double occupancy. The FP allowance reflects two seated campfire
+NPCs exchanging points. Use `--activity-states` for the states being changed and inspect their margins.
+[Measurements, causes and headroom](../../reports/engine/2026-11-14-npc-data/e2-tolerance.md).
 
 ```sh
 python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
@@ -2051,7 +2053,9 @@ The new sample columns follow every old column, in its original order:
 `points.total` and `points.by_state` report held-coordinate agreement (raw and with legal B fallback
 excluded), pose sample time B/A, signed first arrival p95/max, missed reference TA segments and
 double occupancy in B. The collision search includes occupants outside the state filter. Campfire
-pose uses body state 11 (`BS_SIT`); the other four forms use `aivar_19 == 0`. STAND_WP has no held
+pose uses body state 11 (`BS_SIT`); the other four forms use `aivar_19 == 0`. Physical arrival
+does not require an active ZS: End/Init can leave it empty while the NPC stays on point. Pose accepts
+the reference ZS or this transient empty ZS, but not a known different ZS. STAND_WP has no held
 free point: arrival/pose use `on_routine_wp`, and held-point agreement is not applicable.
 
 A legal fallback is a standing NPC near its routine waypoint with no suitable available free point.

@@ -1,15 +1,15 @@
 {
-  "comment": "UNCALIBRATED E2.1 draft, 2026-11-21; do not use for E2.2 acceptance. The seed 73106 control against itself measures held-point agreement and pose ratio 1, arrival delays 0, missed segments and double occupancy 0; the numeric bounds below preserve that exact control. No noise allowance has been chosen. The second authorized run (seed 73107, gq d49a7bfafa23) was externally cancelled with exit 143 after 776.844 seconds at t=995/1440 game minutes. Its incomplete prefix is diagnostic only and fails completeness. A replacement day and lead approval are required before choosing margins from the complete seed pair. See reports/engine/2026-11-14-npc-data/e2-tolerance.md. Legal waiting is excluded from the point/pose comparison and arrival delay; no reference MOB makes object metrics not applicable. Missing point columns fail point checks. Completeness requires both full days, no unmatched samples and no missing final NPCs. A lost segment, a 30-minute late arrival or two NPCs on one point fails these strict control bounds.",
+  "comment": "DRAFT E2.1, 2026-11-21; thresholds require the lead's approval. Calibrated on complete shared-stream original days, seeds 73106 and 73107, both using engine e511168ff045 and OPENGOTHIC_ACTIVITY_EVENTS=0; the cancelled prefix was not used. See reports/engine/2026-11-14-npc-data/e2-tolerance.md. The single profile covers the five measured point forms, both pooled and individually. min_point_same_fp=0.94: worst measured 4643/4878=0.951824518245 (campfire); 234 of 235 mismatches are two seated NPCs exchanging free points, not loss of the activity. Headroom 0.011824518245 share (1.1824518245 percentage points); no nearest-WP threshold is fitted to the guarding route noise. Pose acceptance excludes legal B waiting from both populations: worst measured ratio 0.997376762488 in guarding, max 1; bounds 0.99..1.01 leave 0.007376762488/0.01 ratio headroom, a symmetric 1% allowance around equality. Arrival p95 measured 0, limit 5 game minutes (one journal step); maximum measured 5, limit 10 (one extra step). Missing segments, stuck NPCs and double occupancy measured 0 and allow 0: a whole lost segment must fail independently of the share/ratio population. Completeness requires both days done and full length, zero unmatched samples and zero missing final NPCs. Held-point agreement is not applicable for STAND_WP; missing point columns fail point checks. On-point and pose status are physical measurements independent of a transient empty ZS between End and Init; state agreement is reported separately.",
   "tolerances": {
     "require_done": true,
     "require_full_length": true,
     "max_only_samples": 0,
     "max_missing_end": 0,
-    "min_point_same_fp": 1,
-    "min_point_pose_ratio": 1,
-    "max_point_pose_ratio": 1,
-    "max_point_arrival_p95": 0,
-    "max_point_arrival_max": 0,
+    "min_point_same_fp": 0.94,
+    "min_point_pose_ratio": 0.99,
+    "max_point_pose_ratio": 1.01,
+    "max_point_arrival_p95": 5,
+    "max_point_arrival_max": 10,
     "max_point_missed_segments": 0,
     "max_point_double_occupancy": 0,
     "max_activity_stuck": 0

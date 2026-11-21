@@ -407,14 +407,16 @@ POINT_STATES = {"ZS_STAND_GUARDING": "STAND", "ZS_STAND_ARMSCROSSED": "STAND",
 
 
 def point_status(row, point, state):
-    if point is None or row[3] != state:
+    if point is None:
         return False, False, False
     kind = POINT_STATES[state]
     on = point["on"] and kind in point["name"] if kind else point["on_wp"]
+    # End/Init may leave ZS empty without moving the body; a known different ZS is another pose.
+    same_pose = row[3] in (state, "-")
     # Campfire sets BS_SIT (11); the other four forms set aivar[19]=0 on entering the pose.
     posed = row[10] == 11 if state == "ZS_SIT_CAMPFIRE" else point["stage"] == 0
-    fallback = bool(kind and not on and point["available"] == 0 and point["on_wp"] and row[10] == 0)
-    return bool(on), bool(posed and (on or fallback)), fallback
+    fallback = bool(same_pose and kind and not on and point["available"] == 0 and point["on_wp"] and row[10] == 0)
+    return bool(on), bool(same_pose and posed and (on or fallback)), fallback
 
 
 def point_metrics(a, b, common, states):
