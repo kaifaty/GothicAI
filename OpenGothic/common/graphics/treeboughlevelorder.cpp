@@ -1,4 +1,4 @@
-#include "treelevelorder.h"
+#include "treeboughasset.h"
 
 #include <algorithm>
 #include <array>
@@ -8,7 +8,7 @@
 
 #include "asset/staticmesh.h"
 
-void TreeLevelOrder::sortInSpace(asset::StaticMesh& mesh) {
+void TreeBough::sortLevelInSpace(asset::StaticMesh& mesh) {
   const size_t count = mesh.positions.size();
   if(count==0)
     return;

@@ -11,6 +11,7 @@
 #include "graphics/material.h"
 
 class StaticMesh;
+namespace asset { struct StaticMesh; }
 
 namespace TreeBough {
 
@@ -75,6 +76,15 @@ bool cpuEnabled();
 
 // Attach only on success. Malformed or unsupported sidecars keep the original mesh.
 void attach(StaticMesh& mesh, const std::filesystem::path& file);
+
+// The order of a level GLB of a tree with a hierarchy, before PackedMesh::addLevel (reports/engine/
+// 2026-11-16-modern-trees/tree-bough-lod.md, «Лестница теней ближней ели»). The GLB stores the cards of its crown in no
+// order of space, and PackedMesh::buildMeshlets starts a meshlet at the unused triangle of the lowest position: a
+// meshlet takes cards from all over the crown, its sphere is the crown's, and every shadow page under the tree draws
+// it. The positions are renumbered piece by piece (triangles joined by a position: a card, a limb) along the Z-order
+// curve of the pieces' middles, so a meshlet takes neighbours. No position, wedge or triangle changes otherwise: the
+// colours of the wedges stay theirs, the level draws the same picture.
+void sortLevelInSpace(asset::StaticMesh& level);
 
 float screenSize(const Node& node, const Projection& view);
 float parentWeight(const Node& node, float px);

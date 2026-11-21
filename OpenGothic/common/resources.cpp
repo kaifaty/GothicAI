@@ -41,7 +41,6 @@
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/meshlevels.h"
-#include "graphics/treelevelorder.h"
 #include "graphics/mesh/facerig.h"
 #include "graphics/mesh/renderrig.h"
 #include "graphics/mesh/skeleton.h"
@@ -866,7 +865,7 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
         if(!source->levels.empty() && MeshLevels::enabled())
           for(auto& level:implLoadMeshLevels(key,*source,zmsh,!colors.empty())) {
             if(!source->hierarchy.empty() && TreeBough::enabled())
-              TreeLevelOrder::sortInSpace(level.mesh); // its shadow ladder draws the levels near (treelevelband.h)
+              TreeBough::sortLevelInSpace(level.mesh); // its shadow ladder draws the levels near (treelevelband.h)
             packed.addLevel(level.mesh,level.px,level.colors.empty() ? nullptr : &level.colors);
             }
         }
