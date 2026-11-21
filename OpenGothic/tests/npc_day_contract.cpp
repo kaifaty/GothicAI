@@ -63,7 +63,7 @@ std::string measure(daedalus::DaedalusVm& vm, DayScriptStats& stats, const std::
     stats.end();
     }
   stats.end();
-  vm.call_function<void>("OUTSIDE");
+  vm.unsafe_call_bl(vm.find_symbol_by_name("OUTSIDE"));
   stats.random(false,true);
   stats.random(false,false);
   check(sources==std::vector<std::string>{"HLP_RANDOM/ZS_A/loop","HLP_RANDOM/ZS_B/loop","HLP_RANDOM/ZS_B/loop",
