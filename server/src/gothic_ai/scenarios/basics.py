@@ -1031,6 +1031,30 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
         f"{'done' if queued else 'failed'} (line started after {time.monotonic() - t0:.1f} s)"
     )
 
+    # The observer waits behind a cave wall with wild rats. Protect only the hero
+    # in this new game; Xardas and each wolf must still perceive and hurt each other.
+    flags = ["field", triggers.HERO, "FLAGS"]
+    immortal = ["var", "NPC_FLAG_IMMORTAL"]
+    guard = "DIR_M5B_PROTECT_HERO"
+    await link.patch_graph([triggers.trigger(guard, triggers.STATE, [
+        {"do": "set", "target": flags, "value": ["|", flags, immortal]},
+    ])])
+    try:
+        if not await _until_async(lambda: link.story_eval(npc, [["&", flags, immortal]]),
+                                  lambda values: values[0] > 0, 5):
+            raise GameError("m5b: hero immunity did not take effect")
+    finally:
+        await link.patch_graph([triggers.removal(guard)])
+    initial = (await link.snapshot(npc, fresh=True)).player
+    if initial is None or initial.hp_max is None or initial.hp_max <= 0 or initial.hp != initial.hp_max:
+        raise GameError(f"m5b: expected a healthy hero at setup, got {initial}")
+
+    def check_hero(snap: Snapshot, stage: str) -> None:
+        player = snap.player
+        if player is None or player.hp != initial.hp_max or player.hp_max != initial.hp_max:
+            raise GameError(f"m5b {stage}: expected hero at {initial.hp_max} HP, got {player}")
+        log.info("m5b hero %s hp=%d/%d", stage, player.hp, player.hp_max)
+
     # _091 puts Xardas beside a rock that blocks spells from his hand even when
     # the wolf is visible. Use _09's flat ground and its open southeast corridor.
     arena = "NW_XARDAS_TOWER_VALLEY_09"
@@ -1101,7 +1125,8 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
         await link.debug("player_goto", pos=anchor)
         await link.debug("npc_goto", npc=npc, waypoint=arena, face="PC_HERO")
 
-    async def spawn_wolf(distance: int) -> Snapshot:
+    async def spawn_wolf(distance: int, encounter: str) -> Snapshot:
+        check_hero(await link.snapshot(npc, fresh=True), f"before_{encounter}")
         await link.debug("spawn", instance="WOLF", near=npc, distance=distance)
         # The cave wall screens the hero while keeping both actors inside the 30 m AI radius.
         await link.debug("player_goto", waypoint="NW_XARDAS_TOWER_SECRET_CAVE_02")
@@ -1116,7 +1141,7 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     # 2. a wolf next to the npc: the npc senses it or sees it attack
     await place_fighters(free_anchor)
     events.clear()
-    await spawn_wolf(400)
+    await spawn_wolf(400, "free_fight")
     e = await event({"monster_near", "monster_attack", "hero_attacked"}, "WOLF", 20)
     results["monster_event"] = (
         f"done ({e.npc}: {e.kind} {e.other} '{e.other_name}' {e.distance or 0:.0f} cm {e.detail or ''})"
@@ -1152,6 +1177,7 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
         )
 
     snap = await link.snapshot(npc, fresh=True)
+    check_hero(snap, "after_free_fight")
     killed = any(o.id == "WOLF" and o.dead for o in snap.nearby_npcs)
     results["after_free_fight"] = f"{'done' if killed else 'failed'} (around: {wolves(snap) or 'nobody'})"
     await place_fighters(attached_anchor)
@@ -1163,11 +1189,12 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     ):
         res = await link.act(npc, action, **args)  # type: ignore[arg-type]
         results[name] = f"{res.status} {res.detail or ''}".strip()
-    await spawn_wolf(500)
+    await spawn_wolf(500, "attached_fight")
     started = time.monotonic()
     res = await link.act(npc, "fight", npc="WOLF", timeout=90)
     took = time.monotonic() - started
     snap = await link.snapshot(npc, fresh=True)
+    check_hero(snap, "after_attached_fight")
     results["attached_fight"] = (
         f"{'done' if res.status == 'done' and res.detail == 'target is down' and not detached else 'failed'} "
         f"({res.status} {res.detail or ''} in {took:.1f} s, still attached: {not detached}, "
@@ -1178,9 +1205,10 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     await place_fighters(attached_anchor)
     detached.clear()
     await link.attach(npc)
-    before = await spawn_wolf(800)
+    before = await spawn_wolf(800, "attached_flee")
     res = await link.act(npc, "flee", npc="WOLF", timeout_ms=4000)
     after = await link.snapshot(npc, fresh=True)
+    check_hero(after, "after_attached_flee")
     moved = math.dist(before.npc.pos[::2], after.npc.pos[::2])
     results["attached_flee"] = (
         f"{'done' if res.status in ('done', 'timeout') and not detached and moved > 50 else 'failed'} "
@@ -1235,6 +1263,7 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
         now = (await link.routine(npc)).current
         back = now == info.entries[0].state or now != "ZS_SIT_CAMPFIRE"
         results["set_routine"] = f"{'done' if back else 'failed'} ({variant}: now {now})"
+    check_hero(await link.snapshot(npc, fresh=True), "final")
     for name, outcome in results.items():
         log.info("%-24s %s", name, outcome)
     return results
