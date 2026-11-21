@@ -1,7 +1,6 @@
 // Included by tree_bough_cut_test.h. The level bands of a tree with a bough hierarchy (graphics/treelevelband.h).
 
 #include "graphics/treelevelband.h"
-#include "graphics/treelevelorder.h"
 
 // Out from 1000 to 30 px and back by 1 %: the coarser GLB's share grows monotonically through each band and no two
 // bands of a scale overlap. Outside its bands the main view draws the hard pick it replaces and the shadow the step of
@@ -62,7 +61,7 @@ void treeLevelBandPicks() {
             << shadowBands << " in a shadow band\n";
   }
 
-// A level whose cards lie in no order of space (TreeLevelOrder): sorted, a meshlet takes neighbours and its sphere
+// A level whose cards lie in no order of space (TreeBough::sortLevelInSpace): sorted, a meshlet takes neighbours and its sphere
 // shrinks from the crown's to a few cards'; the triangles are the same, each wedge keeps its position
 void treeLevelOrderCase() {
   constexpr uint32_t side = 16, cards = side*side*4;
@@ -98,7 +97,7 @@ void treeLevelOrderCase() {
     return std::pair(packed.meshletBounds.size(), radius);
     };
   auto sorted = mesh;
-  TreeLevelOrder::sortInSpace(sorted);
+  TreeBough::sortLevelInSpace(sorted);
   const auto [meshlets, radius] = largest(mesh);
   const auto [sortedMeshlets, sortedRadius] = largest(sorted);
   require(corners(sorted)==corners(mesh), "the sorted level differs in a triangle's corner");
