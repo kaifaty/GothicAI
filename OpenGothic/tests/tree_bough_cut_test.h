@@ -388,6 +388,7 @@ void treeBoughCutCases() {
   require(activeJointSamples>2, "tree bough fixture missed the impostor joint");
   std::cout << "tree bough impostor joint: " << activeJointSamples << " fractional CPU/GPU samples\n";
   treeLevelBandPicks();
+  treeLevelOrderCase();
   treeLevelBandMasks(device);
   treeBoughGroupCases(device);
   treeBoughRasterCases(device);

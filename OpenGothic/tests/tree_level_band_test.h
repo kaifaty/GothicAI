@@ -1,21 +1,24 @@
 // Included by tree_bough_cut_test.h. The level bands of a tree with a bough hierarchy (graphics/treelevelband.h).
 
 #include "graphics/treelevelband.h"
+#include "graphics/treelevelorder.h"
 
-// Out from 900 to 30 px and back by 1 %: the coarser GLB's share grows monotonically through each band and no two
-// bands of a scale overlap; outside the bands the finer side is the hard pick it replaces, inside them that pick is one
-// of the two sides. The shadow scale (MeshLevels::pickShadow) likewise
+// Out from 1000 to 30 px and back by 1 %: the coarser GLB's share grows monotonically through each band and no two
+// bands of a scale overlap. Outside its bands the main view draws the hard pick it replaces and the shadow the step of
+// its ladder (800, 400 and 240 px: the visual GLB, the first, the second and the fourth level); inside a band that step
+// is one of the two sides, which are neighbours on the scale. The hard shadow scale of every other object
+// (MeshLevels::pickShadow) is as it was: the visual GLB, the third level under 800 px, the fourth under 400 px
 void treeLevelBandPicks() {
   constexpr float px[] = {400.f, 200.f, 100.f, 50.f};
   std::vector<float> heights;
-  for(float height = 900.f; height > 30.f; height *= 0.99f)
+  for(float height = 1000.f; height > 30.f; height *= 0.99f)
     heights.push_back(height);
   for(size_t i = heights.size(); i > 0; --i)
     heights.push_back(heights[i - 1]);
   uint8_t hard = 0, hardShadow = 0;
   bool    shadowSeparate = false;
   TreeLevelBand::Pick previous {}, previousShadow {};
-  uint32_t mainBands = 0, shadowBands = 0;
+  uint32_t mainBands = 0, shadowBands = 0, shadowSteps = 0;
   for(size_t i = 0; i < heights.size(); ++i) {
     const float height = heights[i];
     const bool  outbound = i < heights.size()/2;
@@ -23,11 +26,15 @@ void treeLevelBandPicks() {
     const auto  band = TreeLevelBand::main(px, 4, height);
     hard = MeshLevels::pick(px, 4, hard, height);
     const auto shadow = TreeLevelBand::shadow(4, height, band.fine);
+    const auto ladder = uint8_t(height>=800.f ? band.fine : height>=400.f ? 1 : height>=240.f ? 2 : 4);
     hardShadow = MeshLevels::pickShadow(4, hardShadow, shadowSeparate, height, hard, true, MeshLevels::ShadowNearDefaultPx);
     shadowSeparate = hardShadow!=hard;
-    for(const auto& [now, before, step, name] : {std::tuple(band, previous, hard, "main"),
-                                                  std::tuple(shadow, previousShadow, hardShadow, "shadow")}) {
-      require(now.coarse==now.fine || now.coarse==now.fine+1 || (now.fine==0 && now.coarse==3),
+    if(outbound)
+      require(hardShadow==(height>=800.f ? hard : height>=400.f ? 3 : 4), label + " the hard shadow scale changed");
+    // the shadow ladder has no third level
+    for(const auto& [now, before, step, next, name] : {std::tuple(band, previous, hard, 3, "main"),
+                                                        std::tuple(shadow, previousShadow, ladder, 4, "shadow")}) {
+      require(now.coarse==now.fine || now.coarse==(now.fine==2 ? next : now.fine+1),
               label + " " + name + " band joins levels that are not adjacent on its scale");
       const float share = now.active() ? now.weight : 0.f;
       if(i > 0 && now.fine==before.fine && now.coarse==before.coarse && now.active())
@@ -35,18 +42,70 @@ void treeLevelBandPicks() {
       if(i > 0 && !now.active() && !before.active())
         require(outbound ? now.fine >= before.fine : now.fine <= before.fine, label + " " + name + " level steps back");
       if(now.active())
-        require(step==now.fine || step==now.coarse, label + " " + name + " band leaves out the hard pick");
+        require(step==now.fine || step==now.coarse, label + " " + name + " band leaves out the step of its scale");
       else
-        require(step==now.fine, label + " " + name + " differs from the hard pick outside its bands");
+        require(step==now.fine && now.coarse==now.fine, label + " " + name + " differs from the step outside its bands");
       }
+    require(shadow.fine>=band.fine, label + " shadow is finer than the main view");
     mainBands += band.active();
     shadowBands += shadow.active();
+    shadowSteps |= 1u << shadow.fine;
     previous = band;
     previousShadow = shadow;
     }
-  require(mainBands > 20 && shadowBands > 10, "level band fixture missed the bands");
+  require(mainBands > 20 && shadowBands > 30 && shadowSteps==0b10111u, "level band fixture missed the bands");
+  // fewer levels than the ladder names, and a visual GLB coarser than a step
+  require(TreeLevelBand::shadow(2, 300.f, 0).fine==2 && TreeLevelBand::shadow(2, 100.f, 0).fine==2 &&
+          TreeLevelBand::shadow(4, 500.f, 3).fine==3 && TreeLevelBand::shadow(4, 100.f, 3).fine==4,
+          "the shadow ladder of a short or coarse scale");
   std::cout << "tree level bands: " << heights.size() << " heights, " << mainBands << " in a main band and "
             << shadowBands << " in a shadow band\n";
+  }
+
+// A level whose cards lie in no order of space (TreeLevelOrder): sorted, a meshlet takes neighbours and its sphere
+// shrinks from the crown's to a few cards'; the triangles are the same, each wedge keeps its position
+void treeLevelOrderCase() {
+  constexpr uint32_t side = 16, cards = side*side*4;
+  asset::StaticMesh mesh;
+  auto& sub = mesh.sub_meshes.emplace_back();
+  for(uint32_t i = 0; i < cards; ++i) {
+    const uint32_t cell = (i*397u) % cards; // every cell once, far from the one before
+    const float corner[3] = {float(cell%side)*100.f, float(cell/(side*side))*100.f, float(cell/side%side)*100.f};
+    const auto first = uint16_t(mesh.positions.size());
+    for(const auto& [x, z] : {std::pair(0.f, 0.f), std::pair(60.f, 0.f), std::pair(60.f, 60.f), std::pair(0.f, 60.f)}) {
+      sub.wedges.push_back({{0,1,0}, {x/60.f, z/60.f}, uint16_t(mesh.positions.size())});
+      mesh.positions.emplace_back(corner[0]+x, corner[1], corner[2]+z);
+      }
+    sub.triangles.push_back({{first, uint16_t(first+1), uint16_t(first+2)}});
+    sub.triangles.push_back({{first, uint16_t(first+2), uint16_t(first+3)}});
+    }
+  mesh.bbox = {{0,0,0}, {float(side)*100.f, 400.f, float(side)*100.f}};
+  const auto corners = [](const asset::StaticMesh& mesh) {
+    std::vector<std::array<float,5>> out;
+    for(const auto& triangle : mesh.sub_meshes[0].triangles)
+      for(const auto id : triangle.wedges) {
+        const auto& wedge = mesh.sub_meshes[0].wedges[id];
+        const auto& at = mesh.positions[wedge.index];
+        out.push_back({at.x, at.y, at.z, wedge.texture.x, wedge.texture.y});
+        }
+    return out;
+    };
+  const auto largest = [](const asset::StaticMesh& mesh) {
+    const PackedMesh packed(mesh, PackedMesh::PK_Visual, true);
+    float radius = 0.f;
+    for(const auto& bounds : packed.meshletBounds)
+      radius = std::max(radius, bounds.r);
+    return std::pair(packed.meshletBounds.size(), radius);
+    };
+  auto sorted = mesh;
+  TreeLevelOrder::sortInSpace(sorted);
+  const auto [meshlets, radius] = largest(mesh);
+  const auto [sortedMeshlets, sortedRadius] = largest(sorted);
+  require(corners(sorted)==corners(mesh), "the sorted level differs in a triangle's corner");
+  require(sortedMeshlets==meshlets && meshlets==cards/16u, "the sorted level packs into another count of meshlets");
+  require(radius > 800.f && sortedRadius < 350.f, "the meshlets of the sorted level do not take neighbours");
+  std::cout << "tree level order: " << meshlets << " meshlets, the largest sphere " << radius << " -> " << sortedRadius
+            << " cm\n";
   }
 
 // GPU: both sides of each word cover each cell once in either scale; the coarser side's share follows the word
