@@ -123,11 +123,12 @@ void npcDayRandom(World& world) {
   auto* npc=world.addNpc(script.findSymbolIndex("NPC_NO_ID"),Tempest::Vec3{});
   check(npc!=nullptr,"day trace NPC must exist");
   auto& vm=script.getVm();
+  const auto state=vm.find_symbol_by_name("ZS_TEST")->index();
   const auto observers=vm.call_observer_count();
   std::string error;
   if(!NpcDayMeasurement::start(world,directory.string(),0,false,{"NPC_NO_ID"},error)) throw std::runtime_error(error);
   check(vm.call_observer_count()==observers+1,"starting a day measurement must install its call observer");
-  script.invokeState(npc,nullptr,nullptr,vm.find_symbol_by_name("ZS_TEST")->index());
+  script.invokeState(npc,nullptr,nullptr,state);
   npc->aiPush(AiQueue::aiUseMob("SMITH_ANVIL",1));
   npc->aiPush(AiQueue::aiOutputSvmOverlay(*npc,"TEST_OVERLAY",7));
   NpcDayMeasurement::stop(world);
@@ -163,6 +164,11 @@ void npcDayRandom(World& world) {
     ++commands;
     }
   check(commands==2,"both regular and overlay aiPush commands must reach JSONL");
+  if(!NpcDayMeasurement::start(world,directory.string(),0,false,{},error)) throw std::runtime_error(error);
+  check(vm.call_observer_count()==observers+1,"starting the second interval must install one call observer");
+  script.invokeState(npc,nullptr,nullptr,state);
+  NpcDayMeasurement::stop(world);
+  check(vm.call_observer_count()==observers,"stopping the second interval must restore the original observer count");
   world.removeNpc(*npc);
   std::filesystem::remove_all(directory);
   std::puts("Live NPC day random: invokeState, VM Hlp_Random, engine rand and measurement attributed one draw");

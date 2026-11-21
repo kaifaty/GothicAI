@@ -114,11 +114,18 @@ void run() {
   RoutineDefinitions::Library catalog;
   catalog.routines["RTN_TEST"]={{8,0,20,0,"ZS_A","WP"},{20,0,8,0,"ZS_B","WP"}};
   unsigned earlyCalls=0,lateCalls=0;
-  vm.observe_calls([&](const auto&) {++earlyCalls;});
   std::shared_ptr<DayScriptStats> stats;
+  std::string first;
+  vm.observe_calls([&](const auto&) {
+    ++earlyCalls;
+    if(first.empty() && earlyCalls==1) {
+      rapidjson::Document counters;
+      counters.Parse(stats->json().c_str());
+      check(counters["calls"]==0,"startup observer runs before the first interval's collector");
+      }
+    });
   std::vector<std::string> sources;
   vm.register_external("HLP_RANDOM",[&] {sources.push_back(stats->source(true,true)); stats->random(true,true);});
-  std::string first;
   for(unsigned interval=0;interval<2;++interval) {
     stats=DayScriptStats::attach(vm,catalog);
     if(interval==0) vm.add_call_observer([&](const auto&) {
