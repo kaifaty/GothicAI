@@ -552,37 +552,58 @@ def test_the_mode_of_pairs_only_adds_the_twins(config, spruce, tmp_path):
 
 
 def digest(tree) -> str:
-    """The arrays of a built tree at a millimetre: the same spruce on every platform gives the same digest."""
+    """Hash both materials' vertex attributes and indices at a fixed precision and byte order."""
     h = hashlib.sha256()
-    for p in tree.parts:
-        h.update(np.rint(p['position'] * 1000).astype(np.int64).tobytes())
-        h.update(p['index'].astype(np.int64).tobytes())
-        h.update(np.rint(p['uv'] * 1e4).astype(np.int64).tobytes())
-        h.update(p['colour'].tobytes())
+    fields = (('position', '<f4'), ('normal', '<f4'), ('uv', '<f4'), ('index', '<u4'), ('colour', 'u1'))
+    for part in tree.parts:
+        for field, dtype in fields:
+            h.update(np.asarray(part[field], dtype=dtype).tobytes())
     return h.hexdigest()
 
 
-def test_spruce_a_is_built_as_before_and_thin_is_a_separate_step(config):
-    """thin() of the cost stand (reports/engine/2026-11-16-modern-trees/tree-cost.md) does not touch spruce A:
-    the digest is that of the generator before it; share 1 gives the tree itself."""
-    tree = fir_tree.build(config)
-    assert digest(tree) == 'c6e92de4460a137d725f6f97a5442c30865f6c786054bf300da110c85ef9d79b'
+def test_spruce_a_is_built_as_before_and_thin_is_a_separate_step(spruce):
+    tree = spruce['tree']
+    # Built with fir_tree.py and fir.json from 0e7d1cc9, before the cost stand (#1545).
+    accepted = '8be2b1489a4c3f34cf2b5859855ac3250aea5823cbf9abeb5dab3d9e0cbc069a'
+    assert digest(tree) == accepted
     assert fir_tree.thin(tree, 1.) is tree
-    full_width = sum(tree.metrics['crown_width_m'])
+    full_width = np.ptp(tree.parts[1]['position'][:, :2], axis=0)
+    full_triangles = sum(len(part['index']) for part in tree.parts)
     for share in (.5, .25, .125):
         thinned = fir_tree.thin(tree, share)
-        assert abs(thinned.metrics['triangles'] / tree.metrics['triangles'] - share) < .01
-        assert abs(sum(thinned.metrics['crown_width_m']) / full_width - 1) < .03
-        assert thinned.metrics['thin']['card_growth'] == pytest.approx(thinned.metrics['thin']['cards_share'] ** -.5,
-                                                                       abs=1e-3)
-    assert digest(fir_tree.build(config)) == digest(tree)
+        triangles = sum(len(part['index']) for part in thinned.parts)
+        assert triangles / full_triangles == pytest.approx(share, abs=.01)
+        width = np.ptp(thinned.parts[1]['position'][:, :2], axis=0)
+        np.testing.assert_allclose(width, full_width, rtol=.03)
+        assert width.sum() == pytest.approx(full_width.sum(), rel=1e-6)
+    assert digest(tree) == accepted
+
+
+def test_thin_scales_the_retained_cards_about_their_centres():
+    # Congruent triangles at separate heights. Thinning can pick any of them.
+    card = np.array([(-1., 0., -1.), (1., 0., -1.), (0., 1., 2.)])
+    heights = np.arange(8) * 10.
+    positions = np.concatenate([card + (0., 0., z) for z in heights])
+    bark = dict(name='bark', position=card, index=np.array([[0, 1, 2]]), owner=np.zeros(3, int))
+    foliage = dict(name='foliage', position=positions, index=np.arange(len(positions)).reshape(-1, 3))
+    cards = [dict(first=i, count=3) for i in range(0, len(positions), 3)]
+    tree = fir_tree.Tree([bark, foliage], {}, [], cards)
+
+    thinned = fir_tree.thin(tree, .5).parts[1]
+    retained = thinned['position'][thinned['index']]
+    assert 0 < len(retained) < len(cards)
+    # The final crown-width adjustment acts only in XY, so Z gives the card's growth directly.
+    z = retained[:, :, 2]
+    for centre in z.mean(axis=1):
+        assert np.isclose(centre, heights, atol=1e-5).any()
+    expected_height = np.ptp(card[:, 2]) * math.sqrt(len(cards) / len(retained))
+    np.testing.assert_allclose(np.ptp(z, axis=1), expected_height, atol=1e-5)
 
 
 @pytest.mark.parametrize(('px', 'old_share'), [(400, .5), (200, .25), (100, .125), (50, 1 / 32)])
 def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, config, px, old_share, tmp_path):
     tree = spruce['tree']
     before = digest(tree)
-    normals = [part['normal'].copy() for part in tree.parts]
     mask = tree_density.load_mask(HERE / config['atlas']['mask'])
     _, boughs = tree.parts
     source_colour = boughs['colour']
@@ -621,8 +642,6 @@ def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, co
         assert float(retained[:, 3].max()) / 255 >= settings['min_open'], card
         np.testing.assert_array_equal(retained, source_colour[original['first']:original['first'] + original['count']])
     assert digest(tree) == before
-    for part, original in zip(tree.parts, normals):
-        np.testing.assert_array_equal(part['normal'], original)
 
     comparison = tree_density.compare_level(tree.parts, level.parts, mask, atlas, px)
     assert len(comparison['views']) == 5
