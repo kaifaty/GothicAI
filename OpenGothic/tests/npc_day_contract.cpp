@@ -124,10 +124,10 @@ void run() {
     if(interval==0) vm.add_call_observer([&](const auto&) {
       ++lateCalls;
       check(earlyCalls==lateCalls,"startup observer runs before the later observer");
-      if(first.empty() && lateCalls==1) {
+      if(lateCalls==1) {
         rapidjson::Document counters;
         counters.Parse(stats->json().c_str());
-        check(counters["calls"]==1,"collector counts the first call before the later observer runs");
+        check(counters["calls"]==(first.empty() ? 1 : 0),"collector and later observer run in registration order in both intervals");
         }
       });
     earlyCalls=lateCalls=0;
