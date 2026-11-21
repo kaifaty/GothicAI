@@ -548,7 +548,6 @@ struct Shot {
   Tempest::Vec3      from;
   bool               down = false; // straight down; otherwise towards `to`
   Tempest::Vec3      to;
-  float              near = 10.f;  // the near plane, centimetres (the camera's own by default)
   std::vector<Probe> probes;
   };
 
@@ -699,13 +698,9 @@ void drawCase(Tempest::Device& device, const Fixture& fixture, const asset::Worl
     s.file = "island-top.png";
     s.w    = 1200;
     s.h    = 1200;
+    // At 290 m all three probes used to disappear in fog with the camera's normal near plane.
     s.from = {0, 29000, 0};
     s.down = true;
-    // The fog counts its air from the near plane and stretches it 50 times (fog_view_lut.comp): straight down from
-    // 290 m its ray ends 14 km under the sea, where the haze's density has grown without bound, and the frame is one
-    // colour of fog. With the near plane 40 m over the sea the fog is that of 40 m of air. A way around, not a
-    // cure: the debt is issue #1342.
-    s.near = s.from.y-4000.f;
     s.probes.push_back({"the meadow", onGround(land, -40.f, -70.f, 0), 24, Hue::Grass, 0.7f});
     s.probes.push_back({"the sea", {-17500, 0, 17500}, 24, Hue::Blue, 0.7f});
     s.probes.push_back({"the beach", onGround(land, cornerX-nx*(shoreAt-15.f), cornerZ-nz*(shoreAt-15.f), 0), 4, Hue::Sand, 0.7f});
@@ -744,7 +739,6 @@ void drawCase(Tempest::Device& device, const Fixture& fixture, const asset::Worl
   uint32_t frameNo = 0;
   for(const auto& shot:shots) {
     camera.setViewport(shot.w, shot.h);
-    camera.setNearClip(shot.near);
     if(shot.down) {
       Camera::SaveState state = camera.saveState();
       state.origin      = shot.from;
