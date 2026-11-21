@@ -16,7 +16,7 @@ flame, a few sparks of burning fines and a thin smoke into the hood. The tongues
 bellows and settle between them: the loop S_S1 is 62 frames at 25 a second, 2.48 s; the fire starts at frame 11 of
 T_S0_2_S1, 26 frames before the loop, and the push (its sound FORGE_FIRE) comes 7 frames into the loop, so the first
 push is 1.32 s after the fire starts. No column of flame: the fire stays in the coals. Its light (particles.d "light")
-comes out of the bed, about 3 m, warmer between the pushes and yellower at each, on the same keys as the tongues.
+comes out of the bed, about 2.4 m, warmer between the pushes and yellower at each, on the same keys as the tongues.
 
 The anvil (a blow on iron at forging heat): a handful of flakes of scale, dark orange, thrown sideways and down at a
 few metres a second; they fall, land on the floor (particles.d "land") and glow out there. No shower of bright sparks:
