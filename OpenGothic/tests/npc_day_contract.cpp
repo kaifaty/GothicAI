@@ -24,7 +24,7 @@ struct Sink final : NpcActivityProbe {
   void point(const Npc&,const WayPoint*,const WayPoint*) override {}
   void mob(const Npc&,const Interactive&,bool) override {}
   };
-std::string run() {
+daedalus::DaedalusVm makeVm() {
   asset::ProgramRecord program;
   program.version=50;
   program.bytecode.push_back(std::byte(Op::RSR));
@@ -48,37 +48,32 @@ std::string run() {
   const auto a=function("ZS_A_LOOP");begin(a);call(Op::BL,uint32_t(program.symbols[helper].address));op(Op::RSR);
   const auto b=function("ZS_B_LOOP");begin(b);call(Op::BL,uint32_t(program.symbols[helper].address));op(Op::RSR);
   const auto outside=function("OUTSIDE");begin(outside);call(Op::BL,uint32_t(program.symbols[helper].address));op(Op::RSR);
-  daedalus::DaedalusVm vm(daedalus::DaedalusScript::from_program(std::move(program)));
-  unsigned previousCalls=0;
-  vm.observe_calls([&](const auto&) {++previousCalls;});
-  RoutineDefinitions::Library catalog;
-  catalog.routines["RTN_TEST"]={{8,0,20,0,"ZS_A","WP"},{20,0,8,0,"ZS_B","WP"}};
-  auto stats=DayScriptStats::attach(vm,catalog);
-  std::vector<std::string> sources;
-  vm.register_external("HLP_RANDOM",[&] {sources.push_back(stats->source(true,true)); stats->random(true,true);});
+  return daedalus::DaedalusVm(daedalus::DaedalusScript::from_program(std::move(program)));
+  }
+std::string measure(daedalus::DaedalusVm& vm, DayScriptStats& stats, const std::vector<std::string>& sources) {
   for(const auto name:{"ZS_A_LOOP","ZS_B_LOOP"}) {
-    stats->begin(name);
+    stats.begin(name);
     vm.call_function<void>(name);
-    stats->end();
+    stats.end();
     }
-  stats->begin("ZS_A_LOOP");
+  stats.begin("ZS_A_LOOP");
   for(const auto name:{"ZS_B_LOOP","OUTSIDE"}) {
-    stats->begin(name);
+    stats.begin(name);
     vm.call_function<void>(name);
-    stats->end();
+    stats.end();
     }
-  stats->end();
+  stats.end();
   vm.call_function<void>("OUTSIDE");
-  stats->random(false,true);
-  stats->random(false,false);
+  stats.random(false,true);
+  stats.random(false,false);
   check(sources==std::vector<std::string>{"HLP_RANDOM/ZS_A/loop","HLP_RANDOM/ZS_B/loop","HLP_RANDOM/ZS_B/loop",
                                         "HLP_RANDOM/outside/OUTSIDE","HLP_RANDOM/outside/OUTSIDE"},
         "random ownership follows nested states and perceptions, then restores outside top-level");
-  const auto bytes=stats->json();
+  const auto bytes=stats.json();
   rapidjson::Document j;
   j.Parse(bytes.c_str());
   check(!j.HasParseError(),"valid counter JSON");
-  check(j["calls"].GetUint64()==10 && previousCalls==10,"all nested script calls and existing observer included");
+  check(j["calls"].GetUint64()==10,"all nested script calls included");
   check(j["states"]["ZS_A"]["phases"]["loop"]["engine"]==2,"engine phase entries counted separately from VM calls");
   check(j["states"]["ZS_A"]["phases"]["loop"]["nested"]==1,"nested call belongs to phase");
   check(j["states"]["ZS_A"]["phases"]["loop"]["instructions"]==4,"inclusive VM instruction count");
@@ -89,16 +84,45 @@ std::string run() {
   total=0;
   for(const auto& value:j["random_sources"].GetObject()) total+=value.value.GetUint64();
   check(total==7 && total==j["random"].GetUint64(),"all random sources converge");
-  stats->stop(vm);
-  vm.call_function<void>("OUTSIDE");
-  check(stats->json()==bytes && previousCalls==12,"stopped interval is inert, original observer retained");
   return bytes;
+  }
+
+void run() {
+  auto vm=makeVm();
+  RoutineDefinitions::Library catalog;
+  catalog.routines["RTN_TEST"]={{8,0,20,0,"ZS_A","WP"},{20,0,8,0,"ZS_B","WP"}};
+  unsigned earlyCalls=0,lateCalls=0;
+  vm.observe_calls([&](const auto&) {++earlyCalls;});
+  std::shared_ptr<DayScriptStats> stats;
+  std::vector<std::string> sources;
+  vm.register_external("HLP_RANDOM",[&] {sources.push_back(stats->source(true,true)); stats->random(true,true);});
+  std::string first;
+  for(unsigned interval=0;interval<2;++interval) {
+    stats=DayScriptStats::attach(vm,catalog);
+    if(interval==0) vm.add_call_observer([&](const auto&) {
+      ++lateCalls;
+      check(earlyCalls==lateCalls,"startup observer runs before the later observer");
+      });
+    earlyCalls=lateCalls=0;
+    sources.clear();
+    const auto bytes=measure(vm,*stats,sources);
+    if(interval==0) first=bytes;
+    else check(bytes==first,"two intervals on the same VM produce identical counter bytes");
+    stats->stop(vm);
+    check(vm.call_observer_count()==2,"stop removes only the interval's call observer");
+    vm.call_function<void>("OUTSIDE");
+    check(stats->json()==bytes,"stopped counters stay unchanged");
+    check(earlyCalls==12 && lateCalls==12,"both unrelated observers receive all calls, including after stop");
+    const std::weak_ptr<DayScriptStats> lifetime=stats;
+    stats.reset();
+    check(lifetime.expired(),"VM releases the stopped collector");
+    }
   }
 }
 int main() {
   try {
     check(NpcActivityProbe::instance==nullptr,"engine hooks disabled by default");
-    check(run()==run(),"repeated programs produce identical counter bytes");
+    run();
     Sink sink;
     int actorToken=0;
     auto* actor=reinterpret_cast<const Npc*>(&actorToken);

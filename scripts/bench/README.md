@@ -1960,8 +1960,8 @@ actual engine queue observation on a synthetic program, without game data. The s
 `gothic-placed-items-contract` additionally exercises `invokeState` through the real `Hlp_Random`,
 `GameScript::rand` and measurement probe, and verifies JSONL commands from both regular and overlay
 `Npc::aiPush` queues. The day contract also checks that merged `LookAtNpc` commands are both traced.
-Repeated probe intervals in one VM retain inactive call observer links and their collectors;
-removable VM observers are tracked in [#1550](https://github.com/kaifaty/GothicAI/issues/1550).
+At the end of each interval the probe removes its call observer and releases its collector.
+The day contract runs two intervals on one VM and checks that other call observers still run in registration order.
 
 
 `scripts/npc_day_parity.py` matches samples by time and key and leaves the hero out, with his events
