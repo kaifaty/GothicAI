@@ -10,9 +10,10 @@
 
 // The level switches of a tree with a bough hierarchy (OPENGOTHIC_TREE_BOUGH_LOD; reports/engine/2026-11-16-modern-trees/
 // tree-bough-lod.md, «Плавная смена древесины и тени»). A threshold of its own GLBs (the main view's `levels` px) and
-// of the default shadow scale (MeshLevels::pickShadow) is a band in the proportions of the impostor
+// of its shadow scale (ShadowPx) is a band in the proportions of the impostor
 // joint: from px*56/49 down to px*46/49 the coarser GLB takes the share TreeBough::impostorJointWeight(px, height) of
-// the samples and the finer one the rest. The thresholds lie an octave apart, so at most one band of a scale is active.
+// the samples and the finer one the rest. The thresholds lie 56/46 times apart or more, so at most one band of a
+// scale is active.
 // The object's cluster draws the finer side, a second cluster the coarser one; the word in the static instance's
 // deform slot (a static tree is never deformed) tells the masks the two shares and the side:
 // tree_bough_dissolve.glsl. The bands are reversible and need no hysteresis.
@@ -54,12 +55,18 @@ inline Pick main(const float* px, size_t count, float height) {
   return pick(px, levels, count, height);
   }
 
-// The default shadow scale of MeshLevels::pickShadow with bands: the visual GLB above, then the third and
-// the fourth level (as many as there are)
+// The shadow scale, a ladder in place of the step of MeshLevels::pickShadow from the visual GLB to the third level,
+// which changes 22 % of a spruce's shadow at once («Лестница теней ближней ели»): the visual GLB above ShadowPx[0],
+// then the first, the second and the fourth level (as many as there are, none finer than the visual GLB). The third
+// level is left out: its cards are the fattest, the shadow would grow by a quarter and shrink again one step later.
+// The last, largest step lies under 300 px, where a share of the shadow is as many pixels as at the steps above
+constexpr float ShadowPx[] = {MeshLevels::ShadowNearDefaultPx, MeshLevels::ShadowFarPx, 240.f};
+static_assert(ShadowPx[0]*46.f>=ShadowPx[1]*56.f && ShadowPx[1]*46.f>=ShadowPx[2]*56.f);
+
 inline Pick shadow(size_t count, float heightAt1080, uint8_t visualGlb) {
-  constexpr float px[] = {MeshLevels::ShadowNearDefaultPx, MeshLevels::ShadowFarPx};
-  const uint8_t levels[] = {visualGlb, uint8_t(std::min<size_t>(3, count)), uint8_t(std::min<size_t>(4, count))};
-  return pick(px, levels, 2, heightAt1080);
+  const auto level = [&](size_t i) { return std::max(visualGlb, uint8_t(std::min(i, count))); };
+  const uint8_t levels[] = {visualGlb, level(1), level(2), level(4)};
+  return pick(ShadowPx, levels, 3, heightAt1080);
   }
 
 inline uint32_t share(const Pick& band) {
