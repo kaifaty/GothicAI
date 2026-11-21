@@ -87,6 +87,28 @@ std::string measure(daedalus::DaedalusVm& vm, DayScriptStats& stats, const std::
   return bytes;
   }
 
+void checkOverrides() {
+  auto vm=makeVm();
+  check(vm.call_observer_count()==0,"VM starts without call observers");
+  auto stats=DayScriptStats::attach(vm,{});
+  const std::weak_ptr<DayScriptStats> lifetime=stats;
+  check(vm.call_observer_count()==1,"the interval owns the first call observer");
+  stats->stop(vm);
+  check(vm.call_observer_count()==0,"stopping the sole interval restores the unobserved VM");
+  stats.reset();
+  check(lifetime.expired(),"VM releases its first collector after stop");
+
+  unsigned overrides=0,notifications=0;
+  vm.override_function("HELPER",[&] {++overrides;});
+  vm.call_function<void>("OUTSIDE");
+  check(overrides==1,"ordinary calls still execute with no observers after stop");
+  vm.observe_calls([&](const auto& symbol) {if(symbol.name()=="HELPER") ++notifications;});
+  vm.call_function<void>("OUTSIDE");
+  check(overrides==2 && notifications==1,"bytecode BL reports an overridden call once");
+  vm.unsafe_call_bl(vm.find_symbol_by_name("HELPER"));
+  check(overrides==3 && notifications==2,"unsafe_call_bl reports an overridden call once");
+  }
+
 void run() {
   auto vm=makeVm();
   RoutineDefinitions::Library catalog;
@@ -102,6 +124,11 @@ void run() {
     if(interval==0) vm.add_call_observer([&](const auto&) {
       ++lateCalls;
       check(earlyCalls==lateCalls,"startup observer runs before the later observer");
+      if(first.empty() && lateCalls==1) {
+        rapidjson::Document counters;
+        counters.Parse(stats->json().c_str());
+        check(counters["calls"]==1,"collector counts the first call before the later observer runs");
+        }
       });
     earlyCalls=lateCalls=0;
     sources.clear();
@@ -123,6 +150,7 @@ int main() {
   try {
     check(NpcActivityProbe::instance==nullptr,"engine hooks disabled by default");
     run();
+    checkOverrides();
     Sink sink;
     int actorToken=0;
     auto* actor=reinterpret_cast<const Npc*>(&actorToken);

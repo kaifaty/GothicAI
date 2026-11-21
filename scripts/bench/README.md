@@ -1961,6 +1961,7 @@ actual engine queue observation on a synthetic program, without game data. The s
 `GameScript::rand` and measurement probe, and verifies JSONL commands from both regular and overlay
 `Npc::aiPush` queues. The day contract also checks that merged `LookAtNpc` commands are both traced.
 At the end of each interval the probe removes its call observer and releases its collector.
+Call observers must leave the VM's call-observer list unchanged during notification.
 The day contract runs two intervals on one VM and checks that other call observers still run in registration order.
 
 

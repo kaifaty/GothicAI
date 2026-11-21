@@ -122,12 +122,16 @@ void npcDayRandom(World& world) {
   auto& script=world.script();
   auto* npc=world.addNpc(script.findSymbolIndex("NPC_NO_ID"),Tempest::Vec3{});
   check(npc!=nullptr,"day trace NPC must exist");
+  auto& vm=script.getVm();
+  const auto observers=vm.call_observer_count();
   std::string error;
   if(!NpcDayMeasurement::start(world,directory.string(),0,false,{"NPC_NO_ID"},error)) throw std::runtime_error(error);
-  script.invokeState(npc,nullptr,nullptr,script.getVm().find_symbol_by_name("ZS_TEST")->index());
+  check(vm.call_observer_count()==observers+1,"starting a day measurement must install its call observer");
+  script.invokeState(npc,nullptr,nullptr,vm.find_symbol_by_name("ZS_TEST")->index());
   npc->aiPush(AiQueue::aiUseMob("SMITH_ANVIL",1));
   npc->aiPush(AiQueue::aiOutputSvmOverlay(*npc,"TEST_OVERLAY",7));
   NpcDayMeasurement::stop(world);
+  check(vm.call_observer_count()==observers,"stopping a day measurement must remove its call observer");
   std::ifstream file(directory/"npc-day-script.json");
   const std::string bytes{std::istreambuf_iterator<char>(file),{}};
   rapidjson::Document document;
