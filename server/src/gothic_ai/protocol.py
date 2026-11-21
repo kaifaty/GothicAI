@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 64
+PROTOCOL_VERSION = 65
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -215,6 +215,7 @@ class InventoryItem(_GameMessage):
     item: str  # script symbol, e.g. ITMW_1H_BAU_MACE
     name: str
     count: int
+    value: int | None = None  # v65: C_ITEM.value in gold per unit
     equipped: bool = False
     mission: bool = False  # v39: a mission item (ITEM_MISSION), never given from one npc to another
 
@@ -2129,8 +2130,8 @@ class StoryStateCmd(_Command):
     present in the world, including far NPCs), "distance": cm from `near`, alive or dead, and "seen":
     `near` sees it now (v12), if given}}, "knows": {dialog: bool} (the hero has heard it), "symbols": {name:
     "npc" | "item" | "info" | "var" | "const" | "func" | "other"} (unknown names are left out), "items":
-    {instance: name in the game}, "dialog": bool, "cutscene": bool, "day", "hour", "minute": the game
-    time}."""
+    {instance: name in the game}, "item_values": {instance: gold per unit} (v65), "dialog": bool,
+    "cutscene": bool, "day", "hour", "minute": the game time}."""
 
     type: Literal["story_state"] = "story_state"
     req: str

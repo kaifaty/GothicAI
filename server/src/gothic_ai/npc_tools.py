@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .contracts import GOLD
 from .executor import ATTITUDES, GOALS, Intent, describe_targets
 from .game import GameError, GameLink
 from .llm import Tool, ToolCall
@@ -236,7 +237,11 @@ def render_situation(
             + (f" Здоровье героя: {pl.hp}/{pl.hp_max}." if pl.hp is not None and pl.hp_max else "")
         )
     if not brief:
-        items = [f"{it.name} ({it.item}) ×{it.count}" for it in npc.inventory if not it.equipped]
+        items = [
+            f"{it.name} ({it.item}) ×{it.count}"
+            + (f" (цена за штуку — {it.value} зол.)" if it.item != GOLD and it.value is not None else "")
+            for it in npc.inventory if not it.equipped
+        ]
         lines.append("Твой инвентарь: " + ("; ".join(items) if items else "пусто") + ".")
     if sight is not None:
         lines.append(sight.people)

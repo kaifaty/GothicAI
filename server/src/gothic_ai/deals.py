@@ -50,7 +50,9 @@ from typing import TYPE_CHECKING, Any, Literal
 from .chronicle import Chronicle, Fact
 from .contracts import (
     GOLD,
+    MAX_COUNT,
     MAX_TASK_DAYS,
+    MAX_TERMS,
     TEACH_KINDS,
     Contracts,
     Give,
@@ -63,6 +65,7 @@ from .contracts import (
     parse_teach,
     split,
 )
+from .deal_items import APPRAISE_TOOL, ITEM_LIST, DealItemLookup, appraise_deal, format_appraisal, parse_items
 from .game import GameError, GameLink
 from .gates import GateResultUnknown
 from .journal import Journal
@@ -99,26 +102,12 @@ log = logging.getLogger(__name__)
 
 PROPOSE_DEAL = "propose_deal"
 WITHDRAW_DEAL = "withdraw_deal"
-MAX_COUNT = 100_000  # a sanity bound, not a price limit: what is fair is the npc's to judge
-MAX_TERMS = 6  # things on one side
 MAX_VOUCH = 200
 MAX_DAYS = 10  # the furthest a debt may be due
 STORY_ITEMS = 8  # the things of its story an npc is told of, when it asked for one that is not
 DEBTS_EVERY_S = 10.0  # how often the debts' days are checked
 LIE_KINDS = ("found_out", "caught")
 
-_GIVES = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": {
-            "item": {"type": "string", "description": "идентификатор предмета, золото — ITMI_GOLD"},
-            "count": {"type": "integer", "description": "сколько, не меньше 1"},
-        },
-        "required": ["item", "count"],
-        "additionalProperties": False,
-    },
-}
 _IDS = {"type": "array", "items": {"type": "string"}}
 _TEACH = {
     "type": "array",
@@ -173,6 +162,8 @@ PROPOSE_TOOL = Tool(
     PROPOSE_DEAL,
     "Предложить герою сделку. Герой увидит условия и примет их сам, если согласен, — тогда всё сразу "
     "перейдёт из рук в руки. Торгуетесь — вызови снова с новыми условиями, они заменят прежние. "
+    "Перед торгом посмотри игровые цены за штуку. Цены вещей героя и стоимость обеих сторон узнай "
+    "через appraise_deal. Учитывай количество, а скидку или подарок связывай с причиной в разговоре. "
     "Отдать можешь только то, что есть в твоём инвентаре (он в обстановке); у героя проси предметы по "
     "идентификатору, золото — ITMI_GOLD. Не знаешь точного — пиши догадку того же вида (ITWR_… письма и "
     "книги, ITMI_… прочие вещи): вещь из твоих дел, которая у него с собой, код подставит сам. Сколько у "
@@ -209,8 +200,8 @@ PROPOSE_TOOL = Tool(
     {
         "type": "object",
         "properties": {
-            "npc_gives": {**_GIVES, "description": "что отдаёшь ты"},
-            "hero_gives": {**_GIVES, "description": "что отдаёт герой сейчас"},
+            "npc_gives": {**ITEM_LIST, "description": "что отдаёшь ты"},
+            "hero_gives": {**ITEM_LIST, "description": "что отдаёт герой сейчас"},
             "let_pass": {"type": "boolean", "description": "разрешить проход через ворота; иначе false"},
             "forgive": {
                 **_IDS,
@@ -254,7 +245,7 @@ PROPOSE_TOOL = Tool(
             "npc_later": {
                 "type": ["object", "null"],
                 "properties": {
-                    "items": {**_GIVES, "description": "что ты отдашь герою позже"},
+                    "items": {**ITEM_LIST, "description": "что ты отдашь герою позже"},
                     "day": {"type": "integer", "description": "с какого дня игры отдашь, день от 1"},
                 },
                 "required": ["items", "day"],
@@ -273,7 +264,7 @@ PROPOSE_TOOL = Tool(
                 "type": "object",
                 "properties": {
                     "kill": {**_KILLS, "description": "кого ему убить"},
-                    "bring": {**_GIVES, "description": "что ему принести тебе"},
+                    "bring": {**ITEM_LIST, "description": "что ему принести тебе"},
                     "days": {"type": "integer", "description": "срок в днях; 0 — без срока"},
                 },
                 "required": ["kill", "bring", "days"],
@@ -283,7 +274,7 @@ PROPOSE_TOOL = Tool(
             "reward": {
                 "type": "object",
                 "properties": {
-                    "npc_gives": {**_GIVES, "description": "что ты отдашь"},
+                    "npc_gives": {**ITEM_LIST, "description": "что ты отдашь"},
                     "xp": {"type": "integer", "description": "опыт; 0 — нет"},
                     "teach": {**_TEACH, "description": "чему научишь"},
                 },
@@ -542,6 +533,7 @@ class Deal:
     truce: int | None = None  # agreed game hours, only bandits (parley.py)
     let_pass: bool = False
     secret: str = ""
+    appraisal: str = ""  # base prices of the items changing hands now, for the NPC
 
     def same(self, other: Deal) -> bool:
         return self.terms() == other.terms()
@@ -755,6 +747,8 @@ class Deals:
                 lines.append("Исход принятой сделки за проход неизвестен. Повторно брать плату нельзя.")
             else:
                 lines.append(f"Твоё предложение герою ждёт его согласия: {deal.terms()}.")
+                if deal.appraisal:
+                    lines.append(deal.appraisal)
         known, forgiven, silent = self.lies_of(npc)
         open_lies = {k: lie for k, lie in known.items() if k not in forgiven}
         if open_lies:
@@ -795,13 +789,13 @@ class Deals:
     def all_tools(self) -> tuple[Tool, ...]:
         if self.gates is not None:
             # The offered schema depends on whether this npc is at its gate post.
-            return (WITHDRAW_TOOL,)
+            return (APPRAISE_TOOL, WITHDRAW_TOOL)
         tool = NO_GATES_TOOL if self.cover and self.crimes is not None else NO_COVER_NO_GATES_TOOL
         if self.parley is None:
             tool = _NO_TRUCE_TOOLS[tool.description]
         if self.bounty is None:
             tool = _NO_SECRET_TOOLS[tool.description]
-        return (tool, WITHDRAW_TOOL)
+        return (tool, APPRAISE_TOOL, WITHDRAW_TOOL)
 
     def tools(self, npc: str) -> list[Tool]:
         if (deal := self.open.get(npc.upper())) is not None and deal.state == "unknown":
@@ -814,11 +808,13 @@ class Deals:
             tool = _NO_TRUCE_TOOLS[tool.description]
         if self.bounty is None:
             tool = _NO_SECRET_TOOLS[tool.description]
-        return [tool, WITHDRAW_TOOL] if npc.upper() in self.open else [tool]
+        return [tool, APPRAISE_TOOL, WITHDRAW_TOOL] if npc.upper() in self.open else [tool, APPRAISE_TOOL]
 
     async def handle(
         self, dialogue: DialogueManager, conv: Conversation, call: ToolCall, snap: Snapshot | None
     ) -> ToolOutcome | None:
+        if call.name == APPRAISE_TOOL.name:
+            return await appraise_deal(self.link, call.arguments)
         if call.name == PROPOSE_DEAL:
             return await self.propose(
                 conv.npc, conv.persona.name, call.arguments, snap, hero_words=meeting_words(conv)
@@ -875,7 +871,7 @@ class Deals:
         kills, why = await parse_kills(self.link, task_raw.get("kill"), self.names)
         if kills is None:
             return ToolOutcome(f"Отклонено: {why}", "rejected")
-        bring, why = _parse(task_raw.get("bring"))
+        bring, why = parse_items(task_raw.get("bring"))
         if bring is None:
             return ToolOutcome(f"Отклонено: {why}", "rejected")
         days, why = _parse_days(task_raw.get("days"))
@@ -910,14 +906,17 @@ class Deals:
         npc_later_raw, why = _parse_npc_later(args.get("npc_later"))
         if why:
             return ToolOutcome(f"Отклонено: {why}", "rejected")
-        wanted, why = _parse(args.get("hero_gives"))
+        wanted, why = parse_items(args.get("hero_gives"))
         if wanted is None:
             return ToolOutcome(f"Отклонено: {why}", "rejected")
         later_ids = {i for i, _, _ in later_raw}
         asked = {*wanted, *bring, *later_ids, *(npc_later_raw[0] if npc_later_raw else ())}
-        things, swaps, day, why = await self._items(npc, asked, set(wanted) - set(bring) - later_ids)
-        if things is None:
+        wares = {g.item: g.count for g in npc_gives}
+        price_items = set(wares) | {d.give.item for d in repay}
+        lookup, why = await self._items(npc, asked, set(wanted) - set(bring) - later_ids, price_items)
+        if lookup is None:
             return ToolOutcome(f"Отклонено: {why}", "rejected")
+        things, swaps, day = lookup.names, lookup.swaps, lookup.day
         npc_later = None
         if npc_later_raw:
             items, due = npc_later_raw
@@ -1008,6 +1007,12 @@ class Deals:
             let_pass=let_pass,
             secret=secret,
         )
+        if (price_items | wanted.keys()) - {GOLD}:
+            payment = wanted.copy()
+            for debt in repay:
+                give = debt.give
+                payment[give.item] = payment.get(give.item, 0) + give.count
+            deal.appraisal = format_appraisal(wares, payment, things, lookup.values)
         if why := self.purse.error(deal, self.debts.values(), hero_words):
             return ToolOutcome(why, "rejected")
         if current is not None and current.same(deal):
@@ -1036,6 +1041,8 @@ class Deals:
                 for g in twice
             )
             after += f" Учти: долг уже включает своё, с hero_gives герой отдаёт всего {total}."
+        if deal.appraisal:
+            after += "\n" + deal.appraisal
         return ToolOutcome(f"{changed}: {deal.terms()}. {after}", "accepted")
 
     def end(self, npc: str, why: str = "") -> None:
@@ -1109,7 +1116,7 @@ class Deals:
 
     def _npc_gives(self, npc: str, raw: Any, snap: Snapshot | None) -> tuple[tuple[Give, ...] | None, str]:
         """What the npc gives: what it carries first, the rest from its stash (contracts.py)."""
-        wanted, why = _parse(raw)
+        wanted, why = parse_items(raw)
         if wanted is None:
             return None, why
         if not wanted:
@@ -1267,16 +1274,16 @@ class Deals:
         return ""
 
     async def _items(
-        self, npc: str, items: set[str], hero: set[str]
-    ) -> tuple[dict[str, str] | None, dict[str, str], int, str]:
-        """The names of the items in the game, what stands for an id the npc guessed for a thing the hero
-        gives now (`hero`: the guess -> the one of that kind of its story he carries), and today's game
-        day; or why not."""
+        self, npc: str, items: set[str], hero: set[str], price_items: set[str]
+    ) -> tuple[DealItemLookup | None, str]:
+        """Resolve requested item symbols (including guesses for a hero's story item) and look up
+        unit prices for the immediate exchange in the same read."""
         story = sorted(set(self.things(npc)) - items) if self.things is not None else []
+        catalogue = sorted(items | price_items | set(story))
         try:
-            state = await self.link.story_state(symbols=[*items, *story], items=[*items, *story])
+            state = await self.link.story_state(symbols=[*items, *story], items=catalogue)
         except (GameError, TimeoutError) as err:
-            return None, {}, 0, f"не выходит проверить предметы: {err}"
+            return None, f"не выходит проверить предметы: {err}"
         kinds, names = state.get("symbols", {}), state.get("items", {})
         story = [i for i in story if kinds.get(i) == "item"]
         unknown = sorted(i for i in items if kinds.get(i) != "item")
@@ -1300,9 +1307,14 @@ class Deals:
                 story.sort(key=lambda i: (_kind(i) not in kinds_asked, i))
                 listed = "; ".join(f"{names.get(i) or i} ({i})" for i in story[:STORY_ITEMS])
                 why += f" Вещи из твоих дел: {listed}."
-            return None, {}, 0, why
-        known = {*(i for i in items if i not in swaps), *swaps.values()}
-        return {i: str(names.get(i) or i) for i in known}, swaps, int(state.get("day", 0)), ""
+            return None, why
+        known = ((items | price_items) - swaps.keys()) | set(swaps.values())
+        return DealItemLookup(
+            names={i: str(names.get(i) or i) for i in known},
+            values=state.get("item_values", {}),
+            swaps=swaps,
+            day=int(state.get("day", 0)),
+        ), ""
 
     # --- the hero accepts ------------------------------------------------------------------------
 
@@ -1705,31 +1717,6 @@ class Deals:
         task.add_done_callback(self._background.discard)
 
 
-def _parse(raw: Any) -> tuple[dict[str, int] | None, str]:
-    """[{item, count}] -> {ITEM: count}, the same item added up; or why not."""
-    if raw is None:
-        return {}, ""
-    if not isinstance(raw, list):
-        return None, "нужен список предметов."
-    out: dict[str, int] = {}
-    for x in raw:
-        if not isinstance(x, dict):
-            return None, "каждый предмет — {item, count}."
-        item = str(x.get("item") or "").strip().upper()
-        try:
-            count = int(x.get("count") or 0)
-        except (TypeError, ValueError):
-            count = 0
-        if not item or count < 1:
-            return None, f"неверный предмет: {x}."
-        out[item] = out.get(item, 0) + count
-    if len(out) > MAX_TERMS:
-        return None, f"не больше {MAX_TERMS} разных предметов с одной стороны."
-    if any(c > MAX_COUNT for c in out.values()):
-        return None, f"не больше {MAX_COUNT} штук."
-    return out, ""
-
-
 def _kind(item: str) -> str:
     """The kind of an item by its id's prefix: ITWR_ writings, ITMI_ things, ITAR_ armour..."""
     return item.split("_", 1)[0]
@@ -1774,7 +1761,7 @@ def _parse_later(raw: Any) -> tuple[list[tuple[str, int, int]] | None, str]:
     for x in raw or []:
         if not isinstance(x, dict):
             return None, "каждый долг — {item, count, days}."
-        got, why = _parse([{"item": x.get("item"), "count": x.get("count")}])
+        got, why = parse_items([{"item": x.get("item"), "count": x.get("count")}])
         if got is None:
             return None, why
         try:
@@ -1795,7 +1782,7 @@ def _parse_npc_later(raw: Any) -> tuple[tuple[dict[str, int], int] | None, str]:
         return None, ""
     if not isinstance(raw, dict) or set(raw) - {"items", "day"}:
         return None, "npc_later — условие {items, day}."
-    items, why = _parse(raw.get("items"))
+    items, why = parse_items(raw.get("items"))
     if items is None:
         return None, f"npc_later — {why}"
     if not items:

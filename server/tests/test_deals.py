@@ -562,7 +562,7 @@ async def test_cover_is_unavailable_without_cover_or_crimes(crimes, cover):
     deals.crimes = Crimes(dialogue.link, chronicle) if crimes else None
     deals.cover = cover
     try:
-        [tool] = deals.tools(XARDAS)
+        tool = next(t for t in deals.tools(XARDAS) if t.name == "propose_deal")
         assert "cover" not in tool.parameters["properties"] and "(cover)" not in tool.description
         assert "cover" not in deals.all_tools[0].parameters["properties"]
         result = await deals.propose(XARDAS, "Ксардас", {"cover": {"vouch": ""}}, None)
@@ -1168,10 +1168,10 @@ async def test_gate_deal_is_shown_and_paid_only_with_the_passage(monkeypatch):
 
     gates.bribe.side_effect = transfer
     try:
-        [tool] = deals.tools(guard)
+        tool = next(t for t in deals.tools(guard) if t.name == "propose_deal")
         assert "let_pass" in tool.parameters["properties"]
         assert "let_pass" in tool.parameters["required"]
-        [tool] = deals.tools(XARDAS)
+        tool = next(t for t in deals.tools(XARDAS) if t.name == "propose_deal")
         assert "let_pass" not in tool.parameters["properties"] and "let_pass" not in tool.description
         dialogue.open(guard, "Стражник")
         result = await deals.propose(

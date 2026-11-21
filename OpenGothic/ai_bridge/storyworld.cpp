@@ -7,6 +7,8 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <utility>
+#include <vector>
 
 #include "daedalus/vm.h"
 #include "daedalus/classes.h"
@@ -489,17 +491,19 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
     });
   w.EndObject();
 
+  std::vector<std::pair<std::string,int32_t>> itemValues;
   w.Key("items");
   w.StartObject();
   eachString(msg,"items",[&](const std::string& name) {
     auto* s = vm.find_symbol_by_name(name);
     if(s==nullptr || kindOf(vm,*s)!="item")
       return;
-    // the engine reads names the same way (the gold's); the symbol keeps the instance it had
+    // Read the name and unit value from the same item and restore the live VM binding.
     auto prev = s->get_instance();
     try {
       auto item = world.script().createItemForQuery(s->index());
       auto text = TextCodec::toUtf8(item->name);
+      itemValues.emplace_back(name,item->value);
       key(name);
       w.String(text.data(),rapidjson::SizeType(text.size()));
       }
@@ -507,6 +511,14 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
       }
     s->set_instance(prev);
     });
+  w.EndObject();
+
+  w.Key("item_values");
+  w.StartObject();
+  for(const auto& [name,value] : itemValues) {
+    key(name);
+    w.Int(value);
+    }
   w.EndObject();
 
   if(auto target = msg.FindMember("deed_target"); target!=msg.MemberEnd() && target->value.IsObject()) {

@@ -41,7 +41,7 @@ class StoryWorld final {
     // story_state: what the director's rules read (stage 5), as JSON: values of global int `vars`, whether
     // `npcs` live ({"state": "alive", "dead" or "absent", "name", "pos" (v48)}), which dialogs (`knows`) the hero has
     // heard, what script `symbols` are ("npc", "item", "info", "var", "const", "func", "other"; missing:
-    // absent), the names of `items` (instances), whether a dialog or a cutscene runs now, and the game time
+    // absent), the names and unit values of `items` (instances), whether a dialog or a cutscene runs now, and the game time
     std::string state(World& world, const rapidjson::Value& msg);
     // story_people: every person of the world (alive, not the hero, no monsters) and its day, as JSON
     // [{"npc", "name", "guild", "home_room" (ground sector/BSP room at ZS_GOTOBED or ZS_SLEEP),
