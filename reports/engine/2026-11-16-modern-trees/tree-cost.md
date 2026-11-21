@@ -298,7 +298,9 @@ python3 reports/engine/2026-11-16-modern-trees/tree-cost/screen.py ~/.local/shar
 OPENGOTHIC_CONTENT=<набор> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh tree-cost /absolute/out
 ```
 
-Наборы на Ryzen лежат в `~/gothic-ai/tree-cost/content/`. Прогоны — на хранилище `/mnt/shared/gothic-ai/tree-cost/runs/` (серия 1) и в `~/gothic-ai/tree-cost/runs/` (серия 3, без архивации: заявка прервана).
+Команда `run.sh` передаёт варианты в общий `perf.sh --variants`. Новые серии архивируются в `/mnt/shared/gothic-ai/perf-stand/runs/`. В указанной локальной папке отчёты лежат в `<вариант>/round-N/`.
+
+Наборы на Ryzen лежат в `~/gothic-ai/tree-cost/content/`. Прежние прогоны — на хранилище `/mnt/shared/gothic-ai/tree-cost/runs/` (серия 1) и в `~/gothic-ai/tree-cost/runs/` (серия 3, без архивации: заявка прервана).
 
 ## Что из этого следует для уровней
 
