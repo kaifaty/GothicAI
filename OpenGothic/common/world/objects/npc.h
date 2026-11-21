@@ -826,7 +826,6 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      clearAiQueue();
 
     auto      currentWayPoint() const -> const WayPoint* { return currentFp; }
-    auto      heldWayPoint() const -> const WayPoint* { return currentFpLock.point(); }
     auto      currentGoToPoint() const -> const WayPoint* { return go2.wp; }
     auto      navigationPath() const -> const WayPath& { return wayPath; }
     auto      currentTaPoint() const -> const WayPoint*;

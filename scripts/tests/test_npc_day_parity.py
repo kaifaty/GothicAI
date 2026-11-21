@@ -513,9 +513,12 @@ def test_point_loss_late_arrival_collision_and_legal_fallback(tmp_path):
         assert npc_day_parity.main([str(a), str(b), "--activity-states", "ZS_STAND_GUARDING",
                                    "--tolerances", str(POINTS), "--out", str(tmp_path / (name + ".md")),
                                    "--json", str(tmp_path / (name + ".json"))]) == (0 if name == "fallback" else 1)
-        if name == "double":
-            assert {c["name"] for c in json.loads((tmp_path / (name + ".json")).read_text())["checks"]
-                    if not c["pass"]} == {"max_point_double_occupancy"}
+        profile_failed = {c["name"] for c in json.loads((tmp_path / (name + ".json")).read_text())["checks"]
+                          if not c["pass"]}
+        if name == "late":
+            assert "max_point_arrival_max" in profile_failed
+        elif name == "double":
+            assert profile_failed == {"max_point_double_occupancy"}
     # A single legal wait cannot disguise losing the rest of the activity to an empty point.
     mixed = tmp_path / "mixed"
     journal(mixed, [variants["fallback"][0], *variants["lost"][1:]], [], header)

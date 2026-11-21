@@ -201,11 +201,9 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
     const auto  inv   = inventoryHash(*npc);
     const int   ta    = npc->currentRoutineIndex();
     const auto* mob   = npc->interactive();
-    const auto* point = npc->heldWayPoint();
+    const auto* point = npc->currentWayPoint();
     if(point!=nullptr && !point->isFreePoint()) point=nullptr;
-    const auto* currentPoint=npc->currentWayPoint();
-    const bool onPoint=point!=nullptr && currentPoint!=nullptr && currentPoint->isFreePoint() &&
-                       currentPoint->checkName(point->name) && MoveAlgo::isClose(*npc,*currentPoint,MAX_AI_USE_DISTANCE);
+    const bool onPoint=point!=nullptr && MoveAlgo::isClose(*npc,*point,MAX_AI_USE_DISTANCE);
     // Availability is needed to distinguish legal waiting from losing an empty point.
     // These are the five script forms calibrated by the point-activity bench, not executors.
     const auto state=symbolName(w,npc->currentState().ptr);
