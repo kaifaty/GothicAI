@@ -1,12 +1,14 @@
 """The forest of the cost stand (scripts/content/fir_set.py forest, reports/engine/2026-11-16-modern-trees/tree-cost.md):
 the forests of 64, 256 and 1 024 spruces nest, every place keeps its spruce and yaw, the grid is STEP apart."""
 import json
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from PIL import Image
 
 import fir_set
 import impostor_bake
@@ -34,10 +36,73 @@ def test_a_forest_is_an_even_square_within_the_grid(count):
         fir_set.forest_layout(count)
 
 
+@pytest.mark.parametrize(('count', 'share', 'sample'), [(4, .5, True), (4, 1., False), (0, 1., True)])
+@pytest.mark.filterwarnings('error:All-NaN slice encountered:RuntimeWarning')
+def test_forest_writes_the_meshes_and_plants_only_on_ground(tmp_path, monkeypatch, count, share, sample):
+    monkeypatch.syspath_prepend(str(fir_set.HERE / 'world'))
+    from world_fixtures import write_glb
+
+    def patch(x, z, height, material):
+        # Flat triangle wider than the root probes, in the mirrored X of a world chunk (cm).
+        positions = [(-x + 180, height, z - 120), (-x - 180, height, z - 120), (-x, height, z + 240)]
+        return material, positions, range(3), [(0, 1, 2)]
+
+    base, source, textures, output = (tmp_path / name for name in ('base', 'source', 'textures', 'forest'))
+    grid = fir_set.forest_layout(4)
+    ground = [(grid[0], 120), (grid[1], 250)]
+    materials = [dict(name=name) for name in ('NW_NATURE_WALDBODEN_03', 'NW_CITY_ROOF_01', 'NW_NATURE_STEIN_03')]
+    chunks = base / 'worlds/NEWWORLD/chunks'
+    # Two roots on soil, one on a roof, and one where only a side probe touches soil. The lone spruce is on rock.
+    patches = [patch(t['x'], t['z'], y, 0) for t, y in ground]
+    patches.append(patch(grid[2]['x'], grid[2]['z'], 600, 1))
+    patches.append(patch(grid[3]['x'] + 150, grid[3]['z'], 180, 0))
+    write_glb(chunks / '8_-2.glb', patches, materials)
+    write_glb(chunks / '7_0.glb', [patch(*fir_set.LONE, 480, 2)], materials)
+    for directory in ('materials', 'meshes', 'worlds/NEWWORLD/vobs.d'):
+        (source / directory).mkdir(parents=True)
+    (source / 'materials/materials.json').write_text('{}')
+    textures.mkdir()
+    for part in ('bark', 'boughs'):
+        for kind in ('albedo', 'normal', 'orm'):
+            Image.new('RGB', (4, 4)).save(textures / f'{part}-{kind}.dds')
+
+    # A few whorls keep the real mesh builds and density checks small enough for CI.
+    config = json.loads((fir_set.BLENDER / 'fir.json').read_text())
+    config['height'] = 7.
+    config['whorl']['step'] = [2., 3.]
+    config_path = tmp_path / 'fir.json'
+    config_path.write_text(json.dumps(config))
+    args = ['fir_set.py', '--config', str(config_path), 'forest', str(output), '--from', str(source),
+            '--base', str(base), '--textures', str(textures), '--count', str(count), '--share', str(share)]
+    monkeypatch.setattr(sys, 'argv', args if sample else [*args, '--no-sample'])
+    assert fir_set.main() == 0
+
+    layer = json.loads((output / 'worlds/NEWWORLD/vobs.d/tree-cost.json').read_text())
+    expected = [dict(key=f'tree-cost-{t["column"]}-{t["row"]}', kind='mesh', visual=f'OWN_TREE_FIR_A_{t["spruce"]}',
+                     position=[round(t['x'], 1), y, round(t['z'], 1)], yaw_deg=t['yaw'], collision='none')
+                for t, y in ground[:count]]
+    if sample:
+        expected.append(dict(key='tree-cost-lone', kind='mesh', visual='OWN_TREE_FIR_A_4',
+                             position=[fir_set.LONE[0], 480, fir_set.LONE[1]], yaw_deg=0., collision='none'))
+    assert layer == dict(format=1, add=expected)
+
+    report = json.loads((output / 'tree-cost.json').read_text())
+    assert (report['count'], report['share'], report['sample']) == (count, share, sample)
+    assert report['standing'] == len(ground[:count])
+    assert report['without_ground'] == [[t['column'], t['row']] for t in grid[2:count]]
+    meshes = json.loads((output / 'meshes/meshes.json').read_text())
+    triangles = {visual: sum(len(p['index']) for p in tree_glb.read(output / 'meshes' / record['glb']))
+                 for visual, record in meshes.items()}
+    assert set(triangles) == {f'OWN_TREE_FIR_A_{i}' for i in range(1, 6)}
+    assert {s['visual']: s['triangles'] for s in report['spruces']} == triangles
+    for spruce in report['spruces']:
+        assert triangles[spruce['visual']] / spruce['triangles_full'] == pytest.approx(share, abs=.01)
+    assert report['triangles'] == sum(triangles[t['visual']] for t in expected)
+
+
 @pytest.mark.parametrize('method', ['designed', 'random'])
 def test_the_levels_are_the_field_the_engine_takes_and_keep_the_spruces_materials(tmp_path, monkeypatch, method):
     """Each mode writes four GLBs with the materials and COLOR_0 required by the engine."""
-    import sys
     sys.path.insert(0, str(fir_set.BLENDER))
     import fir_tree
     config = json.loads((fir_set.BLENDER / 'fir.json').read_text())

@@ -705,7 +705,7 @@ def thin(tree: Tree, share: float, seed: int = 0) -> Tree:
     branches. If the trunk and stubs exceed that share, the cards give up the excess while keeping at least
     the first card if initially affordable. The cards are kept at random, p of them, and each is scaled about
     its centre by 1 / sqrt(p): the cards cover the area all of them covered, so the crown keeps its density
-    (the background through the outline of spruce A: 10.6 % full, 11.5 / 12.4 / 14.8 % at 1/2, 1/4 and 1/8)
+    (tree-cost.md measured 10.6 % background with the full spruce A and 12.0 / 11.6 / 11.4 % at 1/2, 1/4 and 1/8)
     and about the pixels it fills, so the triangle count changes more than its overdraw. Keeping the outline's
     cards first (by A) left holes: 23-24 % at 1/4 and 1/8. The grown cards of the outline reach further out, so
     the cards are then brought back to the crown's width about the trunk's axis. Branches, phases and wind
