@@ -6,7 +6,9 @@ import time
 from typing import Any
 
 from ..brain.reflex import Reflexes
-from ..deals import GOLD, Deals, _parse
+from ..contracts import GOLD
+from ..deal_items import parse_items
+from ..deals import Deals
 from ..dialogue import DialogueManager
 from ..game import GameError, GameLink
 from ..llm import ToolCall
@@ -67,6 +69,9 @@ async def deal_window(
         snap = await link.snapshot(seller, fresh=True)
         wares = [i for i in snap.npc.inventory if not i.equipped and i.item != GOLD and i.count > 0]
     ware = wares[0]
+    catalogue = await link.story_state(items=[ware.item])
+    unit_price = catalogue.get("item_values", {}).get(ware.item)
+    check("ware_value", ware.value is not None and unit_price == ware.value, ware.value)
     gold = await has(GOLD)
     if gold > 10:
         await link.story_effect(seller, [{"do": "give", "item": GOLD, "count": gold - 10, "to": "self"}])
@@ -474,9 +479,9 @@ async def xardas_money(
             if call.get("name") != "propose_deal":
                 continue
             args = call.get("arguments", {})
-            gives, _ = _parse(args.get("npc_gives"))
+            gives, _ = parse_items(args.get("npc_gives"))
             later = args.get("npc_later")
-            deferred, _ = _parse(later.get("items")) if isinstance(later, dict) else ({}, "")
+            deferred, _ = parse_items(later.get("items")) if isinstance(later, dict) else ({}, "")
             if (gives or {}).get(GOLD, 0) or (deferred or {}).get(GOLD, 0):
                 money_calls.append(call)
         deal = deals.open.get(npc)

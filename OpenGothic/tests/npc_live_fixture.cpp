@@ -1,5 +1,7 @@
 #include "npc_definition_fixture.h"
 #include "npcdaymeasurement.h"
+#include "npccontroller.h"
+#include "storyworld.h"
 
 #include "baseidentity.h"
 #include "commandline.h"
@@ -113,6 +115,41 @@ fs::path program(const fs::path& base) {
   NpcSnapshot::writePlacements(value,definitions/"placement.json",base/"worlds");
   NpcSnapshot::writeActivities(value,definitions/"activities.json",definitions/"routines.json");
   return definitions/"npcs.json";
+  }
+
+void dealItemPrices(World& world) {
+  auto& script=world.script();
+  auto* seller=world.addNpc(script.findSymbolIndex("NPC_NO_ID"),Tempest::Vec3{});
+  if(!seller) throw std::runtime_error("deal fixture needs a seller");
+
+  rapidjson::Document snapshot;
+  NpcController controller([&](std::string&& json) { snapshot.Parse(json.c_str()); });
+  if(!controller.requestSnapshot(world,"NPC_NO_ID") || !snapshot.IsObject() || !snapshot.HasMember("npc"))
+    throw std::runtime_error("seller snapshot is missing");
+  bool found=false;
+  for(const auto& item:snapshot["npc"]["inventory"].GetArray()) {
+    if(std::string_view(item["item"].GetString())!="IT_NPC_RING") continue;
+    if(!item.HasMember("value") || item["value"].GetInt()!=7)
+      throw std::runtime_error("the seller snapshot must report the ring's unit price");
+    found=true;
+    }
+  if(!found) throw std::runtime_error("the seller snapshot must contain the ring");
+
+  auto* ring=script.getVm().find_symbol_by_name("IT_NPC_RING");
+  const auto before=ring->get_instance();
+  StoryWorld story({},{});
+  rapidjson::Document query,reply;
+  query.Parse(R"({"items":["it_npc_ring","IT_NPC_TRAILER","NPC_NO_ID","UNKNOWN"]})");
+  reply.Parse(story.state(world,query).c_str());
+  if(!reply.IsObject() || !reply.HasMember("item_values"))
+    throw std::runtime_error("the item catalogue is missing its prices");
+  const auto& prices=reply["item_values"];
+  if(prices.MemberCount()!=2 || !prices.HasMember("IT_NPC_RING") || prices["IT_NPC_RING"].GetInt()!=7 ||
+     !prices.HasMember("IT_NPC_TRAILER") || prices["IT_NPC_TRAILER"].GetInt()!=13 ||
+     !reply["items"].HasMember("IT_NPC_RING") || ring->get_instance()!=before)
+    throw std::runtime_error("catalogue prices must follow the requested items and preserve the live VM binding");
+  world.removeNpc(*seller);
+  std::puts("Deal prices: seller snapshot and script catalogue expose unit values");
   }
 
 void npcDayRandom(World& world) {
@@ -336,6 +373,7 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
   npcDayRandom(*gothic.world());
   placement(*gothic.world());
   activities(*gothic.world());
+  dealItemPrices(*gothic.world());
   mutations(definitions,gothic,compare);
   helperMutations(definitions.parent_path()/"helpers.json",gothic,compare);
   gothic.clearGame().reset();
@@ -348,6 +386,7 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
   gothic.setGame(std::make_unique<GameSession>("NPC_CONTRACT.ZEN"));
   disabled(*gothic.world());
   placementDisabled(*gothic.world());
+  dealItemPrices(*gothic.world());
   gothic.clearGame().reset();
   std::puts("Synthetic live NPC definitions: normal GameSession and engine externals, no game data");
   }

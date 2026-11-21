@@ -1,4 +1,4 @@
-# Протокол игра ↔ ИИ-сервер (v64)
+# Протокол игра ↔ ИИ-сервер (v65)
 
 ## Версии
 
@@ -15,7 +15,7 @@
 
 Брони:
 
-- v65 — занято: `codex/1103-deal-item-values` — игровые цены предметов для голосовых сделок (#1103).
+Нет.
 
 ### Что добавила каждая версия
 
@@ -85,6 +85,7 @@
 | v62 | время слов: `say_audio.words` и `say.words` — индексы `say.text.split()` и начало/конец слова в секундах от начала звука реплики | [Время слов](#время-слов-v62) |
 | v63 | лицо по звуку: `say_face` — дорожка весов 52 форм ARKit к реплике, посчитанная Audio2Face по её звуку | [Лицо по звуку](#лицо-по-звуку-v63) |
 | v64 | `ptt_audio`: живой PCM игрока в немую дорожку речи героя | [Живой голос игрока](#живой-голос-игрока-v64) |
+| v65 | Базовая цена за единицу в `snapshot.npc.inventory[].value` и `story_state.item_values` | [Сделки](#сделки-v10) |
 
 `ProtocolVersion` в мосту отставал от серверного номера на v22 и с v27 снова равен ему.
 
@@ -156,7 +157,7 @@ Native-защитник явно возвращается арбитром с `r
 | `follow_ended` | `npc`, `reason` | NPC перестал следовать. `stopped` / `replaced` — по команде. `target_gone` / `target_too_far` (> 60 м) / `timeout` (только если его задали в `follow`) — сам; тогда игра отпускает NPC (`detached`, `reason:"follow_ended"`) |
 
 **Поля `snapshot`:**
-- `npc`: `id`, `name`, `pos[3]`, `rot`, `hp`, `hp_max`, `busy`, `action?`, `following`, `gaze?` (v27), `waypoint?`, `nearest_waypoint?`, `inventory[]` (`item`, `name`, `count`, `equipped`, `mission` — v39, только у предмета миссии `ITEM_MISSION`; не больше 40 предметов);
+- `npc`: `id`, `name`, `pos[3]`, `rot`, `hp`, `hp_max`, `busy`, `action?`, `following`, `gaze?` (v27), `waypoint?`, `nearest_waypoint?`, `inventory[]` (`item`, `name`, `count`, `value` — цена за штуку в золоте (v65), `equipped`, `mission` — v39, только у предмета миссии `ITEM_MISSION`; не больше 40 предметов);
 - `player`: `name`, `pos[3]`, `ahead[2]?` и `right[2]?` (v32: куда он смотрит, `x` и `z`, и вправо от него, как на экране), `distance`, `guild`, `hp`, `hp_max`, `armor?`, `melee?`, `ranged?`;
 - `nearby_waypoints[]`: до 6 вейпоинтов в радиусе 20 м;
 - `nearby_npcs[]`: до 8 NPC в радиусе 15 м (`id`, `name`, `distance`, `guild`, `dead`), без самого NPC и игрока.
@@ -695,7 +696,7 @@ runtime fallback даёт `reason:"policy_fallback:<reason>"`, ошибка по
 | `story_tag` | `req`, `tag`, `npcs[]` | NPC, уже живущие в мире, под меткой — как существа режиссёра: их смерти и расстояние до них приходят в `npc_died` и `story_world`. `result.value` — сколько нашлось |
 | `story_effect` | `req`, `npc`, `effects[]` | эффекты через функции самих скриптов, `self` — NPC, `other` — герой. Те же, что в диалогах режиссёра (`give`, `xp`, `set`, `journal`, `end`), и ещё два: `attack` — `B_Attack`, `reason` — константа `AR_*`, по умолчанию `AR_NONE`: бьёт, пока герой не упадёт, не до смерти; `refuse_talk` — `Npc_SetRefuseTalk`, `seconds`; `calm` (v20) — NPC прекращает драку с героем и держится этого: отношение к герою через `B_SetAttitude` (`attitude` — константа `ATT_*`, по умолчанию `ATT_NEUTRAL`), бой с ним обрывается, NPC убирает оружие и возвращается к распорядку. На время этих трёх мост отпускает NPC, если тот под управлением. Если тело NPC ведёт P30, мост ничего не применяет и отвечает ошибкой `body control is releasing…`: тело отпускается на ближайшей безопасной границе, а сервер (`GameLink.story_effect`) шлёт запрос заново каждые 50 мс до его срока. `routine` — смена распорядка, как в диалогах (`B_StartOtherRoutine`): `npc` — символ NPC (по умолчанию этот), `routine` — имя (`START`). `knows` (v31) — герой слышал диалог этого NPC (`info` — символ `C_INFO`), как будто его сыграли: меню его больше не предлагает, `Npc_KnowsInfo` его видит. `party` (v30) — `value` 1 или 0: NPC в отряде героя по скриптам (`AIV_PARTYMEMBER`), как его отмечает диалог спутника: за его убийства герою дают опыт (`ZS_Dead`), а `hero_kill` приходит и о них. `check: true` (v10) — всё или ничего: сначала проверяется, что у каждого отдающего есть всё, что он отдаёт по `give`; если нет, ничего не происходит, `error` — чего не хватает: `missing: hero ITMI_GOLD 30 (has 12)` |
 | `story_nearby` | `req`, `npc`, `radius`=2000 | люди в радиусе от NPC: `result.value` = `[{npc, name, distance, guild}]` |
-| `story_state` | `req`, `vars[]`, `npcs[]`, `near`?, `knows[]`, `symbols[]`, `items[]`, `deed_target`? (v47) | что читают правила режиссёра (этап 5). `result.value`: `vars` — значения глобалов `int`; `npcs` — `{state: "alive"/"dead"/"absent", name, distance, seen}`, если задан NPC `near`: `distance` — в см от него, живого или мёртвого, `seen` — видит ли он его сейчас, движковым зрением (v12); `knows` — слышал ли герой диалог; `symbols` — что это за имя в скриптах: `npc`, `item`, `info`, `var`, `const`, `func`, `other` (неизвестных нет в ответе); `items` — названия предметов; `dialog`, `cutscene` — идёт ли сейчас диалог или ролик; `day`, `hour`, `minute` — игровое время; `deed_target` — [проверка цели кражи](#дела-npc-v47) |
+| `story_state` | `req`, `vars[]`, `npcs[]`, `near`?, `knows[]`, `symbols[]`, `items[]`, `deed_target`? (v47) | что читают правила режиссёра (этап 5). `result.value`: `vars` — значения глобалов `int`; `npcs` — `{state: "alive"/"dead"/"absent", name, distance, seen}`, если задан NPC `near`: `distance` — в см от него, живого или мёртвого, `seen` — видит ли он его сейчас, движковым зрением (v12); `knows` — слышал ли герой диалог; `symbols` — что это за имя в скриптах: `npc`, `item`, `info`, `var`, `const`, `func`, `other` (неизвестных нет в ответе); `items` — названия предметов, `item_values` — их базовые цены в золоте за штуку (v65); `dialog`, `cutscene` — идёт ли сейчас диалог или ролик; `day`, `hour`, `minute` — игровое время; `deed_target` — [проверка цели кражи](#дела-npc-v47) |
 | `story_people` | `req` | все люди мира, для слухов (этап 5): живые, без героя и монстров. `result.value` — `[{npc, name, guild, routine: [{start, end, state, waypoint, pos?}]}]`; `start`, `end` — минуты дня, `pos` — где точка распорядка, если она есть в мире |
 | `story_eval` | `req`, `npc`, `exprs[]` | выражения графа на живой VM, `self` — NPC, `other` — герой; без `-devmode`. Из функций движка — только те, что читают мир (среди них `Npc_CheckInfo`: ждёт ли важный диалог). `result.value` — по значению на выражение, `null`, если не посчиталось |
 
@@ -788,6 +789,8 @@ runtime fallback даёт `reason:"policy_fallback:<reason>"`, ошибка по
 ## Сделки (v10)
 
 Сделка NPC с героем ([npc-tools.md](npc-tools.md#сделки)). В мосте — окно в [chatoverlay.cpp](../OpenGothic/ai_bridge/chatoverlay.cpp), на сервере — [deals.py](../server/src/gothic_ai/deals.py).
+
+С v65 снимок NPC включает базовую цену `C_ITEM.value` у каждой вещи. Запрос `story_state{items:[...]}` возвращает названия и цены запрошенных игровых предметов по их символам. Это позволяет оценить и вещь, которую назвал герой, сохраняя содержимое его инвентаря в тайне. Ноль означает известную нулевую цену. У неизвестного символа и у старого моста цена отсутствует.
 
 **Сервер → игра:**
 

@@ -73,6 +73,7 @@ class FakeGame:
         self.hour, self.minute = 8, 0
         self.people: list[dict[str, Any]] = []  # what story_people answers: the world's people and their days
         self.item_names: dict[str, str] = {}
+        self.item_values: dict[str, int] = {}
         self.fns: dict[str, int] = {}  # story_eval: what helper predicates of the scripts come to (C_X())
         self.attitudes: dict[str, int] = {}  # NPC_GETATTITUDE towards HERO; default ATT_NEUTRAL
         self.guild_attitudes: dict[tuple[int, int], int] = {}  # WLD_GETGUILDATTITUDE, npc -> hero guild
@@ -144,6 +145,14 @@ class FakeGame:
         await self.ws.send(json.dumps(msg))
 
     def snapshot(self, npc: str) -> dict[str, Any]:
+        inventory = [
+            {"item": "ITPO_HEALTH_01", "name": "Эликсир лечения", "count": 3, "equipped": False},
+            {"item": "ITMW_ZWEIHAENDER1", "name": "Двуручник", "count": 1, "equipped": True},
+        ]
+        if self.protocol >= 65:
+            for entry in inventory:
+                if entry["item"] in self.item_values:
+                    entry["value"] = self.item_values[entry["item"]]
         return {
             "type": "snapshot",
             "t": 1000,
@@ -160,10 +169,7 @@ class FakeGame:
                 "waypoint": "NW_XARDAS_TOWER_IN1_31",
                 "nearest_waypoint": "NW_XARDAS_TOWER_IN1_31",
                 "following": False,
-                "inventory": [
-                    {"item": "ITPO_HEALTH_01", "name": "Эликсир лечения", "count": 3, "equipped": False},
-                    {"item": "ITMW_ZWEIHAENDER1", "name": "Двуручник", "count": 1, "equipped": True},
-                ],
+                "inventory": inventory,
             },
             "player": {
                 "name": "Я",
@@ -327,6 +333,10 @@ class FakeGame:
                     "hour": self.hour,
                     "minute": self.minute,
                 }
+                if self.protocol >= 65:
+                    value["item_values"] = {
+                        i: self.item_values[i] for i in msg.get("items", []) if i in self.item_values
+                    }
                 await self.send(type="result", req=msg["req"], ok=True, value=value)
             case "npc_view":
                 value = [self.views[n] for n in msg["npcs"] if n in self.views]
