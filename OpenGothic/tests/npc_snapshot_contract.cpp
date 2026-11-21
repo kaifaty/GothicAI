@@ -1230,6 +1230,75 @@ void activityDefinitions(const fs::path& dir) {
   std::cerr<<"expected activity difference follows:\n";
   check(NpcSnapshot::verifyActivities(program,file,routines)!=0,"a repeated parameter key in a ready base fails the comparison");
   std::ofstream(file,std::ios::binary)<<original;
+
+  // A point activity in an invented program, with a name unrelated to the installed guard.
+  NpcDefinitionFixture::Fixture f;
+  f.p=program.data;
+  using Op=DaedalusOpcode;
+  const auto self=f.find("SELF"),wp=f.find("C_NPC.WP"),aivar=f.find("C_NPC.AIVAR");
+  auto text=[&](const char* value) {
+    const auto id=f.symbol("$POINT_"+std::to_string(f.p.symbols.size()),Type::STRING,1,DaedalusSymbolFlag::CONST);
+    f.p.symbols[id].string_values[0]=value; return id;
+    };
+  auto jump=[&](Op op) { f.op(op,0u); return f.p.bytecode.size()-4; };
+  auto land=[&](size_t at) {
+    for(size_t i=0;i<4;++i) f.p.bytecode[at+i]=std::byte((uint32_t(f.p.bytecode.size())>>(8*i))&255);
+    };
+  auto stage=[&] { f.op(Op::GMOVI,self); f.op(Op::PUSHVV,aivar); f.p.bytecode.push_back(std::byte{19}); };
+  auto assign=[&](uint32_t value) { f.op(Op::PUSHI,value); stage(); f.op(Op::MOVI); };
+  auto question=[&](uint32_t value) { f.op(Op::PUSHI,value); stage(); f.op(Op::EQ); };
+  const auto isOn=f.fn("NPC_ISONFP",{Type::INSTANCE,Type::STRING},true,Type::INT);
+  const auto free=f.fn("WLD_ISFPAVAILABLE",{Type::INSTANCE,Type::STRING},true,Type::INT);
+  const auto go=f.fn("AI_GOTOFP",{Type::INSTANCE,Type::STRING},true);
+  const auto stand=f.fn("AI_STANDUP",{Type::INSTANCE},true);
+  const auto align=f.fn("AI_ALIGNTOFP",{Type::INSTANCE},true);
+  const auto alignWp=f.fn("AI_ALIGNTOWP",{Type::INSTANCE},true);
+  const auto play=f.fn("AI_PLAYANI",{Type::INSTANCE,Type::STRING},true);
+  const auto seconds=f.fn("NPC_GETSTATETIME",{Type::INSTANCE},true,Type::INT);
+  const auto reset=f.fn("NPC_SETSTATETIME",{Type::INSTANCE,Type::INT},true);
+  const auto random=f.find("HLP_RANDOM");
+  const auto point=text("STAND"),enter=text("T_STAND_2_HGUARD"),leave=text("T_HGUARD_2_STAND"),gesture=text("T_HGUARD_LOOKAROUND");
+  auto call=[&](uint32_t external) { f.op(Op::PUSHVI,self); f.op(Op::BE,external); };
+  auto named=[&](uint32_t external,uint32_t value) { f.op(Op::PUSHVI,self); f.op(Op::PUSHV,value); f.op(Op::BE,external); };
+  const auto init=f.fn("ZS_POINT_FIXTURE"); f.begin(init);
+  f.call(f.find("PERCEPTION_SET_NORMAL")); f.op(Op::PUSHVI,self); f.call(f.find("B_RESETALL"));
+  f.op(Op::PUSHVI,self); f.op(Op::PUSHI,1u); f.op(Op::BE,f.find("AI_SETWALKMODE"));
+  f.op(Op::PUSHI,500u); f.op(Op::PUSHVI,self); f.op(Op::GMOVI,self); f.op(Op::PUSHV,wp);
+  f.op(Op::BE,f.find("NPC_GETDISTTOWP")); f.op(Op::GT); const auto near=jump(Op::BZ);
+  f.op(Op::PUSHVI,self); f.op(Op::GMOVI,self); f.op(Op::PUSHV,wp); f.op(Op::BE,f.find("AI_GOTOWP"));
+  land(near); assign(1); f.op(Op::RSR);
+  const auto loop=f.fn("ZS_POINT_FIXTURE_LOOP",{},false,Type::INT); f.begin(loop);
+  named(isOn,point); const auto notOn=jump(Op::BZ);
+  call(align); question(2); const auto already=jump(Op::BZ); assign(1); land(already);
+  const auto doneOn=jump(Op::B); land(notOn);
+  named(free,point); const auto occupied=jump(Op::BZ);
+  named(go,point); call(stand); call(align); assign(2);
+  const auto doneFree=jump(Op::B); land(occupied);
+  call(alignWp); question(2); const auto waiting=jump(Op::BZ); assign(1); land(waiting);
+  land(doneOn); land(doneFree);
+  question(1); const auto posed=jump(Op::BZ); named(play,enter); assign(0); land(posed);
+  question(0); f.op(Op::PUSHI,5u); call(seconds); f.op(Op::GT); f.op(Op::AND); const auto early=jump(Op::BZ);
+  f.op(Op::PUSHI,0u); f.op(Op::PUSHI,10u); f.op(Op::BE,random); f.op(Op::EQ); const auto noGesture=jump(Op::BZ);
+  named(play,gesture); land(noGesture); f.op(Op::PUSHVI,self); f.op(Op::PUSHI,0u); f.op(Op::BE,reset);
+  land(early); f.op(Op::PUSHI,0u); f.op(Op::RSR);
+  const auto end=f.fn("ZS_POINT_FIXTURE_END"); f.begin(end); named(play,leave); f.op(Op::RSR);
+  NpcSnapshot::Program points;
+  points.data=std::move(f.p);
+  const auto encoded=ProgramData::encodeProgram(points.data); points.name=encoded.name; points.sha256=encoded.sha256;
+  const auto pointBase=dir/"point-activity",pointDir=pointBase/"definitions"/points.sha256;
+  fs::create_directories(pointDir);
+  std::ofstream(pointDir/"routines.json")<<"{\"program_sha256\":\""<<points.sha256
+    <<"\",\"records\":[{\"status\":\"captured\",\"rows\":[{\"state\":\"ZS_POINT_FIXTURE\"}]}]}";
+  const auto pointCounts=NpcSnapshot::writeActivities(points,pointDir/"activities.json",pointDir/"routines.json");
+  check(pointCounts.captured==1,"a point template is recognized without a state-name special case");
+  check(NpcSnapshot::verifyActivities(points,pointDir/"activities.json",pointDir/"routines.json")==0,"point phase streams verify");
+  const auto pointLibrary=ActivityDefinitions::read(pointBase,points.sha256);
+  const auto& guard=pointLibrary.points.at("ZS_POINT_FIXTURE");
+  check(guard.point=="STAND" && guard.enterAnimation=="T_STAND_2_HGUARD" && guard.leaveAnimation=="T_HGUARD_2_STAND" &&
+        guard.approachDistance==500 && guard.timerSeconds==5 && guard.rollRange==10 && guard.gestures.size()==10 &&
+        guard.initialStage==1 && guard.walkingStage==2 && guard.arrivedStage==1 && guard.poseStage==0,"point activity parameters");
+  for(size_t i=0;i<guard.gestures.size();++i)
+    check(guard.gestures[i].animation==(i==0 ? "T_HGUARD_LOOKAROUND" : "") && guard.gestures[i].resetTimer,"every draw outcome");
   }
 
 void realActivities(const NpcSnapshot::Program& program,const fs::path& base,const fs::path& dir) {
@@ -1246,15 +1315,22 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
     for(const auto& row:rows) states.insert(row.state);
   for(const auto& [name,activity]:library.activities) recorded.insert(name);
   for(const auto& [name,reason]:library.uncaptured) recorded.insert(name);
+  for(const auto& [name,activity]:library.points) recorded.insert(name);
   check(states.size()==counts.total && recorded==states,"every state of the base's routines has one activity record");
   check(library.activities.contains("ZS_SMITH_ANVIL"),"the real ZS_SMITH_ANVIL is captured by the template");
   check(library.uncaptured.contains("ZS_SIT_THRONE") && library.uncaptured.at("ZS_SIT_THRONE").starts_with("template_mismatch: "),
         "the real ZS_SIT_THRONE, whose Init asks the body state first, is refused by the comparison");
+  const auto& guard=library.points.at("ZS_STAND_GUARDING");
+  check(library.points.size()==1,"only the guard fits the first point template");
+  check(guard.point=="STAND" && guard.enterAnimation=="T_STAND_2_HGUARD" && guard.leaveAnimation=="T_HGUARD_2_STAND" &&
+        guard.timerSeconds==5 && guard.rollRange==10 && guard.gestures[0].animation=="T_HGUARD_LOOKAROUND" &&
+        guard.gestures[0].resetTimer,"real guard parameters match the bytecode study");
   const auto& anvil=library.activities.at("ZS_SMITH_ANVIL");
   check(anvil.scheme=="BSANVIL" && anvil.perceptions=="PERCEPTION_SET_NORMAL" && anvil.walkMode==1 && anvil.useState==1 &&
         anvil.leaveState==-1 && anvil.busyBodyState==32784,"the real anvil parameters");
   std::string captured;
   for(const auto& [name,activity]:library.activities) captured+=(captured.empty() ? "" : ", ")+name+" ("+activity.scheme+")";
+  for(const auto& [name,activity]:library.points) captured+=", "+name+" (point "+activity.point+")";
   std::cout<<"Real activities: "<<counts.total<<" states, "<<counts.captured<<" captured, "<<counts.situations
            <<" compared situations, "<<ms<<" ms: "<<captured<<"\n";
   for(const auto& [name,reason]:library.uncaptured) std::cout<<"  VM: "<<name<<": "<<reason<<"\n";

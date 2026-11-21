@@ -34,6 +34,36 @@ ActivityDefinitions::MobActivity mob(const Json& json) {
   a.loopResult=integer(at(json,"loop_result"));
   return a;
   }
+ActivityDefinitions::PointActivity point(const Json& json) {
+  using namespace ActivityDefinitions;
+  require(json.IsObject() && json.MemberCount()==13,"unexpected point parameter field");
+  PointActivity a;
+  a.perceptions=string(at(json,"perceptions"));
+  a.walkMode=integer(at(json,"walk_mode"));
+  a.approachDistance=integer(at(json,"approach_distance"));
+  a.point=bytes(at(json,"point"));
+  a.occupied=string(at(json,"occupied"));
+  require(!a.perceptions.empty() && !a.point.empty() && a.occupied=="align_waypoint","unsupported point approach");
+  a.enterAnimation=bytes(at(json,"enter_animation"));
+  a.leaveAnimation=bytes(at(json,"leave_animation"));
+  a.timerSeconds=integer(at(json,"timer_seconds"));
+  a.rollRange=integer(at(json,"roll_range"));
+  a.loopResult=integer(at(json,"loop_result"));
+  require(string(at(json,"approach"))=="distance","unsupported point approach");
+  const auto& stages=at(json,"aivar_19");
+  require(stages.IsObject() && stages.MemberCount()==4,"unexpected stage field");
+  a.initialStage=integer(at(stages,"initial"));
+  a.walkingStage=integer(at(stages,"walking"));
+  a.arrivedStage=integer(at(stages,"arrived"));
+  a.poseStage=integer(at(stages,"pose"));
+  const auto& gestures=at(json,"gestures");
+  require(a.rollRange>0 && gestures.IsArray() && gestures.Size()==uint32_t(a.rollRange),"invalid gesture range");
+  for(const auto& gesture:gestures.GetArray()) {
+    require(gesture.IsObject() && gesture.MemberCount()==2 && at(gesture,"reset_timer").IsBool(),"invalid gesture");
+    a.gestures.push_back({bytes(at(gesture,"animation")),at(gesture,"reset_timer").GetBool()});
+    }
+  return a;
+  }
 }
 
 ActivityDefinitions::Library ActivityDefinitions::read(const std::filesystem::path& base, std::string_view programSha256) {
@@ -47,7 +77,7 @@ ActivityDefinitions::Library ActivityDefinitions::read(const std::filesystem::pa
     require(!doc.HasParseError(),"invalid JSON");
     require(string(at(doc,"format"))=="gothic-activity-definitions","unsupported format");
     const auto& version=at(doc,"version");
-    require(version.IsInt() && version.GetInt()==1,"unsupported version");
+    require(version.IsInt() && version.GetInt()==2,"unsupported version");
     require(!string(at(doc,"program_name")).empty(),"empty program name");
     require(string(at(doc,"program_sha256"))==programSha256,"program SHA differs");
     require(string(at(doc,"string_encoding"))=="unicode-byte-mapping","unsupported string encoding");
@@ -58,7 +88,7 @@ ActivityDefinitions::Library ActivityDefinitions::read(const std::filesystem::pa
     for(const auto& record:records.GetArray()) {
       const auto name=string(at(record,"symbol"));
       try {
-        require(name.starts_with("ZS_") && !result.activities.contains(name) && !result.uncaptured.contains(name),
+        require(name.starts_with("ZS_") && !result.activities.contains(name) && !result.points.contains(name) && !result.uncaptured.contains(name),
                 "duplicate or invalid state symbol");
         const auto status=string(at(record,"status"));
         if(status=="uncaptured") {
@@ -68,8 +98,10 @@ ActivityDefinitions::Library ActivityDefinitions::read(const std::filesystem::pa
           }
         require(status=="captured","unsupported capture status");
         require(record.MemberCount()==4,"unexpected captured activity field");
-        require(string(at(record,"template"))=="mob","unsupported activity template");
-        result.activities.emplace(name,mob(at(record,"parameters")));
+        const auto type=string(at(record,"template"));
+        require(type=="mob" || type=="point","unsupported activity template");
+        if(type=="point") result.points.emplace(name,point(at(record,"parameters")));
+        else result.activities.emplace(name,mob(at(record,"parameters")));
         }
       catch(const std::exception& e) { throw std::runtime_error(name+": "+e.what()); }
       }

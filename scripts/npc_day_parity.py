@@ -15,6 +15,9 @@ Routine activity metrics use A's nonempty TA samples, grouped by A's ZS: state,
 MOB scheme and waypoint agreement, occupancy ratio, first-MOB arrival delay and
 NPCs with no MOB sample in a reference TA segment. --activity-states limits their
 totals and checks, while the complete state table remains visible.
+Point activities additionally compare held coordinates, pose time, first arrivals,
+missed segments and double occupancy. Legal waiting at the routine waypoint is
+reported separately and excluded from the point acceptance populations.
 The activity health checks read run B's own counters of the activities by events
 (npc-day.json "activity_events", common/world/activityevents.h): watchdog restarts,
 expired reservations, reservations without a living owner, two NPCs on one place. A run
@@ -68,7 +71,14 @@ CHECKS = {
     "max_activity_mob_time_ratio": ("max", "activity: B/A occupied MOB samples"),
     "max_activity_arrival_p95": ("max", "activity: arrival delay p95, game min"),
     "max_activity_arrival_max": ("max", "activity: maximum arrival delay, game min"),
-    "max_activity_stuck": ("max", "activity: NPCs missing every MOB sample in a routine segment"),
+    "max_activity_stuck": ("max", "activity: NPCs missing every MOB or point sample in a routine segment"),
+    "min_point_same_fp": ("min", "point activity: same held coordinates (legal fallback excluded), share"),
+    "min_point_pose_ratio": ("min", "point activity: B/A pose samples outside legal B waiting"),
+    "max_point_pose_ratio": ("max", "point activity: B/A pose samples outside legal B waiting"),
+    "max_point_arrival_p95": ("max", "point activity: first arrival delay p95, game min"),
+    "max_point_arrival_max": ("max", "point activity: maximum first arrival delay, game min"),
+    "max_point_missed_segments": ("max", "point activity: reference segments with no arrival in B"),
+    "max_point_double_occupancy": ("max", "point activity: B samples with two NPCs on the same coordinates"),
     "max_activity_watchdog": ("max", "activity events in B: watchdog restarts"),
     "max_activity_reservation_expired": ("max", "activity events in B: reservations expired without an attach"),
     "max_activity_reservation_ownerless": ("max", "activity events in B: reservations without a living owner"),
@@ -99,6 +109,7 @@ def load(run):
     if samples is None:
         raise SystemExit(f"{run}: no npc-day.csv")
     rows = {}
+    points = {}
     keys = {}
     hero = {}
     hero_keys = set()
@@ -118,6 +129,14 @@ def load(run):
                 row["alive"] == "1", int(row["hp"]), row["ta"], row["zs"],
                 float(row["x"]), float(row["y"]), float(row["z"]), row["inv_hash"], row["tier"], row["head"], int(row["body"]),
                 row["mob"], row["wp"])
+            if "on_fp" in row:
+                points[(t, row["key"])] = {
+                    "name": row["fp"],
+                    "position": tuple(float(row["fp_" + axis]) for axis in "xyz") if row["fp"] != "-" else None,
+                    "on": row["on_fp"] == "1", "stage": int(row["aivar_19"]),
+                    "available": int(row["fp_available"]),
+                    "on_wp": row["on_routine_wp"] == "1",
+                }
             keys[row["key"]] = row["symbol"]
     events = {}
     path = find(run, "npc-day-events.csv")
@@ -137,7 +156,7 @@ def load(run):
             header = {}
     last = max(times) if times else None
     return {"sample_digest": sample_digest.hexdigest(), "event_digest": event_digest.hexdigest(),
-            "rows": rows, "keys": keys, "hero": hero, "events": events, "header": header, "path": str(samples.parent),
+            "rows": rows, "points": points, "keys": keys, "hero": hero, "events": events, "header": header, "path": str(samples.parent),
             "last": last, "end_keys": {key for t, key in rows if t == last}}
 
 
@@ -290,6 +309,22 @@ def end_differences(a, b):
     return missing, alive, inventory, hp
 
 
+
+def routine_segments(run):
+    """Continuous TA segments of A, including the observed day edges."""
+    key, previous_ta, samples = None, None, []
+    for (t, npc), row in sorted(run["rows"].items(), key=lambda item: (item[0][1], item[0][0])):
+        if npc != key or row[2] != previous_ta:
+            if samples:
+                yield key, samples
+            samples = []
+        key, previous_ta = npc, row[2]
+        if row[2] != "-":
+            samples.append((t, row))
+    if samples:
+        yield key, samples
+
+
 def activity_metrics(a, b, common, states):
     """Reference-TA samples and first occupied samples within reference TA segments.
 
@@ -332,16 +367,7 @@ def activity_metrics(a, b, common, states):
                  "delay_min": first_b - first_a if first_b is not None else None}
         tally(state)["stuck" if first_b is None else "arrivals"].append(entry)
 
-    key, previous_ta, samples = None, None, []
-    for (t, npc), ra in sorted(a["rows"].items(), key=lambda item: (item[0][1], item[0][0])):
-        if npc != key or ra[2] != previous_ta:
-            if samples:
-                segment(key, samples)
-            samples = []
-        key, previous_ta = npc, ra[2]
-        if ra[2] != "-":
-            samples.append((t, ra))
-    if samples:
+    for key, samples in routine_segments(a):
         segment(key, samples)
 
     def summary(items):
@@ -356,9 +382,9 @@ def activity_metrics(a, b, common, states):
                 "mob_samples_a": counts["mob_a"], "mob_samples_b": counts["mob_b"],
                 "same_mob": share(counts["same_mob"], counts["mob_a"]),
                 # A count, not a share: a share of one state set's few samples admits no mismatch at all.
-                # Undefined only for an empty selection; samples without any occupied MOB in A give 0.
-                "mob_mismatch": counts["mob_a"] - counts["same_mob"] if counts["samples"] else None,
-                "extra_mob": share(counts["extra_mob"], counts["samples"] - counts["mob_a"]),
+                # No reference objects: object metrics are not applicable.
+                "mob_mismatch": counts["mob_a"] - counts["same_mob"] if counts["mob_a"] else None,
+                "extra_mob": share(counts["extra_mob"], counts["samples"] - counts["mob_a"]) if counts["mob_a"] else None,
                 "mob_time_ratio": share(counts["mob_b"], counts["mob_a"]),
                 "arrival_segments": len(arrivals),
                 "arrival_p50": percentile(delays, 0.5), "arrival_p95": percentile(delays, 0.95),
@@ -372,6 +398,130 @@ def activity_metrics(a, b, common, states):
             "by_state": {state: summary([item]) for state, item in sorted(by_state.items())},
             "arrivals": sorted((entry for item in by_state.values() for entry in item["arrivals"]),
                                key=lambda entry: (-entry["delay_min"], entry["key"], entry["start_min"]))}
+
+
+
+# These are the five original script forms in the E2 calibration, not a game executor.
+POINT_STATES = {"ZS_STAND_GUARDING": "STAND", "ZS_STAND_ARMSCROSSED": "STAND",
+                "ZS_SIT_CAMPFIRE": "CAMPFIRE", "ZS_PEE": "PEE", "ZS_STAND_WP": ""}
+
+
+def point_status(row, point, state):
+    if point is None:
+        return False, False, False
+    kind = POINT_STATES[state]
+    on = point["on"] and kind in point["name"] if kind else point["on_wp"]
+    # End/Init may leave ZS empty without moving the body; a known different ZS is another pose.
+    same_pose = row[3] in (state, "-")
+    # Campfire sets BS_SIT (11); the other four forms set aivar[19]=0 on entering the pose.
+    posed = row[10] == 11 if state == "ZS_SIT_CAMPFIRE" else point["stage"] == 0
+    fallback = bool(same_pose and kind and not on and point["available"] == 0 and point["on_wp"] and row[10] == 0)
+    return bool(on), bool(same_pose and posed and (on or fallback)), fallback
+
+
+def point_metrics(a, b, common, states):
+    by_state = {}
+    valid = bool(a["points"] and b["points"])
+    selected = set(common)
+
+    def tally(state):
+        return by_state.setdefault(state, {name: [] if name in {"arrivals", "missed", "collisions"} else 0 for name in
+            ("samples", "held_a", "comparable", "same_fp", "same_fp_raw", "on_a", "on_b", "pose_a", "pose_b",
+             "pose_comparable_a", "pose_comparable_b", "fallback_a", "fallback_b", "arrivals", "missed", "collisions")})
+
+    # Check against all B NPCs, including those outside --activity-states.
+    owners = {}
+    for sample, point in b["points"].items():
+        if point["on"] and b["rows"][sample][0] and point["position"] is not None:
+            owners.setdefault((sample[0], point["position"]), []).append(sample[1])
+    seen_collisions = set()
+    for sample in common:
+        ra, rb = a["rows"][sample], b["rows"][sample]
+        if ra[2] == "-" or ra[3] not in POINT_STATES:
+            continue
+        state = ra[3]
+        item = tally(state)
+        item["samples"] += 1
+        pa, pb = a["points"].get(sample), b["points"].get(sample)
+        if pa is None or pb is None:
+            valid = False
+            continue
+        on_a, pose_a, fallback_a = point_status(ra, pa, state)
+        on_b, pose_b, fallback_b = point_status(rb, pb, state)
+        held = bool(POINT_STATES[state] and pa["position"] is not None and POINT_STATES[state] in pa["name"])
+        item["held_a"] += held
+        item["comparable"] += held and not fallback_b
+        item["same_fp"] += held and not fallback_b and pa["position"] == pb["position"]
+        item["same_fp_raw"] += held and pa["position"] == pb["position"]
+        item["pose_comparable_a"] += pose_a and not fallback_b
+        item["pose_comparable_b"] += pose_b and not fallback_b
+        for name, value in (("on_a", on_a), ("on_b", on_b), ("pose_a", pose_a), ("pose_b", pose_b),
+                            ("fallback_a", fallback_a), ("fallback_b", fallback_b)):
+            item[name] += value
+        collision = (sample[0], pb["position"])
+        occupants = owners.get(collision, [])
+        # Count once per state: a collision with another selected state appears in both state rows.
+        if sample[1] in occupants and len(occupants) > 1 and (state, collision) not in seen_collisions:
+            seen_collisions.add((state, collision))
+            item["collisions"].append({"t_min": sample[0], "point": pb["position"], "npcs": occupants})
+
+    def segment(key, samples):
+        routine = samples[0][1][2].split()
+        routine_state = routine[2] if len(routine) == 4 else None
+        # A previous ZS can linger at the first sample of a new TA. It is not an arrival
+        # for that new routine (e.g. arms crossed while the next TA is going to bed).
+        available = [(t, ra) for t, ra in samples if (t, key) in selected and ra[3] in POINT_STATES
+                     and (routine_state is None or ra[3] == routine_state)]
+        arrived_a = [(t, ra[3]) for t, ra in available if point_status(ra, a["points"].get((t, key)), ra[3])[0]]
+        if not arrived_a:
+            return
+        first_a, state = arrived_a[0]
+        observed = [(t, point_status(b["rows"][(t, key)], b["points"].get((t, key)), state))
+                    for t, _ in samples if (t, key) in selected]
+        arrivals_b = [t for t, status in observed if status[0]]
+        # A whole lost activity cannot hide behind one legal wait sample.
+        reference_times = [t for t, ra in available if ra[3] == state and
+                           point_status(ra, a["points"].get((t, key)), state)[0]]
+        lawful_wait = not arrivals_b and all(dict(observed)[t][2] for t in reference_times)
+        first_b = arrivals_b[0] if arrivals_b else None
+        # Waiting while no point is available is legitimate. Report it separately, and subtract
+        # only observed legal waiting intervals from a later arrival's delay.
+        delay = None if first_b is None else first_b - first_a
+        if delay is not None and delay > 0:
+            period = b["header"].get("period_min", 5)
+            delay -= sum(min(period, first_b - t) for t, status in observed if first_a <= t < first_b and status[2])
+        entry = {"key": key, "state": state, "ta": samples[0][1][2], "start_min": samples[0][0],
+                 "end_min": samples[-1][0], "arrival_a_min": first_a - samples[0][0],
+                 "arrival_b_min": first_b - samples[0][0] if first_b is not None else None,
+                 "delay_min": delay}
+        if first_b is not None:
+            tally(state)["arrivals"].append(entry)
+        elif not lawful_wait:
+            tally(state)["missed"].append(entry)
+
+    for key, samples in routine_segments(a):
+        segment(key, samples)
+
+    def summary(items):
+        counts = {name: sum(item[name] for item in items) for name in
+                  ("samples", "held_a", "comparable", "same_fp", "same_fp_raw", "on_a", "on_b", "pose_a", "pose_b",
+                   "pose_comparable_a", "pose_comparable_b", "fallback_a", "fallback_b")}
+        arrivals = [entry for item in items for entry in item["arrivals"]]
+        missed = [entry for item in items for entry in item["missed"]]
+        collisions = {(entry["t_min"], tuple(entry["point"])): entry for item in items for entry in item["collisions"]}
+        delays = [entry["delay_min"] for entry in arrivals]
+        return {**counts, "available": valid and bool(counts["samples"]),
+                "same_fp": share(counts["same_fp_raw"], counts["held_a"]),
+                "same_fp_available": share(counts["same_fp"], counts["comparable"]),
+                "pose_ratio": share(counts["pose_b"], counts["pose_a"]),
+                "pose_ratio_available": share(counts["pose_comparable_b"], counts["pose_comparable_a"]),
+                "arrival_p95": percentile(delays, 0.95), "arrival_max": max(delays) if delays else None,
+                "arrivals": arrivals, "missed_segments": len(missed), "missed": missed,
+                "stuck_npcs": len({entry["key"] for entry in missed}),
+                "double_occupancy": len(collisions), "collisions": list(collisions.values())}
+
+    return {"total": summary([item for state, item in by_state.items() if states is None or state in states]),
+            "by_state": {state: summary([item]) for state, item in sorted(by_state.items())}}
 
 
 def compare(a, b, window=60.0, min_hero_distance=0.0, activity_states=None):
@@ -414,6 +564,12 @@ def compare(a, b, window=60.0, min_hero_distance=0.0, activity_states=None):
     raw_zs_a, raw_zs_b = a["events"].get("zs_start", {}), b["events"].get("zs_start", {})
     diverged = [key for key, npc in per_npc.items() if npc["zs_diff"] or npc["pos_max"] > 5]
     first = [npc["first_zs_diff"] for npc in per_npc.values() if npc["first_zs_diff"] is not None]
+    activity = activity_metrics(a, b, common, activity_states)
+    points = point_metrics(a, b, common, activity_states)
+    for item, point in [(activity["total"], points["total"]),
+                        *[(activity["by_state"][state], point) for state, point in points["by_state"].items()]]:
+        item["stuck"] += point["missed"]
+        item["stuck_npcs"] = len({entry["key"] for entry in item["stuck"]})
     return {
         "a": {"path": a["path"], "header": a["header"]},
         "b": {"path": b["path"], "header": b["header"]},
@@ -428,7 +584,8 @@ def compare(a, b, window=60.0, min_hero_distance=0.0, activity_states=None):
         "npcs": len({key for _, key in common}),
         "last_t_min": last,
         "total": total.summary(),
-        "activity": activity_metrics(a, b, common, activity_states),
+        "activity": activity,
+        "points": points,
         "activity_events": b["header"].get("activity_events"),
         "by_tier": {tier: tally.summary() for tier, tally in sorted(by_tier.items())},
         "by_hour": {int(hour): tally.summary() for hour, tally in sorted(by_hour.items())},
@@ -457,6 +614,7 @@ def compare(a, b, window=60.0, min_hero_distance=0.0, activity_states=None):
 def check_values(result, inventory_evidence=()):
     total = result["total"]
     activity = result["activity"]["total"]
+    points = result["points"]["total"]
     ca, cb = result["complete_a"], result["complete_b"]
     attested = {(item["key"], item["reference_hash"], item["candidate_hash"]) for item in inventory_evidence
                 if item.get("cause") in {"script_random_draw", "extra_script_iterations"} and item.get("item")
@@ -488,6 +646,10 @@ def check_values(result, inventory_evidence=()):
         "max_activity_arrival_p95": activity["arrival_p95"],
         "max_activity_arrival_max": activity["arrival_max"],
         "max_activity_stuck": activity["stuck_npcs"],
+        **{check: points[metric] if points["available"] else None for check, metric in {
+            "min_point_same_fp": "same_fp_available", "min_point_pose_ratio": "pose_ratio_available", "max_point_pose_ratio": "pose_ratio_available",
+            "max_point_arrival_p95": "arrival_p95", "max_point_arrival_max": "arrival_max",
+            "max_point_missed_segments": "missed_segments", "max_point_double_occupancy": "double_occupancy"}.items()},
         **{name: (result["activity_events"] or {}).get(counter) for name, counter in HEALTH.items()},
     }
 
@@ -506,7 +668,20 @@ def evaluate(result, tolerances, inventory_evidence=()):
             passed = bool(value)
         else:
             passed = value is not None and (value >= limit if kind == "min" else value <= limit)
-        checks.append({"name": name, "label": label, "value": value, "limit": limit, "kind": kind, "pass": passed})
+        activity, points = result["activity"]["total"], result["points"]["total"]
+        object_checks = {"min_activity_same_mob", "max_activity_mob_mismatch", "min_activity_mob_time_ratio",
+                         "max_activity_mob_time_ratio", "max_activity_arrival_p95", "max_activity_arrival_max"}
+        applicable = not (name in object_checks and activity["samples"] and not activity["mob_samples_a"])
+        # No held FP / arrivals is meaningful for a population entirely in legal fallback, or STAND_WP.
+        if name == "min_point_same_fp" and points["available"] and not points["comparable"]:
+            applicable = False
+        if name in {"min_point_pose_ratio", "max_point_pose_ratio"} and points["available"] and not points["pose_comparable_a"] and (
+                points["fallback_a"] or points["fallback_b"]):
+            applicable = False
+        if name in {"max_point_arrival_p95", "max_point_arrival_max"} and points["available"] and not points["arrivals"] and not points["missed"]:
+            applicable = False
+        checks.append({"name": name, "label": label, "value": value, "limit": limit, "kind": kind,
+                       "applicable": applicable, "pass": passed if applicable else True})
     return checks
 
 
@@ -567,6 +742,8 @@ def markdown(result, checks, label_a, label_b):
             else:
                 sign = "≥" if check["kind"] == "min" else "≤"
                 value, limit = fmt(check["value"], 4), f"{sign} {fmt(check['limit'], 4)}"
+            if not check["applicable"]:
+                value = "not applicable"
             lines.append(f"| {check['label']} | {value} | {limit} | {'pass' if check['pass'] else '**FAIL**'} |")
         lines.append("")
     activity = result["activity"]
@@ -576,7 +753,7 @@ def markdown(result, checks, label_a, label_b):
               "the segment is grouped by A's ZS at its first occupied sample. Delay is signed B minus A.",
               f"Arrival resolution is the journal step: A {fmt(activity['period_min_a'])}, B {fmt(activity['period_min_b'])} game minutes "
               "(5 minutes in npc-day-parity). Segment bounds are the first/last observed samples, including day edges.",
-              "Undefined ratios or arrivals are shown as — and fail an enabled numeric check.",
+              "Undefined ratios or arrivals are shown as —. MOB checks are not applicable without reference objects.",
               f"Summary states: {', '.join(activity['states']) if activity['states'] is not None else 'all'}; the state table always includes all states.", "",
               "| State | Samples | Same ZS | Same MOB | MOB mismatches | Extra MOB | Same WP | MOB samples A / B | MOB time B/A | Arrival p50 / p95 / max, min | Stuck NPCs |",
               "|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -586,7 +763,7 @@ def markdown(result, checks, label_a, label_b):
                      f"{fmt(item['mob_time_ratio'], 4)} | {fmt(item['arrival_p50'])} / {fmt(item['arrival_p95'])} / "
                      f"{fmt(item['arrival_max'])} | {item['stuck_npcs']} |")
     lines += ["", "### Stuck routine segments (all states)", "",
-              "| NPC | Reference state | TA | Segment samples, min | First MOB in A, min from start |",
+              "| NPC | Reference state | TA | Segment samples, min | First MOB or point in A, min from start |",
               "|---|---|---|---|---|"]
     for state, item in activity["by_state"].items():
         for entry in item["stuck"]:
@@ -599,6 +776,32 @@ def markdown(result, checks, label_a, label_b):
         if entry["delay_min"] > 0:
             lines.append(f"| `{entry['key']}` | {entry['state']} | `{entry['ta']}` | {entry['start_min']}–{entry['end_min']} | "
                          f"{entry['arrival_a_min']} / {entry['arrival_b_min']} | {entry['delay_min']} |")
+    lines.append("")
+    lines += ["## Point activities", "",
+              "Held points are identified by coordinates; equal names alone do not match. Pose follows aivar[19],",
+              "BS_SIT for campfire. STAND_WP uses the routine waypoint (within the 500 cm approach radius).",
+              "Legal fallback requires no available FP, the routine waypoint and a standing body; it is counted separately.",
+              "Raw pose time is reported; acceptance excludes legal B waiting from both pose populations and held-point agreement.",
+              "Observed legal waits do not count as late arrival.",
+              "Missing point columns fail enabled point checks. Resolution is the journal step.", "",
+              "| State | Samples | Same held FP raw / excluding legal fallback | On point A / B | Pose A / B | Pose B/A raw / outside B waiting | Arrival p95 / max, min | Missed segments | Double occupancy B |",
+              "|---|---|---|---|---|---|---|---|---|"]
+    points = result["points"]
+    for state, item in [("**Selected total**", points["total"]), *points["by_state"].items()]:
+        lines.append(f"| {state} | {item['samples']} | {pct(item['same_fp'])} / {pct(item['same_fp_available'])} | {item['on_a']} / {item['on_b']} | "
+                     f"{item['pose_a']} / {item['pose_b']} | {fmt(item['pose_ratio'], 4)} / {fmt(item['pose_ratio_available'], 4)} | "
+                     f"{fmt(item['arrival_p95'])} / {fmt(item['arrival_max'])} | {item['missed_segments']} | {item['double_occupancy']} |")
+        lines.append(f"| {state}: legal routine-waypoint fallback | | | {item['fallback_a']} / {item['fallback_b']} | | | | | |")
+    lines += ["", "### Missed point segments / later point arrivals", "",
+              "| NPC | State | TA | Segment, min | Delay, min |", "|---|---|---|---|---|"]
+    for state, item in points["by_state"].items():
+        for entry in item["missed"] + [e for e in item["arrivals"] if e["delay_min"] > 0]:
+            lines.append(f"| `{entry['key']}` | {state} | `{entry['ta']}` | {entry['start_min']}–{entry['end_min']} | "
+                         f"{fmt(entry['delay_min']) if entry['delay_min'] is not None else 'missed'} |")
+    lines += ["", "### Point collisions in B", "", "| State | Time, min | Coordinates, cm | NPCs |", "|---|---|---|---|"]
+    for state, item in points["by_state"].items():
+        for collision in item["collisions"]:
+            lines.append(f"| {state} | {collision['t_min']} | {collision['point']} | {', '.join(collision['npcs'])} |")
     lines.append("")
     events = result["activity_events"]
     lines += [f"## Activities by events in {label_b}", ""]
