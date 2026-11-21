@@ -9,8 +9,10 @@ encoder's noise are fine detail. For each spruce the frame difference is the mea
 (the box of fir_eye_frames.tree_bounds, as wide as 0.6 of its height, so its shadow at noon is inside). A frame's score
 is that difference over the median of the 61 frames around it. A jump is a score at --ratio or more, the highest within
 4 frames and above every score 8 to 60 frames away. The script prints the jumps while the spruce is in 3D, then a row
-for every threshold of the hard level and shadow switches it crosses (falling 800 px and the px of its four levels,
-400, 200, 100, 50 for spruce A, rising 1.1 times those): the highest score within 4 frames of the crossing and the highest one 8 to 60 frames away.
+for every threshold of the level and shadow switches it crosses (falling the shadow ladder's 800, 400 and 240 px and
+the px of its four levels, 400, 200, 100, 50 for spruce A, rising 1.1 times those, where the hard switches of a
+spruce with no hierarchy are): the highest score within 4 frames of the crossing and the highest one 8 to 60 frames
+away.
 <csv> is the table of fir_bough_frames.py for the same recording; the heights and frames are its own. --name is the
 scenario and its recording when they are not fir-bough-lod.
 """
@@ -29,7 +31,7 @@ from fir_eye_frames import FOV_DEGREES, HYSTERESIS, camera_path, tree_bounds
 NAME = 'fir-bough-lod'
 BENCH = Path(__file__).resolve().parents[1] / 'bench'
 WIDTH, HEIGHT = 240, 135
-SHADOW_PX = 800
+SHADOW_PX = (800, 400, 240)  # TreeLevelBand::ShadowPx
 NEAR, RING, WINDOW = 4, (8, 60), 30
 
 
@@ -158,7 +160,7 @@ def report(content: Path, run: Path, table: Path, layer: str, visuals: list[str]
         print(f'{name}: {len(jumps)} jumps while in 3D')
         for i in jumps:
             print(f'  frame {i}: {heights[k][i]:.1f} px, x{score[i]:.2f}, {diff[i][k] - diff[i][k] / score[i]:+.3f} grey')
-        for way, threshold, frame in crossings(heights[k], (SHADOW_PX, *trees[k][2][:-1])):
+        for way, threshold, frame in crossings(heights[k], sorted({*SHADOW_PX, *trees[k][2][:-1]}, reverse=True)):
             peak, around, jump = standout(score, frame, ratio)
             print(f'  {way} {threshold:g} px at frame {frame}: peak x{score[peak]:.2f} at {peak} '
                   f'({heights[k][peak]:.1f} px), around x{around:.2f}: {"JUMP" if jump else "none"}')
