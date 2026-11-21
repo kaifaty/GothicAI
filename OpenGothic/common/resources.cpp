@@ -863,8 +863,11 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
         source = &it->second;
       if(source!=nullptr && source->hasLevels) {
         if(!source->levels.empty() && MeshLevels::enabled())
-          for(auto& level:implLoadMeshLevels(key,*source,zmsh,!colors.empty()))
+          for(auto& level:implLoadMeshLevels(key,*source,zmsh,!colors.empty())) {
+            if(!source->hierarchy.empty() && TreeBough::enabled())
+              TreeBough::sortLevelInSpace(level.mesh); // its shadow ladder draws the levels near (treelevelband.h)
             packed.addLevel(level.mesh,level.px,level.colors.empty() ? nullptr : &level.colors);
+            }
         }
       else if(source!=nullptr) {
         const auto enabled = [](const char* env, const char* setting) {

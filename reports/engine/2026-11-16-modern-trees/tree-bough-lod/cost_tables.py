@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The tables of the price of a bough scheme in the forest, tree-bough-lod.md: the runs of cost.sh (or any runs of
-perf-trees.bench with `perf_report.py run` done), the first one the scheme off.
+perf-trees.bench with `perf_report.py run` done), the first state is the reference when comparing several states.
 
   cost_tables.py RUNS off s122 b
 """
@@ -74,8 +74,8 @@ def vsm(run):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('runs', type=Path)
-    parser.add_argument('off', help='the run with the scheme off')
-    parser.add_argument('on', nargs='+', help='the runs with a scheme on')
+    parser.add_argument('off', help='the reference or only run')
+    parser.add_argument('on', nargs='*', help='other runs to compare against the reference')
     args = parser.parse_args()
     off = times(args.runs / args.off)
     print('| Вид | Состояние | Кадров | Кадр GPU, мс | `GBuffer`, мс | `VSM-rendering`, мс | Видимость и срез, мс '
