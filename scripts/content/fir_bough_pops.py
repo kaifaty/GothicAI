@@ -9,10 +9,9 @@ encoder's noise are fine detail. For each spruce the frame difference is the mea
 (the box of fir_eye_frames.tree_bounds, as wide as 0.6 of its height, so its shadow at noon is inside). A frame's score
 is that difference over the median of the 61 frames around it. A jump is a score at --ratio or more, the highest within
 4 frames and above every score 8 to 60 frames away. The script prints the jumps while the spruce is in 3D, then a row
-for every threshold of the level and shadow switches it crosses (falling the shadow ladder's 800, 400 and 240 px and
-the px of its four levels, 400, 200, 100, 50 for spruce A, rising 1.1 times those, where the hard switches of a
-spruce with no hierarchy are): the highest score within 4 frames of the crossing and the highest one 8 to 60 frames
-away.
+for each threshold: the highest score within 4 frames of the crossing and the highest one 8 to 60 frames away.
+The shadow-ladder recording checks 800, 400 and 240 px in both directions because the bands are reversible.
+The older recordings use the hard switches as a reference, including their 10% hysteresis on return.
 <csv> is the table of fir_bough_frames.py for the same recording; the heights and frames are its own. --name is the
 scenario and its recording when they are not fir-bough-lod.
 """
@@ -123,16 +122,15 @@ def standout(score: list[float], frame: int, ratio: float) -> tuple[int, float, 
     return peak, around, score[peak] >= ratio and score[peak] > around
 
 
-def crossings(heights: list[float], thresholds) -> list[tuple[str, float, int]]:
-    """The frames where the hard switches of the old scheme happen: falling below a threshold on the way out, rising
-    to 1.1 times it on the way back."""
+def crossings(heights: list[float], thresholds, return_scale: float = HYSTERESIS) -> list[tuple[str, float, int]]:
+    """Find each threshold crossing on the outward and return legs."""
     lowest = heights.index(min(heights))
     out = []
     for threshold in thresholds:
         down = next((i for i in range(1, lowest + 1) if heights[i] < threshold <= heights[i - 1]), None)
         if down is not None:
             out.append(('out', threshold, down))
-        rise = threshold * HYSTERESIS
+        rise = threshold * return_scale
         up = next((i for i in range(lowest + 1, len(heights)) if heights[i] >= rise > heights[i - 1]), None)
         if up is not None:
             out.append(('back', rise, up))
@@ -153,18 +151,22 @@ def report(content: Path, run: Path, table: Path, layer: str, visuals: list[str]
     boxes = [[box(eye, target, middle, height) for middle, height, _ in trees] for eye in cameras]
     diff = differences(run / f'{name}.mp4', boxes)
     result = []
-    for k, name in enumerate(names):
+    for k, tree_name in enumerate(names):
         score = scores([row[k] for row in diff])
         jumps = [i for i in range(1, len(score))
                  if stages[k][i] < 2 and standout(score, i, ratio)[0]==i and standout(score, i, ratio)[2]]
-        print(f'{name}: {len(jumps)} jumps while in 3D')
+        print(f'{tree_name}: {len(jumps)} jumps while in 3D')
         for i in jumps:
             print(f'  frame {i}: {heights[k][i]:.1f} px, x{score[i]:.2f}, {diff[i][k] - diff[i][k] / score[i]:+.3f} grey')
-        for way, threshold, frame in crossings(heights[k], sorted({*SHADOW_PX, *trees[k][2][:-1]}, reverse=True)):
+        if name == 'fir-bough-shadow':
+            switches = crossings(heights[k], SHADOW_PX, 1.0)
+        else:
+            switches = crossings(heights[k], (SHADOW_PX[0], *trees[k][2][:-1]))
+        for way, threshold, frame in switches:
             peak, around, jump = standout(score, frame, ratio)
             print(f'  {way} {threshold:g} px at frame {frame}: peak x{score[peak]:.2f} at {peak} '
                   f'({heights[k][peak]:.1f} px), around x{around:.2f}: {"JUMP" if jump else "none"}')
-            result.append({'tree': name, 'way': way, 'threshold': threshold, 'frame': frame, 'peak': score[peak],
+            result.append({'tree': tree_name, 'way': way, 'threshold': threshold, 'frame': frame, 'peak': score[peak],
                            'around': around, 'jump': jump})
     return result
 

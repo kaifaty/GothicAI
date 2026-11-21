@@ -1,10 +1,10 @@
 # The shadow ladder of the three spruces of the row of fir-bough-lod.bench (`fir_set.py bough --labels`): the camera
-# stands on that bench's view direction (20 degrees down, square to the row) through the middle spruce, 9.5 m from
+# stands on that bench's view direction (20 degrees down, square to the row) through the middle spruce, 9 m from
 # its middle, backs away to 70 m and returns. By the distance to the camera, as the engine measures it, the outer
-# spruces pass 994 -> 210 -> 994 px of height (985 and 209 px for the third) and the middle one 1572 -> 213 -> 1572:
+# spruces pass 1015 -> 210 -> 1015 px of height (1006 and 209 px for the third) and the middle one 1659 -> 213 -> 1659:
 # through the bands of the shadow thresholds 800, 400 and 240 px (914 -> 751, 457 -> 376, 274 -> 225 px) and of the
-# wood's 400 px. Every leg is 1.199 times the distance in 4.8 s: 3.8 % of the middle spruce's height a second, at
-# most 4.1 (fir-bough-near.bench: 3.7 to 3.9, at most 4.4). It looks 60 cm below the middle; below 14 m the frame
+# wood's 400 px. The first leg takes 6.2 s and the following legs 4.8 s, about 3.8 % of the middle spruce's height a second, at
+# most 4.3 (fir-bough-near.bench: 3.7 to 3.9, at most 4.4). It looks 60 cm below the middle; below 14 m the frame
 # cuts the tops of the crowns, and the ground with the shadows stays in it. Keep each wait equal to its cam fly.
 # The run is offscreen, the stand's default: a window that another one covers on Ryzen draws a frame a second.
 # BASE=~/.local/share/gothic-ai/remaster/trees-fir/bough-early
@@ -28,15 +28,15 @@ goto pos 42700 3517 -2230
 clear 3000
 streaming wait
 grass wait
-cam at 46843.07 7369.10 -540.39 47705.36 6984.18 -309.34
+cam at 46888.45 7352.00 -528.23 47705.36 6984.18 -309.34
 wait 5000
 rec fir-bough-shadow
 wait 1000
 
 # Away from the three spruces.
-cam fly 46671.40 7433.79 -586.39 47705.36 6984.18 -309.34 4800
+cam fly 46671.40 7433.79 -586.39 47705.36 6984.18 -309.34 6200
 mark fir-bough-leg
-wait 4800
+wait 6200
 cam fly 46465.54 7511.36 -641.55 47705.36 6984.18 -309.34 4800
 mark fir-bough-leg
 wait 4800
@@ -100,9 +100,9 @@ wait 4800
 cam fly 46671.40 7433.79 -586.39 47705.36 6984.18 -309.34 4800
 mark fir-bough-leg
 wait 4800
-cam fly 46843.07 7369.10 -540.39 47705.36 6984.18 -309.34 4800
+cam fly 46888.45 7352.00 -528.23 47705.36 6984.18 -309.34 6200
 mark fir-bough-leg
-wait 4800
+wait 6200
 mark fir-bough-returned
 wait 1000
 stop

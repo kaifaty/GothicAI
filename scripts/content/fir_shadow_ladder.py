@@ -89,9 +89,11 @@ def shadows(models: list[list[dict]], mask: np.ndarray, px: float, azimuth: floa
 
 def compare(fine: np.ndarray, coarse: np.ndarray) -> dict:
     a, b = filtered(fine), filtered(coarse)
-    return dict(changed=float(np.abs(a - b).sum() / np.maximum(a, b).sum()),
-                texels=float((fine ^ coarse).sum() / (fine | coarse).sum()),
-                area=float(coarse.sum() / fine.sum() - 1.))
+    return {
+        'changed': float(np.abs(a - b).sum() / np.maximum(a, b).sum()),
+        'texels': float((fine ^ coarse).sum() / (fine | coarse).sum()),
+        'area': float(coarse.sum() / fine.sum() - 1.),
+    }
 
 
 def measure(models: list[list[dict]], mask: np.ndarray, heights: list[float], pairs: list[tuple[int, int]],
@@ -160,8 +162,11 @@ def cost(parts: list[dict], heights: list[float]) -> list[dict]:
             position, index = part['position'].astype(np.float64), part['index']
             diameters += meshlets(*(in_space(position, index) if sort else (position, index)))
         diameters = np.array(diameters)
-        out.append(dict(meshlets=len(diameters), median=float(np.median(diameters)),
-                        pairs=[float(((diameters * px / (PAGE * height) + 1.) ** 2).sum()) for px in heights]))
+        out.append({
+            'meshlets': len(diameters),
+            'median': float(np.median(diameters)),
+            'pairs': [float(((diameters * px / (PAGE * height) + 1.) ** 2).sum()) for px in heights],
+        })
     return out
 
 
@@ -201,7 +206,8 @@ def main() -> int:
               f"  texels {row['texels']:6.1%} ({row['texels_max']:6.1%})"
               f"  area {row['area']:+7.1%} ({row['area_max']:+7.1%})")
     if args.json:
-        args.json.write_text(json.dumps(dict(elevation=ELEVATION, azimuths=AZIMUTHS, rays=RAYS, rows=rows), indent=1) + '\n')
+        result = {'elevation': ELEVATION, 'azimuths': AZIMUTHS, 'rays': RAYS, 'rows': rows}
+        args.json.write_text(json.dumps(result, indent=1) + '\n')
     if args.png:
         tree_density.png(args.png, sheet(shadows(models, mask, args.px[0], AZIMUTHS[0])))
     return 0
