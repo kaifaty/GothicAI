@@ -505,7 +505,7 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
       if(useHistory) {
         boughHistoryToken = boughPush.token;
         } else {
-        boughs->expand(cmd,boughPush.token,false);
+        boughs->expand(cmd,boughPush.token);
         boughExpanded = true;
         }
       }

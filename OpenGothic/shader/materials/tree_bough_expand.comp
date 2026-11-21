@@ -2,6 +2,9 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "scene.glsl"
+#ifdef TREE_BOUGH_CULL
+#include "common.glsl"
+#endif
 
 layout(local_size_x = 64) in;
 layout(binding = 0, std140) uniform Scene        { SceneDesc scene;      };
@@ -18,12 +21,17 @@ layout(binding = 10, std430) readonly buffer HiZHistory { uint historyStatus[]; 
 
 layout(push_constant, std430) uniform Push {
   uint token;
-  uint flags; // bit 0: CPU reference, bit 1: counters, bit 2: HiZ probe, bit 3: late history HiZ
+  uint flags; // bit 0: CPU reference, bit 1: counters, bit 2: HiZ probe, bit 3: late history HiZ, bit 4: node HiZ
   float nearZ;
   uint stage; // 0: cut of each crown, 1: reset of the counters, 2: whole meshlets of the mesh path
   } push;
 
 #include "materials/tree_bough_cut.glsl"
+#ifdef TREE_BOUGH_CULL
+layout(binding = 11) uniform sampler2D hiZ;
+#include "hiz/foliage_visibility.glsl"
+#include "materials/tree_bough_cull.glsl"
+#endif
 
 // The state prefix matches TreeBoughRender::readStats. Height is a maximum; the other counters are sums.
 const uint BoughStatsSumCount = 7u;
@@ -177,6 +185,10 @@ void main() {
     return;
     }
 
+#ifdef TREE_BOUGH_CULL
+  boughCullTransform(mat4(vec4(x,0), vec4(y,0), vec4(z,0), vec4(origin,1)),
+                     uintBitsToFloat(data[asset+18u]), uintBitsToFloat(instanceMem[transform+12u]));
+#endif
   if(useReference) {
     for(uint i=lane; i<nodeCount; i+=gl_WorkGroupSize.x) {
       const uint transition = reference[ref+1u+i*2u];

@@ -4,6 +4,8 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
+#include <string_view>
 #include <stdexcept>
 
 #include "frameprofile.h"
@@ -24,6 +26,14 @@ ComputePipeline compute(std::string_view name) {
   auto& device = Resources::device();
   const auto shader = GothicShader::get(name);
   return device.pipeline(device.shader(shader.data,shader.len));
+  }
+
+uint32_t boughCullMode() {
+  const char* env = std::getenv("OPENGOTHIC_TREE_BOUGH_CULL");
+  const std::string_view value = env!=nullptr ? env : "";
+  if(value=="2")
+    return 2;
+  return value=="1" ? 1u : 0u;
   }
 
 Vec3 column(const Matrix4x4& m, size_t i) {
@@ -55,8 +65,9 @@ void demandProxyTextures(const TreeBough::Asset& asset, bool add) {
 }
 
 TreeBoughRender::TreeBoughRender(DrawCommands& owner)
-  : owner(owner), expandPipeline(compute("tree_bough_expand.comp.sprv")),
-    copyPipeline(compute("tree_bough_buffer.comp.sprv")), cpu(TreeBough::cpuEnabled()) {}
+  : owner(owner), cpu(TreeBough::cpuEnabled()), cullMode(cpu ? 0u : boughCullMode()),
+    expandPipeline(compute(cullMode==0u ? "tree_bough_expand.comp.sprv" : "tree_bough_expand_cull.comp.sprv")),
+    copyPipeline(compute("tree_bough_buffer.comp.sprv")) {}
 
 TreeBoughRender::~TreeBoughRender() {
   for(const auto& [mesh,asset]:assets)
@@ -211,6 +222,7 @@ void TreeBoughRender::uploadData() {
     words.push_back(std::bit_cast<uint32_t>(box[1].y-box[0].y));
     putVec(words,bound[0]);
     putVec(words,bound[1]);
+    words.push_back(std::bit_cast<uint32_t>(source.cullPadding));
     words.resize(roots);
     words.insert(words.end(),source.roots.begin(),source.roots.end());
     words.resize(ranges);
@@ -329,13 +341,14 @@ const ComputePipeline& TreeBoughRender::historyClassify() {
   return historyPipeline;
   }
 
-void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool lateHiZ) {
+void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, const Texture2d* historyDepth) {
   auto& view = owner.views[SceneGlobals::V_Main];
   const auto& scene = owner.scene;
   uint32_t flags = uint32_t(cpu);
   flags |= FrameProfile::enabled() ? 2u : 0u;
   flags |= scene.isTreeOcclusionProbe() ? 4u : 0u;
-  flags |= lateHiZ ? 8u : 0u;
+  flags |= historyDepth!=nullptr ? 8u : 0u;
+  flags |= cullMode==2u ? 16u : 0u;
   struct Push { uint32_t token, flags; float nearZ; uint32_t stage; };
   enc.setBinding(0,scene.uboGlobal[SceneGlobals::V_Main]);
   enc.setBinding(1,view.visClusters);
@@ -347,7 +360,9 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
   enc.setBinding(7,cpu ? referenceData : data);
   enc.setBinding(8,indirect);
   enc.setBinding(9,payload);
-  enc.setBinding(10,lateHiZ ? owner.history.status : data);
+  enc.setBinding(10,historyDepth!=nullptr ? owner.history.status : data);
+  if(cullMode!=0u)
+    enc.setBinding(11,historyDepth!=nullptr ? *historyDepth : *scene.hiZ,Sampler::nearest());
   enc.setPipeline(expandPipeline);
   enc.setPushData(Push{token,flags,scene.znear,1});
   enc.dispatchThreads(std::max<size_t>(StatsCount,commands.size()));
@@ -416,11 +431,11 @@ void DrawCommands::setBoughTransform(uint32_t cluster, const Matrix4x4& transfor
     boughs->setTransform(cluster,transform);
   }
 
-void DrawCommands::finishBoughVisibility(Encoder<CommandBuffer>& enc, uint8_t fId, bool late) {
+void DrawCommands::finishBoughVisibility(Encoder<CommandBuffer>& enc, uint8_t fId, const Texture2d* historyDepth) {
   if(boughHistoryToken==0u)
     return;
   enc.setDebugMarker("Bough-cut");
-  boughs->expand(enc,boughHistoryToken,late);
+  boughs->expand(enc,boughHistoryToken,historyDepth);
   boughHistoryToken = 0;
   boughExpanded = true;
   if(FrameProfile::enabled())

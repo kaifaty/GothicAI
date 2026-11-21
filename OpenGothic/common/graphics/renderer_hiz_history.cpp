@@ -39,7 +39,7 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     cmd.dispatchThreads(zbuffer.size());
     }
 
-  const auto* grassHiZ = &textureCast<const Texture2d&>(hiz.hiZ);
+  const auto* currentHiZ = &textureCast<const Texture2d&>(hiz.hiZ);
   if(!reset) {
     auto w = RendererInternal::nextPot(uint32_t(zbuffer.w()));
     auto h = RendererInternal::nextPot(uint32_t(zbuffer.h()));
@@ -49,15 +49,15 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
       }
     auto& pyramid = usesImage2d(treeHistory.pyramid, TextureFormat::R32F, w, h, true);
     buildHiZ(cmd, &pyramid);
-    grassHiZ = &textureCast<const Texture2d&>(pyramid);
-    commands.classifyHistory(cmd, *grassHiZ, quantization, true, false);
+    currentHiZ = &textureCast<const Texture2d&>(pyramid);
+    commands.classifyHistory(cmd, *currentHiZ, quantization, true, false);
     }
-  commands.finishBoughVisibility(cmd, fId, !reset);
+  commands.finishBoughVisibility(cmd, fId, reset ? nullptr : currentHiZ);
   if(!reset)
     commands.compactHistory(cmd, false);
 
   // The reference pass and the live pass draw the same prepared grass.
-  view.prepareGrass(cmd, fId, *grassHiZ, reset ? 0.f : quantization);
+  view.prepareGrass(cmd, fId, *currentHiZ, reset ? 0.f : quantization);
   if(request) {
     auto& reference = usesZBuffer(treeHistory.referenceDepth, zBufferFormat, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
     auto& owners = usesAttachment(treeHistory.referenceOwners, TextureFormat::R32U, zbuffer.size());

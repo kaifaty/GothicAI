@@ -1,6 +1,7 @@
 // Included by mesh_gltf_test.cpp.
 
 #include "tree_bough_groups_test.h"
+#include "tree_bough_cull_test.h"
 #include "tree_level_band_test.h"
 
 void treeBoughRasterCases(Tempest::Device& device) {
@@ -390,5 +391,6 @@ void treeBoughCutCases() {
   treeLevelBandPicks();
   treeLevelBandMasks(device);
   treeBoughGroupCases(device);
+  treeBoughCullCases(device);
   treeBoughRasterCases(device);
   }
