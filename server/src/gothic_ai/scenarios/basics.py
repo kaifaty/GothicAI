@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from collections.abc import Sequence
@@ -1007,9 +1008,9 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     link.listeners.append(lambda m: events.append(m) if isinstance(m, NpcEvent) else None)
     results: dict[str, str] = {}
 
-    async def event(kinds: set[str], timeout: float) -> NpcEvent | None:
+    async def event(kinds: set[str], other: str, timeout: float) -> NpcEvent | None:
         for _ in range(int(timeout / 0.2)):
-            hit = next((e for e in events if e.kind in kinds), None)
+            hit = next((e for e in events if e.npc == npc and e.other == other and e.kind in kinds), None)
             if hit is not None:
                 return hit
             await asyncio.sleep(0.2)
@@ -1052,7 +1053,6 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
         await link.debug("npc_goto", npc=npc, waypoint=clearing)
         await clear_animals()
     # npc_goto resolves script instances, so face needs PC_HERO, not the PLAYER alias.
-    # This position fixes the direction for both wolf spawns, away from the rocks.
     await link.debug("player_goto", pos=[23472, 1032, -10816])
     await link.debug("npc_goto", npc=npc, waypoint=arena, face="PC_HERO")
     await link.debug("teleport", near=npc, distance=300)
@@ -1088,17 +1088,36 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     await clear_animals()
     events.clear()
     await _m5b_player_weapon(link, "melee")
-    e = await event({"weapon_drawn"}, 5)
+    e = await event({"weapon_drawn"}, "PLAYER", 5)
     results["weapon_drawn"] = f"done ({e.npc}, {e.distance:.0f} cm)" if e else "failed (no weapon_drawn)"
     await _m5b_player_weapon(link, "none")
-    # Keep the hero beyond the 400/500 cm wolf spawns so he cannot intercept
-    # Xardas's projectiles. The weapon perception above still runs at 300 cm.
-    await link.debug("player_goto", pos=[23967, 1032, -11311])
+
+    # Two clear rays keep the first carcass out of the second spell lane. Both anchors
+    # have level ground and leave at least 4 m between the hero and the spawn point.
+    free_anchor = [23458, 963, -11533]
+    attached_anchor = [23911, 960, -12066]
+
+    async def place_fighters(anchor: list[int]) -> None:
+        await link.debug("player_goto", pos=anchor)
+        await link.debug("npc_goto", npc=npc, waypoint=arena, face="PC_HERO")
+
+    async def spawn_wolf(distance: int) -> Snapshot:
+        await link.debug("spawn", instance="WOLF", near=npc, distance=distance)
+        # The cave wall screens the hero while keeping both actors inside the 30 m AI radius.
+        await link.debug("player_goto", waypoint="NW_XARDAS_TOWER_SECRET_CAVE_02")
+        snap = await link.snapshot(npc, fresh=True)
+        living = [o.distance for o in snap.nearby_npcs if o.id == "WOLF" and not o.dead]
+        if len(living) != 1 or snap.player is None or not snap.player.hp:
+            raise GameError(f"m5b spawn {distance}: wolves={living}, player={snap.player}")
+        log.info("m5b spawn %d cm: mage=%s hero=%s hp=%s wolf=%.0f cm",
+                 distance, snap.npc.pos, snap.player.pos, snap.player.hp, living[0])
+        return snap
 
     # 2. a wolf next to the npc: the npc senses it or sees it attack
+    await place_fighters(free_anchor)
     events.clear()
-    await link.debug("spawn", instance="WOLF", near=npc, distance=400)
-    e = await event({"monster_near", "monster_attack", "hero_attacked"}, 20)
+    await spawn_wolf(400)
+    e = await event({"monster_near", "monster_attack", "hero_attacked"}, "WOLF", 20)
     results["monster_event"] = (
         f"done ({e.npc}: {e.kind} {e.other} '{e.other_name}' {e.distance or 0:.0f} cm {e.detail or ''})"
         if e
@@ -1123,15 +1142,20 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
 
     # 4. an attached npc: weapons, its own voiced line, and fight/flee handed to the scripts and back
     detached: list[str] = []
-    link.listeners.append(lambda m: detached.append(m.reason) if isinstance(m, Detached) else None)
-    await attach_when_free(link, npc)
+    link.listeners.append(
+        lambda m: detached.append(m.reason) if isinstance(m, Detached) and m.npc == npc else None
+    )
 
     def wolves(sn: Snapshot) -> str:
         return ", ".join(
             f"{o.name} {o.distance / 100:.0f} m{' dead' if o.dead else ''}" for o in sn.nearby_npcs
         )
 
-    results["after_free_fight"] = f"done (around: {wolves(await link.snapshot(npc, fresh=True)) or 'nobody'})"
+    snap = await link.snapshot(npc, fresh=True)
+    killed = any(o.id == "WOLF" and o.dead for o in snap.nearby_npcs)
+    results["after_free_fight"] = f"{'done' if killed else 'failed'} (around: {wolves(snap) or 'nobody'})"
+    await place_fighters(attached_anchor)
+    await link.attach(npc)
     for name, action, args in (
         ("attached_draw", "draw_weapon", {}),
         ("attached_remove", "remove_weapon", {}),
@@ -1139,21 +1163,28 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     ):
         res = await link.act(npc, action, **args)  # type: ignore[arg-type]
         results[name] = f"{res.status} {res.detail or ''}".strip()
-    await link.debug("spawn", instance="WOLF", near=npc, distance=500)
+    await spawn_wolf(500)
     started = time.monotonic()
     res = await link.act(npc, "fight", npc="WOLF", timeout=90)
     took = time.monotonic() - started
     snap = await link.snapshot(npc, fresh=True)
     results["attached_fight"] = (
-        f"{'done' if res.status == 'done' and not detached else 'failed'} "
+        f"{'done' if res.status == 'done' and res.detail == 'target is down' and not detached else 'failed'} "
         f"({res.status} {res.detail or ''} in {took:.1f} s, still attached: {not detached}, "
         f"hp {snap.npc.hp}/{snap.npc.hp_max}, around: {wolves(snap)})"
     )
-    await link.debug("spawn", instance="WOLF", near=npc, distance=800)
+    # npc_goto only places free actors. Start a fresh attachment for the independent flight.
+    await link.detach(npc)
+    await place_fighters(attached_anchor)
+    detached.clear()
+    await link.attach(npc)
+    before = await spawn_wolf(800)
     res = await link.act(npc, "flee", npc="WOLF", timeout_ms=4000)
+    after = await link.snapshot(npc, fresh=True)
+    moved = math.dist(before.npc.pos[::2], after.npc.pos[::2])
     results["attached_flee"] = (
-        f"{'done' if res.status in ('done', 'timeout') and not detached else 'failed'} "
-        f"({res.status} {res.detail or ''}, still attached: {not detached})"
+        f"{'done' if res.status in ('done', 'timeout') and not detached and moved > 50 else 'failed'} "
+        f"({res.status} {res.detail or ''}, moved {moved:.0f} cm, still attached: {not detached})"
     )
     # The flee wolf may stay with the hero outside the fleeing NPC's snapshot.
     # Remove that encounter before restoring the routine, even if it is out of view.
