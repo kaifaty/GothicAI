@@ -48,11 +48,12 @@ void treeBoughCullCases(Tempest::Device& device) {
   auto mainDraw = device.ssbo(unused,sizeof(unused));
   auto mainPayload = device.ssbo(unused,sizeof(unused));
   using Task = std::array<uint32_t,4>;
-  const auto run = [&](uint32_t mode, bool raw, float pad, float fatness) {
+  using Instance = std::array<float,16>;
+  const Instance upright = {1,0,0, 0,1,0, 0,0,1, 0,0,0};
+  const auto run = [&](uint32_t mode, bool raw, float pad, const Instance& transform) {
     data[asset+18] = std::bit_cast<uint32_t>(pad);
     const auto records = device.ssbo(data);
-    const float matrix[16] = {1,0,0, 0,1,0, 0,0,1, 0,0,0, fatness,0,0,0};
-    const auto instance = device.ssbo(matrix,sizeof(matrix));
+    const auto instance = device.ssbo(transform.data(),sizeof(transform));
     uint32_t draw[5] = {1,0,0,0,0};
     auto indirect = device.ssbo(draw,sizeof(draw));
     auto payload = device.ssbo(Uninitialized,count*sizeof(Task));
@@ -96,16 +97,27 @@ void treeBoughCullCases(Tempest::Device& device) {
     std::ranges::sort(tasks);
     return tasks;
     };
-  const auto control = run(0,false,.006f,0.f);
+  const auto control = run(0,false,.006f,upright);
   require(control.size()==count-1,"control contains both sides of each band except the near-plane parent");
   for(bool raw : {false,true}) {
     for(uint32_t mode : {1u,2u}) {
       auto expected = control;
       std::erase_if(expected,[&](const Task& t){ return t[1]/group==0 || (mode==2 && t[1]/group==1); });
-      require(run(mode,raw,.006f,0.f)==expected,"tree bough culling lost a visible node or changed a dissolve weight");
+      require(run(mode,raw,.006f,upright)==expected,"tree bough culling lost a visible node or changed a dissolve weight");
       std::erase_if(expected,[&](const Task& t){ return t[1]/group==5; });
-      require(run(mode,raw,0.f,0.f)==expected,"tree bough culling ignored the swept extent at the screen edge");
+      require(run(mode,raw,0.f,upright)==expected,"tree bough culling ignored the swept extent at the screen edge");
       }
     }
-  require(run(2,true,.006f,1.f)==control,"an instance displaced beyond the boxes must keep its original cut");
+  // Turning and translating the tree puts all seven groups over the left tile.
+  // Only the groups crossing the near plane or touching the occluder are still visible.
+  const Instance turned = {0,.75f,0, -2,0,0, 0,0,1, -.25f,0,0};
+  auto expected = run(0,true,.006f,turned);
+  std::erase_if(expected,[&](const Task& t){ return t[1]/group!=3 && t[1]/group!=4; });
+  require(run(2,true,.006f,turned)==expected,"rotated and scaled boxes must use the instance's translated screen coverage");
+  auto displaced = upright;
+  displaced[12] = 1.f;
+  require(run(2,true,.006f,displaced)==control,"an instance displaced beyond the boxes must keep its original cut");
+  auto sheared = upright;
+  sheared[6] = .25f;
+  require(run(2,true,.006f,sheared)==run(0,true,.006f,sheared),"a shear must retain the original cut");
 }
