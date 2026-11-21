@@ -6,6 +6,7 @@
 #include "utils/string_frm.h"
 
 #include <cctype>
+#include <cmath>
 
 using namespace Tempest;
 
@@ -199,25 +200,34 @@ float ParticleFx::maxPps() const {
   }
 
 float ParticleFx::shpScale(uint64_t time) const {
-  return fetchScaleKey(time,shpScaleKeys,shpScaleFPS,
-                       shpScaleIsSmooth!=0,shpScaleIsLooping!=0);
+  return fetchScaleKey(shpScaleFPS*float(time),shpScaleKeys,shpScaleIsSmooth,shpScaleIsLooping);
   }
 
 float ParticleFx::ppsScale(uint64_t time) const {
-  float v = fetchScaleKey(time,ppsScaleKeys,ppsFPS,ppsIsSmooth!=0,ppsIsLooping!=0);
-  if(v<0)
-    return 0.f;
-  return v;
+  return ppsScaleAtKeyTime(ppsFPS*double(time));
   }
 
-std::pair<uint64_t,uint64_t> ParticleFx::keySpan(bool looped, uint64_t born, uint64_t now, uint64_t dt, uint64_t blockTime) const {
-  if(!looped || !ppsIsLooping || prefferedTime==0)
-    return {blockTime, blockTime+dt};
+float ParticleFx::ppsScaleAtKeyTime(double keyTime) const {
+  return std::max(fetchScaleKey(keyTime,ppsScaleKeys,ppsIsSmooth,ppsIsLooping),0.f);
+  }
+
+ParticleFx::KeySpan ParticleFx::keySpan(bool looped, uint64_t born, uint64_t now, uint64_t dt, uint64_t blockTime) const {
+  if(!looped || !ppsIsLooping || prefferedTime==0) {
+    const auto from = looped ? blockTime : std::min(blockTime,prefferedTime);
+    const auto to   = looped ? blockTime+dt : std::min(blockTime+dt,prefferedTime);
+    // Keep the original float sampling on the block clock.
+    return {double(from), double(to), ppsScaleAtKeyTime(ppsFPS*float(to))};
+    }
   // born within the step: its keys start at 0, the step is shorter
   const uint64_t to   = now>born ? now-born : 0;
   const uint64_t from = to>dt ? to-dt : 0;
-  const uint64_t base = from/prefferedTime*prefferedTime;
-  return {from-base, to-base};
+  // Modulo in thousandths of a key keeps the fractional period. Use the same cycle start for
+  // both emission totals, even when the step ends in the next cycle.
+  const double period  = 1000.0*double(ppsScaleKeys.size());
+  const double phase   = std::fmod(ppsFPS*double(from),period);
+  const double stepMs  = double(to-from);
+  const double fromMs  = phase/ppsFPS;
+  return {fromMs, fromMs+stepMs, ppsScaleAtKeyTime(phase+stepMs*ppsFPS)};
   }
 
 uint64_t ParticleFx::calcPrefferedTimeSingle() const {
@@ -320,11 +330,11 @@ ParticleFx::Orientation ParticleFx::loadOrientation(std::string_view src) {
   return Orientation::None;
   }
 
-float ParticleFx::fetchScaleKey(uint64_t time, const KeyList& keys, float fps, bool smooth, bool loop) const {
+float ParticleFx::fetchScaleKey(double keyTime, const KeyList& keys, bool smooth, bool loop) const {
   if(keys.size()==0)
     return 1.f;
 
-  uint64_t timeScaled = uint64_t(fps*float(time));
+  uint64_t timeScaled = uint64_t(keyTime);
   size_t   at         = size_t(timeScaled/1000);
   float    alpha      = float(timeScaled%1000)/1000.f;
 
