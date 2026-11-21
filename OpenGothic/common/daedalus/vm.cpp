@@ -105,8 +105,27 @@ namespace daedalus {
 		return inst;
 	}
 
+	void DaedalusVm::observe_calls(CallObserver callback) {
+		_m_call_observers.clear();
+		if (callback) add_call_observer(std::move(callback));
+	}
+
+	uint64_t DaedalusVm::add_call_observer(CallObserver callback) {
+		auto id = ++_m_next_call_observer;
+		_m_call_observers.emplace_back(id, std::move(callback));
+		return id;
+	}
+
+	void DaedalusVm::remove_call_observer(uint64_t id) {
+		std::erase_if(_m_call_observers, [id](auto const& entry) { return entry.first == id; });
+	}
+
+	void DaedalusVm::notify_call(DaedalusSymbol const* symbol) const {
+		for (auto const& observer : _m_call_observers) observer.second(*symbol);
+	}
+
 	void DaedalusVm::unsafe_call(DaedalusSymbol const* sym) {
-		if (_m_call_observer && !sym->is_external()) _m_call_observer(*sym);
+		if (call_observer_count() != 0 && !sym->is_external()) notify_call(sym);
 		push_call(sym);
 		jump(sym->address());
 
@@ -120,7 +139,7 @@ namespace daedalus {
 	void DaedalusVm::unsafe_call_bl(DaedalusSymbol const* sym) {
 		// the same as the BL instruction
 		if (auto cb = _m_function_overrides.find(sym->address()); cb != _m_function_overrides.end()) {
-			if (_m_call_observer) _m_call_observer(*sym);
+			notify_call(sym);
 			StackGuard guard {this, sym->rtype()};
 			cb->second(*this);
 			guard.inhibit();
@@ -280,7 +299,7 @@ namespace daedalus {
 				// Check if the function is overridden and if it is, call the resulting external.
 				sym = find_symbol_by_address(instr.address);
 				if (auto cb = _m_function_overrides.find(instr.address); cb != _m_function_overrides.end()) {
-					if (_m_call_observer) _m_call_observer(*sym);
+					notify_call(sym);
 					// Guard against exceptions during external invocation.
 					StackGuard guard {this, sym->rtype()};
 					// Call maybe naked.
