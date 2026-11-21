@@ -74,6 +74,7 @@
 #include <optional>
 #include <tuple>
 
+void particleKeySpan();
 void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
                       void (*placement)(World&), void (*placementDisabled)(World&), void (*activities)(World&));
 
@@ -3405,18 +3406,16 @@ void animationEffects(Gothic& gothic) {
   std::printf("Animation effects: BIP01 PFX_FIRE goes %.1f cm up and down in S_S1\n",double(fireHigh-fireLow));
   require(follows && fireHigh-fireLow>30.f,"without node FIRE_HOT must go with BIP01 PFX_FIRE up and down in S_S1");
   require(ownLight(slot(*forge,fireSlot)),"FIRE_HOT's own light must follow BIP01 PFX_FIRE while it burns");
-  // its pulse keeps the beat: a block taken again near after it was freed far away counts the looped keys from the
-  // effect's birth by the world's clock (PfxBucket::implTickCommon); a burst's keys count from its block as before
-  {
+  // A reallocated block follows world time for a loop and its own time for a burst.
   const uint64_t period=fire->prefferedTime,dt=16,now=lit+7*period+period/3;
   const auto beat=fire->keySpan(true,lit,now,dt,0);
   const auto burst=sparks->keySpan(true,lit,now,dt,0);
-  std::printf("Animation effects: FIRE_HOT's keys %llu ms after its birth: %llu..%llu ms of its %llu ms period\n",
-              (unsigned long long)(now-lit),(unsigned long long)beat.first,(unsigned long long)beat.second,(unsigned long long)period);
-  require(period/3>=dt && beat.second==(now-lit)%period && beat.first+dt==beat.second &&
-          burst==std::pair<uint64_t,uint64_t>(0,dt) && fire->keySpan(false,lit,now,dt,40)==std::pair<uint64_t,uint64_t>(40,56),
+  const auto blockBeat=fire->keySpan(false,lit,now,dt,40);
+  std::printf("Animation effects: FIRE_HOT's keys %llu ms after its birth: %.3f..%.3f ms of its %llu ms period\n",
+              (unsigned long long)(now-lit),beat.fromMs,beat.toMs,(unsigned long long)period);
+  require(period/3>=dt && beat.toMs==double((now-lit)%period) && beat.fromMs+double(dt)==beat.toMs &&
+          burst.fromMs==0.0 && burst.toMs==double(dt) && blockBeat.fromMs==40.0 && blockBeat.toMs==56.0,
           "a looped emitter's new block must count its keys from its birth by the world's clock, a burst's from 0");
-  }
   std::printf("Animation effects: FIRE_HOT of BSFIRE burns %llu ms of S_S1, %llu ms from its lighting (its own time and "
               "particle life %llu ms)\n",(unsigned long long)(world.tickCount()-cycle),(unsigned long long)(world.tickCount()-lit),
               (unsigned long long)aliveFor);
@@ -4202,6 +4201,7 @@ int main() {
     groundBelowSupport();
     asymmetricLowestPoint();
     irregularSupport();
+    particleKeySpan();
     npcLiveSynthetic(npcDefinitions,npcDefinitionsDisabled,placementDefinitions,placementDefinitionsDisabled,
                      activityDefinitionsSynthetic);
     const auto* noGameData=std::getenv("OPENGOTHIC_CONTRACT_NO_GAME_DATA");
