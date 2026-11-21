@@ -969,6 +969,7 @@ void trackRecords(Tempest::Device& device, const Fixture& fixture) {
           tracked.textureUvPerMetre(0.1f)==0.5f && tracked.textureUvPerMetre(3.f)==3.f*std::abs(tracked.uvScale),
           "a ground with a track or a border is asked no coarser than a repeat per the finest of its tiles");
   }
+#include "two_sided_render_test.h"
 #include "foliage_tree_test.h" // foliageTreeMaths, foliageTreeRecords
 #include "crown_light_test.h"
 #include "vsm_pair_cap_test.h" // vsmRecords
@@ -3224,7 +3225,8 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
 int main(int argc, char** argv) {
   try {
     const bool crownOnly = argc==2 && std::string_view(argv[1])=="--crown-light";
-    if(!crownOnly) {
+    const bool sidesOnly = (argc==2 || argc==3) && std::string_view(argv[1])=="--two-sided";
+    if(!crownOnly && !sidesOnly) {
       ddsMipTails();
       textureLevelMaths();
       textureFlowMaths();
@@ -3241,6 +3243,11 @@ int main(int argc, char** argv) {
     CommandLine commandLine(0,nullptr);
     Tempest::VulkanApi api;
     Tempest::Device device(api);
+    if(sidesOnly) {
+      twoSidedRecords(device,fixture,argc==3 ? argv[2] : nullptr);
+      std::cout << "{\"test\":\"two_sided\",\"passed\":true,\"assertions\":" << assertions << "}\n";
+      return 0;
+      }
     if(crownOnly) {
       crownLightMaths();
       crownLightPixels(device,fixture);

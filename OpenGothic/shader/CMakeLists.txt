@@ -141,6 +141,7 @@ add_shader(visibility_pass_history_ordered.comp materials/visibility_pass.comp -
 add_shader(visibility_stats.comp           materials/visibility_stats.comp)
 add_shader(tree_bough_cut_test.comp        materials/tree_bough_cut_test.comp)
 add_shader(tree_level_band_test.comp       materials/tree_level_band_test.comp)
+add_shader(two_sided_test.comp             materials/two_sided_test.comp)
 add_shader(tree_bough_expand.comp          materials/tree_bough_expand.comp)
 add_shader(tree_bough_buffer.comp          materials/tree_bough_buffer.comp)
 add_shader(visibility_bough.comp                 materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DTREE_BOUGH_LOD)

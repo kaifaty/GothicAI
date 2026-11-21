@@ -567,7 +567,7 @@ void foliageTreeMaths() {
 // materials.json "foliage": {"anchor": "tree"}
 // "two_sided" of a record (reports/engine/2026-11-16-modern-trees/two-sided.md): the field's values, a bucket of
 // its own, a pipeline without culling for an object's mesh in every pass and the old ones for everything else.
-void twoSidedRecords(Tempest::Device& device, const Fixture& fixture) {
+void twoSidedRecords(Tempest::Device& device, const Fixture& fixture, const char* lampShot = nullptr) {
   const auto record = [](std::string_view name, std::string_view sides) {
     return "\"" + std::string(name) + R"(":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds")" +
            std::string(sides) + "}";
@@ -583,7 +583,7 @@ void twoSidedRecords(Tempest::Device& device, const Fixture& fixture) {
     record("SIDES_BOTH.TGA", R"(,"two_sided":"both")") + "," +
     record("SIDES_EMPTY.TGA", R"(,"two_sided":"")") +
     "}");
-  Resources resources(device);
+  Resources resources(device,Resources::Audio::Off);
   Shaders shaders;
   shaders.waitCompiler();
   using Sides = Material::TwoSided;
@@ -626,6 +626,7 @@ void twoSidedRecords(Tempest::Device& device, const Fixture& fixture) {
                 "the world mesh, a skin and a morph are drawn by the pipeline of a one-sided material");
       }
     }
+  twoSidedPixels(device,shaders,{off,same,flip},lampShot);
   }
 
 void foliageTreeRecords(Tempest::Device& device, const Fixture& fixture) {
