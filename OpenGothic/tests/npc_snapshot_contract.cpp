@@ -1339,6 +1339,13 @@ void pointMutations(const NpcSnapshot::Program& program,const fs::path& dir,bool
     check(NpcSnapshot::verifyActivities(changed,file,routines)==0,"mutated activities agree with a fresh VM");
     return ActivityDefinitions::read(base,changed.sha256);
     };
+  const auto* wpRoll=script.find_symbol_by_name("ZS_STAND_WP_LOOP.RANDOM");
+  check(wpRoll!=nullptr,"the installed waypoint loop has a saved gesture local");
+  auto& wpName=changed.data.symbols.at(wpRoll->index()).name;
+  wpName+="_SCRATCH";
+  check(import({"ZS_STAND_WP"}).uncaptured.at("ZS_STAND_WP").find("template RANDOM=0")!=std::string::npos,
+        "a waypoint gesture that writes another saved local stays in the VM");
+  wpName=program.data.symbols.at(wpRoll->index()).name;
   auto operand=[&](size_t pc,uint32_t value) {
     for(size_t i=0;i<4;++i) changed.data.bytecode[pc+1+i]=std::byte((value>>(8*i))&255);
     };
@@ -1502,6 +1509,14 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
   if(fs::exists(section)) {
     const auto ready=ActivityDefinitions::read(base,program.sha256);
     if(read(section)["version"]==2) {
+      if(fs::is_regular_file(base/"base-files.json")) {
+        const auto manifest=read(base/"base-files.json");
+        const auto files=manifest["files"].GetArray();
+        const auto path=section.lexically_relative(base).generic_string();
+        const auto entry=std::find_if(files.begin(),files.end(),[&](const auto& f) { return f["path"].GetString()==path; });
+        check(entry!=files.end() && (*entry)["sha256"].GetString()==BaseImport::sha256File(section),
+              "the archived v2 section, including every fallback reason, matches its payload manifest");
+        }
       check(symbols(ready)==states,"v2 covers the full symbol set of the installed routines");
       check(ready.activities==library.activities && ready.points.size()==1 && ready.points.at("ZS_STAND_GUARDING")==guard,
             "the v2 ready section retains the original mobs and guard");
