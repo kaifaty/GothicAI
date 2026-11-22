@@ -742,6 +742,15 @@ std::vector<uint8_t> savedNpc(Npc& npc) {
   return bytes;
   }
 
+void loadSavedNpc(Npc& npc,const std::vector<uint8_t>& bytes) {
+  Tempest::MemReader reader(bytes);
+  Serialize in(reader);
+  in.setContext(&npc.world());
+  npc.load(in,0,"/npc/");
+  npc.postValidate();
+  npc.setSimTier(NpcSimTier::Full);
+  }
+
 ArchiveEntries npcState(Npc& npc) {
   // Compare entry payloads: ZIP modification times are outside NPC state.
   return archiveEntries(savedNpc(npc));
@@ -2173,7 +2182,8 @@ void activityDefinitionsWorld(Gothic& gothic) {
   std::vector<std::string> accepted;
   for(const auto& spec:worldActivities)
     accepted.emplace_back(spec.state);
-  activitySwitch(script,accepted,"ZS_ROAST_SCAVENGER",2);
+  constexpr size_t pointPhases=5*2; // Init and End of the five point activities; their polled Loops run in the VM.
+  activitySwitch(script,accepted,"ZS_ROAST_SCAVENGER",pointPhases);
   std::vector<WorldActivity> activities;
   std::set<Npc*> actors;
   for(const auto& spec:worldActivities) {
@@ -2197,8 +2207,8 @@ void activityDefinitionsWorld(Gothic& gothic) {
     actors.insert(activity.actor);
     activities.push_back(std::move(activity));
     }
-  require(NpcDefinitionContract::activities(script).phases.size()==3*activities.size()+2,
-          "the game must load the accepted mob phases and the guard Init and End");
+  require(NpcDefinitionContract::activities(script).phases.size()==3*activities.size()+pointPhases,
+          "the game must load the accepted mob phases and the point activities' Init and End");
   size_t events=0;
   for(auto& activity:activities)
     events+=activityAtObject(world,activity,actors);
@@ -3885,6 +3895,15 @@ void moverChildSave() {
   gothic.isNpcInDialogFn=[](const Npc*) { return false; };
   gothic.setupGlobalScripts();
   GameMusic music;
+  const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
+  const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
+  for(bool events:{false,true}) {
+    setenv("OPENGOTHIC_ACTIVITY_EVENTS",events ? "1" : "0",1);
+    gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+    pointActivitiesWorld(gothic,events);
+    gothic.clearGame().reset();
+    }
+  if(previousEvents) setenv("OPENGOTHIC_ACTIVITY_EVENTS",previousEvents->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const auto placementWorldDifferences=placementFirstWorld(gothic);
   require(gothic.player()!=nullptr,"bench helper fixture has a player");
   routineTables(*gothic.player());
