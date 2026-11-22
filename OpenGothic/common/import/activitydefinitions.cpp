@@ -399,8 +399,11 @@ class Recognizer {
         a.leaveBodyState=std::get<int32_t>(leave->args.at(1));
         }
       else if(!point) a.form=Form::Waypoint;
-      else if(firstEvent(loop,"NPC_ISONFP",1))
+      else if(firstEvent(loop,"NPC_ISONFP",1)) {
+        // Washing has the same queue shape but targets a different kind of free point.
+        if(a.point!="PEE") throw Stop("point_template_mismatch",phases.loop->name()+" uses FP "+a.point);
         a.form=Form::Pee;
+        }
       else if(firstEvent(loop,"AI_STANDUP")) a.form=Form::ArmsCrossed;
 
       if(a.form!=Form::Guard) {
