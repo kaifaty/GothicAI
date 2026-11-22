@@ -250,12 +250,11 @@ void runCluster(const uint clusterId, const uint mip) {
   const uint shadowSunLod = 1u << 19; // DrawClusters::ShadowSunLod
   if((mip==7u || mip==8u) && (cluster.shadowCommandId & shadowSunLod)!=0u) {
     const uint tail = (cluster.instanceId+1u)*16u; // SunCaster immediately after the 64-byte instance
-    const Bucket bx = bucket[cluster.bucketId_commandId >> 16];
-    const float diameter = length(bx.bbox[1].xyz - bx.bbox[0].xyz) * clusterLodScale(pullInstance(cluster.instanceId).mat);
+    const float cmPerTexel = uintBitsToFloat(instanceMem[tail+3u]) * clusterLodScale(pullInstance(cluster.instanceId).mat);
     // Orthographic NDC per cm, independent of the tree's position and the page rectangle.
     const float ndcPerCm = length(vec3(scene.viewProject[0].x, scene.viewProject[1].x, scene.viewProject[2].x));
-    const float texels = diameter * ndcPerCm * (0.5*VSM_CLIPMAP_SIZE / float(1u << mip));
-    if(texels<=uintBitsToFloat(instanceMem[tail+3u])) {
+    const float texelsPerCm = ndcPerCm * (0.5*VSM_CLIPMAP_SIZE / float(1u << mip));
+    if(cmPerTexel * texelsPerCm <= 1.0) {
       if(instanceMem[tail+1u]==0u)
         return; // the other side of the band submits the same tree whole
       sunCaster = tail;

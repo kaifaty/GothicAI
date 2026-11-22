@@ -15,6 +15,7 @@
 #include "graphics/texturelookahead.h"
 #include "graphics/texturescreendemand.h"
 #include "graphics/treeboughasset.h"
+#include "graphics/treelevelband.h"
 #include "resources.h"
 #include "texturebudget.h"
 #include "textureflow.h"
