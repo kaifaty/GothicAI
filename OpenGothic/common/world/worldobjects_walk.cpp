@@ -57,8 +57,7 @@ void WorldObjects::updateSimTiers(bool beforeTick) {
       suspend = hasCampfireView && !mustUpdateAnimation(npc,*campfireView) && !campfireView->visible(npc);
       }
     if(suspend) {
-      npc.suspendCampfireBody();
-      campfireBodiesSuspended = true;
+      campfireBodiesSuspended |= npc.suspendCampfireBody();
       } else if(npc.campfireBodySuspended()) {
       npc.resumeCampfireBody();
       }

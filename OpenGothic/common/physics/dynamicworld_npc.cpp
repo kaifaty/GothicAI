@@ -45,8 +45,12 @@ void DynamicWorld::NpcItem::resumeBody() {
   obj->suspended = false;
   }
 
-void DynamicWorld::NpcItem::setPosition(const Tempest::Vec3& pos) {
+void DynamicWorld::NpcItem::setPosition(const Tempest::Vec3& pos, bool keepSuspended) {
   if(obj) {
+    if(keepSuspended && obj->suspended) {
+      implSetPosition(pos);
+      return;
+      }
     resumeBody();
     resetVirtual();
     implSetPosition(pos);

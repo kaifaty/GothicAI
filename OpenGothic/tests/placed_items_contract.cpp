@@ -77,7 +77,6 @@
 
 void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
                       void (*placement)(World&), void (*placementDisabled)(World&), void (*activities)(World&));
-
 // Test-only access keeps the production creation entry point unchanged.
 struct NpcDefinitionContract {
   static auto& definitions(GameScript& script) { return script.npcDefinitions; }
@@ -94,6 +93,7 @@ struct NpcDefinitionContract {
   static void tickActivityDeadline(Npc& npc) { npc.tickActivityDeadline(); }
   static const AiQueue& queue(const Npc& npc) { return npc.aiQueue; }
   static bool walking(const Npc& npc) { return !npc.go2.empty(); }
+  static const auto& physicsPosition(const Npc& npc) { return npc.physic.position(); }
   // An action at the head of the queue, as an interruption ahead of the queued use.
   static void pushFront(Npc& npc, AiQueue::AiAction&& a) { npc.aiQueue.pushFront(std::move(a)); }
   static const auto& items(GameScript& script) { return script.itemDefinitions; }

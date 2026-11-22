@@ -734,6 +734,106 @@ void checkPointClip(const Npc& npc,std::string_view name,BodyState body=BS_NONE)
   require(count==size_t(!name.empty()),("unexpected number of queued clips for '"+std::string(name)+"'").c_str());
   }
 
+void campfireApproachWorld(Gothic& gothic,ActivityEventsWorld& test,EventActor& actor,Npc& npc,
+                           const WayPoint& start,const WayPoint& row,const WayPoint& seat,const ActivityCalls& calls) {
+  using ActivityEvents::Stage;
+  auto& world=test.world();
+  auto& hero=*world.player();
+  const auto heroAt=hero.position();
+  const auto heroHeading=hero.rotation();
+  const auto* far=world.findWayPoint("NW_BIGFARM_SHEEP2_02");
+  require(far!=nullptr && seat.useCounter()==0,"campfire route starts with an available seat and a distant waypoint");
+  FpLock occupied(&seat);
+  const auto away=far->position()-row.position();
+  const auto awayHeading=std::atan2(away.z,away.x)*180.f/float(M_PI);
+  auto moveAway=[&]{ test.moveHero(far->position(),awayHeading); };
+  auto moveNear=[&]{ test.moveHero(row.position(),heroHeading); };
+  auto hit=[&] {
+    const auto center=npc.collosionCenter();
+    const Tempest::Vec3 across(130.f,0,0);
+    return world.physic()->rayNpc(center-across,center+across,&hero).npcHit==&npc;
+    };
+  test.only({&npc});
+  test.start(actor,start.position(),&npc,false);
+  npc.attachToPoint(&start);
+  npc.updateTransform();
+  const auto inits=calls.phase(npc,actor.state)+1;
+  moveAway();
+
+  auto previous=npc.position();
+  Tempest::Vec3 step;
+  test.stepUntil(450,[&] {
+    step=npc.position()-previous;
+    previous=npc.position();
+    return npc.campfireBodySuspended() && npc.currentGoToPoint()!=nullptr && std::hypot(step.x,step.z)>0.1f;
+    },"the camper takes a graph step without its body");
+  const auto at=npc.position();
+  const auto* edge=npc.currentGoToPoint();
+  const auto heading=npc.rotation();
+  const auto phase=ActivityEventsWorld::stage(npc);
+  const auto pose=npc.bodyStateMasked();
+  const auto travel=npc.simplifiedMoveSpeed()*33.f;
+  const auto center=npc.collosionCenter();
+  const auto floor=world.physic()->landRay(at+Tempest::Vec3(0,30,0),60);
+  const auto heightError=std::abs(floor.v.y-at.y);
+  require(npc.simTier()==NpcSimTier::Simplified && phase==Stage::Approach && npc.navigationGoal().point==&row,
+          "the bodyless approach retains its authored waypoint destination");
+  require(!hit() && NpcDefinitionContract::physicsPosition(npc)==at,"the absent capsule's placement follows the graph");
+  require(std::hypot(step.x,step.z)<=travel+0.1f && !world.physic()->sweep(center-step,center,12.f).hasCol,
+          "the bodyless walk takes one unobstructed step at graph speed");
+  require(floor.hasCol && heightError<=5.f,"the bodyless walk stays on its floor");
+  require(seat.useCounter()==1,"the approach leaves the occupied seat with its current owner");
+
+  auto& camera=*gothic.camera();
+  camera.reset(&npc);
+  const auto target=camera.destTarget();
+  camera.setPosition(target+Tempest::Vec3::normalize(camera.originLwc()-target)*2000.f);
+  AnimationLod::View view;
+  view.make(camera.viewProj(),camera.originLwc(),nullptr);
+  require(view.visible(npc) && !view.nearCamera(npc),"the camera reveals the walker outside the near camera radius");
+  world.catchUpAnimation();
+  auto sameWalk=[&] {
+    return !npc.campfireBodySuspended() && hit() && npc.position()==at && npc.rotation()==heading &&
+           NpcDefinitionContract::physicsPosition(npc)==at && npc.currentGoToPoint()==edge &&
+           npc.navigationGoal().point==&row && ActivityEventsWorld::stage(npc)==phase;
+    };
+  require(sameWalk() && npc.bodyStateMasked()==pose,"the first visible frame restores collision on the same edge and pose");
+  moveAway();
+  require(npc.campfireBodySuspended() && !hit(),"the walker can leave view again without restarting its route");
+  moveNear();
+  require(npc.simTier()==NpcSimTier::Full && sameWalk(),"player approach restores the walker on its current edge");
+  test.step();
+  const auto resumed=npc.position()-at;
+  require(std::hypot(resumed.x,resumed.z)<=travel+0.1f && std::abs(resumed.y)<=travel+5.f,
+          "the first native step keeps the walker on the supported route");
+
+  test.stepUntil(900,[&]{ return ActivityEventsWorld::stage(npc)==Stage::Wait && npc.isAiQueueEmpty(); },
+                 "the returned body reaches the row and waits for the occupied seat");
+  moveAway();
+  test.stepUntil(120,[&]{ return npc.campfireBodySuspended(); },"the distant camper waits without collision");
+  const auto waiting=npc.position();
+  require(!hit() && npc.currentWayPoint()!=&seat && seat.useCounter()==1,"the distant waiter keeps the other owner's seat free of conflicts");
+  moveNear();
+  require(!npc.campfireBodySuspended() && hit() && npc.position()==waiting && ActivityEventsWorld::stage(npc)==Stage::Wait &&
+          seat.useCounter()==1,"the returned waiter still waits at the same place");
+
+  moveAway();
+  test.stepUntil(120,[&]{ return npc.campfireBodySuspended(); },"the waiter dematerializes again");
+  occupied=FpLock();
+  test.stepUntil(900,[&]{ return npc.campfireBodySuspended() && npc.bodyStateMasked()==BS_SIT; },
+                 "the freed seat wakes the camper, who walks to it and sits");
+  const auto seated=npc.position();
+  require(!hit() && npc.currentWayPoint()==&seat && seat.useCounter()==1,"the seated camper keeps the only lock while its body is absent");
+  moveNear();
+  require(hit() && !npc.campfireBodySuspended() && npc.position()==seated && npc.currentWayPoint()==&seat &&
+          seat.useCounter()==1 && npc.animProgress("S_SIT")>=0 && calls.phase(npc,actor.state)==inits,
+          "the same route reaches the original sitting pose with no new Init or double claim");
+  test.only({});
+  test.moveHero(heroAt,heroHeading);
+  std::printf("E3.2 campfire: approach, camera reveal, occupied wait and seat takeover passed (step %.2f cm, support error %.2f cm)\n",
+              double(std::hypot(step.x,step.z)),double(heightError));
+  }
+
 struct CampfireSave {
   std::vector<uint8_t>  bytes;
   Tempest::Vec3         position;
@@ -1104,6 +1204,8 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
         check(fp->useCounter()==0,"walking away releases the seat");
         drain();
         }
+      if(events)
+        campfireApproachWorld(gothic,test,a,npc,*field,*wp,*fp,calls);
       } else {
       if(folded) {
         PhysicsNoise impact;
