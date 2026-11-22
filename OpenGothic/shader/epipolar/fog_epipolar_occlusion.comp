@@ -99,9 +99,10 @@ void main() {
   const ivec2 ratio    = (viewportSize + lutSize - 1)/lutSize;
   const ivec2 depthPix = min(fragCoord*ratio, viewportSize-1);
 
-  const vec2  inPos = (vec2(depthPix)/vec2(viewportSize))*2.0 - 1.0;
+  // Share one rounded NDC between slice selection and shadow projection.
+  precise vec2 inPos = vec2(2*depthPix - viewportSize)*scene.screenResInv;
   const float z     = min(texelFetch(depth, depthPix, 0).x, dFogMax);
-  const uint  id    = sliceId(scene, depthPix, viewportSize, NumSlices);
+  const uint  id    = sliceId(scene, inPos, viewportSize, NumSlices);
   // dbgEpipole(inPos, z);
   trace(inPos, z, fragCoord, id);
 

@@ -366,6 +366,10 @@ at 800×600 matched at all four points. On `95f9dfdea`, the Ryzen pair had 0, 0,
 RGBA pixels in market, harbour, forest and island respectively. The maximum channel differences were
 0, 0, 1 and 1. Issue #946 remains open. [Measurements](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#пара-ryzen-после-ревью).
 
+The regular VSM fog pass uses one NDC from the top-left depth pixel for both epipolar ray selection and the shadow threshold.
+Replaying the FGT2 inputs on the CPU removes the divergence reproduced by contracting the old NDC expression.
+The two render controls are pending. [Fog replay](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#выбор-луча-и-порога-тумана).
+
 `motion-vectors` and `motion-vectors-clips` check the motion vectors of objects (graphics plan 1b,
 [report](../../reports/render-features/2026-11-10-motion-vectors/step-1b.md)). `motion-vectors` takes stills: a still
 world with a moving camera (creatures hidden, indoors), an NPC walking past a still camera, the hero running with
