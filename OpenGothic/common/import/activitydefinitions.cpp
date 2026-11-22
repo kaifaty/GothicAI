@@ -20,15 +20,15 @@
 #include <set>
 #include <stdexcept>
 
-// Step D4.1: recognise the template "activity at a world object" in the three script phases of
-// every human routine state. The phases run in a VM whose engine is a stub answering from one
-// situation; the template walk answers from the same situation. A state is captured only when
-// both call streams and the Loop result are equal in every situation of the template's branches.
+// Recognise mob and point activities by comparing the three script phases against their
+// templates. The VM and the template see the same answers from the engine in each situation.
 namespace fs = std::filesystem;
 namespace {
 using namespace daedalus;
 using namespace ActivityDefinitions;
 using Type = DaedalusDataType;
+using Form = PointActivity::Form;
+constexpr std::string_view PortalHelper = "B_EVENT_PORTAL_EARTHQUAKE";
 using Json = rapidjson::Value;
 using Allocator = rapidjson::Document::AllocatorType;
 
@@ -50,10 +50,12 @@ struct Situation {
   int32_t     body = 0;
   bool        onPoint = false;
   int32_t     stage = 0, seconds = 0, roll = 0;
+  int32_t     portalRoll = 0, guild = 0, ravenDead = 0, world = 0;
   std::string text() const {
     return "wp="+Recorder::text(waypoint)+" look_at="+std::to_string(lookAt)+" nearest="+Recorder::text(nearest)+
            " distance="+std::to_string(distance)+" available="+std::to_string(available)+" body="+std::to_string(body)+
-           " on_point="+std::to_string(onPoint)+" stage="+std::to_string(stage)+" seconds="+std::to_string(seconds)+" roll="+std::to_string(roll);
+           " on_point="+std::to_string(onPoint)+" stage="+std::to_string(stage)+" seconds="+std::to_string(seconds)+" roll="+std::to_string(roll)+
+           " portal_roll="+std::to_string(portalRoll)+" guild="+std::to_string(guild)+" raven_dead="+std::to_string(ravenDead)+" world="+std::to_string(world);
     }
   };
 
@@ -119,8 +121,13 @@ class ScriptRun {
       auto previous = vm.global_other()->get_instance();
       lookAtNpc = vm.allocate_instance<INpc>(vm.global_other());
       vm.global_other()->set_instance(previous);
+      if(points) {
+        currentLevel=mutableInt("CURRENTLEVEL");
+        ravenIsDead=mutableInt("RAVENISDEAD");
+        }
       for(const auto& symbol:vm.symbols())
-        if(symbol.type()==Type::FUNCTION && !symbol.is_external() && symbol.name().starts_with("PERCEPTION_SET_") &&
+        if(symbol.type()==Type::FUNCTION && !symbol.is_external() &&
+           (symbol.name().starts_with("PERCEPTION_SET_") || (points && symbol.name()==PortalHelper)) &&
            symbol.count()==0 && !symbol.has_return()) {
           deferred.insert(symbol.index());
           vm.override_function_custom(symbol,[this,name=symbol.name()](DaedalusVm&) {
@@ -142,9 +149,19 @@ class ScriptRun {
         });
       vm.observe_instructions([this](const DaedalusInstruction& instruction) {
         if(++instructions>100000) throw Stop("execution_limit",phaseName);
+        // The write observer fires before assignment. Read the value before the next instruction.
+        if(drawWrite) {
+          const auto* name=drawWrite==random ? "RANDOM" : "EVENTRANDY";
+          current->events.push_back({"draw_write",std::string(name)+"="+std::to_string(drawWrite->get_int()),{}});
+          drawWrite=nullptr;
+          }
         if(instruction.op==DaedalusOpcode::RSR && !frames.empty()) frames.pop_back();
         });
       vm.observe_reads([this](const DaedalusSymbol& symbol) {
+        if(&symbol==currentLevel || &symbol==ravenIsDead) {
+          current->events.push_back({symbol.name(),symbol.name()+"->"+std::to_string(symbol.get_int()),{}});
+          return;
+          }
         // SELF is the NPC; generated strings are the VM's scratch for pushed values.
         if(&symbol==self || symbol.is_const() || symbol.is_member() || (symbol.is_generated() && symbol.type()==Type::STRING))
           return;
@@ -155,6 +172,10 @@ class ScriptRun {
           throw Stop("local_state",symbol.name()+" before assignment");
         });
       vm.observe_member_reads([this](const DaedalusSymbol& symbol,uint16_t index,const DaedalusInstance* instance) {
+        if(this->points && symbol.name()=="C_NPC.GUILD" && instance==selfNpc.get() && index==0) {
+          current->events.push_back({"guild","self.guild->"+std::to_string(selfNpc->guild),{}});
+          return;
+          }
         if(this->points && symbol.name()=="C_NPC.AIVAR" && index==19 && instance==selfNpc.get()) {
           current->events.push_back({"stage_read","aivar[19]->"+std::to_string(selfNpc->aivar[19]),{}});
           return;
@@ -169,13 +190,19 @@ class ScriptRun {
         const auto frame=std::find_if(frames.rbegin(),frames.rend(),[&](const auto& f) { return f.function==owner; });
         if(frame==frames.rend()) throw Stop("local_state_write",symbol.name());
         frame->assigned.insert(symbol.index());
+        if(&symbol==random || &symbol==eventRandy) drawWrite=&symbol;
         });
       vm.observe_member_writes([this](const DaedalusSymbol& symbol,uint16_t index,const DaedalusInstance* instance) {
         if(!this->points || symbol.name()!="C_NPC.AIVAR" || index!=19 || instance!=selfNpc.get())
           throw Stop("engine_state_write",symbol.name());
-        current->events.push_back({"stage_write","aivar[19]="+std::to_string(selfNpc->aivar[19]),{}});
+        current->events.push_back({"stage_write","aivar[19]="+std::to_string(selfNpc->aivar[19]),{selfNpc->aivar[19]}});
         });
       vm.register_default_external_custom([this](DaedalusVm&,DaedalusSymbol& function) { external(function); });
+      }
+
+    void watchRollWrites(const DaedalusSymbol& loop) {
+      random=mutableInt(loop.name()+".RANDOM");
+      eventRandy=mutableInt(loop.name()+".EVENTRANDY");
       }
 
     Run run(const DaedalusSymbol& function,const Situation& situation) {
@@ -185,8 +212,13 @@ class ScriptRun {
       phaseName = function.name();
       frames.clear();
       instructions = 0;
+      draws = 0;
+      drawWrite = nullptr;
       selfNpc->wp = situation.waypoint;
       selfNpc->aivar[19] = situation.stage;
+      selfNpc->guild = situation.guild;
+      if(currentLevel) currentLevel->set_int(situation.world);
+      if(ravenIsDead) ravenIsDead->set_int(situation.ravenDead);
       self->set_instance(selfNpc);
       if(function.has_return()) result.result = vm.call_function<int>(&function);
       else vm.call_function<void>(&function);
@@ -196,6 +228,11 @@ class ScriptRun {
     const DaedalusVm& script() const { return vm; }
 
   private:
+    DaedalusSymbol* mutableInt(std::string_view name) {
+      auto* symbol=vm.find_symbol_by_name(name);
+      return symbol && symbol->type()==Type::INT && symbol->count()==1 && !symbol->is_member() && !symbol->is_const() ? symbol : nullptr;
+      }
+
     static DaedalusVm load(const NpcSnapshot::Program& program) {
       auto script=DaedalusScript::from_program(program.data);
       if(script.find_symbol_by_name("C_NPC")) INpc::register_(script);
@@ -215,7 +252,7 @@ class ScriptRun {
         "HLP_STRCMP","NPC_GETDISTTOWP","AI_GOTOWP","WLD_ISMOBAVAILABLE","NPC_GETBODYSTATE","AI_USEMOB"};
       const auto& name=function.name();
       static const std::set<std::string> pointCalls={"NPC_ISONFP","WLD_ISFPAVAILABLE","AI_GOTOFP","AI_STANDUP",
-        "AI_ALIGNTOFP","AI_ALIGNTOWP","AI_PLAYANI","NPC_GETSTATETIME","NPC_SETSTATETIME","HLP_RANDOM"};
+        "AI_ALIGNTOFP","AI_ALIGNTOWP","AI_PLAYANI","AI_PLAYANIBS","NPC_GETSTATETIME","NPC_SETSTATETIME","HLP_RANDOM"};
       if(!known.contains(name) && !(points && pointCalls.contains(name))) throw Stop("unsupported_external",name);
       const auto parameters=vm.find_parameters_for_function(&function);
       Event event{name,name+"(",{}};
@@ -251,7 +288,10 @@ class ScriptRun {
       else if(name=="NPC_ISONFP") { vm.push_int(s.onPoint); result=std::to_string(s.onPoint); }
       else if(name=="WLD_ISFPAVAILABLE") { vm.push_int(s.available); result=std::to_string(s.available); }
       else if(name=="NPC_GETSTATETIME") { vm.push_int(s.seconds); result=std::to_string(s.seconds); }
-      else if(name=="HLP_RANDOM") { vm.push_int(s.roll); result=std::to_string(s.roll); }
+      else if(name=="HLP_RANDOM") {
+        const int32_t draw=draws++==0 ? s.roll : s.portalRoll;
+        vm.push_int(draw); result=std::to_string(draw);
+        }
       else if(function.has_return()) {
         if(function.rtype()!=Type::INT) throw Stop("unsupported_external",name);
         vm.push_int(0); result="0";
@@ -266,12 +306,18 @@ class ScriptRun {
       };
     DaedalusVm                vm;
     DaedalusSymbol*           self = nullptr;
+    DaedalusSymbol*           currentLevel = nullptr;
+    DaedalusSymbol*           ravenIsDead = nullptr;
+    const DaedalusSymbol*      random = nullptr;
+    const DaedalusSymbol*      eventRandy = nullptr;
+    const DaedalusSymbol*      drawWrite = nullptr;
     std::shared_ptr<INpc>     selfNpc, lookAtNpc;
     Run*                      current = nullptr;
     const Situation*          situation = nullptr;
     std::string               phaseName;
     std::vector<Frame>        frames;
     size_t                    instructions = 0;
+    size_t                    draws = 0;
     std::set<uint32_t>        deferred;
     bool                     points = false;
   };
@@ -291,10 +337,24 @@ std::vector<std::string> walk(const MobActivity& activity,Phase phase,const Situ
   return events;
   }
 
-const Event* firstEvent(const Run& run,std::string_view name) {
+const Event* firstEvent(const Run& run,std::string_view name,size_t skip=0) {
   for(const auto& event:run.events)
-    if(event.name==name) return &event;
+    if(event.name==name) {
+      if(skip==0) return &event;
+      --skip;
+      }
   return nullptr;
+  }
+
+void compareTrace(const Run& vm,const std::vector<std::string>& expected,int result,
+                  const char* reason,const DaedalusSymbol& function,const Situation& s) {
+  const auto actual=vm.texts();
+  auto [left,right]=std::mismatch(actual.begin(),actual.end(),expected.begin(),expected.end());
+  if(left!=actual.end() || right!=expected.end())
+    throw Stop(reason,function.name()+" with "+s.text()+": call "+std::to_string(left-actual.begin()+1)+
+               " VM "+(left==actual.end() ? "<none>" : *left)+", template "+(right==expected.end() ? "<none>" : *right));
+  if(vm.result!=result)
+    throw Stop(reason,function.name()+" with "+s.text()+": result VM "+std::to_string(vm.result)+", template "+std::to_string(result));
   }
 
 class Recognizer {
@@ -335,101 +395,271 @@ class Recognizer {
       PointActivity a;
       Situation s;
       const auto init=script.run(*phases.init,s);
-      if(init.events.empty() || init.events.front().name!="deferred") throw Stop("no_perception_set",state);
+      if(init.events.empty() || !init.events.front().text.starts_with("deferred PERCEPTION_SET_"))
+        throw Stop("no_perception_set",state);
       a.perceptions=init.events.front().text.substr(std::string("deferred ").size());
-      s.onPoint=true; s.stage=a.arrivedStage;
+      const auto* initial=firstEvent(init,"stage_write");
+      s.onPoint=true; s.stage=initial ? std::get<int32_t>(initial->args.at(0)) : 0;
       const auto loop=script.run(*phases.loop,s);
-      const auto* point=firstEvent(loop,"NPC_ISONFP"),*enter=firstEvent(loop,"AI_PLAYANI");
       const auto end=script.run(*phases.end,s);
-      const auto* leave=firstEvent(end,"AI_PLAYANI");
-      if(!point || !enter || !leave) throw Stop("no_point_pose",state);
-      a.point=std::get<std::string>(point->args.at(0));
+      const auto* point=firstEvent(loop,"NPC_ISONFP");
+      const bool sit=firstEvent(loop,"AI_PLAYANIBS")!=nullptr;
+      const auto* enter=firstEvent(loop,sit ? "AI_PLAYANIBS" : "AI_PLAYANI");
+      const auto* leave=firstEvent(end,sit ? "AI_PLAYANIBS" : "AI_PLAYANI");
+      if(!enter || !leave) throw Stop("no_point_pose",state);
       a.enterAnimation=std::get<std::string>(enter->args.at(0));
       a.leaveAnimation=std::get<std::string>(leave->args.at(0));
-      // This first form has a five-second timer and a ten-way draw. Other timer/draw
-      // forms stay in the VM until their branch contract is defined, regardless of name.
-      s.stage=a.poseStage; s.seconds=a.timerSeconds+1;
+      if(point) a.point=std::get<std::string>(point->args.at(0));
+      if(sit) {
+        a.form=Form::Campfire;
+        a.enterBodyState=std::get<int32_t>(enter->args.at(1));
+        a.leaveBodyState=std::get<int32_t>(leave->args.at(1));
+        }
+      else if(!point) a.form=Form::Waypoint;
+      else if(firstEvent(loop,"NPC_ISONFP",1)) {
+        // Washing has the same queue shape but targets a different kind of free point.
+        if(a.point!="PEE") throw Stop("point_template_mismatch",phases.loop->name()+" uses FP "+a.point);
+        a.form=Form::Pee;
+        }
+      else if(firstEvent(loop,"AI_STANDUP")) a.form=Form::ArmsCrossed;
+
+      if(a.form!=Form::Guard) {
+        const auto* mode=firstEvent(init,"AI_SETWALKMODE");
+        if(!mode) throw Stop("no_walk_mode",state);
+        a.walkMode=std::get<int32_t>(mode->args.at(0));
+        a.approachDistance=a.form==Form::Waypoint ? 0 : threshold(script,*phases.init);
+        if(!sit) {
+          const auto* pose=firstEvent(loop,"stage_write");
+          if(!initial || !pose) throw Stop("no_point_pose",state);
+          a.initialStage=s.stage;
+          a.arrivedStage=a.initialStage;
+          a.poseStage=std::get<int32_t>(pose->args.at(0));
+          if(a.form!=Form::Waypoint) {
+            Situation free; free.stage=a.initialStage;
+            const auto walking=script.run(*phases.loop,free);
+            const auto* stage=firstEvent(walking,"stage_write");
+            if(!stage) throw Stop("no_point_pose",state);
+            a.walkingStage=std::get<int32_t>(stage->args.at(0));
+            }
+          }
+        }
+      if(a.form!=Form::Waypoint && a.point.empty()) throw Stop("no_point_pose",state);
+      if(!a.timed()) {
+        a.rollRange=0; a.timerSeconds=0;
+        return a;
+        }
+      s.stage=a.poseStage;
+      if(a.form!=Form::Guard) {
+        a.timerSeconds=lastBefore([&](int32_t seconds) {
+          s.seconds=seconds;
+          return firstEvent(script.run(*phases.loop,s),"HLP_RANDOM")!=nullptr;
+          });
+        if(a.timerSeconds<0 || a.timerSeconds==std::numeric_limits<int32_t>::max())
+          throw Stop("point_template_mismatch",phases.loop->name()+" gesture timer");
+        }
+      s.seconds=a.timerSeconds+1;
+      const auto timed=script.run(*phases.loop,s);
+      const auto* draw=firstEvent(timed,"HLP_RANDOM");
+      if(!draw || std::get<int32_t>(draw->args.at(0))!=(a.form==Form::ArmsCrossed ? 7 : 10))
+        throw Stop("point_template_mismatch",phases.loop->name()+" gesture draw");
+      a.rollRange=std::get<int32_t>(draw->args.at(0));
       for(s.roll=0;s.roll<a.rollRange;++s.roll) {
         const auto gesture=script.run(*phases.loop,s);
         const auto* animation=firstEvent(gesture,"AI_PLAYANI");
         a.gestures.push_back({animation ? std::get<std::string>(animation->args.at(0)) : "",true});
         }
+      if(a.form==Form::ArmsCrossed) {
+        const auto* second=firstEvent(timed,"HLP_RANDOM",1);
+        // Classic has neither the portal helper nor Raven's quest flag. In the addon a missing
+        // second draw is a mismatch even when the rest of the loop resembles Classic.
+        if(!second && !script.script().find_symbol_by_name(PortalHelper) && !script.script().find_symbol_by_name("RAVENISDEAD"))
+          return a;
+        if(!second || std::get<int32_t>(second->args.at(0))!=200)
+          throw Stop("point_template_mismatch",phases.loop->name()+" portal draw");
+        auto constant=[&](std::string_view name) {
+          const auto* symbol=script.script().find_symbol_by_name(name);
+          if(!symbol || symbol->type()!=Type::INT || !symbol->is_const() || symbol->count()!=1 || symbol->is_member())
+            throw Stop("game_state",std::string(name));
+          return symbol->get_int();
+          };
+        auto& portal=a.portal.emplace();
+        portal.world=constant("ADDONWORLD_ZEN");
+        portal.excludedGuild=constant("GIL_PIR");
+        portal.ravenDead=constant("FALSE");
+        portal.rollRange=std::get<int32_t>(second->args.at(0));
+        s.world=portal.world; s.guild=portal.excludedGuild^1; s.ravenDead=portal.ravenDead; s.roll=0;
+        for(s.portalRoll=0;s.portalRoll<portal.rollRange;++s.portalRoll) {
+          const auto probe=script.run(*phases.loop,s);
+          const auto* helper=firstEvent(probe,"deferred");
+          if(!helper) continue;
+          if(helper->text!="deferred "+std::string(PortalHelper) || !portal.function.empty())
+            throw Stop("point_template_mismatch",phases.loop->name()+" portal helper with "+s.text());
+          portal.function=PortalHelper; portal.triggerRoll=s.portalRoll;
+          }
+        if(portal.function.empty()) throw Stop("point_template_mismatch",phases.loop->name()+" missing portal call");
+        }
       return a;
       }
 
-    std::vector<std::string> walkPoint(const PointActivity& a,Phase phase,const Situation& s,int& result) const {
+    std::vector<std::string> walkPoint(const PointActivity& a,Phase phase,const Situation& s) const {
       std::vector<std::string> events;
       auto call=[&](std::string text) { events.push_back(std::move(text)); };
+      StubHost stub(s);
+      Recorder host(stub,call);
       auto stage=s.stage;
       auto read=[&] { call("aivar[19]->"+std::to_string(stage)); return stage; };
       auto write=[&](int32_t value) { stage=value; call("aivar[19]="+std::to_string(value)); };
       auto play=[&](const std::string& animation) { call("AI_PLAYANI(self,"+Recorder::text(animation)+")"); };
-      result=0;
-      if(phase==Phase::Init) {
-        MobActivity approach;
-        approach.perceptions=a.perceptions; approach.walkMode=a.walkMode;
-        approach.approach=Approach::Distance; approach.approachDistance=a.approachDistance;
-        events=walk(approach,phase,s,result);
-        write(a.initialStage);
-        }
-      else if(phase==Phase::End) play(a.leaveAnimation);
-      else {
+      auto playBody=[&](const std::string& animation,int32_t body) {
+        call("AI_PLAYANIBS(self,"+Recorder::text(animation)+","+std::to_string(body)+")");
+        };
+      auto sitting=[&] { return bodyStateContains(host.bodyState(),a.enterBodyState); };
+      auto onPoint=[&] {
         call("NPC_ISONFP(self,"+Recorder::text(a.point)+")->"+std::to_string(s.onPoint));
-        if(s.onPoint) {
+        return s.onPoint;
+        };
+      auto available=[&] {
+        call("WLD_ISFPAVAILABLE(self,"+Recorder::text(a.point)+")->"+std::to_string(s.available));
+        return s.available;
+        };
+      auto gotoPoint=[&] {
+        call("AI_GOTOFP(self,"+Recorder::text(a.point)+")");
+        call("AI_STANDUP(self)"); call("AI_ALIGNTOFP(self)");
+        };
+      if(phase==Phase::Init) {
+        resetForActivity(host,a.perceptions);
+        if(a.form==Form::Campfire && sitting()) return events;
+        host.setWalkMode(a.walkMode);
+        if(a.form==Form::Waypoint) {
+          host.gotoWaypoint(s.waypoint);
+          call("AI_ALIGNTOWP(self)");
+          }
+        else if(host.distanceToWaypoint(s.waypoint)>a.approachDistance) host.gotoWaypoint(s.waypoint);
+        if(a.form!=Form::Campfire) write(a.initialStage);
+        return events;
+        }
+      if(phase==Phase::End) {
+        if(a.form==Form::Campfire) playBody(a.leaveAnimation,a.leaveBodyState);
+        else play(a.leaveAnimation);
+        return events;
+        }
+      if(a.form==Form::Campfire) {
+        // Daedalus evaluates both operands, including the second body query in the else-if.
+        const bool seated=sitting();
+        if(onPoint() && !seated) {
+          call("AI_ALIGNTOFP(self)");
+          playBody(a.enterAnimation,a.enterBodyState);
+          }
+        else {
+          const bool stillSeated=sitting();
+          if(available() && !stillSeated) gotoPoint();
+          }
+        return events;
+        }
+      if(a.form!=Form::Waypoint) {
+        if(onPoint()) {
           call("AI_ALIGNTOFP(self)");
           if(read()==a.walkingStage) write(a.arrivedStage);
           }
+        else if(available()) { gotoPoint(); write(a.walkingStage); }
         else {
-          call("WLD_ISFPAVAILABLE(self,"+Recorder::text(a.point)+")->"+std::to_string(s.available));
-          if(s.available) {
-            call("AI_GOTOFP(self,"+Recorder::text(a.point)+")");
-            call("AI_STANDUP(self)"); call("AI_ALIGNTOFP(self)"); write(a.walkingStage);
-            }
-          else {
-            call("AI_ALIGNTOWP(self)");
-            if(read()==a.walkingStage) write(a.arrivedStage);
-            }
+          call("AI_ALIGNTOWP(self)");
+          if(read()==a.walkingStage) write(a.arrivedStage);
           }
-        if(read()==a.arrivedStage) { play(a.enterAnimation); write(a.poseStage); }
-        const bool posed=read()==a.poseStage;
-        call("NPC_GETSTATETIME(self)->"+std::to_string(s.seconds));
-        if(posed && s.seconds>a.timerSeconds) {
-          call("HLP_RANDOM("+std::to_string(a.rollRange)+")->"+std::to_string(s.roll));
-          const auto& gesture=a.gestures.at(size_t(s.roll));
-          if(!gesture.animation.empty()) play(gesture.animation);
-          if(gesture.resetTimer) call("NPC_SETSTATETIME(self,0)");
-          }
-        result=a.loopResult;
         }
+      const bool canEnter=a.form!=Form::Pee || onPoint();
+      if(read()==(a.form==Form::Waypoint ? a.initialStage : a.arrivedStage) && canEnter) {
+        if(a.form==Form::Pee) call("AI_ALIGNTOFP(self)");
+        if(a.form==Form::Pee || a.form==Form::ArmsCrossed) call("AI_STANDUP(self)");
+        play(a.enterAnimation); write(a.poseStage);
+        }
+      if(!a.timed()) return events;
+      const bool posed=read()==a.poseStage;
+      call("NPC_GETSTATETIME(self)->"+std::to_string(s.seconds));
+      if(!posed || s.seconds<=a.timerSeconds) return events;
+      call("HLP_RANDOM("+std::to_string(a.rollRange)+")->"+std::to_string(s.roll));
+      if(a.form==Form::ArmsCrossed || a.form==Form::Waypoint) call("RANDOM="+std::to_string(s.roll));
+      const auto& gesture=a.gestures.at(size_t(s.roll));
+      if(!gesture.animation.empty()) play(gesture.animation);
+      if(a.portal) {
+        const auto& p=*a.portal;
+        call("HLP_RANDOM("+std::to_string(p.rollRange)+")->"+std::to_string(s.portalRoll));
+        call("EVENTRANDY="+std::to_string(s.portalRoll));
+        call("self.guild->"+std::to_string(s.guild));
+        call("RAVENISDEAD->"+std::to_string(s.ravenDead));
+        call("CURRENTLEVEL->"+std::to_string(s.world));
+        if(s.guild!=p.excludedGuild && s.ravenDead==p.ravenDead && s.world==p.world && s.portalRoll==p.triggerRoll)
+          call("deferred "+p.function);
+        }
+      if(gesture.resetTimer) call("NPC_SETSTATETIME(self,0)");
       return events;
       }
 
     size_t comparePoint(ScriptRun& script,const Phases& phases,const PointActivity& a) const {
+      if(a.form==Form::ArmsCrossed || a.form==Form::Waypoint) script.watchRollWrites(*phases.loop);
       size_t count=0;
       auto compare=[&](Phase phase,const Situation& s) {
         const auto* fn=phase==Phase::Init ? phases.init : phase==Phase::Loop ? phases.loop : phases.end;
         const auto actual=script.run(*fn,s);
-        int result=0;
-        const auto expected=walkPoint(a,phase,s,result);
-        if(actual.texts()!=expected || actual.result!=result)
-          throw Stop("point_template_mismatch",fn->name()+" with "+s.text());
+        const auto expected=walkPoint(a,phase,s);
+        compareTrace(actual,expected,phase==Phase::Loop ? a.loopResult : 0,"point_template_mismatch",*fn,s);
         ++count;
         };
+      std::vector<int32_t> bodies={0};
+      if(a.form==Form::Campfire) {
+        const int32_t sit=a.enterBodyState;
+        bodies={0,sit,sit^1,sit^0x8000,sit^0x10000,sit|0x40000};
+        }
+      const int32_t max=std::numeric_limits<int32_t>::max();
+      std::set<int32_t> distances={0,max,a.approachDistance};
+      if(a.approachDistance>0) distances.insert(a.approachDistance-1);
+      if(a.approachDistance<max) distances.insert(a.approachDistance+1);
       for(bool lookAt:{false,true})
         for(const char* wp:{"ROUTINE_WP",""})
-          for(int32_t distance:{0,499,500,501,std::numeric_limits<int32_t>::max()}) {
-            Situation s; s.lookAt=lookAt; s.waypoint=wp; s.distance=distance;
-            compare(Phase::Init,s);
-            }
-      for(int32_t stage:{-1,0,1,2,3,std::numeric_limits<int32_t>::max()}) {
+          for(int32_t distance:distances)
+            for(auto body:bodies) {
+              Situation s; s.lookAt=lookAt; s.waypoint=wp; s.distance=distance; s.body=body;
+              compare(Phase::Init,s);
+              if(a.form!=Form::Guard) {
+                s.stage=a.initialStage; compare(Phase::Init,s);
+                s.stage=a.walkingStage; compare(Phase::Init,s);
+                }
+              }
+      const std::set<int32_t> stages={-1,0,1,2,3,max,a.initialStage,a.walkingStage,a.arrivedStage,a.poseStage};
+      const std::set<int32_t> timers={0,a.timerSeconds-1,a.timerSeconds,a.timerSeconds+1,max};
+      for(int32_t stage:stages) {
         Situation s; s.stage=stage;
-        compare(Phase::End,s);
+        for(auto body:bodies) { s.body=body; compare(Phase::End,s); }
         for(bool on:{false,true})
-          for(bool available:{false,true})
-            for(int32_t seconds:{0,4,5,6,std::numeric_limits<int32_t>::max()})
-              for(int32_t roll=0;roll<a.rollRange;++roll) {
-                s.onPoint=on; s.available=available; s.seconds=seconds; s.roll=roll;
+          for(bool free:{false,true}) {
+            s.onPoint=on; s.available=free;
+            if(!a.timed()) {
+              for(auto body:bodies) { s.body=body; compare(Phase::Loop,s); }
+              continue;
+              }
+            if(a.portal) {
+              s.world=a.portal->world; s.ravenDead=a.portal->ravenDead; s.guild=a.portal->excludedGuild^1;
+              s.portalRoll=a.portal->triggerRoll;
+              }
+            for(int32_t seconds:timers)
+              for(s.roll=0;s.roll<a.rollRange;++s.roll) {
+                s.seconds=seconds;
                 compare(Phase::Loop,s);
+                }
+            }
+        }
+      if(a.portal) {
+        Situation s; s.stage=a.poseStage; s.seconds=a.timerSeconds+1; s.onPoint=true;
+        const auto& p=*a.portal;
+        s.world=p.world; s.guild=p.excludedGuild^1; s.ravenDead=p.ravenDead;
+        for(s.roll=0;s.roll<a.rollRange;++s.roll)
+          for(s.portalRoll=0;s.portalRoll<p.rollRange;++s.portalRoll) compare(Phase::Loop,s);
+        s.portalRoll=p.triggerRoll;
+        for(s.roll=0;s.roll<a.rollRange;++s.roll)
+          for(auto guild:{p.excludedGuild,0,std::numeric_limits<int32_t>::max()})
+            for(auto dead:{p.ravenDead,p.ravenDead^1})
+              for(auto world:{p.world,0,1,2,3,max}) { // Newworld, Oldworld and Dragonisland are 1, 2 and 3 in the DAT.
+                s.guild=guild; s.ravenDead=dead; s.world=world; compare(Phase::Loop,s);
                 }
         }
       return count;
@@ -489,21 +719,23 @@ class Recognizer {
       return activity;
       }
 
-    // The script walks to its point when farther than a limit: the smallest distance with AI_GOTOWP, minus one.
-    int32_t threshold(ScriptRun& script,const DaedalusSymbol& init) const {
-      auto walks=[&](int32_t distance) {
-        Situation situation;
-        situation.distance=distance;
-        return firstEvent(script.run(init,situation),"AI_GOTOWP")!=nullptr;
-        };
+    // Last non-negative distance/time before the script issues a command.
+    int32_t lastBefore(const auto& issuesCommand) const {
       int64_t low=0,high=std::numeric_limits<int32_t>::max();
-      if(walks(0)) return -1;
-      if(!walks(int32_t(high))) return int32_t(high);
+      if(issuesCommand(0)) return -1;
+      if(!issuesCommand(int32_t(high))) return int32_t(high);
       while(high-low>1) {
         const auto middle=low+(high-low)/2;
-        if(walks(int32_t(middle))) high=middle; else low=middle;
+        if(issuesCommand(int32_t(middle))) high=middle; else low=middle;
         }
       return int32_t(low);
+      }
+
+    int32_t threshold(ScriptRun& script,const DaedalusSymbol& init) const {
+      return lastBefore([&](int32_t distance) {
+        Situation s; s.distance=distance;
+        return firstEvent(script.run(init,s),"AI_GOTOWP")!=nullptr;
+        });
       }
 
     // Every branch of the template: look-at target or not, at or away from the point (by name
@@ -534,15 +766,8 @@ class Recognizer {
         const auto* function=phase==Phase::Init ? phases.init : phase==Phase::Loop ? phases.loop : phases.end;
         const auto vm=script.run(*function,situation);
         int result=0;
-        const auto expected=vm.texts(),actual=walk(activity,phase,situation,result);
-        size_t i=0;
-        while(i<expected.size() && i<actual.size() && expected[i]==actual[i]) ++i;
-        const auto where=function->name()+" with "+situation.text()+": ";
-        if(i<expected.size() || i<actual.size())
-          throw Stop("template_mismatch",where+"call "+std::to_string(i+1)+" VM "+(i<expected.size() ? expected[i] : "<none>")+
-                     ", template "+(i<actual.size() ? actual[i] : "<none>"));
-        if(vm.result!=result)
-          throw Stop("template_mismatch",where+"result VM "+std::to_string(vm.result)+", template "+std::to_string(result));
+        const auto expected=walk(activity,phase,situation,result);
+        compareTrace(vm,expected,result,"template_mismatch",*function,situation);
         }
       return situations.size();
       }
@@ -591,30 +816,59 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
     }
   if(capture.point) {
     const auto& a=*capture.point;
-    Json parameters(rapidjson::kObjectType),stages(rapidjson::kObjectType),gestures(rapidjson::kArrayType);
+    Json parameters(rapidjson::kObjectType);
+    put(parameters,"form",text(PointActivity::FormNames[size_t(a.form)],allocator),allocator);
     put(parameters,"perceptions",text(a.perceptions,allocator),allocator);
     put(parameters,"walk_mode",Json(a.walkMode),allocator);
-    put(parameters,"approach",text("distance",allocator),allocator);
-    put(parameters,"approach_distance",Json(a.approachDistance),allocator);
-    put(parameters,"point",text(encode(a.point),allocator),allocator);
-    put(parameters,"occupied",text(a.occupied,allocator),allocator);
+    const bool waypoint=a.form==Form::Waypoint;
+    put(parameters,"approach",text(waypoint ? "goto_align_waypoint" : "distance",allocator),allocator);
+    if(!waypoint) {
+      put(parameters,"approach_distance",Json(a.approachDistance),allocator);
+      put(parameters,"point",text(encode(a.point),allocator),allocator);
+      put(parameters,"occupied",text(a.occupied(),allocator),allocator);
+      }
     put(parameters,"enter_animation",text(encode(a.enterAnimation),allocator),allocator);
     put(parameters,"leave_animation",text(encode(a.leaveAnimation),allocator),allocator);
-    put(parameters,"timer_seconds",Json(a.timerSeconds),allocator);
-    put(parameters,"roll_range",Json(a.rollRange),allocator);
     put(parameters,"loop_result",Json(a.loopResult),allocator);
-    put(stages,"initial",Json(a.initialStage),allocator);
-    put(stages,"walking",Json(a.walkingStage),allocator);
-    put(stages,"arrived",Json(a.arrivedStage),allocator);
-    put(stages,"pose",Json(a.poseStage),allocator);
-    put(parameters,"aivar_19",std::move(stages),allocator);
-    for(const auto& gesture:a.gestures) {
-      Json entry(rapidjson::kObjectType);
-      put(entry,"animation",text(encode(gesture.animation),allocator),allocator);
-      put(entry,"reset_timer",Json(gesture.resetTimer),allocator);
-      gestures.PushBack(std::move(entry),allocator);
+    if(a.form==Form::Campfire) {
+      put(parameters,"enter_body_state",Json(a.enterBodyState),allocator);
+      put(parameters,"leave_body_state",Json(a.leaveBodyState),allocator);
       }
-    put(parameters,"gestures",std::move(gestures),allocator);
+    else {
+      Json stages(rapidjson::kObjectType);
+      put(stages,"initial",Json(a.initialStage),allocator);
+      if(!waypoint) {
+        put(stages,"walking",Json(a.walkingStage),allocator);
+        put(stages,"arrived",Json(a.arrivedStage),allocator);
+        }
+      put(stages,"pose",Json(a.poseStage),allocator);
+      put(parameters,"aivar_19",std::move(stages),allocator);
+      }
+    if(a.timed()) {
+      put(parameters,"timer_seconds",Json(a.timerSeconds),allocator);
+      put(parameters,"roll_range",Json(a.rollRange),allocator);
+      Json gestures(rapidjson::kArrayType);
+      for(const auto& gesture:a.gestures) {
+        Json entry(rapidjson::kObjectType);
+        put(entry,"animation",text(encode(gesture.animation),allocator),allocator);
+        put(entry,"reset_timer",Json(gesture.resetTimer),allocator);
+        gestures.PushBack(std::move(entry),allocator);
+        }
+      put(parameters,"gestures",std::move(gestures),allocator);
+      }
+    if(a.form==Form::ArmsCrossed) {
+      Json event;
+      if(a.portal) {
+        event.SetObject();
+        put(event,"function",text(a.portal->function,allocator),allocator);
+        put(event,"roll_range",Json(a.portal->rollRange),allocator);
+        put(event,"trigger_roll",Json(a.portal->triggerRoll),allocator);
+        put(event,"world",Json(a.portal->world),allocator);
+        put(event,"raven_dead",Json(a.portal->ravenDead),allocator);
+        put(event,"excluded_guild",Json(a.portal->excludedGuild),allocator);
+        }
+      put(parameters,"portal_event",std::move(event),allocator);
+      }
     put(json,"template",text("point",allocator),allocator);
     put(json,"parameters",std::move(parameters),allocator);
     return json;
@@ -639,7 +893,7 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
 Json envelope(const NpcSnapshot::Program& program,Allocator& allocator) {
   Json json(rapidjson::kObjectType);
   put(json,"format",text("gothic-activity-definitions",allocator),allocator);
-  put(json,"version",Json(2),allocator);
+  put(json,"version",Json(FormatVersion),allocator);
   put(json,"program_name",text(program.name,allocator),allocator);
   put(json,"program_sha256",text(program.sha256,allocator),allocator);
   put(json,"string_encoding",text("unicode-byte-mapping",allocator),allocator);

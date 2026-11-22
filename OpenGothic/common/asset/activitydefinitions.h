@@ -1,8 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -12,6 +14,7 @@
 // template walk below instead of the script. Both sides share this file, so the call stream the
 // import compares with the VM is the stream the game issues.
 namespace ActivityDefinitions {
+inline constexpr int FormatVersion = 3;
 enum class Phase : uint8_t { Init, Loop, End };
 enum class Approach : uint8_t { NearestWaypoint, Distance };
 
@@ -31,24 +34,36 @@ struct MobActivity {
   bool operator==(const MobActivity&) const = default;
   };
 
-// Script activity at a free point: approach, pose transitions and timed gestures.
+// The form fixes the order and conditions of the three phases.
 struct PointActivity {
+  enum class Form { Guard, Campfire, ArmsCrossed, Waypoint, Pee };
+  static constexpr std::array<std::string_view,5> FormNames={"guard","campfire","arms_crossed","waypoint","pee"};
   struct Gesture {
     std::string animation; // empty: no gesture for this outcome
     bool resetTimer = false;
     bool operator==(const Gesture&) const = default;
     };
+  struct PortalEvent {
+    std::string function; // deferred script helper, after the gesture and before the timer reset
+    int32_t rollRange = 0, triggerRoll = 0;
+    int32_t world = 0, ravenDead = 0, excludedGuild = 0;
+    bool operator==(const PortalEvent&) const = default;
+    };
+  Form form = Form::Guard;
   std::string perceptions;
   int32_t walkMode = 1;
   int32_t approachDistance = 500;
   std::string point;
-  std::string occupied = "align_waypoint";
   std::string enterAnimation, leaveAnimation;
+  int32_t enterBodyState = 0, leaveBodyState = 0; // Campfire: AI_PlayAniBS, also the sitting test
   int32_t timerSeconds = 5;
   int32_t rollRange = 10;
   std::vector<Gesture> gestures; // indexed by the random outcome, [0, rollRange)
   int32_t initialStage = 1, walkingStage = 2, arrivedStage = 1, poseStage = 0; // aivar[19]
   int32_t loopResult = 0;
+  std::optional<PortalEvent> portal; // ArmsCrossed in the addon; Classic goes straight to the timer reset
+  bool timed() const { return form==Form::Guard || form==Form::ArmsCrossed || form==Form::Waypoint; }
+  std::string_view occupied() const { return form==Form::Campfire ? "wait" : "align_waypoint"; }
   bool operator==(const PointActivity&) const = default;
   };
 
@@ -153,16 +168,19 @@ inline bool bodyStateContains(int32_t bodyState, int32_t wanted) {
   return (bodyState & BodyStateMask)==(wanted & BodyStateMask);
   }
 
+inline void resetForActivity(Host& host, std::string_view perceptions) {
+  host.deferred(perceptions);
+  if(host.isValidNpc(host.lookAtTarget()))
+    host.stopLookAt();
+  host.removeWeapon();
+  }
+
 // One phase of the template. Evaluation order follows the script: both operands of a condition
 // are asked even when the first one already decides it, as Daedalus does not short-circuit.
 inline int run(const MobActivity& activity, Phase phase, Host& host) {
   switch(phase) {
     case Phase::Init: {
-      host.deferred(activity.perceptions);
-      // B_ResetAll: stop looking at a valid target, put the weapon away.
-      if(host.isValidNpc(host.lookAtTarget()))
-        host.stopLookAt();
-      host.removeWeapon();
+      resetForActivity(host,activity.perceptions);
       host.setWalkMode(activity.walkMode);
       bool away = false;
       if(activity.approach==Approach::NearestWaypoint) {
