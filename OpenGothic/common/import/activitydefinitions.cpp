@@ -452,19 +452,23 @@ class Recognizer {
         a.gestures.push_back({animation ? std::get<std::string>(animation->args.at(0)) : "",true});
         }
       if(a.form==Form::ArmsCrossed) {
+        const auto* second=firstEvent(timed,"HLP_RANDOM",1);
+        // Classic has neither the portal helper nor Raven's quest flag. In the addon a missing
+        // second draw is a mismatch even when the rest of the loop resembles Classic.
+        if(!second && !script.script().find_symbol_by_name(PortalHelper) && !script.script().find_symbol_by_name("RAVENISDEAD"))
+          return a;
+        if(!second || std::get<int32_t>(second->args.at(0))!=200)
+          throw Stop("point_template_mismatch",phases.loop->name()+" portal draw");
         auto constant=[&](std::string_view name) {
           const auto* symbol=script.script().find_symbol_by_name(name);
           if(!symbol || symbol->type()!=Type::INT || !symbol->is_const() || symbol->count()!=1 || symbol->is_member())
             throw Stop("game_state",std::string(name));
           return symbol->get_int();
           };
-        auto& portal=a.portal;
+        auto& portal=a.portal.emplace();
         portal.world=constant("ADDONWORLD_ZEN");
         portal.excludedGuild=constant("GIL_PIR");
         portal.ravenDead=constant("FALSE");
-        const auto* second=firstEvent(timed,"HLP_RANDOM",1);
-        if(!second || std::get<int32_t>(second->args.at(0))!=200)
-          throw Stop("point_template_mismatch",phases.loop->name()+" portal draw");
         portal.rollRange=std::get<int32_t>(second->args.at(0));
         s.world=portal.world; s.guild=portal.excludedGuild^1; s.ravenDead=portal.ravenDead; s.roll=0;
         for(s.portalRoll=0;s.portalRoll<portal.rollRange;++s.portalRoll) {
@@ -559,8 +563,8 @@ class Recognizer {
       call("HLP_RANDOM("+std::to_string(a.rollRange)+")->"+std::to_string(s.roll));
       const auto& gesture=a.gestures.at(size_t(s.roll));
       if(!gesture.animation.empty()) play(gesture.animation);
-      if(a.form==Form::ArmsCrossed) {
-        const auto& p=a.portal;
+      if(a.portal) {
+        const auto& p=*a.portal;
         call("HLP_RANDOM("+std::to_string(p.rollRange)+")->"+std::to_string(s.portalRoll));
         call("self.guild->"+std::to_string(s.guild));
         call("RAVENISDEAD->"+std::to_string(s.ravenDead));
@@ -613,9 +617,9 @@ class Recognizer {
               for(auto body:bodies) { s.body=body; compare(Phase::Loop,s); }
               continue;
               }
-            if(a.form==Form::ArmsCrossed) {
-              s.world=a.portal.world; s.ravenDead=a.portal.ravenDead; s.guild=a.portal.excludedGuild^1;
-              s.portalRoll=a.portal.triggerRoll;
+            if(a.portal) {
+              s.world=a.portal->world; s.ravenDead=a.portal->ravenDead; s.guild=a.portal->excludedGuild^1;
+              s.portalRoll=a.portal->triggerRoll;
               }
             for(int32_t seconds:timers)
               for(s.roll=0;s.roll<a.rollRange;++s.roll) {
@@ -624,9 +628,9 @@ class Recognizer {
                 }
             }
         }
-      if(a.form==Form::ArmsCrossed) {
+      if(a.portal) {
         Situation s; s.stage=a.poseStage; s.seconds=a.timerSeconds+1; s.onPoint=true;
-        const auto& p=a.portal;
+        const auto& p=*a.portal;
         s.world=p.world; s.guild=p.excludedGuild^1; s.ravenDead=p.ravenDead;
         for(s.roll=0;s.roll<a.rollRange;++s.roll)
           for(s.portalRoll=0;s.portalRoll<p.rollRange;++s.portalRoll) compare(Phase::Loop,s);
@@ -833,13 +837,16 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
       put(parameters,"gestures",std::move(gestures),allocator);
       }
     if(a.form==Form::ArmsCrossed) {
-      Json event(rapidjson::kObjectType);
-      put(event,"function",text(a.portal.function,allocator),allocator);
-      put(event,"roll_range",Json(a.portal.rollRange),allocator);
-      put(event,"trigger_roll",Json(a.portal.triggerRoll),allocator);
-      put(event,"world",Json(a.portal.world),allocator);
-      put(event,"raven_dead",Json(a.portal.ravenDead),allocator);
-      put(event,"excluded_guild",Json(a.portal.excludedGuild),allocator);
+      Json event;
+      if(a.portal) {
+        event.SetObject();
+        put(event,"function",text(a.portal->function,allocator),allocator);
+        put(event,"roll_range",Json(a.portal->rollRange),allocator);
+        put(event,"trigger_roll",Json(a.portal->triggerRoll),allocator);
+        put(event,"world",Json(a.portal->world),allocator);
+        put(event,"raven_dead",Json(a.portal->ravenDead),allocator);
+        put(event,"excluded_guild",Json(a.portal->excludedGuild),allocator);
+        }
       put(parameters,"portal_event",std::move(event),allocator);
       }
     put(json,"template",text("point",allocator),allocator);
