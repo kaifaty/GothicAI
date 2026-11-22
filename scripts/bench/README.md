@@ -361,8 +361,10 @@ uv run --no-project --with pillow --with numpy python \
   --host ryzen --shots perf-market,perf-harbour,perf-forest,perf-island a="$first" b="$second"
 ```
 
-The Ryzen RTX 3080 pair at 1920×1080 with VSM and probe GI enabled and three Metal pairs at
-800×600 gave zero changed pixels in all four shots. [Measurements](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#ryzen-2026-11-22).
+On `8cfe16dc4`, one Ryzen RTX 3080 pair at 1920×1080 with VSM and probe GI and three Metal pairs
+at 800×600 matched at all four points. On `95f9dfdea`, the Ryzen pair had 0, 0, 5 and 1 changed
+RGBA pixels in market, harbour, forest and island respectively. The maximum channel differences were
+0, 0, 1 and 1. Issue #946 remains open. [Measurements](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#пара-ryzen-после-ревью).
 
 `motion-vectors` and `motion-vectors-clips` check the motion vectors of objects (graphics plan 1b,
 [report](../../reports/render-features/2026-11-10-motion-vectors/step-1b.md)). `motion-vectors` takes stills: a still
