@@ -24,12 +24,26 @@ void Npc::wakeActivity(uint16_t wakes) {
 void Npc::stopActivityEvents(uint16_t why) {
   if(activityEvents.init==size_t(-1))
     return; // nothing set up: no reservation, no wait
-  if(activityEvents.activity!=nullptr && why!=0)
+  const auto* record=activityEvents.activity;
+  const bool guard=record && record->point;
+  // The guard has already taken and counted its final step before End.
+  if(record && aiState.started && why!=0 && !(guard && why==ActivityEvents::RowEnd))
     ActivityEvents::countWakes(aiState.hint,why,false);
-  if(activityEvents.activity && activityEvents.activity->point) {
+  if(guard) {
     stopWaitingForPoints();
+    if(why==ActivityEvents::RowEnd) {
+      const auto& next=currentRoutine();
+      if(isGuardPoint(currentFp) && (next.callback!=aiState.funcIni || next.wayPointName()!=hnpc->wp))
+        attachToPoint(nullptr);
+      // The last walk/align/gesture precedes End in the queue. Keep its guard ownership
+      // until the next state is known, including a dialogue queued during the handover.
+      activityEvents=ActivityEvents::State();
+      activityEvents.activity=record;
+      activityEvents.init=aiState.funcIni.ptr;
+      return;
+      }
     dropActivityCommand();
-    if(currentFp && currentFp->isFreePoint() && currentFp->checkName(activityEvents.activity->point->point))
+    if(isGuardPoint(currentFp) && !(why==0 && activityEvents.stage==ActivityEvents::Stage::Off))
       attachToPoint(nullptr);
     } else {
     auto& places = owner.mobReservations();
@@ -62,7 +76,7 @@ void Npc::tickActivityEvents() {
   auto& s = activityEvents;
   if(s.activity->point && (aiQueue.size()!=0 || !go2.empty()))
     return;
-  if(s.restart) {
+  if(s.restart && !(s.pending & ActivityEvents::RowEnd)) {
     runStateInit(); // Init again on this tick: the state stays started, an interruption still runs End
     return;
     }
@@ -137,7 +151,7 @@ void Npc::stepActivityEvents(uint16_t wakes) {
   using namespace ActivityEvents;
   auto& s = activityEvents;
   if(s.activity->point) {
-    if((wakes & Watchdog) && s.stage==Stage::Approach) {
+    if((wakes & Watchdog) && !(wakes & RowEnd) && s.stage==Stage::Approach) {
       runStateInit();
       return;
       }
@@ -264,8 +278,9 @@ void Npc::seekActivityPoint(uint16_t wakes) {
   const bool on = isOnFreePoint(a.point);
   bool occluded = false;
   if(!on || (wakes & AttachFailed)) {
-    const bool away = wp && NpcEngineCalls::distanceToWaypoint(*this,wp)>a.approachDistance;
-    const bool returning = away || ((wakes & (Detached|AttachFailed)) && wp && currentFp!=wp);
+    const bool returning = wp && !(wakes & RowEnd) &&
+                           (NpcEngineCalls::distanceToWaypoint(*this,wp)>a.approachDistance ||
+                            ((wakes & (Detached|AttachFailed)) && currentFp!=wp));
     const auto* post = returning ? nullptr : owner.findFreePoint(*this,a.point,&s.waitPoints);
     if(post!=nullptr) {
       s.waitPoints.clear();
@@ -278,7 +293,9 @@ void Npc::seekActivityPoint(uint16_t wakes) {
       s.deadline   = after(owner.time(),WatchdogMs);
       return;
       }
-    if(wp && (away || currentFp!=wp)) {
+    // A previous free point (e.g. a campfire) must be vacated. An ordinary waypoint
+    // inside the Init radius needs only the Loop's AlignToWP and guard pose.
+    if(returning || (wp && currentFp && currentFp!=wp && currentFp->isFreePoint() && !(wakes & RowEnd))) {
       s.waitPoints.clear();
       pushActivityCommand(AiQueue::aiGoToPoint(*wp));
       s.stage      = Stage::Approach;

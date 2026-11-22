@@ -257,8 +257,7 @@ void guardActivityWorld(Gothic& gothic) {
   require(second.activityStage()==Stage::Wait && second.handle().aivar[19]==a.poseStage &&
           second.lookAtTarget()==&first && entering(second),"the loser queues the recorded pose after the external look");
 
-  auto reload = [&](Npc& npc) {
-    const auto bytes = savedNpc(npc);
+  auto load = [&](Npc& npc,const std::vector<uint8_t>& bytes) {
     Tempest::MemReader reader(bytes);
     Serialize in(reader);
     in.setContext(&world);
@@ -266,6 +265,7 @@ void guardActivityWorld(Gothic& gothic) {
     npc.postValidate();
     npc.setSimTier(NpcSimTier::Full);
     };
+  auto reload = [&](Npc& npc) { load(npc,savedNpc(npc)); };
   first.aiPush(AiQueue::aiLookAtNpc(&second));
   const auto queue = activityQueue(first);
   reload(first);
@@ -567,6 +567,90 @@ void guardActivityWorld(Gothic& gothic) {
   require(second.aiQueueFront() && second.aiQueueFront()->act==AI_LookAtNpc,"a vanished waypoint leaves the next action intact");
   test.stop(second);
   Contract::random(script)=before;
+
+  // Both deck patrols reach a new row within the Init approach radius while
+  // their last waypoint can still differ. Observe the actual VM and event queues.
+  std::string differences;
+  auto deckRow = [&](const char* actor,const char* rowName,const char* previous,gtime time) {
+    auto* npc=activityNpc(world,actor);
+    const auto* row=world.findWayPoint(rowName);
+    const auto* last=world.findWayPoint(previous);
+    require(npc && row && last,"the ship patrol and its waypoints exist");
+    for(bool ending:{false,true}) {
+      std::string reference;
+      for(bool events:{false,true}) {
+        Contract::activityEventsOn(script)=events;
+        test.stop(*npc);
+        gothic.gameSession()->setTime(time);
+        npc->setPosition(row->position());
+        npc->attachToPoint(last);
+        npc->updateTransform();
+        Contract::tickRoutine(*npc);
+        require(npc->isInState(ScriptFn(guard.phases.init)) && npc->handle().wp==rowName,"the authored guard row started");
+        activityDrain(*npc);
+        std::vector<FpLock> occupied;
+        while(auto* p=world.findFreePoint(*npc,a.point)) occupied.emplace_back(*p);
+        if(ending) gothic.gameSession()->setTime(Contract::aiState(*npc).eTime);
+        const auto loops=calls.phase(*npc,guard.state+"_LOOP");
+        Contract::tickRoutine(*npc);
+        require(npc->isInState(ScriptFn(guard.phases.init))!=ending && calls.phase(*npc,guard.state+"_LOOP")==loops+!events,
+                "only the VM polls and both modes finish the expired row");
+        auto queue=Contract::queue(*npc);
+        std::string actions;
+        while(queue.size()>0) {
+          auto command=queue.pop();
+          actions+=(command.act==AI_PlayAnim ? command.s0 : AiQueue::actionName(command.act));
+          actions+=" ";
+          }
+        if(!events) {
+          reference="AlignToWp "+a.enterAnimation+" "+(ending ? a.leaveAnimation+" " : "");
+          require(actions==reference,("unexpected VM deck queue: "+actions).c_str());
+          } else if(actions!=reference) {
+          differences+="\n"+std::string(actor)+(ending ? " row end" : " first check")+": VM ["+reference+"] events ["+actions+"]";
+          }
+        }
+      }
+    test.stop(*npc);
+    };
+  deckRow("PAL_227_SCHIFFSWACHE","SHIP_DECK_29","SHIP_DECK_28",gtime(8,59));
+  deckRow("PAL_228_SCHIFFSWACHE","SHIP_DECK_03","SHIP_DECK_02",gtime(9,39));
+
+  auto* rio=activityNpc(world,"KDW_1404_ADDON_RIORDIAN_NW");
+  const auto* rioRow=world.findWayPoint("NW_TROLLAREA_PORTALTEMPEL_34");
+  const auto* rioPost=world.findPoint("FP_STAND_RIO",false);
+  require(rio && rioRow && rioPost,"Riordian guards the portal");
+  test.only({rio});
+  test.stop(*rio);
+  freePost(rioPost);
+  gothic.gameSession()->setTime(gtime(7,30));
+  rio->setPosition(rioRow->position());
+  rio->attachToPoint(rioRow);
+  rio->updateTransform();
+  test.stepUntil(900,[&]{ return rio->activityStage()==Stage::Hold && rio->isAiQueueEmpty(); },"Riordian takes his night post");
+  require(rio->currentWayPoint()==rioPost && rioPost->useCounter()==1,"Riordian owns the night post");
+  gothic.gameSession()->setTime(Contract::aiState(*rio).eTime);
+  Contract::tickRoutine(*rio);
+  require(!rio->currentState().isValid() && rio->currentTaPoint()==rioRow,"the day row follows the night row at the same waypoint");
+  if(rio->currentWayPoint()!=rioPost || rioPost->useCounter()!=1 || !rioPost->isGuarded())
+    differences+="\nRiordian lost the guarded post between the two rows";
+  const auto nightEnd=savedNpc(*rio);
+  load(*rio,nightEnd);
+  if(!rioPost->isGuarded()) differences+="\nloading the row boundary lost the guard lock";
+  rio->startState(talk,"");
+  require(rioPost->useCounter()==0,"an interruption between guard rows frees the post");
+  require(differences.empty(),differences.c_str());
+  load(*rio,nightEnd);
+  test.stepUntil(900,[&]{ return rio->activityStage()==Stage::Hold && rio->isAiQueueEmpty(); },"the next guard row starts",
+                 [&]{ require(rio->currentWayPoint()==rioPost && rioPost->useCounter()==1 && rioPost->isGuarded(),
+                              "the same post stays guarded through End and the next Init"); });
+  rio->clearState(true);
+  relocate(*rio,post->position());
+  NpcEngineCalls::gotoWaypoint(world,*rio,post->name);
+  Contract::nextAiAction(*rio);
+  require(rio->currentWayPoint()==post && post->useCounter()==1 && !post->isGuarded(),"the external walk takes an ordinary post");
+  reload(*rio);
+  require(!rio->currentState().isValid() && rio->currentWayPoint()==post && post->useCounter()==1 && !post->isGuarded(),
+          "a former guard's external walk keeps its ordinary lock after loading");
   test.release();
   std::puts("Guard point: one owner, last release, loaded walk and pose, 5999/6000 ms, both draw outcomes, VM fallback");
   }

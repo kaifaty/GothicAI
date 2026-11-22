@@ -41,7 +41,9 @@ bool Npc::startState(ScriptFn id, std::string_view wp, gtime endTime, bool noFin
     }
 
   clearAiQueue();
-  clearState(noFinalize);
+  // The last guard commands have drained. A new row at the same post inherits its lock.
+  if(aiState.funcIni.isValid() || !activityEvents.activity || aiPrevState!=id || wp!=hnpc->wp)
+    clearState(noFinalize);
   if(!wp.empty())
     hnpc->wp = wp;
 
@@ -86,8 +88,12 @@ void Npc::setBodyTrace(BodyTrace trace) {
   }
 
 void Npc::clearState(bool noFinalize) {
-  if(BodyController::deferNative(*this,[this,noFinalize] { clearState(noFinalize); })) return;
-  stopActivityEvents(ActivityEvents::Interrupted);
+  finishState(noFinalize,ActivityEvents::Interrupted);
+  }
+
+void Npc::finishState(bool noFinalize, uint16_t reason) {
+  if(BodyController::deferNative(*this,[this,noFinalize,reason] { finishState(noFinalize,reason); })) return;
+  stopActivityEvents(reason);
   if(aiState.funcIni.isValid() && aiState.started) {
     if(!noFinalize)
       owner.rules().invokeState(this,currentOther,currentVictim,aiState.funcEnd);  // cleanup
@@ -173,6 +179,7 @@ void Npc::tickRoutine() {
   if(activityEvents.init!=aiState.funcIni.ptr)
     restoreActivityEvents(owner.rules().eventActivity(aiState.funcIni));
   const bool events = activityEvents.activity!=nullptr;
+  const bool guard = events && activityEvents.activity->point;
   const bool fastPath = (aiPolicy==NpcProcessPolicy::AiFar2 && routines.empty()); //HACK: don't process far away Npc
   if(aiState.loopNextTime<=owner.tickCount()) {
     aiState.loopNextTime = owner.tickCount() + perceptionTimeClampt();
@@ -203,9 +210,11 @@ void Npc::tickRoutine() {
       }
 
     if(loop!=LOOP_CONTINUE) {
-      if(events)
-        stopActivityEvents(ActivityEvents::RowEnd);
-      clearState(false);
+      if(guard) {
+        wakeActivity(ActivityEvents::RowEnd);
+        tickActivityEvents();
+        }
+      finishState(false,ActivityEvents::RowEnd);
       currentOther  = nullptr;
       currentVictim = nullptr;
       return;

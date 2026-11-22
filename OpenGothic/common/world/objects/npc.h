@@ -1025,6 +1025,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     bool      isPlayerEnabledState(const ::AiState& st) const;
     void      tickRoutine();
+    void      finishState(bool noFinalize, uint16_t reason);
     void      runStateInit();
     void      startActivityEvents(const ActivityEvents::Record* activity);
     void      restoreActivityEvents(const ActivityEvents::Record* activity);
