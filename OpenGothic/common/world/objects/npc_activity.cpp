@@ -16,7 +16,7 @@ void Npc::aiPush(AiQueue::AiAction&& a) {
   a.activity = a.activity || activityCommands;
   if(!a.activity && activityEvents.activity && activityEvents.activity->point) {
     activityEvents.awaitQueue = true; // recheck the place after external commands have finished
-    if(a.act==AI_GoToPoint && isGuardPoint(a.point))
+    if(a.act==AI_GoToPoint && isActivityPoint(a.point))
       a.i1=AiQueue::AiAction::ExternalPointWalk;
     }
   a.nativeCombatTarget=nativeCombatQueueTarget;

@@ -41,7 +41,7 @@ bool Npc::startState(ScriptFn id, std::string_view wp, gtime endTime, bool noFin
     }
 
   clearAiQueue();
-  // The last guard commands have drained. A new row at the same post inherits its lock.
+  // The last point commands have drained. A new row at the same post inherits its lock.
   if(aiState.funcIni.isValid() || !activityEvents.activity || aiPrevState!=id || wp!=hnpc->wp)
     clearState(noFinalize);
   if(!wp.empty())
@@ -179,7 +179,7 @@ void Npc::tickRoutine() {
   if(activityEvents.init!=aiState.funcIni.ptr)
     restoreActivityEvents(owner.rules().eventActivity(aiState.funcIni));
   const bool events = activityEvents.activity!=nullptr;
-  const bool guard = events && activityEvents.activity->point;
+  const bool atPoint = events && activityEvents.activity->point;
   const bool fastPath = (aiPolicy==NpcProcessPolicy::AiFar2 && routines.empty()); //HACK: don't process far away Npc
   if(aiState.loopNextTime<=owner.tickCount()) {
     aiState.loopNextTime = owner.tickCount() + perceptionTimeClampt();
@@ -210,7 +210,7 @@ void Npc::tickRoutine() {
       }
 
     if(loop!=LOOP_CONTINUE) {
-      if(guard) {
+      if(atPoint) {
         wakeActivity(ActivityEvents::RowEnd);
         tickActivityEvents();
         }

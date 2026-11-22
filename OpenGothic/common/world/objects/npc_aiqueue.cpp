@@ -124,7 +124,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         // An unmarked saved walk can be an external GotoWP. Only a guard lock excludes it.
         const bool guarded=act.point->isGuarded();
         const bool legacyAtGuard=guarded && (activityEvents.pending & ActivityEvents::Loaded) && act.i1==0;
-        const bool claim=isGuardPoint(act.point) && (!act.s0.empty() || legacyAtGuard);
+        const bool claim=isActivityPoint(act.point) && (!act.s0.empty() || legacyAtGuard);
         if(claim) {
           if(act.activity)
             aiQueue.removeActivity();

@@ -757,7 +757,7 @@ void Npc::attachToPoint(const WayPoint *p) {
     wakeActivity(ActivityEvents::Detached);
   if(auto* probe=NpcActivityProbe::instance; probe && currentFp!=p) probe->point(*this,currentFp,p);
   currentFp     = p;
-  currentFpLock = FpLock(p,isGuardPoint(p) && (!p->isLocked() || p==currentFpLock.point()));
+  currentFpLock = FpLock(p,isActivityPoint(p) && (!p->isLocked() || p==currentFpLock.point()));
   }
 
 bool Npc::goToPosition(const Vec3& position) {

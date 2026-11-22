@@ -17,9 +17,9 @@ using namespace Tempest;
 namespace {
 
 constexpr uint32_t BodyTraceMagic = 0x31544442; // "BDT1": /body-trace of a dead NPC
-// Init resets the inactive Loop clock. Its spare high bit records a guard still
+// Init resets the inactive Loop clock. Its spare high bit records a point activity still
 // draining its commands, separately from the last ZS (also set by an interruption).
-constexpr uint64_t GuardHandover = uint64_t(1)<<63;
+constexpr uint64_t PointHandover = uint64_t(1)<<63;
 
 }
 
@@ -190,18 +190,18 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
 
   go2.load(fin);
   fin.read(currentFp,currentFpLock);
-  // A saved command can end the guard before the next routine tick. Bind its restored lock now,
+  // A saved command can end a point activity before the next routine tick. Bind its restored lock now,
   // while the Loaded event still waits for the saved walk and commands.
-  const bool handover = !aiState.started && (aiState.loopNextTime & GuardHandover);
+  const bool handover = !aiState.started && (aiState.loopNextTime & PointHandover);
   if(handover)
-    aiState.loopNextTime &= ~GuardHandover;
+    aiState.loopNextTime &= ~PointHandover;
   if(aiState.started || handover) {
-    const auto guardState=aiState.funcIni.isValid() ? aiState.funcIni : aiPrevState;
-    const auto* record=owner.rules().eventActivity(guardState);
+    const auto pointState=aiState.funcIni.isValid() ? aiState.funcIni : aiPrevState;
+    const auto* record=owner.rules().eventActivity(pointState);
     if(record && record->point) {
       restoreActivityEvents(record);
-      activityEvents.init=guardState.ptr; // the last guard row can still own its post during End's queue
-      if(isGuardPoint(currentFpLock.point()))
+      activityEvents.init=pointState.ptr; // the last row can still own its point during End's queue
+      if(isActivityPoint(currentFpLock.point()))
         currentFpLock=FpLock(currentFpLock.point(),true);
       }
     }
@@ -333,7 +333,7 @@ void Npc::saveAiState(Serialize& fout) const {
   fout.write(aniWaitTime,waitTime,faiWaitTime,outWaitTime);
   fout.write(uint8_t(aiPolicy));
   const bool handover = !aiState.started && activityEvents.activity && activityEvents.activity->point;
-  const auto nextLoop = aiState.loopNextTime | (handover ? GuardHandover : 0);
+  const auto nextLoop = aiState.loopNextTime | (handover ? PointHandover : 0);
   fout.write(aiState.funcIni,aiState.funcLoop,aiState.funcEnd,aiState.sTime,aiState.eTime,aiState.started,nextLoop);
   fout.write(aiPrevState);
 

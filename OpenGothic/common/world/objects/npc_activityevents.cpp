@@ -25,17 +25,17 @@ void Npc::stopActivityEvents(uint16_t why) {
   if(activityEvents.init==size_t(-1))
     return; // nothing set up: no reservation, no wait
   const auto* record=activityEvents.activity;
-  const bool guard=record && record->point;
-  // The guard has already taken and counted its final step before End.
-  if(record && aiState.started && why!=0 && !(guard && why==ActivityEvents::RowEnd))
+  const bool atPoint=record && record->point;
+  // Point activities take and count their final step before End.
+  if(record && aiState.started && why!=0 && !(atPoint && why==ActivityEvents::RowEnd))
     ActivityEvents::countWakes(aiState.hint,why,false);
-  if(guard) {
+  if(atPoint) {
     stopWaitingForPoints();
     if(why==ActivityEvents::RowEnd) {
       const auto& next=currentRoutine();
-      if(isGuardPoint(currentFp) && (next.callback!=aiState.funcIni || next.wayPointName()!=hnpc->wp))
+      if(isActivityPoint(currentFp) && (next.callback!=aiState.funcIni || next.wayPointName()!=hnpc->wp))
         attachToPoint(nullptr);
-      // The last walk/align/gesture precedes End in the queue. Keep its guard ownership
+      // The last walk/align/gesture precedes End in the queue. Keep ownership
       // until the next state is known, including a dialogue queued during the handover.
       activityEvents=ActivityEvents::State();
       activityEvents.activity=record;
@@ -43,7 +43,7 @@ void Npc::stopActivityEvents(uint16_t why) {
       return;
       }
     dropActivityCommand();
-    if(isGuardPoint(currentFp) && !(why==0 && activityEvents.stage==ActivityEvents::Stage::Off))
+    if(isActivityPoint(currentFp) && !(why==0 && activityEvents.stage==ActivityEvents::Stage::Off))
       attachToPoint(nullptr);
     } else {
     auto& places = owner.mobReservations();
@@ -247,7 +247,7 @@ void Npc::pushActivityCommand(AiQueue::AiAction&& action) {
   aiPush(std::move(action));
   }
 
-bool Npc::isGuardPoint(const WayPoint* point) const {
+bool Npc::isActivityPoint(const WayPoint* point) const {
   const auto* record=activityEvents.activity;
   return record && record->point && point && point->isFreePoint() && point->checkName(record->point->point);
   }
@@ -283,9 +283,9 @@ void Npc::seekActivityPoint(uint16_t wakes) {
   // An old save has no pending failure. A post beyond both the approach and the FP search
   // could only have come from a different destination, even if its name matches.
   const float reach = float(a.approachDistance) + WayMatrix::distanceThreshold;
-  const bool foreign = !seated && isGuardPoint(currentFp) && wp && (wakes & (Loaded|Detached)) &&
+  const bool foreign = !seated && isActivityPoint(currentFp) && wp && (wakes & (Loaded|Detached)) &&
                        currentFp->qDistTo(wp->position())>reach*reach;
-  if(isGuardPoint(currentFp) && (currentFpLock.point()!=currentFp || currentFp->useCounter()>1 ||
+  if(isActivityPoint(currentFp) && (currentFpLock.point()!=currentFp || currentFp->useCounter()>1 ||
                                  foreign || !isOnFreePoint(a.point)))
     attachToPoint(nullptr);
   const bool on = isOnFreePoint(a.point);

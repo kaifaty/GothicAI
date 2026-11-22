@@ -13,7 +13,7 @@ class WayPoint;
 namespace ActivityDefinitions { struct MobActivity; struct PointActivity; }
 
 // Recorded routines keep Init and End. Between them, events drive the object's reservation
-// and use (E1), or the guard's free-point lock, pose and gesture (E2.2).
+// and use (E1), or a point activity's arrival, pose and timed gesture (E2).
 namespace ActivityEvents {
 struct Record {
   const ActivityDefinitions::MobActivity*   mob   = nullptr;
@@ -26,7 +26,7 @@ enum class Stage : uint8_t {
   Attach,   // AI_UseMob is queued: wait for the attach, its failure or the queue
   WalkToPoint, // the chosen free point is acquired when the queued walk starts
   Wait,     // waiting for a place in reach
-  Hold,     // using the object or standing at the guard post
+  Hold,     // using the object or holding the pose
   };
 
 // Why the automaton ran; one step may carry several.
@@ -59,7 +59,7 @@ struct State final {
   bool     awaitQueue = false;              // QueueDone when the queue is empty next time
   bool     restart    = false;              // the walk to the point was reset: start over with Init
   bool     retry      = false;              // the watchdog fired and was counted: look for the place again
-  std::vector<const WayPoint*> waitPoints; // locked candidates within reach of this guard
+  std::vector<const WayPoint*> waitPoints; // locked candidates within reach of this NPC
   gtime    deadline   = gtime::endOfTime(); // the watchdog of the current wait
   };
 

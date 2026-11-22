@@ -429,7 +429,7 @@ void Npc::setSimTier(NpcSimTier t) {
     };
   currentFp=resolve(currentFp,"currentFp",true);
   const auto* lock=resolve(currentFpLock.point(),"currentFpLock",true);
-  currentFpLock=FpLock(lock,isGuardPoint(lock));
+  currentFpLock=FpLock(lock,isActivityPoint(lock));
   go2.wp=resolve(go2.wp,"goTo",true);
   WayPath path;
   while(const auto* point=wayPath.pop())

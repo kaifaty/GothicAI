@@ -1,6 +1,6 @@
 #include "gamescript.h"
 
-#include "world/world.h"
+#include "world/objects/npc.h"
 
 void GameScript::runPointGesture(Npc& npc, const ActivityDefinitions::PointActivity& point) {
   const auto& loop=findSymbol(npc.aiState.funcLoop.ptr)->name();
