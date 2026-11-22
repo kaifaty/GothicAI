@@ -409,16 +409,18 @@ POINT_STATES = {"ZS_STAND_GUARDING": "STAND", "ZS_STAND_ARMSCROSSED": "STAND",
                 "ZS_SIT_CAMPFIRE": "CAMPFIRE", "ZS_PEE": "PEE", "ZS_STAND_WP": ""}
 
 
-def point_status(row, point, state):
+def point_status(row, point, state, waypoint):
     if point is None:
         return False, False, False
     kind = POINT_STATES[state]
-    on = point["on"] and kind in point["name"] if kind else point["on_wp"]
+    same_target = row[2].split()[-1] == waypoint
+    on_wp = point["on_wp"] and same_target
+    on = same_target and (point["on"] and kind in point["name"] if kind else on_wp)
     # End/Init may leave ZS empty without moving the body; a known different ZS is another pose.
     same_pose = row[3] in (state, "-")
     # Campfire sets BS_SIT (11); the other four forms set aivar[19]=0 on entering the pose.
     posed = row[10] == 11 if state == "ZS_SIT_CAMPFIRE" else point["stage"] == 0 and row[10] == 0
-    fallback = bool(same_pose and kind and not on and point["available"] == 0 and point["on_wp"] and row[10] == 0)
+    fallback = bool(same_pose and kind and not on and point["available"] == 0 and on_wp and row[10] == 0)
     return bool(on), bool(same_pose and posed and (on or fallback)), fallback
 
 
@@ -442,7 +444,7 @@ def point_metrics(a, b, common, states):
         ra, rb = a["rows"][sample], b["rows"][sample]
         if ra[2] == "-":
             continue
-        _, _, state, _ = ra[2].split()
+        _, _, state, waypoint = ra[2].split()
         if state not in POINT_STATES:
             continue
         item = tally(state)
@@ -451,10 +453,10 @@ def point_metrics(a, b, common, states):
         if pa is None or pb is None:
             valid = False
             continue
-        on_a, pose_a, fallback_a = point_status(ra, pa, state)
-        on_b, pose_b, fallback_b = point_status(rb, pb, state)
+        on_a, pose_a, fallback_a = point_status(ra, pa, state, waypoint)
+        on_b, pose_b, fallback_b = point_status(rb, pb, state, waypoint)
         held = bool(POINT_STATES[state] and pa["position"] is not None and POINT_STATES[state] in pa["name"])
-        comparable = not (fallback_a or fallback_b)
+        comparable = not ((fallback_a and (pose_b or fallback_b)) or (fallback_b and (pose_a or fallback_a)))
         item["held_a"] += held
         item["comparable"] += held and comparable
         item["same_fp"] += held and comparable and pa["position"] == pb["position"]
@@ -488,10 +490,14 @@ def point_metrics(a, b, common, states):
                 if (t, key) not in selected:
                     continue
                 point = run["points"].get((t, key))
-                status = point_status(run["rows"][(t, key)], point, state)
+                row = run["rows"][(t, key)]
+                status = point_status(row, point, state, waypoint)
                 # An old hold outside the new approach radius is not a new arrival.
-                # A suitable point already in that radius still fulfils the new TA.
-                if old_point is not None and point is not None and point["position"] == old_point and status[0] and not point["on_wp"]:
+                # It may be acquired after the TA changes, near the preceding waypoint.
+                old_post = moved and row[12] == previous[1][2].split()[3]
+                if point is not None and status[0] and not point["on_wp"] and (
+                        point["position"] == old_point or old_post):
+                    old_point = point["position"]
                     status = (False, False, False)
                 else:
                     old_point = None
@@ -500,28 +506,30 @@ def point_metrics(a, b, common, states):
 
         reference = dict(observations(a))
         arrived_a = [t for t, status in reference.items() if status[0]]
-        if not arrived_a:
+        reference_times = [t for t, status in reference.items() if status[0] or status[2]]
+        if not reference_times:
             return
-        first_a = arrived_a[0]
+        first_a = arrived_a[0] if arrived_a else reference_times[0]
         observed = observations(b)
         arrivals_b = [t for t, status in observed if status[0]]
         # A whole lost activity cannot hide behind one legal wait sample.
-        reference_times = arrived_a
-        lawful_wait = not arrivals_b and all(dict(observed)[t][2] for t in reference_times)
+        # For a reference shift spent entirely waiting, any legal wait in B fulfils it.
+        lawful_wait = not arrivals_b and (all(dict(observed)[t][2] for t in reference_times) if arrived_a else
+                                         any(status[2] for _, status in observed))
         first_b = arrivals_b[0] if arrivals_b else None
         # Waiting while no point is available is legitimate. Report it separately, and subtract
         # only observed legal waiting intervals from a later arrival's delay.
-        delay = None if first_b is None else first_b - first_a
+        delay = None if first_b is None or not arrived_a else first_b - first_a
         if delay is not None and delay > 0:
             period = b["header"].get("period_min", 5)
             delay -= sum(min(period, first_b - t) for t, status in observed if first_a <= t < first_b and status[2])
         entry = {"key": key, "state": state, "ta": samples[0][1][2], "start_min": samples[0][0],
-                 "end_min": samples[-1][0], "arrival_a_min": first_a - samples[0][0],
+                 "end_min": samples[-1][0], "arrival_a_min": first_a - samples[0][0] if arrived_a else None,
                  "arrival_b_min": first_b - samples[0][0] if first_b is not None else None,
                  "delay_min": delay}
-        if first_b is not None:
+        if first_b is not None and arrived_a:
             tally(state)["arrivals"].append(entry)
-        elif not lawful_wait:
+        elif first_b is None and not lawful_wait:
             tally(state)["missed"].append(entry)
 
     previous = {}

@@ -31,7 +31,7 @@ struct MobActivity {
   bool operator==(const MobActivity&) const = default;
   };
 
-// E2.1: imported only. No game executor is connected to this template yet.
+// Script activity at a free point: approach, pose transitions and timed gestures.
 struct PointActivity {
   struct Gesture {
     std::string animation; // empty: no gesture for this outcome
