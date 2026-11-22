@@ -510,16 +510,15 @@ void guardActivityWorld(Gothic& gothic) {
       Contract::nextAiAction(second);
     Contract::activityEventsOn(script)=true;
     reload(second);
-    if(!inFlight) {
-      require(second.aiQueueFront() && second.aiQueueFront()->s0.empty() && second.aiQueueFront()->i1==0 && !beside->isGuarded(),
+    if(!inFlight)
+      require(second.aiQueueFront() && second.aiQueueFront()->point==beside && second.aiQueueFront()->s0.empty() &&
+              second.aiQueueFront()->i1==0 && !beside->isGuarded(),
               "the old queued GotoWP has no marker and its destination has an ordinary owner");
-      Contract::nextAiAction(second);
-      }
-    require(second.currentGoToPoint()==beside && second.aiQueueFront() && second.aiQueueFront()->act==AI_LookAtNpc,
-            "the legacy external walk starts before the saved look");
-    test.stepUntil(1500,[&]{ return second.currentWayPoint()==beside && second.isAiQueueEmpty(); },"the legacy external walk runs to its saved destination");
+    test.stepUntil(1500,[&]{ return second.lookAtTarget()==&first; },"the saved look runs after the legacy walk");
+    require(second.currentWayPoint()==beside && second.isOnFreePoint(a.point),
+            "the saved look runs at the ordinarily occupied destination");
     Contract::tickRoutine(second);
-    require(second.lookAtTarget()==&first && second.aiQueueFront() && second.aiQueueFront()->point==wp && beside->useCounter()==1,
+    require(second.aiQueueFront() && second.aiQueueFront()->point==wp && beside->useCounter()==1,
             "the first place check keeps the ordinary owner's lock and returns the guard to its row");
     test.stop(second);
     }
