@@ -367,6 +367,7 @@ RGBA pixels in market, harbour, forest and island respectively. The maximum chan
 0, 0, 1 and 1. Issue #946 remains open. [Measurements](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#пара-ryzen-после-ревью).
 
 The regular VSM fog pass uses one NDC from the top-left depth pixel for both epipolar ray selection and the shadow threshold.
+It supplies zero depth for a missing ray or texel and keeps all 32 threshold comparisons.
 Replaying the FGT2 inputs on the CPU removes the divergence reproduced by contracting the old NDC expression.
 The two render controls are pending. [Fog replay](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#выбор-луча-и-порога-тумана).
 

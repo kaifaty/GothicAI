@@ -51,11 +51,10 @@ void trace(const vec2 inPos, const float z, ivec2 pix, const uint sliceId) {
   const vec3 shPos0 = screenToShadow(vec3(inPos.xy,0));
   const vec3 shPos1 = screenToShadow(vec3(inPos.xy,z));
 
-  const Epipole e      = epipole[sliceId];
-  const float   tMin   = e.tMin;
-  const float   tMax   = e.tMax;
-  const vec2    rayA   = e.rayOrig;
-  const vec2    rayDir = e.rayDir;
+  const bool hasRay = sliceId < NumSlices;
+  Epipole e;
+  if(hasRay)
+    e = epipole[sliceId];
 
   uint occlusion = 0;
   [[dont_unroll]]
@@ -63,9 +62,14 @@ void trace(const vec2 inPos, const float z, ivec2 pix, const uint sliceId) {
     float t      = (i+0.3)/float(steps);
     vec3  shPos  = mix(shPos0, shPos1, t+noise);
     //vec3  shPos  = shPos1;
-    float shV    = dot(shPos.xy - rayA, rayDir) / (tMax-tMin);
-
-    float sh     = texelFetch(rayData, ivec2(shV*NumSamples, sliceId), 0).x;
+    float sh = 0.0;
+    if(hasRay) {
+      const float shV     = dot(shPos.xy - e.rayOrig, e.rayDir) / (e.tMax-e.tMin);
+      const float sampleX = shV*NumSamples;
+      // Coordinates in (-1, 0) truncate to the first texel.
+      if(sampleX > -1.0 && sampleX < float(NumSamples))
+        sh = texelFetch(rayData, ivec2(int(sampleX), int(sliceId)), 0).x;
+      }
     bool  shadow = (sh < shPos.z);
 
     occlusion = occlusion | ((shadow ? 1u : 0u) << uint(i));
