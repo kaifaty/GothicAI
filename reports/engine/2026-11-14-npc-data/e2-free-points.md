@@ -109,6 +109,8 @@ export OPENGOTHIC_BASE=/mnt/shared/gothic-ai/npc-events-e23-records/store/base/d
 
 Полный импорт и выбор базы из хранилища прошли в заявке `8e6cafb50135`. Итоговая база для игры лежит в `/mnt/shared/gothic-ai/npc-events-e23-records/store/base/3062f50e990739f2365f1c905662b75da24c5aa8279ec97c011c4aeccca2b6ee`. Хеш формата — `575db2c507c91fcbe56c78750feda003ce3ea8d5f0e62a2fd5b429323b76184d`. Секции NotR и Classic совпали с приведёнными выше SHA-256, манифест всех 37 354 файлов побайтно совпал с первым импортом. Сравнение и журналы сохранены в `/mnt/shared/gothic-ai/npc-events-e23-records/1522621f6/`.
 
+Для архивной v2 проверка на `0dbba34ea` сверила всю секцию, включая тексты 46 причин возврата в VM, с её записью в исходном манифесте. В заявке `f6a7c064d7e7` итоговый контракт прошёл 58 594 утверждения. Журнал — `/mnt/shared/gothic-ai/npc-events-e23-records/0dbba34ea/snapshot.log`.
+
 ## Как движок вёл свободные точки до Э2.2
 
 - **Поиск:** `findFreePoint` возвращает свою подходящую точку, иначе ближайшую видимую незапертую по подстроке имени в радиусе 800 (`world.cpp:1964`, `waymatrix.cpp:314`).
