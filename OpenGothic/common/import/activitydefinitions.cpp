@@ -122,12 +122,8 @@ class ScriptRun {
       lookAtNpc = vm.allocate_instance<INpc>(vm.global_other());
       vm.global_other()->set_instance(previous);
       if(points) {
-        auto global=[&](const char* name) {
-          auto* symbol=vm.find_symbol_by_name(name);
-          return symbol && symbol->type()==Type::INT && symbol->count()==1 && !symbol->is_member() && !symbol->is_const() ? symbol : nullptr;
-          };
-        currentLevel=global("CURRENTLEVEL");
-        ravenIsDead=global("RAVENISDEAD");
+        currentLevel=mutableInt("CURRENTLEVEL");
+        ravenIsDead=mutableInt("RAVENISDEAD");
         }
       for(const auto& symbol:vm.symbols())
         if(symbol.type()==Type::FUNCTION && !symbol.is_external() &&
@@ -153,6 +149,12 @@ class ScriptRun {
         });
       vm.observe_instructions([this](const DaedalusInstruction& instruction) {
         if(++instructions>100000) throw Stop("execution_limit",phaseName);
+        // The write observer fires before assignment. Read the value before the next instruction.
+        if(drawWrite) {
+          const auto* name=drawWrite==random ? "RANDOM" : "EVENTRANDY";
+          current->events.push_back({"draw_write",std::string(name)+"="+std::to_string(drawWrite->get_int()),{}});
+          drawWrite=nullptr;
+          }
         if(instruction.op==DaedalusOpcode::RSR && !frames.empty()) frames.pop_back();
         });
       vm.observe_reads([this](const DaedalusSymbol& symbol) {
@@ -188,6 +190,7 @@ class ScriptRun {
         const auto frame=std::find_if(frames.rbegin(),frames.rend(),[&](const auto& f) { return f.function==owner; });
         if(frame==frames.rend()) throw Stop("local_state_write",symbol.name());
         frame->assigned.insert(symbol.index());
+        if(&symbol==random || &symbol==eventRandy) drawWrite=&symbol;
         });
       vm.observe_member_writes([this](const DaedalusSymbol& symbol,uint16_t index,const DaedalusInstance* instance) {
         if(!this->points || symbol.name()!="C_NPC.AIVAR" || index!=19 || instance!=selfNpc.get())
@@ -195,6 +198,11 @@ class ScriptRun {
         current->events.push_back({"stage_write","aivar[19]="+std::to_string(selfNpc->aivar[19]),{selfNpc->aivar[19]}});
         });
       vm.register_default_external_custom([this](DaedalusVm&,DaedalusSymbol& function) { external(function); });
+      }
+
+    void watchArmRollWrites(const DaedalusSymbol& loop) {
+      random=mutableInt(loop.name()+".RANDOM");
+      eventRandy=mutableInt(loop.name()+".EVENTRANDY");
       }
 
     Run run(const DaedalusSymbol& function,const Situation& situation) {
@@ -205,6 +213,7 @@ class ScriptRun {
       frames.clear();
       instructions = 0;
       draws = 0;
+      drawWrite = nullptr;
       selfNpc->wp = situation.waypoint;
       selfNpc->aivar[19] = situation.stage;
       selfNpc->guild = situation.guild;
@@ -219,6 +228,11 @@ class ScriptRun {
     const DaedalusVm& script() const { return vm; }
 
   private:
+    DaedalusSymbol* mutableInt(std::string_view name) {
+      auto* symbol=vm.find_symbol_by_name(name);
+      return symbol && symbol->type()==Type::INT && symbol->count()==1 && !symbol->is_member() && !symbol->is_const() ? symbol : nullptr;
+      }
+
     static DaedalusVm load(const NpcSnapshot::Program& program) {
       auto script=DaedalusScript::from_program(program.data);
       if(script.find_symbol_by_name("C_NPC")) INpc::register_(script);
@@ -294,6 +308,9 @@ class ScriptRun {
     DaedalusSymbol*           self = nullptr;
     DaedalusSymbol*           currentLevel = nullptr;
     DaedalusSymbol*           ravenIsDead = nullptr;
+    const DaedalusSymbol*      random = nullptr;
+    const DaedalusSymbol*      eventRandy = nullptr;
+    const DaedalusSymbol*      drawWrite = nullptr;
     std::shared_ptr<INpc>     selfNpc, lookAtNpc;
     Run*                      current = nullptr;
     const Situation*          situation = nullptr;
@@ -561,11 +578,13 @@ class Recognizer {
       call("NPC_GETSTATETIME(self)->"+std::to_string(s.seconds));
       if(!posed || s.seconds<=a.timerSeconds) return events;
       call("HLP_RANDOM("+std::to_string(a.rollRange)+")->"+std::to_string(s.roll));
+      if(a.form==Form::ArmsCrossed) call("RANDOM="+std::to_string(s.roll));
       const auto& gesture=a.gestures.at(size_t(s.roll));
       if(!gesture.animation.empty()) play(gesture.animation);
       if(a.portal) {
         const auto& p=*a.portal;
         call("HLP_RANDOM("+std::to_string(p.rollRange)+")->"+std::to_string(s.portalRoll));
+        call("EVENTRANDY="+std::to_string(s.portalRoll));
         call("self.guild->"+std::to_string(s.guild));
         call("RAVENISDEAD->"+std::to_string(s.ravenDead));
         call("CURRENTLEVEL->"+std::to_string(s.world));
@@ -577,6 +596,7 @@ class Recognizer {
       }
 
     size_t comparePoint(ScriptRun& script,const Phases& phases,const PointActivity& a) const {
+      if(a.form==Form::ArmsCrossed) script.watchArmRollWrites(*phases.loop);
       size_t count=0;
       auto compare=[&](Phase phase,const Situation& s) {
         const auto* fn=phase==Phase::Init ? phases.init : phase==Phase::Loop ? phases.loop : phases.end;
@@ -638,7 +658,7 @@ class Recognizer {
         for(s.roll=0;s.roll<a.rollRange;++s.roll)
           for(auto guild:{p.excludedGuild,0,std::numeric_limits<int32_t>::max()})
             for(auto dead:{p.ravenDead,p.ravenDead^1})
-              for(auto world:{p.world,0,std::numeric_limits<int32_t>::max()}) {
+              for(auto world:{p.world,0,1,2,3,max}) { // Newworld, Oldworld and Dragonisland are 1, 2 and 3 in the DAT.
                 s.guild=guild; s.ravenDead=dead; s.world=world; compare(Phase::Loop,s);
                 }
         }
