@@ -244,6 +244,10 @@ void main_mkHash() {
   if(skip)
     return;
 
+#if defined(ORDERED)
+  // Allocation has finished. The next prune rebuilds the free list. Keep each source stamp fixed during relighting.
+  freeList.list[probeId] = probe[probeId].lastUse;
+#endif
   if(traced && probeId!=0)
     hashmapInsert(probeId);
   }

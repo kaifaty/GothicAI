@@ -344,25 +344,27 @@ waits and four frames more once everything is loaded (also when it was loaded on
 TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with visibility in
 a canonical cluster order (sorted by sphere and meshlets, not by the ids streaming handed out)
 before `shot`; texture levels settle and stand still until the shot.
-Two runs of one binary then give byte-identical `perf-market` and `perf-harbour` PNGs, and
-`perf-forest` and `perf-island` PNGs in most pairs: at 1920x1080 on Ryzen, virtual shadow maps on,
-five runs gave 0 changed pixels at the market and the harbour in all ten pairs, 0 or 1 pixel in the
-forest and 0, 3 or 35–38 pixels (max 2 levels) on the island, the same pixels every time (issue
-#946). `perf-market-teleport` is shot without a streaming wait by design and still depends on
-loading. Accept a render change off ↔ on as two consecutive runs on one host and binary, toggled by
-the feature's own variable:
-`uv run --no-project --with pillow --with numpy python
-reports/engine/2026-11-03-streaming-optimisation/shots_diff.py off=<dir> on=<dir>` must report 0
-changed pixels at the four waited points (`--all-pairs` compares every pair of several runs). If a
-point differs, run off and on once more: the change is accepted when every one of the four points
-gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
+With probe GI active, the wait also restarts the probe pool, its frame clock, fog sky visibility and
+eye adaptation. During the fixed steps, a probe's grid position determines its offscreen relight phase.
+Ray hits vote by cell before the renderer selects up to 512 requests. Each bounce propagates the
+source probe's use stamp from the start of the relight.
+`perf-market-teleport` captures the first frame after the return jump and still depends on loading.
 
-The virtual shadow maps stay on for the comparison on Ryzen: their GPU passes no longer depend on
-the order of shader invocations.
-[Report](../../reports/engine/2026-11-10-still-shots-repeat/README.md): the SSAO cycle's phase that
-was not reset, the two shader bugs behind the VSM noise (an uninitialised depth in
-`fog_epipolar.comp`, a page lost in `vsm_mark_pages.comp`), the second state of a still (whether the
-wait had to wait) and what is left.
+Compare consecutive runs on one host with one binary. For an off ↔ on render check, toggle the
+feature's own variable between runs. Each acceptance pair must report zero changed RGBA pixels
+at all four waited points in the same comparison. Set `first` and `second` to the output directories
+and use `--host mac` for Metal.
+
+```sh
+uv run --no-project --with pillow --with numpy python \
+  reports/engine/2026-11-03-streaming-optimisation/shots_diff.py \
+  --host ryzen --shots perf-market,perf-harbour,perf-forest,perf-island a="$first" b="$second"
+```
+
+On `8cfe16dc4`, one Ryzen RTX 3080 pair at 1920×1080 with VSM and probe GI and three Metal pairs
+at 800×600 matched at all four points. On `95f9dfdea`, the Ryzen pair had 0, 0, 5 and 1 changed
+RGBA pixels in market, harbour, forest and island respectively. The maximum channel differences were
+0, 0, 1 and 1. Issue #946 remains open. [Measurements](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#пара-ryzen-после-ревью).
 
 `motion-vectors` and `motion-vectors-clips` check the motion vectors of objects (graphics plan 1b,
 [report](../../reports/render-features/2026-11-10-motion-vectors/step-1b.md)). `motion-vectors` takes stills: a still
@@ -397,6 +399,8 @@ and its landscape BLAS is freed) run as a copy named `streaming-flythrough` for 
 
 ## План и журнал
 
+- 2026-11-22: a deterministic wait starts probe GI from an empty pool and phase zero. Its fixed
+  steps give the same offscreen turn, hit request selection and use stamp under a permutation of probe slots.
 - 2026-11-11: `deterministic on` walks visibility clusters in a canonical order (sorted by sphere and meshlets,
   not by the ids streaming handed out). On the Mac it removed the dependence on the id order; on Ryzen four
   runs still give the discrete states of issue #946 (0–32 px), so the acceptance rule stays as it is.
@@ -992,7 +996,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `rec <name> [novideo]`, `stop [shadow]` | record a segment (video and metrics, or metrics only); `stop shadow` also copies both rolling melee shadow journals into segment files (filter cumulative rows by fight game-time interval) |
 | `shot <name>` | one PNG |
 | `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
-| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the world stands four frames more, the renderer drops the TAA history and jitter phase, then 16 fixed steps run before the next command, and visibility appends clusters in a canonical order (sorted on the CPU by sphere and meshlets; one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
+| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the world stands four frames more, the renderer resets TAA, SSAO and active probe GI, then 16 fixed steps run before the next command, and visibility appends clusters in a canonical order (sorted on the CPU by sphere and meshlets; one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
 | `npctier <npc> full\|simplified\|auto` | Override one NPC tier until reset or reload. Hero, training and arena actors stay Full. |
 | `npctier-test <npc> <start waypoint> <end waypoint>` | Verify 20 switches in each direction during movement and turns, unchanged remaining path/destination and every arrival. `npc-tier-transitions` runs the fixture on a fresh NEWWORLD. |
 | `npcspeed <start waypoint>` | Compare Sequence speed with Full and Simplified movement on one authored edge for human/orc/wolf in walk/run/sneak; appended to `npc-tier-transitions`. Removes ambient NPCs for calibration. |

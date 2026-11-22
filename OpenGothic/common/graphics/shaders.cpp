@@ -457,6 +457,17 @@ void Shaders::compileShaders() noexcept {
   }
   }
 
+void Shaders::prepareOrderedProbes() {
+  if(!probeOrderRequests.isEmpty())
+    return;
+  const char* materialMaps = opts.doMaterialMaps ? "_orm" : "";
+  probeMakeHashOrdered   = computeShader("probe_make_hash_ordered.comp.sprv");
+  probeRelightOrdered    = computeShader("probe_relight_ordered.comp.sprv");
+  probeRelightNewOrdered = computeShader("probe_relight_new_ordered.comp.sprv");
+  probeLightingOrdered   = computeShader(string_frm("probe_lighting_ordered", materialMaps, ".comp.sprv"));
+  probeOrderRequests     = computeShader("probe_order_requests.comp.sprv");
+  }
+
 bool Shaders::isVsmSupported() {
   auto& gpu = Resources::device().properties();
   if(gpu.compute.maxInvocations>=1024 && gpu.render.maxClipCullDistances>=4 &&
