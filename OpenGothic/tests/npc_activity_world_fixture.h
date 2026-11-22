@@ -1,4 +1,4 @@
-// Shared by the mob and free-point cases in placed_items_contract.cpp.
+// Live world fixture and guard-post cases for placed_items_contract.cpp.
 
 struct EventActor {
   Npc*            npc=nullptr;
@@ -191,3 +191,283 @@ class ActivityEventsWorld final {
     Gothic&        gothic;
     std::set<Npc*> used;
   };
+
+void guardActivityWorld(Gothic& gothic) {
+  using ActivityEvents::Stage;
+  using Contract = NpcDefinitionContract;
+  ActivityEventsWorld test(gothic);
+  auto& world = test.world();
+  auto& script = world.script();
+  auto& first = *test.extra();
+  auto* khaled=activityNpc(world,"SLD_823_KHALED");
+  require(khaled && khaled!=&first,"Khaled guards the farm");
+  auto& second = *khaled;
+  ActivityCalls calls;
+  EventActor guard;
+  guard.state = "ZS_STAND_GUARDING";
+  guard.phases = activityPhases(script,guard.state.c_str());
+  guard.pointName = "NW_CITY_HABOUR_POOR_AREA_PATH_20";
+  const auto* wp = world.findWayPoint(guard.pointName);
+  const auto* post = world.findPoint("FP_STAND_CITY_20",false);
+  require(wp && post,"the harbour row has a single STAND post");
+  const auto* record = script.eventActivity(ScriptFn(guard.phases.init));
+  require(record && record->point,"the guard uses the imported point record");
+  const auto& a = *record->point;
+  test.only({});
+  auto freePost = [&](const WayPoint* p) {
+    for(uint32_t i=0;i<world.npcCount();++i)
+      if(world.npcById(i)->currentWayPoint()==p)
+        world.npcById(i)->attachToPoint(nullptr);
+    };
+  auto init = [&](Npc& npc,const WayPoint& row) {
+    guard.pointName=row.name;
+    test.start(guard,row.position(),&npc,false);
+    npc.attachToPoint(&row);
+    npc.updateTransform();
+    Contract::tickRoutine(npc);
+    require(npc.isInState(ScriptFn(guard.phases.init)) && npc.handle().aivar[19]==a.initialStage,
+            "the guard keeps its script symbol and Init stage");
+    activityDrain(npc);
+    };
+  auto select = [&](Npc& npc) {
+    init(npc,*wp);
+    Contract::tickRoutine(npc);
+    require(npc.aiQueueFront() && npc.aiQueueFront()->point==post && npc.handle().aivar[19]==a.walkingStage,
+            "both guards select the same unlocked post");
+    };
+  auto entering = [&](const Npc& npc) {
+    auto queue=Contract::queue(npc);
+    while(queue.size()>0) {
+      const auto action=queue.pop();
+      if(action.act==AI_PlayAnim && action.s0==a.enterAnimation) return true;
+      }
+    return false;
+    };
+  freePost(post);
+  select(first);
+  select(second);
+  Contract::nextAiAction(first);
+  second.aiPush(AiQueue::aiLookAtNpc(&first));
+  Contract::nextAiAction(second);
+  require(first.currentWayPoint()==post && post->useCounter()==1 && second.currentWayPoint()==wp &&
+          second.aiQueueFront() && second.aiQueueFront()->act==AI_LookAtNpc,"one owner, the losing walk preserves external commands");
+  Contract::nextAiAction(second);
+  Contract::tickRoutine(second);
+  require(second.activityStage()==Stage::Wait && second.handle().aivar[19]==a.poseStage &&
+          second.lookAtTarget()==&first && entering(second),"the loser queues the recorded pose after the external look");
+
+  auto reload = [&](Npc& npc) {
+    const auto bytes = savedNpc(npc);
+    Tempest::MemReader reader(bytes);
+    Serialize in(reader);
+    in.setContext(&world);
+    npc.load(in,0,"/npc/");
+    npc.postValidate();
+    npc.setSimTier(NpcSimTier::Full);
+    };
+  first.aiPush(AiQueue::aiLookAtNpc(&second));
+  const auto queue = activityQueue(first);
+  reload(first);
+  require(Contract::walking(first) && activityQueue(first)==queue && first.activityStage()==Stage::Off,
+          "loading in flight preserves the walk and every saved command");
+  test.only({&first,&second});
+  test.stepUntil(900,[&]{ return first.activityStage()==Stage::Hold; },"loaded guard reaches the post");
+  require(first.lookAtTarget()==&second && entering(first),"the owner queues the recorded pose after the saved look");
+  test.stepUntil(900,[&]{ return first.activityStage()==Stage::Hold && first.isAiQueueEmpty() &&
+                                  second.isAiQueueEmpty() && Contract::activityEvents(second).pending==0; },"loaded guard arrives");
+  require(first.lookAtTarget()==&second && first.isOnFreePoint(a.point) && first.handle().aivar[19]==a.poseStage &&
+          second.activityStage()==Stage::Wait && calls.phase(first,guard.state+"_LOOP")==0,
+          "the saved look ran before taking the guard pose, with no Loop");
+
+  // Hold a second reference across the in-place reload. The saved transition then releases the last one.
+  FpLock last(post);
+  const auto talk=script.findFunction("ZS_TALK");
+  first.aiPush(AiQueue::aiStartState(talk,1,world.player(),nullptr,""));
+  reload(first);
+  last = FpLock();
+  require(post->useCounter()==1 && !(Contract::activityEvents(second).pending & ActivityEvents::Freed),
+          "the first release leaves the waiter asleep");
+  Contract::nextAiAction(first);
+  require(first.isInState(talk) && calls.phase(first,guard.state+"_END")==1 && first.aiQueueFront() &&
+          first.aiQueueFront()->s0==a.leaveAnimation && post->useCounter()==0 &&
+          (Contract::activityEvents(second).pending & ActivityEvents::Freed),
+          "the saved transition releases the last guard lock and runs End before the first routine tick");
+  test.stop(first);
+  test.only({&second});
+  test.stepUntil(900,[&]{ return second.activityStage()==Stage::Hold && second.isAiQueueEmpty(); },"waiter takes the freed post");
+  require(second.currentWayPoint()==post && post->useCounter()==1,"the waiting guard owns the freed post once");
+
+  // Khaled starts closer to 9294 but chooses 12203, which has the same name.
+  const auto* farm=world.findWayPoint("NW_BIGFARM_HOUSE_12");
+  const auto* near=world.findPoint("FP_STAND_NW_BIGFARM_HOUSE_LEE_GUARDING",false);
+  const auto* upper=world.findPoint("FP_STAND_NW_BIGFARM_HOUSE_UP2_01",false);
+  const WayPoint* other=nullptr;
+  world.forEachWayPoint([&](const WayPoint& p) { if(near && p.name==near->name && &p!=near) other=&p; });
+  require(farm && near && other && upper,"the farm row has two identically named guard posts");
+  if(near->qDistTo(farm->position())>other->qDistTo(farm->position())) std::swap(near,other);
+  freePost(near);
+  freePost(other);
+  {
+    FpLock blocked(near),upstairs(upper);
+    init(second,*farm);
+    Contract::tickRoutine(second);
+    require(second.aiQueueFront() && second.aiQueueFront()->point==other,"Khaled chooses the free far post");
+    Contract::nextAiAction(second);
+    require(second.currentGoToPoint()==other && second.qDistTo(near)<second.qDistTo(other),"save early in the walk");
+    reload(second);
+    require(second.currentGoToPoint()==other && second.currentWayPoint()==other &&
+            near->useCounter()==1 && other->useCounter()==1,"the saved walk and lock keep post 12203");
+    test.stepUntil(900,[&]{ return second.activityStage()==Stage::Hold && second.isAiQueueEmpty(); },"Khaled reaches the far post");
+  }
+  auto* roll=script.findSymbol("ZS_STAND_GUARDING_LOOP.RANDOM");
+  require(roll!=nullptr,"the original guard Loop has a saved RANDOM symbol");
+  const auto originalRoll=roll->get_int();
+  roll->set_int(0);
+  second.setStateTime(6000);
+  reload(second);
+  const auto before = Contract::random(script);
+  Contract::tickRoutine(second);
+  require(second.activityStage()==Stage::Hold && second.currentWayPoint()==other && other->useCounter()==1 &&
+          second.isAiQueueEmpty() && second.stateTime()==6000 && Contract::random(script)==before && roll->get_int()==0,
+          "loading the pose resolves the held post and preserves the due draw without replaying it");
+
+  second.setStateTime(5999);
+  Contract::tickRoutine(second);
+  require(second.stateTime()==5999 && Contract::random(script)==before,"no draw before the sixth whole second");
+  for(const auto seed:{1u,4u}) {
+    script.setSeed(seed);
+    auto expected = Contract::random(script);
+    const auto draw = expected()%uint32_t(a.rollRange);
+    second.setStateTime(6000);
+    Contract::tickRoutine(second);
+    const auto* action = second.aiQueueFront();
+    require(Contract::random(script)==expected && roll->get_int()==int32_t(draw) && second.stateTime()==0 &&
+            (a.gestures[draw].animation.empty() ? action==nullptr :
+             action && action->act==AI_PlayAnim && action->s0==a.gestures[draw].animation),
+            "the due gesture consumes one draw, queues its recorded outcome and resets state time");
+    }
+  require(calls.phase(second,guard.state+"_LOOP")==0,"holding and gesturing never call the script Loop");
+  script.setSeed(1);
+  roll->set_int(0);
+  second.setStateTime(6000);
+  script.invokeState(&second,nullptr,nullptr,ScriptFn(guard.phases.loop));
+  require(roll->get_int()==5,"the original Loop writes the same seeded draw");
+  roll->set_int(originalRoll);
+  test.stop(second);
+  guard.pointName=wp->name;
+  auto checkPolled = [&](bool deferred) {
+    test.start(guard,wp->position(),&second,false);
+    second.attachToPoint(wp);
+    second.updateTransform();
+    const auto loops = calls.phase(second,guard.state+"_LOOP");
+    if(deferred) script.startupFloor().begin();
+    Contract::tickRoutine(second);
+    if(deferred) script.startupFloor().end();
+    activityDrain(second);
+    Contract::tickRoutine(second);
+    require(second.activityStage()==Stage::Off && calls.phase(second,guard.state+"_LOOP")==loops+1,
+            "the original guard Loop runs for a disabled, missing or deferred activity");
+    test.stop(second);
+    };
+  Contract::activityEventsOn(script)=false;
+  checkPolled(false);
+  Contract::activityEventsOn(script)=true;
+  ActivityDefinitionRuntime::Definitions empty;
+  std::swap(Contract::activities(script),empty);
+  checkPolled(false);
+  std::swap(Contract::activities(script),empty);
+  checkPolled(true);
+
+  const auto* away=world.findWayPoint("NW_CITY_PATH_HABOUR_03");
+  const auto* beside=world.findPoint("FP_STAND_CITY_10",false);
+  require(away && beside,"the external destination has a different post");
+  freePost(beside);
+  test.only({}); // run queued walks without starting another routine tick
+  select(second);
+  {
+    FpLock blocked(post);
+    second.aiPush(AiQueue::aiGoToPoint(*away));
+    reload(second); // the restored guard walk still competes, the external walk keeps its place
+    Contract::nextAiAction(second);
+    test.stepUntil(1500,[&]{ return second.currentWayPoint()==away && second.isAiQueueEmpty(); },"external walk finishes");
+    require(world.findFreePoint(second,a.point)==beside,"there is a free but unrelated post beside the external destination");
+    Contract::tickRoutine(second);
+    require(second.aiQueueFront() && second.aiQueueFront()->point==wp,"the loser returns to its row before selecting a post");
+    }
+  test.stop(second);
+
+  init(second,*wp);
+  second.handle().wp=post->name;
+  second.setPosition(away->position());
+  second.attachToPoint(away);
+  second.updateTransform();
+  Contract::tickRoutine(second);
+  require(second.aiQueueFront() && second.aiQueueFront()->point==post,"a row named for a free point uses the AI_GotoWP fallback");
+  test.stop(second);
+
+  init(second,*wp);
+  {
+    const auto mid=(second.mapHeadBone()+post->position()+Tempest::Vec3(0,10,0))*.5f;
+    ProtoMesh table(PackedMesh(box({65,180,65},true),PackedMesh::PK_Visual),"CONTRACT_GUARD_OBSTRUCTION.MRM");
+    auto obstacle=world.physic()->addStaticObj(table.attach[0].shape.get(),at(mid.x,mid.y,mid.z),"CONTRACT_GUARD_OBSTRUCTION.MRM");
+    require(!post->isLocked() && !world.findFreePoint(second,a.point),"the obstacle hides the only free post");
+    Contract::tickRoutine(second);
+    const auto deadline=Contract::activityEvents(second).deadline;
+    require(second.activityStage()==Stage::Wait && deadline!=gtime::endOfTime(),"the occluded post has a retry deadline");
+    obstacle.setObjMatrix(at(mid.x,mid.y+1000,mid.z));
+    require(world.findFreePoint(second,a.point)==post,"moving the obstacle opens the sightline");
+    test.stepUntil(600,[&]{ return second.isAiQueueEmpty(); },"the fallback pose finishes");
+    gothic.gameSession()->setTime(deadline);
+    Contract::tickRoutine(second);
+    require(second.aiQueueFront() && second.aiQueueFront()->point==post,"the guard notices the cleared sightline");
+    }
+  test.stop(second);
+
+  const WayPoint vanished(wp->position(),"CONTRACT_WAYPOINT_ABSENT_AFTER_LOAD");
+  second.aiPush(AiQueue::aiGoToPoint(vanished));
+  second.aiPush(AiQueue::aiLookAtNpc(&first));
+  reload(second);
+  require(second.aiQueueFront() && second.aiQueueFront()->point==nullptr,"the missing waypoint loads as null");
+  Contract::nextAiAction(second);
+  require(second.aiQueueFront() && second.aiQueueFront()->act==AI_LookAtNpc,"a vanished waypoint leaves the next action intact");
+  test.stop(second);
+  Contract::random(script)=before;
+  test.release();
+  std::puts("Guard point: one owner, last release, loaded walk and pose, 5999/6000 ms, both draw outcomes, VM fallback");
+  }
+
+void guardCampfireChange(Gothic& gothic) {
+  using Contract=NpcDefinitionContract;
+  gothic.clearGame().reset();
+  gothic.setGame(std::make_unique<GameSession>("OLDWORLD.ZEN"));
+  ActivityEventsWorld test(gothic);
+  auto& world=test.world();
+  auto& script=world.script();
+  gothic.gameSession()->setTime(gtime(world.time().day(),8,1));
+  auto* npc=activityNpc(world,"VLK_4148_GESTATH");
+  const auto* row=world.findWayPoint("OW_DJG_ROCKCAMP_01");
+  const auto* fire=world.findPoint("FP_CAMPFIRE_DJG_ROCKCAMP_01",false);
+  require(npc && row && fire,"Gestath and his camp must be in OLDWORLD");
+  EventActor guard;
+  guard.state="ZS_STAND_GUARDING";
+  guard.phases=activityPhases(script,guard.state.c_str());
+  guard.pointName=row->name;
+  test.only({npc});
+  test.start(guard,fire->position(),npc,false);
+  npc->attachToPoint(fire);
+  npc->updateTransform();
+  test.stepUntil(900,[&]{ return npc->activityStage()==ActivityEvents::Stage::Wait; },"Gestath waits at the morning row");
+  require(npc->currentWayPoint()==row && fire->useCounter()==0,"the waiting guard has released the campfire");
+
+  test.stop(*npc);
+  Contract::activityEventsOn(script)=false;
+  const auto* away=test.awayFrom(*row,800);
+  npc->setPosition(away->position());
+  npc->attachToPoint(away);
+  npc->updateTransform();
+  FpLock occupied(fire);
+  npc->aiPush(AiQueue::aiGoToPoint(*fire));
+  Contract::nextAiAction(*npc);
+  require(npc->currentGoToPoint()==fire && fire->useCounter()==2,"ordinary movement to an occupied campfire keeps its original approach");
+  std::puts("Guard campfire: Gestath frees his old place at the change of row; ordinary GotoWP still approaches it when occupied");
+  }
