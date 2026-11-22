@@ -498,20 +498,32 @@ void guardActivityWorld(Gothic& gothic) {
     }
   test.stop(second);
 
-  // A polling save made during an external walk contains no recorded return command.
-  Contract::activityEventsOn(script)=false;
-  scriptSelect(second,guard);
-  second.clearAiQueue();
-  NpcEngineCalls::gotoWaypoint(world,second,beside->name);
-  Contract::nextAiAction(second);
-  second.aiPush(AiQueue::aiLookAtNpc(&first));
-  Contract::activityEventsOn(script)=true;
-  reload(second);
-  test.stepUntil(1500,[&]{ return second.currentWayPoint()==beside && second.isAiQueueEmpty(); },"the legacy external walk runs to its saved destination");
-  Contract::tickRoutine(second);
-  require(second.lookAtTarget()==&first && second.aiQueueFront() && second.aiQueueFront()->point==wp && !beside->isLocked(),
-          "the first place check releases the remote STAND and returns to the guard's own row");
-  test.stop(second);
+  // A polling save made before or during an external walk contains no provenance or recorded return.
+  first.attachToPoint(beside);
+  for(bool inFlight:{false,true}) {
+    Contract::activityEventsOn(script)=false;
+    scriptSelect(second,guard);
+    second.clearAiQueue();
+    NpcEngineCalls::gotoWaypoint(world,second,beside->name);
+    second.aiPush(AiQueue::aiLookAtNpc(&first));
+    if(inFlight)
+      Contract::nextAiAction(second);
+    Contract::activityEventsOn(script)=true;
+    reload(second);
+    if(!inFlight) {
+      require(second.aiQueueFront() && second.aiQueueFront()->s0.empty() && second.aiQueueFront()->i1==0 && !beside->isGuarded(),
+              "the old queued GotoWP has no marker and its destination has an ordinary owner");
+      Contract::nextAiAction(second);
+      }
+    require(second.currentGoToPoint()==beside && second.aiQueueFront() && second.aiQueueFront()->act==AI_LookAtNpc,
+            "the legacy external walk starts before the saved look");
+    test.stepUntil(1500,[&]{ return second.currentWayPoint()==beside && second.isAiQueueEmpty(); },"the legacy external walk runs to its saved destination");
+    Contract::tickRoutine(second);
+    require(second.lookAtTarget()==&first && second.aiQueueFront() && second.aiQueueFront()->point==wp && beside->useCounter()==1,
+            "the first place check keeps the ordinary owner's lock and returns the guard to its row");
+    test.stop(second);
+    }
+  first.attachToPoint(nullptr);
 
   init(second,*wp);
   second.handle().wp=post->name;
