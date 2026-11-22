@@ -2025,8 +2025,10 @@ python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
   --out /absolute/activity.md --json /absolute/activity.json
 ```
 
-Point activities use `npc-day-parity.tolerances-points.json` (E2.1, **draft; lead approval required**),
-calibrated on complete shared-stream days with seeds 73106 and 73107 using the same frozen engine.
+Point activities use `npc-day-parity.tolerances-points.json` (E2.1, **draft; lead approval required**).
+The complete shared-stream days 73106 and 73107 were recalculated with the verified HUMANS center
+offset and active-TA waypoint; all eight combinations of three rounded boundary bits give identical metrics.
+The result is 31585 samples, 341 arrivals, p95 0 / maximum 5 game minutes and no missed segments or collisions.
 The cancelled prefix is excluded. The profile covers the five measured forms, pooled and individually:
 held FP agreement >=94%, pose time 0.99..1.01, arrival p95 <=5 / maximum <=10 game minutes,
 zero missed segments, stuck NPCs and double occupancy. The FP allowance reflects two seated campfire
@@ -2048,17 +2050,20 @@ The new sample columns follow every old column, in its original order:
 | `on_fp` | `Npc_IsOnFP(self, held_name)`: current point is free, its name matches, and it is close by `MoveAlgo::isClose(..., MAX_AI_USE_DISTANCE)`; the comparer also checks its activity name |
 | `aivar_19` | Raw script stage; 2 walking, 1 ready to enter, 0 pose for guarding, arms crossed, STAND_WP and PEE |
 | `fp_available` | The script's point lookup for STAND / CAMPFIRE / PEE finds a point (1) or none (0); -1 outside these four forms |
-| `on_routine_wp` | `Npc_GetDistToWP(self, self.wp) <= 500`, using the engine call shared with the original script; independent of the nearest waypoint column |
+| `on_routine_wp` | Distance <=500 cm to the active TA row's waypoint, using the existing `Npc_GetDistToWP` engine call; independent of the nearest waypoint and the lagging `self.wp` |
 
 `points.total` and `points.by_state` report held-coordinate agreement (raw and with legal fallback in either run
 excluded), pose sample time B/A, signed first arrival p95/max, missed reference TA segments and
-double occupancy in B. The collision search includes occupants outside the state filter. Campfire
-pose uses body state 11 (`BS_SIT`); the other four forms use `aivar_19 == 0`. Physical arrival
+double occupancy in B. Point samples use the scheduled TA state; the activity table keeps actual active-ZS
+counts. A state present only in TA has an empty active-ZS row (undefined ratios), while its point misses
+still contribute to per-state and total stuck counts. The collision search includes occupants outside the state filter. Campfire
+pose uses body state 11 (`BS_SIT`); the other four forms require standing body state 0 and `aivar_19 == 0`. Physical arrival
 does not require an active ZS: End/Init can leave it empty while the NPC stays on point. Pose accepts
 the reference ZS or this transient empty ZS, but not a known different ZS. STAND_WP has no held
 free point: arrival/pose use `on_routine_wp`, and held-point agreement is not applicable.
 When TA changes the target waypoint, the initial uninterrupted hold of the previous free point
-is excluded from arrivals to the new post, independently in A and B.
+outside the new approach radius is excluded from arrivals, independently in A and B. A suitable
+point already in that radius fulfils the new routine without leaving and reclaiming it.
 
 A legal fallback is a standing NPC near its routine waypoint with no suitable available free point.
 It has a separate A/B row. Raw pose time is reported (waiting for a campfire is not sitting); acceptance
@@ -2066,9 +2071,12 @@ excludes samples with legal waiting in either run from both pose populations and
 Observed legal B waiting intervals are subtracted from a later arrival's delay.
 An entirely waiting segment is allowed only if **every reference on-point sample** has legal fallback
 in B. Waiting once cannot hide losing an otherwise empty point for the rest of the segment.
-Missing point columns fail enabled point checks. MOB metrics are **not applicable** when the selected
-reference samples have no objects; an empty state selection still fails numeric checks. The shared
+Missing point columns fail enabled point checks and never add point misses to legacy stuck counts.
+MOB checks are **not applicable** when the selected reference samples have no objects; Extra MOB
+still reports objects added only in B. An empty state selection still fails numeric checks. The shared
 `max_activity_stuck` gate includes unique NPCs from missed point segments as well as missing MOBs.
+TA-only point samples also make MOB checks inapplicable. Pose time 0/0 is inapplicable, while losing
+an observed reference pose gives ratio 0. Nonempty TA strings must have the four fields of `routineText`.
 
 ## Engine side
 

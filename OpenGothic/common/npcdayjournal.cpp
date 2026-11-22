@@ -155,12 +155,13 @@ void event(World& w, Journal& j, const Npc& npc, const Entry& e, const char* kin
   ++j.eventCount;
   }
 
-std::string routineText(World& w, const Npc& npc, int index) {
+std::string routineText(World& w, const Npc& npc, int index, Npc::RoutineInfo* row=nullptr) {
   std::string ret = "-";
   int i = 0;
   npc.forEachRoutine([&](const Npc::RoutineInfo& r) {
     if(i++!=index)
       return;
+    if(row!=nullptr) *row=r;
     char buf[48];
     std::snprintf(buf,sizeof(buf),"%02lld:%02lld-%02lld:%02lld",(long long)r.start.hour(),(long long)r.start.minute(),
                   (long long)r.end.hour(),(long long)r.end.minute());
@@ -200,19 +201,21 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
       }
     const auto  inv   = inventoryHash(*npc);
     const int   ta    = npc->currentRoutineIndex();
+    Npc::RoutineInfo routine{};
+    const auto taText = routineText(w,*npc,ta,&routine);
     const auto* mob   = npc->interactive();
     const auto* point = npc->currentWayPoint();
     if(point!=nullptr && !point->isFreePoint()) point=nullptr;
     const bool onPoint=point!=nullptr && MoveAlgo::isClose(*npc,*point,MAX_AI_USE_DISTANCE);
     // Availability is needed to distinguish legal waiting from losing an empty point.
     // These are the five script forms calibrated by the point-activity bench, not executors.
-    const auto state=symbolName(w,npc->currentState().ptr);
+    const auto state=symbolName(w,routine.state.ptr);
     std::string_view pointName;
     if(state=="ZS_STAND_GUARDING" || state=="ZS_STAND_ARMSCROSSED") pointName="STAND";
     else if(state=="ZS_SIT_CAMPFIRE") pointName="CAMPFIRE";
     else if(state=="ZS_PEE") pointName="PEE";
     const int available=pointName.empty() ? -1 : (w.findFreePoint(*npc,pointName)!=nullptr ? 1 : 0);
-    const bool onRoutine=NpcEngineCalls::distanceToWaypoint(w,*npc,npc->handle().wp)<=500;
+    const bool onRoutine=NpcEngineCalls::distanceToWaypoint(w,*npc,routine.point)<=500;
     if(j.heights!=nullptr && npc->usesSimplifiedMovement() && !npc->isDead() && mob==nullptr) {
       // Verification only, at journal sample times; movement itself never rays.
       const auto ground=w.physic()->landRay(p+Tempest::Vec3(0,100,0));
@@ -229,7 +232,7 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
                  "%.0f,%.4f,%s,%s,%d,%d,%d,%s,%s,%llu,%.1f,%.1f,%.1f,%s,%.1f,%zu,%s,%u,%016llx,%llu,%s,%s,%s,%s,%s,%.1f,%.1f,%.1f,%d,%d,%d,%d\n",
                  t,at,key->c_str(),e.symbol.c_str(),npc->isDead() ? 0 : 1,
                  npc->attribute(ATR_HITPOINTS),npc->attribute(ATR_HITPOINTSMAX),
-                 routineText(w,*npc,ta).c_str(),symbolName(w,npc->currentState().ptr).c_str(),
+                 taText.c_str(),symbolName(w,npc->currentState().ptr).c_str(),
                  (unsigned long long)npc->stateTime(),double(p.x),double(p.y),double(p.z),
                  wp!=nullptr ? clean(wp->name).c_str() : "-",
                  wp!=nullptr ? double((wp->position()-p).length()) : -1.0,
