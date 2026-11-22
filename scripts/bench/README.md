@@ -2025,10 +2025,14 @@ python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
   --out /absolute/activity.md --json /absolute/activity.json
 ```
 
-Point activities use `npc-day-parity.tolerances-points.json` (E2.1, **approved 2026-11-22 for 73106 -> 73107**).
+Point activities use `npc-day-parity.tolerances-points.json` (E2.1, approved on `bd6391ddc` for 73106 -> 73107;
+**current calibration requires a lead decision after the F1-F3 metric fixes**).
 The complete shared-stream days 73106 and 73107 were recalculated with the verified HUMANS center
 offset and active-TA waypoint; all eight combinations of three rounded boundary bits give identical metrics.
-The result is 31585 samples, 341 arrivals, p95 0 / maximum 5 game minutes and no missed segments or collisions.
+The current result is 31585 samples, 341 arrivals, p95 0 / maximum 5 game minutes, no collisions,
+but three missing fallback-only shifts of PAL_227 (one stuck NPC). The unchanged zero limits fail:
+pooled and guarding checks pass 10/12; the other four forms pass 12/12. Historical 12/12 on
+`bd6391ddc` does not validate the corrected metric. Replay evidence is in `npc-events-e2/review-f1-f4/`.
 The cancelled prefix is excluded. The profile covers the five measured forms, pooled and individually:
 held FP agreement >=94%, pose time 0.99..1.01, arrival p95 <=5 / maximum <=10 game minutes,
 zero missed segments, stuck NPCs and double occupancy. The FP allowance reflects two seated campfire
@@ -2039,7 +2043,7 @@ The derived controls are `/mnt/shared/gothic-ai/npc-events-e2/accepted-calibrati
 and `seed-73107/`; primary CSVs and their SHA-256 hashes are unchanged. The folder also contains
 the reproduction recipe, three rounded boundary bits, and unknown visibility lookups.
 Guarding has no metric-sensitive unknowns (fallback A/B 5084/5080). Four ARMSCROSSED visibility
-bits per seed remain unknown; all 256 archive pairs preserve all 12 gated values. Before comparing
+bits per seed remain unknown; the 256-pair proof of identical gated values applies to `bd6391ddc`. Before comparing
 a future candidate across all five forms, run the archived `variants.py REPO CANDIDATE` to retain
 all 16 alternatives of control 73106. Archive-pair invariance does not prove candidate invariance.
 
@@ -2068,17 +2072,22 @@ still contribute to per-state and total stuck counts. The collision search inclu
 pose uses body state 11 (`BS_SIT`); the other four forms require standing body state 0 and `aivar_19 == 0`. Physical arrival
 does not require an active ZS: End/Init can leave it empty while the NPC stays on point. Pose accepts
 the reference ZS or this transient empty ZS, but not a known different ZS. STAND_WP has no held
-free point: arrival/pose use `on_routine_wp`, and held-point agreement is not applicable.
+free point: arrival/pose use `on_routine_wp` only if B's target waypoint matches A's,
+and held-point agreement is not applicable. Fallback uses the same target check.
 When TA changes the target waypoint, the initial uninterrupted hold of the previous free point
-outside the new approach radius is excluded from arrivals, independently in A and B. A suitable
+outside the new approach radius is excluded from arrivals, independently in A and B. A newly acquired
+hold near the preceding target waypoint is also excluded. A suitable
 point already in that radius fulfils the new routine without leaving and reclaiming it.
 
 A legal fallback is a standing NPC near its routine waypoint with no suitable available free point.
 It has a separate A/B row. Raw pose time is reported (waiting for a campfire is not sitting); acceptance
-excludes samples with legal waiting in either run from both pose populations and from held-point agreement.
+excludes a legal wait from both pose populations and held-point agreement only if the other run
+is also in the activity pose or legally waiting. An inactive candidate cannot hide behind A's wait.
 Observed legal B waiting intervals are subtracted from a later arrival's delay.
 An entirely waiting segment is allowed only if **every reference on-point sample** has legal fallback
 in B. Waiting once cannot hide losing an otherwise empty point for the rest of the segment.
+If A's entire shift has only legal waiting, B must fulfil it at least once (on-point or legal wait);
+otherwise it counts as a missing segment, with no invented physical arrival time for A.
 Missing point columns fail enabled point checks and never add point misses to legacy stuck counts.
 MOB checks are **not applicable** when the selected reference samples have no objects; Extra MOB
 still reports objects added only in B. An empty state selection still fails numeric checks. The shared
