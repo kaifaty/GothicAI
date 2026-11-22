@@ -14,6 +14,7 @@
 #include "graphics/texturelookahead.h"
 #include "graphics/texturescreendemand.h"
 #include "resources.h"
+#include "shader.h"
 #include "texturebudget.h"
 #include "textureflow.h"
 #include "texturelevels.h"
@@ -38,6 +39,7 @@
 #include <iostream>
 #include <iterator>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -968,6 +970,7 @@ void trackRecords(Tempest::Device& device, const Fixture& fixture) {
           "a ground with a track or a border is asked no coarser than a repeat per the finest of its tiles");
   }
 #include "foliage_tree_test.h" // foliageTreeMaths, foliageTreeRecords
+#include "crown_light_test.h"
 #include "vsm_pair_cap_test.h" // vsmRecords
 #include "lights_bvh_test.h" // lightsBvhRecords
 
@@ -3220,21 +3223,30 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
 
 int main(int argc, char** argv) {
   try {
-    ddsMipTails();
-    textureLevelMaths();
-    textureFlowMaths();
-    textureBudgetMaths();
-    if(argc==2 && std::string_view(argv[1])=="--dds-mip-tail") {
-      std::cout << "{\"test\":\"dds_mip_tail\",\"passed\":true,\"assertions\":" << assertions << "}\n";
-      return 0;
+    const bool crownOnly = argc==2 && std::string_view(argv[1])=="--crown-light";
+    if(!crownOnly) {
+      ddsMipTails();
+      textureLevelMaths();
+      textureFlowMaths();
+      textureBudgetMaths();
+      if(argc==2 && std::string_view(argv[1])=="--dds-mip-tail") {
+        std::cout << "{\"test\":\"dds_mip_tail\",\"passed\":true,\"assertions\":" << assertions << "}\n";
+        return 0;
+        }
+      foliageWindMaths();
+      foliageTreeMaths();
+      variants();
       }
-    foliageWindMaths();
-    foliageTreeMaths();
-    variants();
     Fixture fixture;
     CommandLine commandLine(0,nullptr);
     Tempest::VulkanApi api;
     Tempest::Device device(api);
+    if(crownOnly) {
+      crownLightMaths();
+      crownLightPixels(device,fixture);
+      std::cout << "{\"test\":\"crown_light\",\"passed\":true,\"assertions\":" << assertions << "}\n";
+      return 0;
+      }
     replacements(device,fixture);
     census(fixture);
     emptyTable(device,fixture);
@@ -3242,6 +3254,7 @@ int main(int argc, char** argv) {
     fringeRecords(device,fixture);
     foliageRecords(device,fixture);
     foliageTreeRecords(device,fixture);
+    crownLightPixels(device,fixture);
     vsmRecords(device);
     lightsBvhRecords(device);
     grassRecords(device,fixture);

@@ -159,11 +159,12 @@ void main() {
     color = linear;
     color *= luminance(norm);
 #if defined(MATERIAL_MAPS) && defined(SURFEL_GI)
-    const vec4 orm = gbufOrmMaterial(texelFetch(gbufOrm, fragCoord, 0), diff4.a);
+    const vec4 ormG = texelFetch(gbufOrm, fragCoord, 0);
+    const vec4 orm = gbufOrmMaterial(ormG, diff4.a);
     if(orm.a>0.5 && isGBufEye(diff4.a))
       color *= orm.r * orm.b; // the lid's shade of an eye (common.glsl, GBufEyeBit)
     else if(orm.a>0.5 && !isGBufHair(diff4.a))
-      color *= orm.r * (1.0 - orm.b);
+      color *= orm.r * (1.0 - orm.b) * gbufCrownShade(ormG, diff4.a);
 #endif
     }
 #if defined(SURFEL_GI)

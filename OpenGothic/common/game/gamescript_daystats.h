@@ -39,6 +39,7 @@ class DayScriptStats {
     Phase* phase();
     std::string family(std::string_view name) const;
     bool active=true;
+    uint64_t callObserver=0;
     uint64_t calls=0, rolls=0;
     std::map<std::string,uint64_t> symbols, sources;
     std::map<std::string,State> states;
