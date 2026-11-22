@@ -981,7 +981,13 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
         Contract::aiState(npc).eTime=world.time();
         tick();
         check(fp->useCounter()==1 && npc.currentWayPoint()==fp,"the last Loop keeps the seat while queuing both sit and rise");
-        checkPointClip(npc,"T_SIT_2_STAND",BS_STAND);
+        auto handover=Contract::queue(npc);
+        std::vector<std::string> clips;
+        while(handover.size()>0) {
+          const auto action=handover.pop();
+          if(action.act==AI_PlayAnimBs) clips.push_back(action.s0);
+          }
+        check(clips==std::vector<std::string>{"T_STAND_2_SIT","T_SIT_2_STAND"},"the last Loop seats the camper before End raises it");
         gothic.gameSession()->setTime(before);
         loadSavedNpc(npc,arrival);
         }
