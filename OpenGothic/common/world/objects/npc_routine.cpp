@@ -180,22 +180,17 @@ void Npc::tickRoutine() {
     restoreActivityEvents(owner.rules().eventActivity(aiState.funcIni));
   const bool events = activityEvents.activity!=nullptr;
   const bool atPoint = events && activityEvents.activity->point;
-  const bool fastPath = (aiPolicy==NpcProcessPolicy::AiFar2 && routines.empty()); //HACK: don't process far away Npc
-  if(aiState.loopNextTime<=owner.tickCount()) {
+  const bool loopDue = aiState.loopNextTime<=owner.tickCount();
+  bool runLoop = false;
+  if(loopDue) {
     aiState.loopNextTime = owner.tickCount() + perceptionTimeClampt();
     int loop = LOOP_CONTINUE;
-    if(!events && aiState.funcLoop.isValid()) {
+    if(aiState.funcLoop.isValid()) {
       static const float MAX_DIST = 300;
-      if(fastPath && currentFp!=nullptr && qDistTo(currentFp) < MAX_DIST*MAX_DIST) {
-        loop = LOOP_CONTINUE;
-        }
-      else if(fastPath && currentFp!=nullptr) {
-        // for debugging
+      const bool fastPath = aiPolicy==NpcProcessPolicy::AiFar2 && routines.empty();
+      runLoop = !(fastPath && currentFp!=nullptr && qDistTo(currentFp)<MAX_DIST*MAX_DIST);
+      if(!events && runLoop)
         loop = invokeRoutine(aiState.funcLoop);
-        }
-      else {
-        loop = invokeRoutine(aiState.funcLoop);
-        }
       }
     else if(!events) {
       // ZS_DEATH   have no loop-function, in G1, G2-classic
@@ -212,7 +207,7 @@ void Npc::tickRoutine() {
     if(loop!=LOOP_CONTINUE) {
       if(atPoint) {
         wakeActivity(ActivityEvents::RowEnd);
-        tickActivityEvents();
+        tickActivityEvents(runLoop);
         }
       finishState(false,ActivityEvents::RowEnd);
       currentOther  = nullptr;
@@ -221,7 +216,7 @@ void Npc::tickRoutine() {
       }
     }
   if(events)
-    tickActivityEvents();
+    tickActivityEvents(runLoop);
   }
 
 void Npc::forEachRoutine(const std::function<void(const RoutineInfo&)>& f) const {

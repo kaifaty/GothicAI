@@ -30,10 +30,16 @@ void Npc::stopActivityEvents(uint16_t why) {
   if(record && aiState.started && why!=0 && !(atPoint && why==ActivityEvents::RowEnd))
     ActivityEvents::countWakes(aiState.hint,why,false);
   if(atPoint) {
+    const auto& point=*record->point;
+    // The campfire's End queues the rise. The next walk or interaction releases the seat.
+    const bool keepSeat=point.form==ActivityDefinitions::PointActivity::Form::Campfire &&
+                        isOnFreePoint(point.point) && currentFp==currentFpLock.point() &&
+                        (activityEvents.stage==ActivityEvents::Stage::Off ||
+                         ActivityDefinitions::bodyStateContains(int32_t(bodyState()),point.enterBodyState));
     stopWaitingForPoints();
     if(why==ActivityEvents::RowEnd) {
       const auto& next=currentRoutine();
-      if(isActivityPoint(currentFp) && (next.callback!=aiState.funcIni || next.wayPointName()!=hnpc->wp))
+      if(!keepSeat && isActivityPoint(currentFp) && (next.callback!=aiState.funcIni || next.wayPointName()!=hnpc->wp))
         attachToPoint(nullptr);
       // The last walk/align/gesture precedes End in the queue. Keep ownership
       // until the next state is known, including a dialogue queued during the handover.
@@ -43,7 +49,7 @@ void Npc::stopActivityEvents(uint16_t why) {
       return;
       }
     dropActivityCommand();
-    if(isActivityPoint(currentFp) && !(why==0 && activityEvents.stage==ActivityEvents::Stage::Off))
+    if(!keepSeat && isActivityPoint(currentFp) && !(why==0 && activityEvents.stage==ActivityEvents::Stage::Off))
       attachToPoint(nullptr);
     } else {
     auto& places = owner.mobReservations();
@@ -72,9 +78,10 @@ void Npc::restoreActivityEvents(const ActivityEvents::Record* activity) {
   activityEvents.pending  = ActivityEvents::Loaded;
   }
 
-void Npc::tickActivityEvents() {
+void Npc::tickActivityEvents(bool runLoop) {
   auto& s = activityEvents;
-  if(s.activity->point && (aiQueue.size()!=0 || !go2.empty()))
+  const auto* point = s.activity->point;
+  if(point && (aiQueue.size()!=0 || !go2.empty()))
     return;
   if(s.restart && !(s.pending & ActivityEvents::RowEnd)) {
     runStateInit(); // Init again on this tick: the state stays started, an interruption still runs End
@@ -85,23 +92,25 @@ void Npc::tickActivityEvents() {
     s.pending   |= ActivityEvents::QueueDone;
     }
   if(!s.retry && s.pending==0 && s.deadline<=owner.time()) {
-    if(s.activity->point && s.stage==ActivityEvents::Stage::Wait)
+    if(point && s.stage==ActivityEvents::Stage::Wait)
       s.pending |= ActivityEvents::Visibility;
     else
       fireActivityWatchdog();
     }
-  if(!s.retry && s.pending==0) {
-    if(s.activity->point)
-      tickPointGesture();
-    return;
+  const auto wakes = s.pending;
+  if(wakes!=0 || s.retry) {
+    const auto retry = s.retry;
+    s.pending = 0;
+    s.retry   = false;
+    if(wakes!=0)
+      ActivityEvents::countWakes(aiState.hint,wakes,false);
+    stepActivityEvents(retry ? uint16_t(wakes|ActivityEvents::Watchdog) : wakes);
     }
-  const uint16_t wakes = s.pending;
-  const bool     retry = s.retry;
-  s.pending = 0;
-  s.retry   = false;
-  if(wakes!=0)
-    ActivityEvents::countWakes(aiState.hint,wakes,false);
-  stepActivityEvents(retry ? uint16_t(wakes|ActivityEvents::Watchdog) : wakes);
+  // Arrivals and releases are independent of the routine clock. The new timed poses
+  // draw only on the perception beat that would have run their Loop.
+  if(point && point->timed() &&
+     (point->form==ActivityDefinitions::PointActivity::Form::Guard ? !(wakes & ActivityEvents::Loaded) : runLoop))
+    tickPointGesture();
   }
 
 void Npc::tickActivityDeadline() {
@@ -151,13 +160,12 @@ void Npc::stepActivityEvents(uint16_t wakes) {
   using namespace ActivityEvents;
   auto& s = activityEvents;
   if(s.activity->point) {
-    if((wakes & Watchdog) && !(wakes & RowEnd) && s.stage==Stage::Approach) {
+    if((wakes & Watchdog) && !(wakes & RowEnd) && s.stage==Stage::Approach &&
+       s.activity->point->form==ActivityDefinitions::PointActivity::Form::Guard) {
       runStateInit();
       return;
       }
     seekActivityPoint(wakes);
-    if(!(wakes & Loaded))
-      tickPointGesture();
     return;
     }
   if(wakes & Watchdog) {
@@ -357,9 +365,10 @@ void Npc::seekActivityPoint(uint16_t wakes) {
 void Npc::tickPointGesture() {
   using namespace ActivityEvents;
   const auto& s = activityEvents;
+  if(s.stage!=Stage::Hold && s.stage!=Stage::Wait)
+    return;
   const auto& a = *s.activity->point;
-  if(!a.timed() || (s.stage!=Stage::Hold && s.stage!=Stage::Wait) || int32_t(stateTime()/1000)<=a.timerSeconds ||
-     hnpc->aivar[19]!=a.poseStage)
+  if(int32_t(stateTime()/1000)<=a.timerSeconds || hnpc->aivar[19]!=a.poseStage)
     return;
   countWakes(aiState.hint,Gesture,false);
   owner.rules().runPointGesture(*this,a);

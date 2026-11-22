@@ -1029,7 +1029,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      runStateInit();
     void      startActivityEvents(const ActivityEvents::Record* activity);
     void      restoreActivityEvents(const ActivityEvents::Record* activity);
-    void      tickActivityEvents();
+    void      tickActivityEvents(bool runLoop);
     void      tickActivityDeadline();
     void      fireActivityWatchdog();
     void      dropActivityCommand();

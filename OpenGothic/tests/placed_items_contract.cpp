@@ -86,8 +86,9 @@ struct NpcDefinitionContract {
   static auto& activityEvents(Npc& npc) { return npc.activityEvents; }
   static bool& activityEventsOn(GameScript& script) { return script.activityEvents; }
   static auto& previousState(Npc& npc) { return npc.aiPrevState; }
-  // The engine's own routine step, without waiting for the perception period.
-  static void tickRoutine(Npc& npc) { npc.aiState.loopNextTime=0; npc.tickRoutine(); }
+  // Single-phase fixtures take a Loop step without advancing the world.
+  static void tickRoutine(Npc& npc) { npc.aiState.loopNextTime=npc.world().tickCount(); npc.tickRoutine(); }
+  static void tickScheduledRoutine(Npc& npc) { npc.tickRoutine(); }
   // The engine's next queued action, as the NPC's tick takes it.
   static void nextAiAction(Npc& npc) { npc.nextAiAction(npc.aiQueue,0); }
   static void tickActivityDeadline(Npc& npc) { npc.tickActivityDeadline(); }

@@ -27,11 +27,13 @@ class ActivityEventsWorld final {
     MobReservations& places() { return world().mobReservations(); }
     static ActivityEvents::Stage stage(const Npc& npc) { return npc.activityStage(); }
 
+    void advance(uint64_t dt) {
+      gothic.gameSession()->tick(dt);
+      gothic.gameSession()->updateAnimation(dt);
+      }
     void step(size_t ticks=1) {
-      for(size_t i=0;i<ticks;++i) {
-        gothic.gameSession()->tick(33);
-        gothic.gameSession()->updateAnimation(33);
-        }
+      for(size_t i=0;i<ticks;++i)
+        advance(33);
       }
     size_t stepUntil(size_t limit,const std::function<bool()>& done,const std::string& what,
                      const std::function<void()>& each={}) {
@@ -771,7 +773,11 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
       if(vm.pc()==quakePc) ++quakes;
       });
     auto drain=[&] { test.stepUntil(900,[&]{ return npc.isAiQueueEmpty(); },a.state+" finishes its commands"); };
-    auto tick=[&] { Contract::tickRoutine(npc); };
+    auto awaitPerception=[&] {
+      test.stepUntil(600,[&]{ return world.tickCount()>=Contract::aiState(npc).loopNextTime; },a.state+" reaches its next perception tick");
+      };
+    // Inspect the queue before implAiTick consumes an action on the same frame.
+    auto tick=[&] { awaitPerception(); Contract::tickScheduledRoutine(npc); };
     auto play=[&](const char* name,BodyState body=BS_NONE) {
       checkPointClip(npc,name,body);
       test.stepUntil(600,[&]{ return npc.animProgress(name)>=0; },a.state+" plays "+name);
@@ -786,6 +792,19 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
       npc.setStateTime(0);
       };
     npc.handle().aivar[19]=73; // The campfire script never writes the TA position.
+    const auto* away=ActivityEventsWorld::awayFrom(*wp,800.f);
+    test.start(a,away->position(),&npc,false);
+    npc.attachToPoint(away);
+    npc.updateTransform();
+    const auto initBeforeWalk=calls.phase(npc,a.state);
+    tick();
+    test.stepUntil(300,[&]{ return Contract::walking(npc); },a.state+" starts its Init approach");
+    npc.clearAiQueue();
+    tick();
+    const auto* resumed=npc.aiQueueFront();
+    check(calls.phase(npc,a.state)==initBeforeWalk+1 && npc.isInState(ScriptFn(a.phases.init)) &&
+          (!resumed || resumed->act!=AI_GoToPoint || resumed->point!=wp),
+          "clearing an active approach resumes the state without another Init or a new walk to its waypoint");
     start();
     const char* scheme=fire ? "CAMPFIRE" : pee ? "PEE" : "STAND";
     check(fp ? world.findFreePoint(npc,scheme)==fp : world.findFreePoint(npc,"STAND")!=nullptr,
@@ -805,6 +824,18 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
       loadSavedNpc(npc,savedNpc(npc));
       tick();
       check(npc.isAiQueueEmpty(),"a loaded camper searches from the saved position");
+      if(!events)
+        npc.attachToPoint(nullptr); // The VM leaves the old ordinary waypoint on direct relocation.
+      check(npc.currentWayPoint()==nullptr,"the displaced camper waits with no current point");
+      occupied=FpLock();
+      tick();
+      check(npc.isAiQueueEmpty(),"freeing a seat out of reach leaves the displaced camper waiting");
+      npc.setPosition(wp->position());
+      npc.updateTransform();
+      tick();
+      check(npc.aiQueueFront() && npc.aiQueueFront()->act==AI_GoToPoint && npc.aiQueueFront()->point==fp,
+            "moving the same waiter again with no current point finds the now visible seat");
+      occupied=FpLock(fp);
       loadSavedNpc(npc,waiting);
       tick();
       } else if(pee) {
@@ -832,12 +863,32 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
       const auto early=Contract::random(script);
       gesture.set_int(-1);
       event.set_int(-1);
+      awaitPerception();
       npc.setStateTime(5999);
-      tick();
+      Contract::tickScheduledRoutine(npc);
       check(Contract::random(script)==early && npc.stateTime()==5999 && gesture.get_int()==-1 &&
             event.get_int()==-1 && quakes==0,"no gesture or story draw before the sixth whole second");
       checkPointClip(npc,"");
       drain();
+      const auto due=Contract::aiState(npc).loopNextTime;
+      check(due>world.tickCount()+1,"real perception interval leaves a tick before the due draw");
+      script.setSeed(0); // No clip or earthquake, so the queue stays empty at the real draw tick.
+      auto expected=Contract::random(script);
+      const auto nativeRoll=int(expected()%(folded ? 7u : 10u));
+      const auto nativeStory=folded ? int(expected()%200) : -1;
+      const auto nativeLoops=vmLoops;
+      const auto beforeDue=Contract::random(script);
+      test.only({&npc});
+      test.advance(1);
+      check(world.tickCount()<due && Contract::aiState(npc).loopNextTime==due && npc.stateTime()==6000 &&
+            vmLoops==nativeLoops && gesture.get_int()==-1 && event.get_int()==-1 && Contract::random(script)==beforeDue,
+            "the real NPC tick at 6000 ms precedes perception and leaves both draws pending");
+      test.stepUntil(600,[&]{ return world.tickCount()>=due; },a.state+" reaches perception in the normal NPC tick");
+      test.only({});
+      check(Contract::aiState(npc).loopNextTime>world.tickCount() && npc.stateTime()==0 &&
+            gesture.get_int()==nativeRoll && event.get_int()==nativeStory && quakes==0 &&
+            Contract::random(script)==expected && vmLoops==nativeLoops+size_t(!events),
+            "the first real perception tick performs one gesture decision in either mode");
       auto draw=[&](uint32_t seed,int map,int dead,int faction,bool quake,bool hasPortal=true) {
         level.set_int(map);
         raven.set_int(dead);
@@ -851,8 +902,9 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
         const auto roll=int(expected()%(folded ? 7u : 10u));
         const int eventRoll=folded && hasPortal ? int(expected()%200) : -1;
         const int soundRoll=quake ? int(expected()%4) : -1;
+        awaitPerception();
         npc.setStateTime(6000);
-        tick();
+        Contract::tickScheduledRoutine(npc);
         check(gesture.get_int()==roll && event.get_int()==eventRoll && quakes==before+quake &&
               sound.get_int()==soundRoll && Contract::random(script)==expected && npc.stateTime()==0,
               "the due gesture, story draw and earthquake's own sound draw must follow the script order");
@@ -884,9 +936,10 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
       }
     if(fp) {
       occupied=FpLock();
+      awaitPerception();
       if(folded) npc.setStateTime(6000);
       const auto beforeWalk=Contract::random(script);
-      tick();
+      Contract::tickScheduledRoutine(npc);
       const auto* walk=npc.aiQueueFront();
       check(walk && walk->act==AI_GoToPoint && walk->point==fp && fp->useCounter()==0,
             "freeing the point queues a walk to that point");
@@ -921,9 +974,43 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
               "loading the seated NPC preserves its pose and lock without restarting Init");
         } else drain();
       }
-    npc.clearState(false);
-    checkPointClip(npc,fire ? "T_SIT_2_STAND" : pee ? "T_PEE_2_STAND" : "T_LGUARD_2_STAND",fire ? BS_STAND : BS_NONE);
-    drain();
+    if(fire) {
+      const auto seated=savedNpc(npc);
+      const auto* field=world.findWayPoint("NW_FARM2_FIELD_03");
+      for(bool rowEnd:{false,true}) {
+        loadSavedNpc(npc,seated);
+        const auto ends=calls.phase(npc,a.state+"_END");
+        if(rowEnd) {
+          gothic.gameSession()->setTime(gtime(world.time().day(),14,0));
+          check(npc.currentTaPoint()==field && field!=wp,"the next real routine row leaves the campfire");
+          Contract::aiState(npc).eTime=world.time();
+          tick();
+          } else {
+          npc.clearState(false);
+          }
+        check(calls.phase(npc,a.state+"_END")==ends+1 && fp->useCounter()==1 && npc.currentWayPoint()==fp,
+              "End queues the rise while one owner still holds the seat");
+        checkPointClip(npc,"T_SIT_2_STAND",BS_STAND);
+        if(rowEnd) {
+          loadSavedNpc(npc,savedNpc(npc));
+          check(fp->useCounter()==1 && npc.currentWayPoint()==fp,"loading with End queued keeps the seat occupied");
+          }
+        test.stepUntil(600,[&]{ return npc.animProgress("T_SIT_2_STAND")>=0; },"the camper starts rising");
+        check(fp->useCounter()==1 && npc.currentWayPoint()==fp,"the rising camper still holds the seat");
+        if(rowEnd)
+          test.only({&npc});
+        else
+          npc.aiPush(AiQueue::aiGoToPoint(*field));
+        test.stepUntil(900,[&]{ return npc.currentWayPoint()!=fp; },"the camper leaves its seat through the AI queue");
+        test.only({});
+        check(fp->useCounter()==0,"walking away releases the seat");
+        drain();
+        }
+      } else {
+      npc.clearState(false);
+      checkPointClip(npc,pee ? "T_PEE_2_STAND" : "T_LGUARD_2_STAND");
+      drain();
+      }
     npc.attachToPoint(nullptr);
     const auto& stats=test.stats(a.state);
     auto wakes=[&](ActivityEvents::Wake why) { return stats.wakes[std::countr_zero(unsigned(why))]; };
