@@ -827,7 +827,7 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
             event.get_int()==-1 && quakes==0,"no gesture or story draw before the sixth whole second");
       checkPointClip(npc,"");
       drain();
-      auto draw=[&](uint32_t seed,int map,int dead,int faction,bool quake) {
+      auto draw=[&](uint32_t seed,int map,int dead,int faction,bool quake,bool hasPortal=true) {
         level.set_int(map);
         raven.set_int(dead);
         npc.handle().guild=faction;
@@ -838,7 +838,7 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
         script.setSeed(seed);
         auto expected=Contract::random(script);
         const auto roll=int(expected()%(folded ? 7u : 10u));
-        const int eventRoll=folded ? int(expected()%200) : -1;
+        const int eventRoll=folded && hasPortal ? int(expected()%200) : -1;
         const int soundRoll=quake ? int(expected()%4) : -1;
         npc.setStateTime(6000);
         tick();
@@ -859,6 +859,14 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
       draw(63,addon,0,guild,false); // 0 of 7, 2 of 10, misses the earthquake
       draw(1658,addon,1,guild,false); // 1 of 7, 0 of 10; Raven is dead on a winning story draw
       draw(0,addon,0,guild,false); // no gesture, still resets the timer
+      if(folded && events) {
+        // Classic has the same pose and gestures, but its record ends at the timer reset.
+        auto& portal=Contract::activities(script).points.at(a.state).portal;
+        const auto addonPortal=portal;
+        portal.reset();
+        draw(940,addon,0,guild,false,false);
+        portal=addonPortal;
+        }
       level.set_int(originalLevel);
       raven.set_int(originalRaven);
       npc.handle().guild=guild;

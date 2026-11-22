@@ -13,8 +13,8 @@ void GameScript::runPointGesture(Npc& npc, const ActivityDefinitions::PointActiv
   const auto& gesture=point.gestures[size_t(draw(point.rollRange,".RANDOM"))];
   if(!gesture.animation.empty())
     npc.pushActivityCommand(AiQueue::aiPlayAnim(gesture.animation));
-  if(point.form==ActivityDefinitions::PointActivity::Form::ArmsCrossed) {
-    const auto& portal=point.portal;
+  if(point.portal) {
+    const auto& portal=*point.portal;
     const auto roll=draw(portal.rollRange,".EVENTRANDY");
     const auto guild=npc.handle().guild;
     const auto dead=findSymbol("RAVENISDEAD")->get_int();
