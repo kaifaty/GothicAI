@@ -344,12 +344,15 @@ waits and four frames more once everything is loaded (also when it was loaded on
 TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with visibility in
 a canonical cluster order (sorted by sphere and meshlets, not by the ids streaming handed out)
 before `shot`; texture levels settle and stand still until the shot.
-Two runs of one binary then give byte-identical `perf-market` and `perf-harbour` PNGs, and
-`perf-forest` and `perf-island` PNGs in most pairs: at 1920x1080 on Ryzen, virtual shadow maps on,
-five runs gave 0 changed pixels at the market and the harbour in all ten pairs, 0 or 1 pixel in the
-forest and 0, 3 or 35–38 pixels (max 2 levels) on the island, the same pixels every time (issue
-#946). `perf-market-teleport` is shot without a streaming wait by design and still depends on
-loading. Accept a render change off ↔ on as two consecutive runs on one host and binary, toggled by
+Issue #946 requires zero changed RGBA pixels at all four waited points in each acceptance pair.
+On the Ryzen RTX 3080 at 1920×1080 with VSM and the current default probe GI, two diagnostic runs of
+`1e5d5f3f2` differed by 81,107 pixels at the market, 329,222 at the harbour, 688,768 in the forest
+and 8,957 on the island. All four captures had identical G-buffers and direct sunlight on geometry.
+The first pass to differ on those surfaces was ambient lighting.
+[Measurements](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#ryzen-2026-11-22).
+`perf-market-teleport` captures the first frame after the return jump and still depends on loading.
+
+For a render change, compare off ↔ on as two consecutive runs on one host and binary, toggled by
 the feature's own variable:
 `uv run --no-project --with pillow --with numpy python
 reports/engine/2026-11-03-streaming-optimisation/shots_diff.py off=<dir> on=<dir>` must report 0
