@@ -788,6 +788,12 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
       npc.attachToPoint(wp);
       npc.updateTransform();
       tick();
+      if(!site.fp) {
+        auto init=Contract::queue(npc);
+        while(init.size()>2) init.pop();
+        check(init.size()==2 && init.front()->act==AI_GoToPoint && init.pop().point==wp && init.pop().act==AI_AlignToWp,
+              "the waypoint Init ends with a walk to its routine waypoint followed by alignment");
+        }
       drain();
       npc.setStateTime(0);
       };
