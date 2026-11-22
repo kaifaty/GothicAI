@@ -777,7 +777,8 @@ void campfireApproachWorld(Gothic& gothic,ActivityEventsWorld& test,EventActor& 
   const auto floor=world.physic()->landRay(at+Tempest::Vec3(0,30,0),60);
   const auto heightError=std::abs(floor.v.y-at.y);
   require(npc.simTier()==NpcSimTier::Simplified && phase==Stage::Approach && npc.navigationGoal().point==&row &&
-          !hit() && std::hypot(step.x,step.z)<=travel+0.1f && floor.hasCol && heightError<=5.f &&
+          !hit() && NpcDefinitionContract::physicsPosition(npc)==at &&
+          std::hypot(step.x,step.z)<=travel+0.1f && floor.hasCol && heightError<=5.f &&
           !world.physic()->sweep(center-step,center,12.f).hasCol && seat.useCounter()==1,
           "the bodyless camper follows the supported route at its normal step length and cannot take the occupied seat");
 
@@ -791,7 +792,8 @@ void campfireApproachWorld(Gothic& gothic,ActivityEventsWorld& test,EventActor& 
   world.catchUpAnimation();
   auto sameWalk=[&] {
     return !npc.campfireBodySuspended() && hit() && npc.position()==at && npc.rotation()==heading &&
-           npc.currentGoToPoint()==edge && npc.navigationGoal().point==&row && ActivityEventsWorld::stage(npc)==phase;
+           NpcDefinitionContract::physicsPosition(npc)==at && npc.currentGoToPoint()==edge &&
+           npc.navigationGoal().point==&row && ActivityEventsWorld::stage(npc)==phase;
     };
   require(sameWalk() && npc.bodyStateMasked()==pose,"the first visible frame restores collision on the same edge and pose");
   moveAway();
