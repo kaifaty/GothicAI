@@ -82,7 +82,8 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
     addPhases(name,{&stored,nullptr},stored.perceptions);
     }
   const auto guard = library.points.find("ZS_STAND_GUARDING");
-  if(guard!=library.points.end() && guard->second.loopResult==LOOP_CONTINUE) {
+  if(guard!=library.points.end() && guard->second.form==ActivityDefinitions::PointActivity::Form::Guard &&
+     guard->second.loopResult==LOOP_CONTINUE) {
     definitions.guard = std::make_unique<ActivityDefinitions::PointActivity>(guard->second);
     addPhases(guard->first,{nullptr,definitions.guard.get()},guard->second.perceptions);
     }
