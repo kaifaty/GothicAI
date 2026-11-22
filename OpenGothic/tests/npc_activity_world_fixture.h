@@ -640,10 +640,19 @@ void guardActivityWorld(Gothic& gothic) {
   require(rioPost->useCounter()==0,"an interruption between guard rows frees the post");
   require(differences.empty(),differences.c_str());
   load(*rio,nightEnd);
-  test.stepUntil(900,[&]{ return rio->activityStage()==Stage::Hold && rio->isAiQueueEmpty(); },"the next guard row starts",
+  test.stepUntil(900,[&]{ return rio->isInState(ScriptFn(guard.phases.init)) && rio->isStateStarted(); },"the next guard row starts",
                  [&]{ require(rio->currentWayPoint()==rioPost && rioPost->useCounter()==1 && rioPost->isGuarded(),
                               "the same post stays guarded through End and the next Init"); });
+  const auto distance=NpcEngineCalls::distanceToWaypoint(*rio,rioRow);
+  require(Contract::queue(*rio).hasMovement()==(distance>a.approachDistance),"the next Init uses its recorded approach distance");
+  if(distance>a.approachDistance) {
+    test.stepUntil(900,[&]{ return rio->currentWayPoint()!=rioPost; },"the new row's approach starts");
+    require(rioPost->useCounter()==0,"the actual walk away from the post releases it");
+    }
+  std::printf("Guard row handover: one lock until the next Init; distance to the routine waypoint %d cm (threshold %d)\n",
+              distance,a.approachDistance);
   rio->clearState(true);
+  test.only({});
   relocate(*rio,post->position());
   NpcEngineCalls::gotoWaypoint(world,*rio,post->name);
   Contract::nextAiAction(*rio);
