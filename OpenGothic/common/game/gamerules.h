@@ -23,7 +23,7 @@ class Item;
 class Npc;
 class Serialize;
 class VisualFx;
-namespace ActivityDefinitions { struct MobActivity; }
+namespace ActivityEvents { struct Record; }
 
 class GameRules {
   public:
@@ -61,7 +61,8 @@ class GameRules {
     virtual void invokeState(const std::shared_ptr<NpcRecord>& npc, const std::shared_ptr<NpcRecord>& other, const char* name) = 0;
     virtual int  invokeState(Npc* npc, Npc* other, Npc* victim, ScriptFn fn) = 0;
     // The record of a state whose activity runs by events (world/activityevents.h), null when its Loop is polled.
-    virtual const ActivityDefinitions::MobActivity* eventActivity(ScriptFn init) = 0;
+    virtual const ActivityEvents::Record* eventActivity(ScriptFn init) = 0;
+    virtual uint32_t rollGuardGesture(const Npc& npc, uint32_t range) = 0;
     virtual void invokeItem(Npc* npc, ScriptFn fn) = 0;
     virtual int  invokeCond(Npc& npc, std::string_view func) = 0;
     virtual void invokePickLock(Npc& npc, int success, int brokenOpen) = 0;

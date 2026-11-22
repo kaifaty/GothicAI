@@ -67,6 +67,14 @@ bool Npc::setPosition(float ix, float iy, float iz) {
   ragdollLastVelocity = {};
   durtyTranform |= TR_Pos;
   physic.setPosition(Vec3{x,y,z});
+  // A direct relocation can leave the waypoint pointer in place (npc_goto).
+  if(activityEvents.activity && activityEvents.activity->point && go2.empty() && currentFp &&
+     (activityEvents.stage==ActivityEvents::Stage::Wait || isGuardPoint(currentFp)) &&
+     !MoveAlgo::isClose(*this,*currentFp,MAX_AI_USE_DISTANCE)) {
+    stopWaitingForPoints();
+    attachToPoint(nullptr);
+    wakeActivity(ActivityEvents::Detached);
+    }
   if(movedBody)
     syncRagdoll();
   return true;

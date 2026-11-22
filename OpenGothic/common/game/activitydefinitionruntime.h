@@ -2,8 +2,10 @@
 
 #include "activitydefinitions.h"
 #include "daedalus/vm.h"
+#include "world/activityevents.h"
 
 #include <functional>
+#include <memory>
 #include <unordered_map>
 
 class Npc;
@@ -18,16 +20,15 @@ enum class Mode : uint8_t { Off, Accepted, All };
 Mode mode();
 // The states whose record parity is accepted; other captured states need "all".
 bool accepted(std::string_view state);
-// OPENGOTHIC_ACTIVITY_EVENTS: unset (or any other value) runs record activities at objects by events
-// (world/activityevents.h), "0" polls their Loop from the record as before.
+// With events off, mobs poll the recorded Loop and the guard uses the VM.
 bool events();
 
 struct Phase {
-  const ActivityDefinitions::MobActivity* activity = nullptr;
-  ActivityDefinitions::Phase              phase = ActivityDefinitions::Phase::Init;
-  uint32_t                                helper = 0;
+  ActivityEvents::Record     record;
+  ActivityDefinitions::Phase phase = ActivityDefinitions::Phase::Init;
+  uint32_t                   helper = 0;
   };
-// Phases point into `activities`: moving keeps the nodes, a copy would not.
+// Phases refer to owned records whose addresses survive moving the definitions.
 struct Definitions {
   Definitions() = default;
   Definitions(Definitions&&) = default;
@@ -35,6 +36,7 @@ struct Definitions {
   Definitions(const Definitions&) = delete;
   Definitions& operator=(const Definitions&) = delete;
   std::unordered_map<std::string,ActivityDefinitions::MobActivity> activities;
+  std::unique_ptr<ActivityDefinitions::PointActivity> guard;
   std::unordered_map<uint32_t,Phase> phases; // Init, Loop and End function symbols
   };
 Definitions resolve(const ActivityDefinitions::Library& library, const daedalus::DaedalusScript& script, Mode mode);

@@ -1,6 +1,7 @@
 #include "activitydefinitionruntime.h"
 
 #include "game/npcactivityhost.h"
+#include "world/objects/npc.h"
 
 #include <array>
 #include <cstdlib>
@@ -58,21 +59,32 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
   Definitions definitions;
   if(mode==Mode::Off)
     return definitions;
-  for(const auto& [name,activity]:library.activities) {
-    if(mode==Mode::Accepted && !accepted(name))
-      continue;
+  auto addPhases = [&](const std::string& name, ActivityEvents::Record record, const std::string& perceptions) {
     try {
-      const auto* helper = function(script,activity.perceptions,false);
-      const auto& stored = definitions.activities.emplace(name,activity).first->second;
+      const auto* helper = function(script,perceptions,false);
       const std::array phases = {
         std::pair{function(script,name,false),ActivityDefinitions::Phase::Init},
         std::pair{function(script,name+"_LOOP",true),ActivityDefinitions::Phase::Loop},
         std::pair{function(script,name+"_END",false),ActivityDefinitions::Phase::End},
         };
-      for(const auto& [symbol,phase]:phases)
-        definitions.phases.emplace(symbol->index(),Phase{&stored,phase,helper->index()});
+      for(const auto& [symbol,phase]:phases) {
+        if(record.point && phase==ActivityDefinitions::Phase::Loop)
+          continue; // explicit calls and the events-off fallback still use the script Loop
+        definitions.phases.emplace(symbol->index(),Phase{record,phase,helper->index()});
+        }
       }
     catch(const std::exception& e) { throw std::runtime_error("activity definitions: "+name+": "+e.what()); }
+    };
+  for(const auto& [name,activity]:library.activities) {
+    if(mode==Mode::Accepted && !accepted(name))
+      continue;
+    const auto& stored = definitions.activities.emplace(name,activity).first->second;
+    addPhases(name,{&stored,nullptr},stored.perceptions);
+    }
+  const auto guard = library.points.find("ZS_STAND_GUARDING");
+  if(guard!=library.points.end() && guard->second.loopResult==LOOP_CONTINUE) {
+    definitions.guard = std::make_unique<ActivityDefinitions::PointActivity>(guard->second);
+    addPhases(guard->first,{nullptr,definitions.guard.get()},guard->second.perceptions);
     }
   return definitions;
   }
@@ -94,8 +106,23 @@ int ActivityDefinitionRuntime::run(daedalus::DaedalusVm& vm, World& world, Npc& 
   NpcActivityHost host(world,npc,[&vm,&entry](std::string_view) {
     vm.call_function<void>(vm.find_symbol_by_index(entry.helper));
     });
+  if(const auto* point=entry.record.point) {
+    if(entry.phase==ActivityDefinitions::Phase::End) {
+      npc.aiPush(AiQueue::aiPlayAnim(point->leaveAnimation));
+      } else {
+      // The importer verified the same distance-based Init as a mob, followed by the stage write.
+      ActivityDefinitions::MobActivity approach;
+      approach.perceptions = point->perceptions;
+      approach.walkMode = point->walkMode;
+      approach.approach = ActivityDefinitions::Approach::Distance;
+      approach.approachDistance = point->approachDistance;
+      ActivityDefinitions::run(approach,entry.phase,host);
+      npc.handle().aivar[19] = point->initialStage;
+      }
+    return 0;
+    }
   if(!observer)
-    return ActivityDefinitions::run(*entry.activity,entry.phase,host);
+    return ActivityDefinitions::run(*entry.record.mob,entry.phase,host);
   ActivityDefinitions::Recorder recorder(host,[&npc](std::string event) { observer(npc,event); });
-  return ActivityDefinitions::run(*entry.activity,entry.phase,recorder);
+  return ActivityDefinitions::run(*entry.record.mob,entry.phase,recorder);
   }

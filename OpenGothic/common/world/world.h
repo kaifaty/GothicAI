@@ -166,7 +166,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     const WayPoint*      findWayPoint(const Tempest::Vec3& pos, const std::function<bool(const WayPoint&)>& f) const;
     const WayPoint*      findWayPoint(const Tempest::Vec3& pos, std::string_view name) const;
 
-    const WayPoint*      findFreePoint(const Npc& pos,           std::string_view name) const;
+    const WayPoint*      findFreePoint(const Npc& npc, std::string_view name, std::vector<const WayPoint*>* occupied=nullptr) const;
     const WayPoint*      findFreePoint(const Tempest::Vec3& pos, std::string_view name) const;
 
     const WayPoint*      findNextFreePoint(const Npc& pos, std::string_view name) const;

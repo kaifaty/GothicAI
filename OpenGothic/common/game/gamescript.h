@@ -215,7 +215,8 @@ class GameScript final : public GameRules {
     void      fixNpcPosition(Npc& npc, float angle0, float distBias) override;
     StartupFloor& startupFloor() { return floorDefer; }
 
-    const ActivityDefinitions::MobActivity* eventActivity(ScriptFn init) override;
+    const ActivityEvents::Record* eventActivity(ScriptFn init) override;
+    uint32_t     rollGuardGesture(const Npc& npc, uint32_t range) override;
 
   private:
     friend struct NpcDefinitionContract;
@@ -301,6 +302,7 @@ class GameScript final : public GameRules {
     bool game_initgerman     ();
     bool game_initenglish    ();
     int  hlp_random          (int bound);
+    uint32_t rollRandom(uint32_t bound, const Npc* actor, bool script);
     bool hlp_isvalidnpc      (std::shared_ptr<daedalus::INpc> npcRef);
     bool hlp_isitem          (std::shared_ptr<daedalus::IItem> itemRef, int instanceSymbol);
     bool hlp_isvaliditem     (std::shared_ptr<daedalus::IItem> itemRef);

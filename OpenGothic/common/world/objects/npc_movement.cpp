@@ -236,6 +236,7 @@ void Npc::beginSimpleGoTo(AiQueue::AiAction&& action, const WayPoint& point) {
     terminal.set(action.point,action.act==AI_GoToNextFp ? GT_NextFp : GT_Way);
     attachToPoint(action.point);
     }
+  terminal.activity=action.activity;
   float distance=MoveAlgo::closeToPointThreshold*(mvAlgo.checkLastBounce() ? .5f : 1.5f);
   if(terminal.npc!=nullptr)
     distance=fghAlgo.prefferedAttackDistance(*this,*terminal.npc,owner.rules());
@@ -252,9 +253,10 @@ void Npc::beginSimpleGoTo(AiQueue::AiAction&& action, const WayPoint& point) {
     }
   wayPath=simpleWayTo(point);
   const auto* first=wayPath.pop();
-  if(first!=nullptr)
+  if(first!=nullptr) {
     go2.set(first);
-  else
+    go2.activity=action.activity;
+    } else
     go2=terminal; // Already at the target's connected anchor.
   simpleMovement.edgeTo=nullptr;
   aiQueue.pushFront(std::move(action));
@@ -354,6 +356,7 @@ bool Npc::finishSimpleGoTo(uint64_t dt) {
     default:
       return false;
     }
+  go2.activity=pending->activity;
   float distance=MoveAlgo::closeToPointThreshold*(mvAlgo.checkLastBounce() ? .5f : 1.5f);
   if(go2.npc!=nullptr)
     distance=fghAlgo.prefferedAttackDistance(*this,*go2.npc,owner.rules());
@@ -483,6 +486,7 @@ bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
       destination=go2.wp;
       }
     if(destination!=nullptr) {
+      terminal.activity=go2.activity;
       beginSimpleGoTo(std::move(terminal),*destination);
       return implGoTo(dt);
       }
@@ -714,6 +718,8 @@ void Npc::clearAiQueue() {
     owner.mobReservations().release(*this);
     wakeActivity(ActivityEvents::AttachFailed);
     }
+  else if(activityEvents.stage==ActivityEvents::Stage::WalkToPoint)
+    wakeActivity(ActivityEvents::QueueDone);
   else if(activityEvents.stage==ActivityEvents::Stage::Approach) {
     // the walk to the routine point is gone: an empty queue is no arrival. The automaton starts over with Init
     // on its next step, unless a new state replaces it first (startState: its End still runs).
@@ -735,15 +741,23 @@ void Npc::clearAiQueue() {
   clearGoTo();
   }
 
+bool Npc::isOnFreePoint(std::string_view name) const {
+  return currentFp!=nullptr && currentFp->isFreePoint() && currentFp->checkName(name) &&
+         MoveAlgo::isClose(*this,*currentFp,MAX_AI_USE_DISTANCE);
+  }
+
 void Npc::attachToPoint(const WayPoint *p) {
   const auto* pending=pendingSimpleGoTo();
   if(pending!=nullptr && pending->point->isFreePoint() &&
      (pending->act==AI_GoToNextFp || pending->act==AI_GoToPoint) &&
      currentFp==pending->point && go2.flag==GT_Way && p==go2.wp && p!=pending->point)
     return;
+  if(currentFp!=p && activityEvents.activity && activityEvents.activity->point &&
+     (activityEvents.stage==ActivityEvents::Stage::Hold || activityEvents.stage==ActivityEvents::Stage::Wait))
+    wakeActivity(ActivityEvents::Detached);
   if(auto* probe=NpcActivityProbe::instance; probe && currentFp!=p) probe->point(*this,currentFp,p);
   currentFp     = p;
-  currentFpLock = FpLock(currentFp);
+  currentFpLock = FpLock(p,isGuardPoint(p) && (!p->isLocked() || p==currentFpLock.point()));
   }
 
 bool Npc::goToPosition(const Vec3& position) {

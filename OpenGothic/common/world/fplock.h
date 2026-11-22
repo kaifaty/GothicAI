@@ -7,7 +7,7 @@ class FpLock final {
   public:
     FpLock();
     FpLock(const WayPoint& p);
-    FpLock(const WayPoint* p);
+    FpLock(const WayPoint* p, bool guard=false);
     FpLock(FpLock&& other);
     ~FpLock();
 
@@ -18,5 +18,7 @@ class FpLock final {
     const WayPoint* point() const { return pt; }
 
   private:
+    void release();
     const WayPoint* pt=nullptr;
+    bool guarding=false;
   };

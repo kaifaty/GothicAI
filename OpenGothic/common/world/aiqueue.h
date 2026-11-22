@@ -10,12 +10,15 @@ class Npc;
 class Item;
 class WayPoint;
 class Serialize;
+class World;
 
 class AiQueue {
   public:
     AiQueue();
 
     struct AiAction final {
+      static constexpr int SavedGuardCommand = -1; // unused i1 of a guard's walk, alignment or animation
+      static constexpr int ExternalPointWalk = -2; // saved as a positive point ordinal, with an empty s0
       Action            act   =AI_None;
       Npc*              target=nullptr;
       Npc*              victim=nullptr;
@@ -33,12 +36,15 @@ class AiQueue {
       Npc*              nativeCombatTarget=nullptr;
       // Transient: only state changes queued by the physical-noise callback.
       bool              physicsNoiseState=false;
-      // Transient: queued by a routine activity run by events, its Init or its use (world/activityevents.h).
+      // Set by an event activity. The point executor also marks its own commands in the saved queue.
       bool              activity=false;
+      bool hasExactPoint() const {
+        return act==AI_GoToPoint && (i1==ExternalPointWalk || (i1==SavedGuardCommand && !s0.empty()));
+        }
       };
 
-    void     save(Serialize& fout) const;
-    void     load(Serialize& fin);
+    void     save(Serialize& fout, const World& world) const;
+    void     load(Serialize& fin, const World& world);
 
     size_t   size() const { return aiActions.size(); }
     const AiAction* front() const { return aiActions.empty() ? nullptr : &aiActions.front(); }
@@ -50,6 +56,7 @@ class AiQueue {
     void     removeActivity();
     int      aiOutputOrderId() const;
     bool     hasItemUse() const;
+    bool     hasMovement() const;
     bool     nativeCombatOnly(const Npc* target) const;
 
     void     onWldItemRemoved(const Item& itm);

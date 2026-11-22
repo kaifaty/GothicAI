@@ -6,7 +6,7 @@
 
 namespace {
 constexpr std::array<std::string_view,ActivityEvents::WakeCount> wakeNames = {
-  "entered","loaded","queue","attached","attach_failed","detached","freed","row_end","interrupted","watchdog",
+  "entered","loaded","queue","attached","attach_failed","detached","freed","row_end","interrupted","watchdog","gesture","visibility",
   };
 }
 

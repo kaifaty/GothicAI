@@ -14,6 +14,11 @@ void Npc::aiPush(AiQueue::AiAction&& a) {
     return;
   a.physicsNoiseState = physicsNoiseCallback && a.act==AI_StartState;
   a.activity = a.activity || activityCommands;
+  if(!a.activity && activityEvents.activity && activityEvents.activity->point) {
+    activityEvents.awaitQueue = true; // recheck the place after external commands have finished
+    if(a.act==AI_GoToPoint && isGuardPoint(a.point))
+      a.i1=AiQueue::AiAction::ExternalPointWalk;
+    }
   a.nativeCombatTarget=nativeCombatQueueTarget;
   if(BodyController::owns(*this) && a.act!=AI_OutputSvmOverlay)
     BodyController::takeover(*this,"native_script_queue");
