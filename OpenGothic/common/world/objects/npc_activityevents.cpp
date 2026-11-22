@@ -31,15 +31,14 @@ void Npc::stopActivityEvents(uint16_t why) {
     ActivityEvents::countWakes(aiState.hint,why,false);
   if(atPoint) {
     const auto& point=*record->point;
-    // The campfire's End queues the rise. The next walk or interaction releases the seat.
-    const bool keepSeat=point.form==ActivityDefinitions::PointActivity::Form::Campfire &&
-                        isOnFreePoint(point.point) && currentFp==currentFpLock.point() &&
-                        (activityEvents.stage==ActivityEvents::Stage::Off ||
-                         ActivityDefinitions::bodyStateContains(int32_t(bodyState()),point.enterBodyState));
+    // A point Loop leaves its physical post through movement or interaction, even if End
+    // was queued before the pose began. The guard has its own accepted row handover.
+    const bool keepPoint=point.form!=ActivityDefinitions::PointActivity::Form::Guard &&
+                         isOnFreePoint(point.point) && currentFpLock.point()==currentFp;
     stopWaitingForPoints();
     if(why==ActivityEvents::RowEnd) {
       const auto& next=currentRoutine();
-      if(!keepSeat && isActivityPoint(currentFp) && (next.callback!=aiState.funcIni || next.wayPointName()!=hnpc->wp))
+      if(!keepPoint && isActivityPoint(currentFp) && (next.callback!=aiState.funcIni || next.wayPointName()!=hnpc->wp))
         attachToPoint(nullptr);
       // The last walk/align/gesture precedes End in the queue. Keep ownership
       // until the next state is known, including a dialogue queued during the handover.
@@ -49,7 +48,7 @@ void Npc::stopActivityEvents(uint16_t why) {
       return;
       }
     dropActivityCommand();
-    if(!keepSeat && isActivityPoint(currentFp) && !(why==0 && activityEvents.stage==ActivityEvents::Stage::Off))
+    if(!keepPoint && isActivityPoint(currentFp) && !(why==0 && activityEvents.stage==ActivityEvents::Stage::Off))
       attachToPoint(nullptr);
     } else {
     auto& places = owner.mobReservations();

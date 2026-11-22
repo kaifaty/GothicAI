@@ -836,11 +836,21 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
       occupied=FpLock();
       tick();
       check(npc.isAiQueueEmpty(),"freeing a seat out of reach leaves the displaced camper waiting");
-      npc.setPosition(wp->position());
+      const auto* outside=world.findPoint("FP_STAND_SPIELPLATZ_05",false);
+      const auto* inside=world.findPoint("FP_STAND_SPIELPLATZ_06",false);
+      const auto* seat=world.findPoint("FP_CAMPFIRE_SPIELPLATZ_01",false);
+      check(outside && inside && seat && outside->qDistTo(inside->position())<MAX_AI_USE_DISTANCE*MAX_AI_USE_DISTANCE,
+            "a short move at the playground crosses the seat's search boundary");
+      test.freePoint(seat);
+      npc.setPosition(outside->position());
       npc.updateTransform();
       tick();
-      check(npc.aiQueueFront() && npc.aiQueueFront()->act==AI_GoToPoint && npc.aiQueueFront()->point==fp,
-            "moving the same waiter again with no current point finds the now visible seat");
+      check(!world.findFreePoint(npc,scheme) && npc.isAiQueueEmpty(),"the waiting NPC starts outside the seat's reach");
+      npc.setPosition(inside->position());
+      npc.updateTransform();
+      tick();
+      check(npc.aiQueueFront() && npc.aiQueueFront()->act==AI_GoToPoint && npc.aiQueueFront()->point==seat,
+            "moving the same waiter a short distance with no current point finds the now visible seat");
       occupied=FpLock(fp);
       loadSavedNpc(npc,waiting);
       tick();
@@ -963,6 +973,18 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
           });
         } else drain();
       check(npc.currentWayPoint()==fp && npc.isOnFreePoint(scheme) && fp->useCounter()==1,"the walk arrives with one owner");
+      if(fire) {
+        const auto arrival=savedNpc(npc);
+        const auto before=world.time();
+        check(!ActivityDefinitions::bodyStateContains(npc.bodyState(),BS_SIT),"the camper has arrived before the sit animation");
+        gothic.gameSession()->setTime(gtime(before.day(),14,0));
+        Contract::aiState(npc).eTime=world.time();
+        tick();
+        check(fp->useCounter()==1 && npc.currentWayPoint()==fp,"the last Loop keeps the seat while queuing both sit and rise");
+        checkPointClip(npc,"T_SIT_2_STAND",BS_STAND);
+        gothic.gameSession()->setTime(before);
+        loadSavedNpc(npc,arrival);
+        }
       tick();
       if(pee) play("T_STAND_2_PEE");
       else if(fire) {
@@ -1014,7 +1036,21 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
         drain();
         }
       } else {
+      if(folded) {
+        PhysicsNoise impact;
+        impact.position=npc.position()+Tempest::Vec3(-fp->dir.z,0,fp->dir.x)*300.f;
+        npc.setProcessPolicy(NpcProcessPolicy::AiNormal);
+        npc.setExternalControl(false);
+        check(npc.hearPhysicsNoise(impact),"the idle NPC hears an impact with no known culprit");
+        npc.setExternalControl(true);
+        npc.setDirection(impact.position-npc.position());
+        test.stepUntil(120,[until=world.tickCount()+2000,&world]{ return world.tickCount()>until; },"the noise reaction ends");
+        tick();
+        check(npc.aiQueueFront() && npc.aiQueueFront()->act==AI_AlignToFp,"the post regains its facing after the native turn");
+        drain();
+        }
       npc.clearState(false);
+      if(fp) check(npc.currentWayPoint()==fp && fp->useCounter()==1,"interrupting the pose leaves its occupied point held");
       checkPointClip(npc,pee ? "T_PEE_2_STAND" : "T_LGUARD_2_STAND");
       drain();
       }

@@ -1,4 +1,5 @@
 #include "physics/dynamicworld.h"
+#include "physics/physicsnoise.h"
 #include "physics/placedcensuscache.h"
 #include "graphics/bounds.h"
 #include "graphics/mesh/protomesh.h"
@@ -1510,7 +1511,6 @@ std::vector<std::string> placementFirstWorld(Gothic& gothic) {
   for(const auto& value:differences) std::fprintf(stderr,"[placement-world-difference] %s\n",value.c_str());
   return differences;
   }
-
 
 // D4.1: a routine activity from its record against the VM, at the same positions. The stream
 // interleaves the engine calls (VM externals; the template's calls of a record phase, whose

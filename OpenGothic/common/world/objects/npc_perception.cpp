@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "asset/activitydefinitions.h"
 #include "game/bodycontroller.h"
 #include "game/deedwitness.h"
 #include "game/herodeed.h"
@@ -317,6 +318,11 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
   physicsNoiseNextTime = now+2001;
   physicsNoisePosition = noise.position;
   physicsNoiseUntil = now+2000;
+  // A native turn has no queued action. Recheck the poses whose Loop realigns after it.
+  using Form = ActivityDefinitions::PointActivity::Form;
+  const auto* point = activityEvents.activity ? activityEvents.activity->point : nullptr;
+  if(point && (point->form==Form::ArmsCrossed || point->form==Form::Pee))
+    activityEvents.awaitQueue = true;
   // Vanilla B_AssessQuietSound dereferences OTHER. Unknown physical causes
   // still turn the listener natively, without inventing a script actor.
   const bool callbackDispatched = noise.culprit!=nullptr && hasPerc(PERC_ASSESSQUIETSOUND);

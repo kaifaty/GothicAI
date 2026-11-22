@@ -71,8 +71,7 @@ bool Npc::setPosition(float ix, float iy, float iz) {
   // A direct relocation can leave the waypoint pointer in place (npc_goto).
   if(activityEvents.activity && activityEvents.activity->point && go2.empty() &&
      (activityEvents.stage==ActivityEvents::Stage::Wait || isActivityPoint(currentFp)) &&
-     (currentFp ? !MoveAlgo::isClose(*this,*currentFp,MAX_AI_USE_DISTANCE) :
-                  displacement.quadLength()>MAX_AI_USE_DISTANCE*MAX_AI_USE_DISTANCE)) {
+     (!currentFp || !MoveAlgo::isClose(*this,*currentFp,MAX_AI_USE_DISTANCE))) {
     stopWaitingForPoints();
     attachToPoint(nullptr);
     wakeActivity(ActivityEvents::Detached);
