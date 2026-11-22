@@ -973,6 +973,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      updateWeaponSkeleton();
     void      tickTimedEvt(Animation::EvCount &ev);
     void      tickRegen(int32_t& v,const int32_t max,const int32_t chg, const uint64_t dt);
+    bool      implSetPosition(const Tempest::Vec3& pos, bool keepBodySuspended);
     void      setViewPosition(const Tempest::Vec3& pos);
     void      syncCharacterVirtualSupport(const Tempest::Vec3& pos);
     bool      tickCast(uint64_t dt);

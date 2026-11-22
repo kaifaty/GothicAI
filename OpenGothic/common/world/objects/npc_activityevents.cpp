@@ -18,18 +18,34 @@ gtime after(gtime now, uint64_t ms) {
 }
 
 bool Npc::canSuspendCampfireBody() const {
-  const auto* record = activityEvents.activity;
-  const auto* point  = record ? record->point : nullptr;
+  using ActivityEvents::Stage;
+  const auto& state = activityEvents;
+  const auto* point = state.activity ? state.activity->point : nullptr;
   if(point==nullptr || point->form!=ActivityDefinitions::PointActivity::Form::Campfire ||
-     activityEvents.stage!=ActivityEvents::Stage::Hold || !aiState.started || aiState.eTime<=owner.time())
+     !aiState.started || aiState.eTime<=owner.time())
     return false;
-  if(activityEvents.pending!=0 || activityEvents.awaitQueue || activityEvents.retry ||
-     externalCtrl || isAiBusy() || aiQueueOverlay.size()!=0 || !outputPipe->isFinished())
+  if(state.pending!=0 || state.retry || state.restart || externalCtrl || aiQueueOverlay.size()!=0 || !outputPipe->isFinished())
     return false;
   if(!simpleMovement.active || !usesSimplifiedMovement() || animationLodPinned() || isMeleeFighter() || isInAir() ||
      BodyController::owns(*this) || (!physic.isEnabled() && !physic.bodySuspended()))
     return false;
-  return bodyStateMasked()==BS_SIT && animProgress("S_SIT")>=0 &&
+
+  if(state.stage==Stage::Approach || state.stage==Stage::WalkToPoint) {
+    // The graph has admitted the current segment and will supply its height and progress.
+    if(!go2.activity || go2.flag!=GT_Way || go2.wp==nullptr || simpleMovement.edgeTo!=go2.wp ||
+       simpleMovement.ground==nullptr || nativeBodyAction() || waitTime>=owner.tickCount())
+      return false;
+    if(state.stage==Stage::Approach)
+      return true;
+    const auto* walk=pendingSimpleGoTo();
+    return walk && walk->activity && walk->act==AI_GoToPoint && isActivityPoint(walk->point) &&
+           currentFpLock.point()==walk->point && walk->point->useCounter()==1;
+    }
+  if(state.awaitQueue || isAiBusy())
+    return false;
+  if(state.stage==Stage::Wait)
+    return !state.waitPoints.empty() && bodyStateMasked()==BS_STAND && !nativeBodyAction();
+  return state.stage==Stage::Hold && bodyStateMasked()==BS_SIT && animProgress("S_SIT")>=0 &&
          isOnFreePoint(point->point) && currentFpLock.point()==currentFp && currentFp->useCounter()==1;
   }
 

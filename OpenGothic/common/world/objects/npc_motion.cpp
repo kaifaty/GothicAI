@@ -16,9 +16,18 @@
 using namespace Tempest;
 
 bool Npc::setPosition(float ix, float iy, float iz) {
+  return setPosition(Vec3{ix,iy,iz});
+  }
+
+bool Npc::setPosition(const Tempest::Vec3& pos) {
+  return implSetPosition(pos,false);
+  }
+
+bool Npc::implSetPosition(const Tempest::Vec3& pos, bool keepBodySuspended) {
+  const float ix=pos.x, iy=pos.y, iz=pos.z;
   if(x==ix && y==iy && z==iz)
     return false;
-  const auto displacement = position()-Vec3(ix,iy,iz);
+  const auto displacement = position()-pos;
   const bool liveTeleport = !isDown() && !ragdoll && displacement.length()>300.f;
   const auto* skeleton = visual.visualSkeleton();
   std::optional<Ragdoll::State> movedBody, movedDormant;
@@ -67,7 +76,7 @@ bool Npc::setPosition(float ix, float iy, float iz) {
   ragdollHasLastPosition = false;
   ragdollLastVelocity = {};
   durtyTranform |= TR_Pos;
-  physic.setPosition(Vec3{x,y,z});
+  physic.setPosition(Vec3{x,y,z},keepBodySuspended);
   // A direct relocation can leave the waypoint pointer in place (npc_goto).
   if(activityEvents.activity && activityEvents.activity->point && go2.empty() &&
      (activityEvents.stage==ActivityEvents::Stage::Wait || isActivityPoint(currentFp)) &&
@@ -79,10 +88,6 @@ bool Npc::setPosition(float ix, float iy, float iz) {
   if(movedBody)
     syncRagdoll();
   return true;
-  }
-
-bool Npc::setPosition(const Tempest::Vec3& pos) {
-  return setPosition(pos.x,pos.y,pos.z);
   }
 
 void Npc::setViewPosition(const Tempest::Vec3& pos) {

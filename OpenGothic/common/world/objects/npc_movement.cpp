@@ -407,6 +407,7 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
   if(go2.flag==GT_No)
     return false;
 
+  resumeCampfireBody();
   if(isInAir() || interactive()!=nullptr) {
     mvAlgo.tick(dt);
     return true;
@@ -624,10 +625,10 @@ bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
       // a changed waynet anchor admits a new profile, never a per-tick ray.
       next.y=go2.wp!=nullptr ? simpleMovement.ground->heightAt(next) : simpleMovement.ground->terminalHeightAt(next);
       }
-    setPosition(next);
+    implSetPosition(next,true);
     }
   else if(length2==0.f && travel>0.f && target.y!=y) {
-    setPosition(Vec3(x,y+std::copysign(std::min(std::abs(target.y-y),travel),target.y-y),z));
+    implSetPosition(Vec3(x,y+std::copysign(std::min(std::abs(target.y-y),travel),target.y-y),z),true);
     }
   if(setAnim(AnimationSolver::Move))
     simpleMovement.body = bool(walkMode()&WalkBit::WM_Sneak) ? BS_SNEAK :
@@ -779,6 +780,8 @@ bool Npc::goToPosition(const Vec3& position) {
   }
 
 void Npc::clearGoTo() {
+  if(go2.activity)
+    resumeCampfireBody();
   simpleMovement.ground=nullptr;
   if(pendingSimpleGoTo()!=nullptr)
     aiQueue.pop();
