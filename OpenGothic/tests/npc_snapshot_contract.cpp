@@ -1339,6 +1339,13 @@ void pointMutations(const NpcSnapshot::Program& program,const fs::path& dir,bool
     check(NpcSnapshot::verifyActivities(changed,file,routines)==0,"mutated activities agree with a fresh VM");
     return ActivityDefinitions::read(base,changed.sha256);
     };
+  const auto* wpRoll=script.find_symbol_by_name("ZS_STAND_WP_LOOP.RANDOM");
+  check(wpRoll!=nullptr,"the installed waypoint loop has a saved gesture local");
+  auto& wpName=changed.data.symbols.at(wpRoll->index()).name;
+  wpName+="_SCRATCH";
+  check(import({"ZS_STAND_WP"}).uncaptured.at("ZS_STAND_WP").find("template RANDOM=0")!=std::string::npos,
+        "a waypoint gesture that writes another saved local stays in the VM");
+  wpName=program.data.symbols.at(wpRoll->index()).name;
   auto operand=[&](size_t pc,uint32_t value) {
     for(size_t i=0;i<4;++i) changed.data.bytecode[pc+1+i]=std::byte((value>>(8*i))&255);
     };

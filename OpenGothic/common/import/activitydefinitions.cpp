@@ -200,7 +200,7 @@ class ScriptRun {
       vm.register_default_external_custom([this](DaedalusVm&,DaedalusSymbol& function) { external(function); });
       }
 
-    void watchArmRollWrites(const DaedalusSymbol& loop) {
+    void watchRollWrites(const DaedalusSymbol& loop) {
       random=mutableInt(loop.name()+".RANDOM");
       eventRandy=mutableInt(loop.name()+".EVENTRANDY");
       }
@@ -578,7 +578,7 @@ class Recognizer {
       call("NPC_GETSTATETIME(self)->"+std::to_string(s.seconds));
       if(!posed || s.seconds<=a.timerSeconds) return events;
       call("HLP_RANDOM("+std::to_string(a.rollRange)+")->"+std::to_string(s.roll));
-      if(a.form==Form::ArmsCrossed) call("RANDOM="+std::to_string(s.roll));
+      if(a.form==Form::ArmsCrossed || a.form==Form::Waypoint) call("RANDOM="+std::to_string(s.roll));
       const auto& gesture=a.gestures.at(size_t(s.roll));
       if(!gesture.animation.empty()) play(gesture.animation);
       if(a.portal) {
@@ -596,7 +596,7 @@ class Recognizer {
       }
 
     size_t comparePoint(ScriptRun& script,const Phases& phases,const PointActivity& a) const {
-      if(a.form==Form::ArmsCrossed) script.watchArmRollWrites(*phases.loop);
+      if(a.form==Form::ArmsCrossed || a.form==Form::Waypoint) script.watchRollWrites(*phases.loop);
       size_t count=0;
       auto compare=[&](Phase phase,const Situation& s) {
         const auto* fn=phase==Phase::Init ? phases.init : phase==Phase::Loop ? phases.loop : phases.end;
