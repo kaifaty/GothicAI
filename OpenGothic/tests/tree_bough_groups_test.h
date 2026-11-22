@@ -12,7 +12,7 @@ std::vector<std::array<uint32_t,3>> treeBoughWideNodes(std::vector<Resources::Ve
     for(uint32_t i=0; i<cells; ++i) {
       const uint32_t cell = firstCell+i, at = firstVertex+i*4u;
       const float x = -0.95f + 0.5f*float(cell%4u), y = -0.95f + 0.5f*float(cell/4u);
-      for(const auto [dx,dy] : {std::pair(0.f,0.f),std::pair(0.4f,0.f),std::pair(0.4f,0.4f),std::pair(0.f,0.4f)})
+      for(const auto& [dx,dy] : {std::pair(0.f,0.f),std::pair(0.4f,0.f),std::pair(0.4f,0.4f),std::pair(0.f,0.4f)})
         vbo.push_back({{x+dx,y+dy,0.4f},{0.f,0.f,1.f},{dx*2.5f,dy*2.5f},0xffffffffu});
       ibo.insert(ibo.end(),{at,at+1u,at+2u,at,at+2u,at+3u});
       }

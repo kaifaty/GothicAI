@@ -27,6 +27,7 @@ namespace TreeBough {
 namespace {
 
 constexpr float BoundsTolerance = .01f;
+constexpr uint32_t MaxDepth = 64;
 
 using Json = rapidjson::Value;
 
@@ -187,7 +188,7 @@ struct Forest {
   uint32_t visit(uint32_t id, uint32_t parent, float upper, uint32_t depth) {
     if(id==0 || id>records.size())
       reject("unknown node ID");
-    if(depth>64)
+    if(depth>MaxDepth)
       reject("hierarchy exceeds 64 levels");
     auto& record = records[id-1];
     if(record.seen)
@@ -229,7 +230,16 @@ std::filesystem::path glbPath(const std::filesystem::path& directory, std::strin
   return directory/relative;
   }
 
-void packGeometry(Asset& asset, const Forest& forest, std::vector<GlbPage> source) {
+float vertexTravel(const Resources::Vertex& v, uint32_t wind, float reach) {
+  // Same arms as the generator's wind_travel, with the actual height and material used by DrawBuckets.
+  const float height = std::clamp(v.pos[1]/reach, 0.f, 1.f);
+  const float branch = (v.color & 255u)==0 ? 0.f :
+                       std::min(1.f,std::hypot(v.pos[0],v.pos[2])/(reach*FoliageTree::BranchReach));
+  const float leaf = float((v.color >> 16u) & 255u)/255.f;
+  return FoliageTree::travel(wind,reach,{height*height,branch,leaf});
+  }
+
+void packGeometry(Asset& asset, const Forest& forest, std::vector<GlbPage> source, const StaticMesh& mesh) {
   std::vector<std::vector<uint32_t>> pageNodes(source.size());
   for(uint32_t i=0; i<forest.order.size(); ++i) {
     const auto& geometry = forest.records[forest.order[i]-1].geometry;
@@ -247,6 +257,19 @@ void packGeometry(Asset& asset, const Forest& forest, std::vector<GlbPage> sourc
     const auto data = [&](uint32_t i) -> const Record& { return forest.records[forest.order[i]-1]; };
     std::ranges::sort(nodes,[&](uint32_t a, uint32_t b) { return data(a).geometry.firstIndex<data(b).geometry.firstIndex; });
 
+    auto& page = asset.pages[primitive];
+    ::asset::Material material;
+    material.name = geometry.texture;
+    material.texture = geometry.texture;
+    material.color = {255,255,255,255};
+    material.alpha_func = ::asset::AlphaFunction::DEFAULT;
+    page.material = Resources::loadMaterial(material,true,true);
+    if(!FoliageTree::isTree(page.material.foliage) || page.material.alpha!=Material::AlphaTest ||
+       page.material.tex==nullptr || !page.material.hasMaterialMaps())
+      reject("missing alpha-tested tree material "+geometry.texture);
+    const auto& bounds = mesh.bbox.bbox;
+    const float reach = FoliageTree::reach(page.material.foliage,bounds[0],bounds[1]);
+    const uint32_t wind = FoliageWind::pack(page.material.foliage,FoliageWind::Wind);
     std::vector<uint32_t> indices;
     indices.reserve(geometry.indices.size()+nodes.size());
     size_t nextIndex = 0, nextVertex = 0;
@@ -272,9 +295,13 @@ void packGeometry(Asset& asset, const Forest& forest, std::vector<GlbPage> sourc
         }
       const auto& node = asset.nodes[i];
       for(size_t vertex=range.firstVertex; vertex<nextVertex; ++vertex) {
-        const auto& p = geometry.vertices[vertex].pos;
+        const auto& v = geometry.vertices[vertex];
+        const auto& p = v.pos;
         if(!Box{node.boxMin,node.boxMax}.contains(Vec3(p[0],p[1],p[2])))
           reject("culling box does not cover its geometry");
+        const float margin = std::min({p[0]-node.boxMin.x,p[1]-node.boxMin.y,p[2]-node.boxMin.z,
+                                       node.boxMax.x-p[0],node.boxMax.y-p[1],node.boxMax.z-p[2]});
+        asset.cullPadding = std::max(asset.cullPadding,vertexTravel(v,wind,reach)-margin);
         if(primitive==1 && geometry.cardIds[vertex]!=record.id)
           reject("_CARD_ID does not match the source node");
         }
@@ -287,16 +314,6 @@ void packGeometry(Asset& asset, const Forest& forest, std::vector<GlbPage> sourc
     if(nextIndex!=geometry.indices.size() || nextVertex!=geometry.vertices.size())
       reject("primitive has unused geometry");
 
-    auto& page = asset.pages[primitive];
-    ::asset::Material material;
-    material.name = geometry.texture;
-    material.texture = geometry.texture;
-    material.color = {255,255,255,255};
-    material.alpha_func = ::asset::AlphaFunction::DEFAULT;
-    page.material = Resources::loadMaterial(material,true,true);
-    if(!FoliageTree::isTree(page.material.foliage) || page.material.alpha!=Material::AlphaTest ||
-       page.material.tex==nullptr || !page.material.hasMaterialMaps())
-      reject("missing alpha-tested tree material "+geometry.texture);
     page.vbo = Resources::ssbo(geometry.vertices.data(),geometry.vertices.size()*sizeof(Resources::Vertex));
     page.ibo = Resources::ssbo(indices.data(),indices.size()*sizeof(uint32_t));
     }
@@ -355,7 +372,9 @@ std::unique_ptr<Asset> load(const StaticMesh& mesh, const std::filesystem::path&
   auto geometry = loadGlb(glbPath(file.parent_path(),stringField(document,"glb")));
   if(geometry[1].texture!=mesh.sub[sourceSub].texName)
     reject("source foliage uses a different material from the original mesh");
-  packGeometry(*asset,forest,std::move(geometry));
+  packGeometry(*asset,forest,std::move(geometry),mesh);
+  // Each accepted parent can miss its child's box by BoundsTolerance on an axis.
+  asset->cullPadding += float(MaxDepth)*BoundsTolerance;
   return asset;
   }
 

@@ -55,6 +55,7 @@ struct Asset {
   uint32_t sourceSub = 0; // corresponding original canopy submesh
   uint32_t sourceCards = 0;
   uint32_t sourceTriangles = 0;
+  float cullPadding = 0.f; // extra travel beyond the authored boxes with the loaded page materials
   };
 
 struct Projection {

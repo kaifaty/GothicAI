@@ -38,49 +38,10 @@ const uint CullView   = 0u;
 const uint CullGrowth = 1u;
 const uint CullDepth  = 2u;
 const uint CullKeep   = 3u;
-const float Epsilon = 1.1920928955078125e-7;
+#include "hiz/foliage_visibility.glsl"
 
 shared uint survivors;
 shared uint appendBase;
-
-ivec2 tileSize() {
-  if(push.rawDepth==0u)
-    return scene.hiZTileSize;
-  const ivec2 power = findMSB(uvec2(scene.screenRes - 1)) + 1;
-  return (ivec2(1) << power) / textureSize(hiZ, 0);
-  }
-
-bool hiZVisible(vec4 rect, float depth) {
-  // The R16 pyramid packs depth below 0.95 into the same bin. Keep bounds touching that zone.
-  if(depth<=0.95)
-    return true;
-
-  // Same precise mip selection and max-depth test as for clusters. Include a pixel for raster rounding.
-  const vec4 pixels = (rect*0.5 + 0.5)*vec2(scene.screenRes).xyxy;
-  const vec2 last = vec2(scene.screenRes - 1);
-  const ivec2 tile = tileSize();
-  ivec2 lo = ivec2(clamp(pixels.xy - 1.0, vec2(0), last)) / tile;
-  ivec2 hi = ivec2(clamp(pixels.zw + 1.0, vec2(0), last)) / tile;
-  const ivec2 span = hi - lo;
-  int mip = findMSB(max(1, max(span.x, span.y)));
-  lo >>= mip;
-  hi >>= mip;
-  if(any(greaterThan(hi - lo, ivec2(1)))) {
-    ++mip;
-    lo >>= 1;
-    hi >>= 1;
-    }
-
-  float furthest = texelFetch(hiZ, lo, mip).x;
-  if(lo.x!=hi.x)
-    furthest = max(furthest, texelFetch(hiZ, ivec2(hi.x, lo.y), mip).x);
-  if(lo.y!=hi.y)
-    furthest = max(furthest, texelFetch(hiZ, ivec2(lo.x, hi.y), mip).x);
-  if(lo.x!=hi.x && lo.y!=hi.y)
-    furthest = max(furthest, texelFetch(hiZ, hi, mip).x);
-  const float nearest = min(push.rawDepth!=0u ? depth : packHiZ(depth), 1.0);
-  return !(nearest>furthest);
-  }
 
 uint classifyBlade(const Draw draw, const uvec4 b) {
   const vec3 root = grassBladeRoot(b, draw.origin.xyz);
@@ -105,30 +66,20 @@ uint classifyBlade(const Draw draw, const uvec4 b) {
   vec3 hi = root + extent + vec3(0.0, height, 0.0);
 
   // Budget rounding at the blade's world coordinates and in the separate clip transformations.
-  const vec3 worldPad = (max(abs(lo), abs(hi)) + 1.0)*(8.0*Epsilon);
+  const vec3 worldPad = (max(abs(lo), abs(hi)) + 1.0)*(8.0*FoliageCullEpsilon);
   lo -= worldPad;
   hi += worldPad;
   const vec3 magnitude = max(abs(lo), abs(hi));
   const vec4 clipPad = (abs(project[0])*magnitude.x + abs(project[1])*magnitude.y +
-                        abs(project[2])*magnitude.z + abs(project[3]) + 1.0)*(8.0*Epsilon);
+                        abs(project[2])*magnitude.z + abs(project[3]) + 1.0)*(8.0*FoliageCullEpsilon);
 
-  vec4 rect = vec4(2.0, 2.0, -2.0, -2.0);
-  float nearDepth = 2.0;
-  for(uint corner=0u; corner<8u; ++corner) {
-    const vec3 p = mix(lo, hi, notEqual(uvec3(corner) & uvec3(1,2,4), uvec3(0)));
-    const vec4 clip = project*vec4(p,1.0);
-    const vec4 clipLo = clip - clipPad, clipHi = clip + clipPad;
-    if(clipLo.w<=push.znear || clipLo.z<=0.0)
-      return CullKeep;
-    const vec3 low = min(clipLo.xyz/clipLo.w, clipLo.xyz/clipHi.w);
-    const vec2 high = max(clipHi.xy/clipLo.w, clipHi.xy/clipHi.w);
-    rect = vec4(min(rect.xy, low.xy), max(rect.zw, high));
-    nearDepth = min(nearDepth, low.z);
-    }
-
-  if(any(lessThan(rect.zw, vec2(-1))) || any(greaterThan(rect.xy, vec2(1))) || nearDepth>1.0)
+  vec4 rect;
+  float nearDepth;
+  if(!foliageProjectBox(project, lo, hi, clipPad, push.znear, rect, nearDepth))
+    return CullKeep;
+  if(foliageOutsideView(rect, nearDepth))
     return CullView;
-  return hiZVisible(rect, nearDepth - push.depthRoundoff) ? CullKeep : CullDepth;
+  return foliageHiZVisible(rect, nearDepth - push.depthRoundoff, push.rawDepth!=0u) ? CullKeep : CullDepth;
   }
 
 void main() {

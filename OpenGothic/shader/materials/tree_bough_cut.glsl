@@ -24,6 +24,9 @@ struct BoughProjection {
 
 BoughNode boughGetNode(uint i);
 void boughEmit(uint i, uint transition, float weight);
+#ifdef TREE_BOUGH_CULL
+bool boughHidden(BoughNode node);
+#endif
 
 float boughScreenSize(BoughNode node, BoughProjection projection) {
   vec3 nearest = mix(node.boxMin, node.boxMax, lessThan(projection.forwardLocal, vec3(0)));
@@ -58,6 +61,12 @@ void boughWalkFrom(uint i, uint end, uint band, uint bandEnd, float bandWeight, 
       ++i;
       continue;
       }
+#ifdef TREE_BOUGH_CULL
+    if(boughHidden(node)) {
+      i = node.subtreeEnd;
+      continue;
+      }
+#endif
     if(node.highPx<=0.0) {
       ++i;
       continue;
@@ -95,8 +104,19 @@ void boughWalkSlice(uint first, uint last, BoughProjection projection) {
   // leaves its nearest proxies and source cards.
   uint  band = 0u, bandEnd = 0u, belowEnd = 0u, proxyEnd = 0u;
   float bandWeight = 0.0;
+#ifdef TREE_BOUGH_CULL
+  uint hiddenEnd = first;
+#endif
   for(uint p = boughGetNode(first).parent; p!=0xffffffffu;) {
     BoughNode node = boughGetNode(p);
+#ifdef TREE_BOUGH_CULL
+    // A slice can start in the middle of a subtree rejected by another lane.
+    if(boughHidden(node)) {
+      if(node.subtreeEnd>=last)
+        return;
+      hiddenEnd = node.subtreeEnd;
+      }
+#endif
     if(node.highPx>0.0) {
       const float weight = boughParentWeight(node, projection);
       if(weight>0.0) {
@@ -117,6 +137,9 @@ void boughWalkSlice(uint first, uint last, BoughProjection projection) {
   else if(band!=0u) {
     first = max(first, belowEnd);
     }
+#ifdef TREE_BOUGH_CULL
+  first = max(first, hiddenEnd);
+#endif
   boughWalkFrom(first, last, band, bandEnd, bandWeight, projection);
   }
 
