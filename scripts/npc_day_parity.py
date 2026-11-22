@@ -417,7 +417,7 @@ def point_status(row, point, state):
     # End/Init may leave ZS empty without moving the body; a known different ZS is another pose.
     same_pose = row[3] in (state, "-")
     # Campfire sets BS_SIT (11); the other four forms set aivar[19]=0 on entering the pose.
-    posed = row[10] == 11 if state == "ZS_SIT_CAMPFIRE" else point["stage"] == 0
+    posed = row[10] == 11 if state == "ZS_SIT_CAMPFIRE" else point["stage"] == 0 and row[10] == 0
     fallback = bool(same_pose and kind and not on and point["available"] == 0 and point["on_wp"] and row[10] == 0)
     return bool(on), bool(same_pose and posed and (on or fallback)), fallback
 
@@ -442,8 +442,7 @@ def point_metrics(a, b, common, states):
         ra, rb = a["rows"][sample], b["rows"][sample]
         if ra[2] == "-":
             continue
-        routine = ra[2].split()
-        state = routine[2] if len(routine) == 4 else ra[3]
+        _, _, state, _ = ra[2].split()
         if state not in POINT_STATES:
             continue
         item = tally(state)
@@ -475,17 +474,10 @@ def point_metrics(a, b, common, states):
     def segment(key, samples, previous):
         if not valid:
             return
-        routine = samples[0][1][2].split()
-        routine_state = routine[2] if len(routine) == 4 else None
-        # A previous ZS can linger at the first sample of a new TA. It is not an arrival
-        # for that new routine (e.g. arms crossed while the next TA is going to bed).
-        available = [(t, ra) for t, ra in samples if (t, key) in selected and ra[3] in POINT_STATES
-                     and (routine_state is None or ra[3] == routine_state)]
-        state = routine_state or (available[0][1][3] if available else None)
+        _, _, state, waypoint = samples[0][1][2].split()
         if state not in POINT_STATES:
             return
-        prior_routine = previous[1][2].split() if previous is not None else []
-        moved = (len(routine) == len(prior_routine) == 4 and routine[-1] != prior_routine[-1]
+        moved = (previous is not None and waypoint != previous[1][2].split()[3]
                  and previous[0] + a["header"].get("period_min", 5) == samples[0][0])
 
         def observations(run):
@@ -707,12 +699,12 @@ def evaluate(result, tolerances, inventory_evidence=()):
         activity, points = result["activity"]["total"], result["points"]["total"]
         object_checks = {"min_activity_same_mob", "max_activity_mob_mismatch", "min_activity_mob_time_ratio",
                          "max_activity_mob_time_ratio", "max_activity_arrival_p95", "max_activity_arrival_max"}
-        applicable = not (name in object_checks and activity["samples"] and not activity["mob_samples_a"])
+        applicable = not (name in object_checks and (activity["samples"] or points["samples"]) and not activity["mob_samples_a"])
         # No held FP / arrivals is meaningful for a population entirely in legal fallback, or STAND_WP.
         if name == "min_point_same_fp" and points["available"] and not points["comparable"]:
             applicable = False
-        if name in {"min_point_pose_ratio", "max_point_pose_ratio"} and points["available"] and not points["pose_comparable_a"] and (
-                points["fallback_a"] or points["fallback_b"]):
+        if name in {"min_point_pose_ratio", "max_point_pose_ratio"} and points["available"] and not (
+                points["pose_comparable_a"] or points["pose_comparable_b"]):
             applicable = False
         if name in {"max_point_arrival_p95", "max_point_arrival_max"} and points["available"] and not points["arrivals"] and not points["missed"]:
             applicable = False

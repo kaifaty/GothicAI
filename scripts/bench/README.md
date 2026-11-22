@@ -2025,9 +2025,10 @@ python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
   --out /absolute/activity.md --json /absolute/activity.json
 ```
 
-Point activities use `npc-day-parity.tolerances-points.json` (E2.1, **draft; recalibration and lead approval required**).
-The original complete shared-stream days with seeds 73106 and 73107 used the same frozen engine,
-but recorded `on_routine_wp` against the lagging script target. They cannot validate that corrected field.
+Point activities use `npc-day-parity.tolerances-points.json` (E2.1, **draft; lead approval required**).
+The complete shared-stream days 73106 and 73107 were recalculated with the verified HUMANS center
+offset and active-TA waypoint; all eight combinations of three rounded boundary bits give identical metrics.
+The result is 31585 samples, 341 arrivals, p95 0 / maximum 5 game minutes and no missed segments or collisions.
 The cancelled prefix is excluded. The profile covers the five measured forms, pooled and individually:
 held FP agreement >=94%, pose time 0.99..1.01, arrival p95 <=5 / maximum <=10 game minutes,
 zero missed segments, stuck NPCs and double occupancy. The FP allowance reflects two seated campfire
@@ -2056,7 +2057,7 @@ excluded), pose sample time B/A, signed first arrival p95/max, missed reference 
 double occupancy in B. Point samples use the scheduled TA state; the activity table keeps actual active-ZS
 counts. A state present only in TA has an empty active-ZS row (undefined ratios), while its point misses
 still contribute to per-state and total stuck counts. The collision search includes occupants outside the state filter. Campfire
-pose uses body state 11 (`BS_SIT`); the other four forms use `aivar_19 == 0`. Physical arrival
+pose uses body state 11 (`BS_SIT`); the other four forms require standing body state 0 and `aivar_19 == 0`. Physical arrival
 does not require an active ZS: End/Init can leave it empty while the NPC stays on point. Pose accepts
 the reference ZS or this transient empty ZS, but not a known different ZS. STAND_WP has no held
 free point: arrival/pose use `on_routine_wp`, and held-point agreement is not applicable.
@@ -2074,6 +2075,8 @@ Missing point columns fail enabled point checks and never add point misses to le
 MOB checks are **not applicable** when the selected reference samples have no objects; Extra MOB
 still reports objects added only in B. An empty state selection still fails numeric checks. The shared
 `max_activity_stuck` gate includes unique NPCs from missed point segments as well as missing MOBs.
+TA-only point samples also make MOB checks inapplicable. Pose time 0/0 is inapplicable, while losing
+an observed reference pose gives ratio 0. Nonempty TA strings must have the four fields of `routineText`.
 
 ## Engine side
 
