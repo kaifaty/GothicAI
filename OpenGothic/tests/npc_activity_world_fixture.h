@@ -783,6 +783,19 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
     tick();
     if(fire) {
       check(npc.aiQueueFront()==nullptr && npc.handle().aivar[19]==73,"an occupied campfire queues nothing");
+      const auto waiting=savedNpc(npc);
+      const auto* field=world.findWayPoint("NW_FARM2_FIELD_03");
+      check(field && wp->qDistTo(field->position())>500*500,"the field is outside the Init walk radius");
+      npc.setPosition(field->position());
+      npc.updateTransform();
+      check(world.findFreePoint(npc,scheme)==nullptr,"the displaced camper has no free seat in view");
+      tick();
+      check(npc.isAiQueueEmpty(),"a displaced camper waits without walking back to the routine waypoint");
+      loadSavedNpc(npc,savedNpc(npc));
+      tick();
+      check(npc.isAiQueueEmpty(),"a loaded camper searches from the saved position");
+      loadSavedNpc(npc,waiting);
+      tick();
       } else if(pee) {
       check(Contract::queue(npc).size()==1 && npc.aiQueueFront()->act==AI_AlignToWp && npc.handle().aivar[19]==1,
             "an occupied PEE point only aligns the waiting NPC to the waypoint");
