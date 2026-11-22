@@ -260,22 +260,42 @@ void Npc::stopWaitingForPoints() {
 
 void Npc::seekActivityPoint(uint16_t wakes) {
   using namespace ActivityEvents;
+  using Form = ActivityDefinitions::PointActivity::Form;
   auto& s = activityEvents;
   const auto& a = *s.activity->point;
   auto& stage = hnpc->aivar[19];
   countWakes(aiState.hint,0,true);
   stopWaitingForPoints();
 
+  if(a.form==Form::Waypoint) {
+    // Init already queued GotoWP and AlignToWP. Its Loop only enters the stance and gestures.
+    if(stage==a.initialStage) {
+      pushActivityCommand(AiQueue::aiPlayAnim(a.enterAnimation));
+      stage=a.poseStage;
+      }
+    s.stage=Stage::Hold;
+    s.deadline=gtime::endOfTime();
+    return;
+    }
+  const bool campfire = a.form==Form::Campfire;
+  const bool seated = campfire && ActivityDefinitions::bodyStateContains(int32_t(bodyState()),a.enterBodyState);
   const auto* wp = NpcEngineCalls::resolveWaypoint(owner,*this,hnpc->wp);
   // An old save has no pending failure. A post beyond both the approach and the FP search
   // could only have come from a different destination, even if its name matches.
   const float reach = float(a.approachDistance) + WayMatrix::distanceThreshold;
-  const bool foreign = isGuardPoint(currentFp) && wp && (wakes & (Loaded|Detached)) &&
+  const bool foreign = !seated && isGuardPoint(currentFp) && wp && (wakes & (Loaded|Detached)) &&
                        currentFp->qDistTo(wp->position())>reach*reach;
   if(isGuardPoint(currentFp) && (currentFpLock.point()!=currentFp || currentFp->useCounter()>1 ||
                                  foreign || !isOnFreePoint(a.point)))
     attachToPoint(nullptr);
   const bool on = isOnFreePoint(a.point);
+  if(on && !currentFp->isGuarded())
+    currentFpLock=FpLock(currentFp,true); // Init can start on a post held by the preceding script.
+  if(seated) {
+    s.stage=Stage::Hold;
+    s.deadline=gtime::endOfTime();
+    return;
+    }
   bool occluded = false;
   if(!on || (wakes & AttachFailed)) {
     const bool returning = wp && !(wakes & RowEnd) &&
@@ -287,7 +307,8 @@ void Npc::seekActivityPoint(uint16_t wakes) {
       pushActivityCommand(AiQueue::aiGoToPoint(*post));
       pushActivityCommand(AiQueue::aiStandup());
       pushActivityCommand(AiQueue::aiAlignToFp());
-      stage        = a.walkingStage;
+      if(!campfire)
+        stage = a.walkingStage;
       s.stage      = Stage::WalkToPoint;
       s.awaitQueue = true;
       s.deadline   = after(owner.time(),WatchdogMs);
@@ -295,7 +316,7 @@ void Npc::seekActivityPoint(uint16_t wakes) {
       }
     // A previous free point (e.g. a campfire) must be vacated. An ordinary waypoint
     // inside the Init radius needs only the Loop's AlignToWP and guard pose.
-    if(returning || (wp && currentFp && currentFp!=wp && currentFp->isFreePoint() && !(wakes & RowEnd))) {
+    if(returning || (!campfire && wp && currentFp && currentFp!=wp && currentFp->isFreePoint() && !(wakes & RowEnd))) {
       s.waitPoints.clear();
       pushActivityCommand(AiQueue::aiGoToPoint(*wp));
       s.stage      = Stage::Approach;
@@ -307,30 +328,37 @@ void Npc::seekActivityPoint(uint16_t wakes) {
       p->waitForFree(*this);
     occluded = owner.findFreePoint(centerPosition(),a.point)!=nullptr;
     }
-  const auto next = on ? Stage::Hold : Stage::Wait;
+  s.stage    = on ? Stage::Hold : Stage::Wait;
+  s.deadline = occluded ? after(owner.time(),WatchdogMs) : gtime::endOfTime();
+  if(campfire) {
+    if(on) {
+      pushActivityCommand(AiQueue::aiAlignToFp());
+      pushActivityCommand(AiQueue::aiPlayAnimBs(a.enterAnimation,BodyState(a.enterBodyState)));
+      s.awaitQueue=true; // a cleared sitting command leaves the body standing
+      }
+    return;
+    }
   if(!(wakes & Loaded) || stage!=a.poseStage)
     pushActivityCommand(on ? AiQueue::aiAlignToFp() : AiQueue::aiAlignToWp());
   if(stage==a.walkingStage)
     stage = a.arrivedStage;
-  if(stage==a.arrivedStage) {
+  if(stage==a.arrivedStage && (a.form!=Form::Pee || on)) {
+    if(a.form==Form::Pee)
+      pushActivityCommand(AiQueue::aiAlignToFp());
+    if(a.form==Form::Pee || a.form==Form::ArmsCrossed)
+      pushActivityCommand(AiQueue::aiStandup());
     pushActivityCommand(AiQueue::aiPlayAnim(a.enterAnimation));
     stage = a.poseStage;
     }
-  s.stage    = next;
-  s.deadline = occluded ? after(owner.time(),WatchdogMs) : gtime::endOfTime();
   }
 
 void Npc::tickPointGesture() {
   using namespace ActivityEvents;
   const auto& s = activityEvents;
   const auto& a = *s.activity->point;
-  if((s.stage!=Stage::Hold && s.stage!=Stage::Wait) || int32_t(stateTime()/1000)<=a.timerSeconds ||
+  if(!a.timed() || (s.stage!=Stage::Hold && s.stage!=Stage::Wait) || int32_t(stateTime()/1000)<=a.timerSeconds ||
      hnpc->aivar[19]!=a.poseStage)
     return;
   countWakes(aiState.hint,Gesture,false);
-  const auto& gesture = a.gestures[owner.rules().rollGuardGesture(*this,uint32_t(a.rollRange))];
-  if(!gesture.animation.empty())
-    pushActivityCommand(AiQueue::aiPlayAnim(gesture.animation));
-  if(gesture.resetTimer)
-    setStateTime(0);
+  owner.rules().runPointGesture(*this,a);
   }

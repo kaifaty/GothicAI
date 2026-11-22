@@ -47,7 +47,7 @@ void AiQueue::load(Serialize& fin, const World& world) {
       i.activity=!i.s0.empty() || i.i1==AiAction::SavedGuardCommand;
     else
       i.activity=i.i1==AiAction::SavedGuardCommand &&
-                 (i.act==AI_StandUp || i.act==AI_AlignToFp || i.act==AI_AlignToWp || i.act==AI_PlayAnim);
+                 (i.act==AI_StandUp || i.act==AI_AlignToFp || i.act==AI_AlignToWp || i.act==AI_PlayAnim || i.act==AI_PlayAnimBs);
     if(i.act==AI_GoToPoint && i.point && i.i1>0) {
       const auto& name=i.point->name;
       int ordinal=0;
