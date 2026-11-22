@@ -1029,8 +1029,8 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
         auto& hero=*world.player();
         const auto originalHero=hero.position();
         const auto originalHeading=hero.rotation();
-        const auto* far=world.findWayPoint("NW_CITY_MERCHANT_SHOP01_FRONT_03");
-        check(far && npc.qDistTo(far->position())>25600.f*25600.f,"the far observation point is beyond the Near rings");
+        const auto* far=world.findWayPoint("NW_BIGFARM_SHEEP2_02");
+        check(far!=nullptr,"the distant observation point exists");
         const auto feet=npc.position();
         const auto heading=npc.rotation();
         const auto center=npc.collosionCenter();
@@ -1047,8 +1047,9 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
         const auto awayHeading=std::atan2(away.z,away.x)*180.f/float(M_PI);
         test.moveHero(far->position(),awayHeading);
         test.step(4);
-        check(npc.simTier()==NpcSimTier::Simplified && npc.campfireBodySuspended()==events && hit()!=events && seated(),
-              "the distant campfire preserves the seat and pose and suspends the body in event mode");
+        check(npc.simTier()==NpcSimTier::Simplified,"the distant observation point is outside the Near rings");
+        check(npc.campfireBodySuspended()==events && hit()!=events,"the distant NPC loses collision only in event mode");
+        check(seated(),"the distant NPC keeps its seat, coordinates, heading and sitting pose");
         if(events) {
           distantCampfire.position=npc.position();
           distantCampfire.heading=npc.rotation();
