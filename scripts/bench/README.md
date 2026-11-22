@@ -2025,12 +2025,16 @@ python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
   --out /absolute/activity.md --json /absolute/activity.json
 ```
 
-Point activities use `npc-day-parity.tolerances-points.json` (E2.1, approved on `bd6391ddc` for 73106 -> 73107;
-**current calibration requires a lead decision after the F1-F3 metric fixes**).
+Point activities use `npc-day-parity.tolerances-points.json`. The lead accepted E2.1 preparation
+for strict E2.2 acceptance against control 73106 **with the same seed 73106**. All thresholds stay
+unchanged: the candidate must have **zero missed shifts and zero stuck NPCs**, with no NPC-specific exceptions.
 The complete shared-stream days 73106 and 73107 were recalculated with the verified HUMANS center
 offset and active-TA waypoint; all eight combinations of three rounded boundary bits give identical metrics.
 The current result is 31585 samples, 341 arrivals, p95 0 / maximum 5 game minutes, no collisions,
-but three missing fallback-only shifts of PAL_227 (one stuck NPC). The unchanged zero limits fail:
+but three missing fallback-only shifts of PAL_227 on SHIP_DECK_29 (one NPC in the tool's stuck counter).
+This is a cross-seed observation of the original, not an allowance of three or proof of an actual hang
+between samples. Both self-comparisons pass 12/12 (341 arrivals for 73106, 342 for 73107).
+The unchanged zero limits fail on the cross-seed pair:
 pooled and guarding checks pass 10/12; the other four forms pass 12/12. Historical 12/12 on
 `bd6391ddc` does not validate the corrected metric. Replay evidence is in `npc-events-e2/review-f1-f4/`.
 The cancelled prefix is excluded. The profile covers the five measured forms, pooled and individually:
