@@ -422,6 +422,8 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   const size_t maxHash = hashTable.byteSize()/sizeof(uint32_t);
   const auto*  bench   = BenchProbe::get();
   const bool   ordered = bench!=nullptr && bench->orderedVisibility();
+  if(ordered)
+    shaders.prepareOrderedProbes();
 
   // The game's clock went back (a save from earlier in the game, a new game) or the world changed: the probes' hits
   // and light are of another place or time. With dt 0 their cubes would blend only at a sharp change until the clock

@@ -72,7 +72,7 @@ layout(binding = 19, std430) buffer Rbo  { uint ageHistogram[probeAgeBuckets]; P
 layout(binding = 20, std430) readonly buffer Stamps { int cursor; uint lastUse[]; } source;
 #endif
 
-#if !defined(RELIGHT) && !defined(RELIGHT_NEW)
+#if !defined(RELIGHT) && !defined(RELIGHT_NEW) && !defined(ORDER_REQUESTS)
 shared vec4 shSum [gl_WorkGroupSize.x][9]; // a thread's sums of L*Y_k over its samples, their count in [0].w (9 Kb)
 shared vec4 shEst [7];                     // the coefficients of this frame, packed as the texels
 shared vec4 shHist[7];                     // and of the last frame

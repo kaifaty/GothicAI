@@ -124,6 +124,7 @@ class Shaders {
     Tempest::ComputePipeline probeVote, probePrune, probeAlocation, probeHitAlloc, probeClearVotes;
     Tempest::ComputePipeline probeTrace, probeRelight, probeRelightNew, probeLighting, probeStats;
     Tempest::ComputePipeline probeMakeHashOrdered, probeRelightOrdered, probeRelightNewOrdered, probeLightingOrdered, probeOrderRequests;
+    void prepareOrderedProbes();
     Tempest::RenderPipeline  probeAmbient;
 
     // GI-Surf
