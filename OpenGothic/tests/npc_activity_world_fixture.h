@@ -884,6 +884,7 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
       const auto nativeStory=folded ? int(expected()%200) : -1;
       const auto nativeLoops=vmLoops;
       const auto beforeDue=Contract::random(script);
+      npc.setStateTime(5999); // Draining the VM alignment above advanced the world clock.
       test.only({&npc});
       test.advance(1);
       check(world.tickCount()<due && Contract::aiState(npc).loopNextTime==due && npc.stateTime()==6000 &&
