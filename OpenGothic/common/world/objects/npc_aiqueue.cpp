@@ -130,7 +130,8 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
             aiQueue.removeActivity();
           wakeActivity(ActivityEvents::AttachFailed);
           // A return behind the remaining commands also survives a save during an external walk.
-          if(act.activity && aiQueue.hasMovement()) {
+          if(act.activity && activityEvents.activity->point->form==ActivityDefinitions::PointActivity::Form::Guard &&
+             aiQueue.hasMovement()) {
             if(const auto* row=NpcEngineCalls::resolveWaypoint(owner,*this,hnpc->wp))
               pushActivityCommand(AiQueue::aiGoToPoint(*row));
             }

@@ -279,11 +279,13 @@ void Npc::seekActivityPoint(uint16_t wakes) {
     }
   const bool campfire = a.form==Form::Campfire;
   const bool seated = campfire && ActivityDefinitions::bodyStateContains(int32_t(bodyState()),a.enterBodyState);
-  const auto* wp = NpcEngineCalls::resolveWaypoint(owner,*this,hnpc->wp);
+  // The guard returns to its authored row after a lost walk. The other FP Loops
+  // choose from the NPC's actual position, including after a relocation or a load.
+  const auto* wp = a.form==Form::Guard ? NpcEngineCalls::resolveWaypoint(owner,*this,hnpc->wp) : nullptr;
   // An old save has no pending failure. A post beyond both the approach and the FP search
   // could only have come from a different destination, even if its name matches.
   const float reach = float(a.approachDistance) + WayMatrix::distanceThreshold;
-  const bool foreign = !seated && isActivityPoint(currentFp) && wp && (wakes & (Loaded|Detached)) &&
+  const bool foreign = wp && isActivityPoint(currentFp) && (wakes & (Loaded|Detached)) &&
                        currentFp->qDistTo(wp->position())>reach*reach;
   if(isActivityPoint(currentFp) && (currentFpLock.point()!=currentFp || currentFp->useCounter()>1 ||
                                  foreign || !isOnFreePoint(a.point)))
@@ -297,7 +299,7 @@ void Npc::seekActivityPoint(uint16_t wakes) {
     return;
     }
   bool occluded = false;
-  if(!on || (wakes & AttachFailed)) {
+  if(!on || (wp && (wakes & AttachFailed))) {
     const bool returning = wp && !(wakes & RowEnd) &&
                            (NpcEngineCalls::distanceToWaypoint(*this,wp)>a.approachDistance ||
                             ((wakes & (Detached|AttachFailed)) && currentFp!=wp));
@@ -316,7 +318,7 @@ void Npc::seekActivityPoint(uint16_t wakes) {
       }
     // A previous free point (e.g. a campfire) must be vacated. An ordinary waypoint
     // inside the Init radius needs only the Loop's AlignToWP and guard pose.
-    if(returning || (!campfire && wp && currentFp && currentFp!=wp && currentFp->isFreePoint() && !(wakes & RowEnd))) {
+    if(returning || (wp && currentFp && currentFp!=wp && currentFp->isFreePoint() && !(wakes & RowEnd))) {
       s.waitPoints.clear();
       pushActivityCommand(AiQueue::aiGoToPoint(*wp));
       s.stage      = Stage::Approach;
