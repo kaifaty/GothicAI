@@ -23,8 +23,7 @@ class Renderer final {
     ~Renderer();
 
     void onWorldChanged();
-    // Bench `deterministic on`: the next frame starts the TAA history over at jitter phase 0
-    // and the SSAO history over at phase 0 of its sample cycle
+    // Begin the fixed sequence of frames after a deterministic streaming wait.
     void resetTemporal();
     // bench `vsm sides 1|2|3|0`: the sides a lamp's cube face keeps (settings.vsmLampSides) instead of the setting
     static uint32_t benchVsmLampSides;
@@ -48,6 +47,7 @@ class Renderer final {
                                     bool benchShot = false, Tempest::Pixmap* landscapeCoverage = nullptr);
 
   private:
+    void resetViewHistory();
     struct TreeOcclusionProbe {
       Tempest::StorageImage occluderDepth;
       Tempest::StorageImage mainDepth;
@@ -411,7 +411,7 @@ class Renderer final {
       uint32_t                  frame    = 0;       // turns the samples relit in a frame
       uint64_t                  lastTick = 0;       // the world's tick of the last lighting, for the blend over time
       float                     frameTime = 0;      // smoothed world time of a frame, s: how many samples to relight
-      bool                      resetHistory = false; // another world: the probes start over, as on the first frame
+      bool                      resetHistory = false; // initialise the probe pool and its lighting on the next GI frame
       int64_t                   dayTime     = -1;  // the game's time of day (gtime, ms) of this frame, set by draw
       int64_t                   lastDayTime = -1;  // of the last lighting: a jump lights the probes anew
       // the counters of probe_stats (live probes, traced in the frame), read back a frame slot later (FrameProfile)

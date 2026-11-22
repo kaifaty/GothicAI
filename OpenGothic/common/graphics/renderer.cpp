@@ -535,6 +535,19 @@ void Renderer::onWorldChanged() {
   }
 
 void Renderer::resetTemporal() {
+  resetViewHistory();
+  if(settings.giMethod==GiMethod::Probes && settings.zCloudShadowScale) {
+    // GI still updates while streaming holds the world clock. Start its history at the first fixed step.
+    gi.resetHistory = true;
+    gi.frame        = 0;
+    gi.frameTime    = 0;
+    fogSky.hasLast  = false;
+    fogSky.frame    = 0;
+    eye.off();
+    }
+  }
+
+void Renderer::resetViewHistory() {
   taa.valid  = false;
   ssao.valid = false;
   camHistory.hasCur = false;
@@ -1695,7 +1708,7 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId, Tempest::Attachment&&
       rgba[4*i+2] = 255;
       rgba[4*i+3] = 255;
       }
-    resetTemporal();
+    resetViewHistory();
     return img;
     }
   if(benchShot) {

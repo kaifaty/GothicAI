@@ -344,6 +344,10 @@ waits and four frames more once everything is loaded (also when it was loaded on
 TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with visibility in
 a canonical cluster order (sorted by sphere and meshlets, not by the ids streaming handed out)
 before `shot`; texture levels settle and stand still until the shot.
+With probe GI active, the wait also restarts the probe pool, its frame clock, fog sky visibility and
+eye adaptation. During the fixed steps, a probe's grid position determines its offscreen relight phase.
+Ray hits vote by cell before the renderer selects up to 512 requests. Each bounce propagates the
+source probe's use stamp from the start of the relight.
 Issue #946 requires zero changed RGBA pixels at all four waited points in each acceptance pair.
 On the Ryzen RTX 3080 at 1920×1080 with VSM and the current default probe GI, two diagnostic runs of
 `1e5d5f3f2` differed by 81,107 pixels at the market, 329,222 at the harbour, 688,768 in the forest
@@ -400,6 +404,8 @@ and its landscape BLAS is freed) run as a copy named `streaming-flythrough` for 
 
 ## План и журнал
 
+- 2026-11-22: a deterministic wait starts probe GI from an empty pool and phase zero. Its fixed
+  steps give the same offscreen turn, hit request selection and use stamp under a permutation of probe slots.
 - 2026-11-11: `deterministic on` walks visibility clusters in a canonical order (sorted by sphere and meshlets,
   not by the ids streaming handed out). On the Mac it removed the dependence on the id order; on Ryzen four
   runs still give the discrete states of issue #946 (0–32 px), so the acceptance rule stays as it is.
@@ -995,7 +1001,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `rec <name> [novideo]`, `stop [shadow]` | record a segment (video and metrics, or metrics only); `stop shadow` also copies both rolling melee shadow journals into segment files (filter cumulative rows by fight game-time interval) |
 | `shot <name>` | one PNG |
 | `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
-| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the world stands four frames more, the renderer drops the TAA history and jitter phase, then 16 fixed steps run before the next command, and visibility appends clusters in a canonical order (sorted on the CPU by sphere and meshlets; one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
+| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the world stands four frames more, the renderer resets TAA, SSAO and active probe GI, then 16 fixed steps run before the next command, and visibility appends clusters in a canonical order (sorted on the CPU by sphere and meshlets; one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
 | `npctier <npc> full\|simplified\|auto` | Override one NPC tier until reset or reload. Hero, training and arena actors stay Full. |
 | `npctier-test <npc> <start waypoint> <end waypoint>` | Verify 20 switches in each direction during movement and turns, unchanged remaining path/destination and every arrival. `npc-tier-transitions` runs the fixture on a fresh NEWWORLD. |
 | `npcspeed <start waypoint>` | Compare Sequence speed with Full and Simplified movement on one authored edge for human/orc/wolf in walk/run/sneak; appended to `npc-tier-transitions`. Removes ambient NPCs for calibration. |

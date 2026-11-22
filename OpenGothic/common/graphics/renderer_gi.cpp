@@ -398,7 +398,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
     }
   readGiStats(fId);
 
-  const bool fisrtFrame = gi.voteTable.isEmpty();
+  const bool firstFrame = gi.voteTable.isEmpty();
 
   auto& hashTable          = usesSsbo(gi.hashTable, 2'097'152*sizeof(uint32_t)); // 8MB
   auto& voteTable          = usesSsbo(gi.voteTable, gi.hashTable.byteSize());
@@ -420,6 +420,8 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
 
   const auto&  scene   = wview.sceneGlobals();
   const size_t maxHash = hashTable.byteSize()/sizeof(uint32_t);
+  const auto*  bench   = BenchProbe::get();
+  const bool   ordered = bench!=nullptr && bench->orderedVisibility();
 
   // The game's clock went back (a save from earlier in the game, a new game) or the world changed: the probes' hits
   // and light are of another place or time. With dt 0 their cubes would blend only at a sharp change until the clock
@@ -427,9 +429,9 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   // A pause (the same tick) keeps them.
   if(scene.tickCount<gi.lastTick)
     gi.resetHistory = true;
-  if(gi.resetHistory && !fisrtFrame)
+  if(gi.resetHistory && !firstFrame && !ordered)
     Log::i("render: gi probes start over (", scene.tickCount<gi.lastTick ? "the game's clock went back" : "another world", ")");
-  const bool restart = fisrtFrame || gi.resetHistory;
+  const bool restart = firstFrame || gi.resetHistory;
   gi.resetHistory = false;
 
   // The time of day jumped (sleep, a script, `set time`): the places and hits of the probes hold, their light is of
@@ -582,7 +584,7 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   cmd.setBinding(6, voteTiles);
   cmd.setPipeline(shaders.probeClearHash);
   cmd.dispatchThreads(maxHash);
-  cmd.setPipeline(shaders.probeMakeHash);
+  cmd.setPipeline(ordered ? shaders.probeMakeHashOrdered : shaders.probeMakeHash);
   cmd.dispatchThreads(gi.maxProbes);
 
   // the blend of the probes' cubes over time: 90 % of a change in 2.3*tau (step-2.md, «2а»), by the world's clock,
@@ -632,15 +634,21 @@ void Renderer::prepareGi(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wv
   cmd.setBinding(17,newList);
   cmd.setBinding(18,voteTable);
   cmd.setBinding(19,requests);
+  if(ordered)
+    cmd.setBinding(20,freeList);
   // a thread per relit sample of every slot: the rays keep all lanes busy
-  cmd.setPipeline(shaders.probeRelight);
+  cmd.setPipeline(ordered ? shaders.probeRelightOrdered : shaders.probeRelight);
   cmd.dispatchThreads(gi.maxProbes*(256/push.relitPeriod));
   // the new probes: all samples, a thread each
-  cmd.setPipeline(shaders.probeRelightNew);
+  cmd.setPipeline(ordered ? shaders.probeRelightNewOrdered : shaders.probeRelightNew);
   cmd.dispatch(256);
+  if(ordered) {
+    cmd.setPipeline(shaders.probeOrderRequests);
+    cmd.dispatch(1);
+    }
   // a workgroup per probe: the samples projected on the harmonics, in place
   cmd.setBinding(1, probesLighting);
-  cmd.setPipeline(shaders.probeLighting);
+  cmd.setPipeline(ordered ? shaders.probeLightingOrdered : shaders.probeLighting);
   cmd.dispatch(1024);
 
   if(FrameProfile::enabled()) {

@@ -24,7 +24,7 @@
 // history.
 
 layout(primitive_culling);
-#if defined(RELIGHT_NEW)
+#if defined(RELIGHT_NEW) || defined(ORDER_REQUESTS)
 layout(local_size_x = 256) in;
 #else
 layout(local_size_x = 64) in;
@@ -68,6 +68,9 @@ layout(binding = 16, r32ui) uniform restrict uimage2D probesRadiance;
 layout(binding = 17, std430) readonly buffer Nbo { uint newList[]; }; // the new probes, probe_allocation.comp
 layout(binding = 18, std430) buffer Hbo0 { uint voteTable[]; };          // requests of probes at hits
 layout(binding = 19, std430) buffer Rbo  { uint ageHistogram[probeAgeBuckets]; ProbeRequest request[]; } req;
+#if defined(ORDERED) && (defined(RELIGHT) || defined(RELIGHT_NEW))
+layout(binding = 20, std430) readonly buffer Stamps { int cursor; uint lastUse[]; } source;
+#endif
 
 #if !defined(RELIGHT) && !defined(RELIGHT_NEW)
 shared vec4 shSum [gl_WorkGroupSize.x][9]; // a thread's sums of L*Y_k over its samples, their count in [0].w (9 Kb)
@@ -80,6 +83,19 @@ shared vec2 skySamples[gl_WorkGroupSize.x][3][2];
 #endif
 shared uint shProbeId;
 #endif
+
+uint probePositionKey(vec3 pos) {
+  return probeGridPosHash(ivec3(round(pos/probeGridStep)));
+  }
+
+bool offscreenTurn(uint id) {
+  uint phase = id;
+#if defined(ORDERED)
+  uint key = probePositionKey(probe[id].pos);
+  phase = wangHash(key);
+#endif
+  return (frameId + phase)%offPeriod==0;
+  }
 
 float luma(vec3 c) {
   return dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -304,7 +320,36 @@ vec3 skyRadiance(vec3 origin, vec3 dir) {
   return sky + NightSky;
   }
 
+ivec3 hitCorner(vec3 pos, vec3 norm, float step) {
+  return ivec3(round((pos + norm*(probeCageBias + 0.5*step))/step));
+  }
+
+float readHit(ivec2 uv, vec3 origin, vec3 dir, out vec3 pos, out vec3 norm) {
+  const float rayT = texelFetch(gbufferRayT, uv, 0).r * probeRayDistance;
+  pos  = origin + rayT*dir;
+  norm = normalize(texelFetch(gbufferNorm, uv, 0).xyz*2.0-vec3(1));
+  if(dot(norm, dir)>0)
+    norm = -norm; // backfaces face the probe
+  return rayT;
+  }
+
+ProbeRequest hitRequest(uint ray) {
+  const uint id = ray/samplesTotal, sampleId = ray%samplesTotal;
+  vec3 pos, norm;
+  readHit(gbufferCoord(id, sampleId), probe[id].pos, sampleSphere(sampleId, samplesTotal, 0), pos, norm);
+  const int stride = 1 << probeGridLod(pos, scene.camPos, scene.probeLodScale);
+  return ProbeRequest(hitCorner(pos, norm, probeGridStep*stride)*stride, packSnorm4x8(vec4(norm, 0)));
+  }
+
 #if defined(RELIGHT) || defined(RELIGHT_NEW)
+uint sourceStamp(uint id) {
+#if defined(ORDERED)
+  return source.lastUse[id];
+#else
+  return probe[id].lastUse;
+#endif
+  }
+
 vec3 readSelf(uint probeId, bool hasPrev, vec3 n) {
   // the probe's own light of the last frame in the hit's direction; a new probe has none
   return hasPrev ? probeReadIrradiance(probesLighting, probeId, n) : vec3(0);
@@ -315,7 +360,7 @@ vec3 readSelf(uint probeId, bool hasPrev, vec3 n) {
 // cannot be taken (new: no light of the last frame yet; bad: it sits in a wall), 2: found.
 int lookupProbe(vec3 pos, vec3 norm, int lod, out uint id, out ivec3 gridPos) {
   const float step = probeGridStep*(1 << lod);
-  const ivec3 px   = ivec3(round((pos + norm*(probeCageBias + 0.5*step))/step));
+  const ivec3 px   = hitCorner(pos, norm, step);
   const vec3  wpos = vec3(px)*step;
   gridPos = px*(1 << lod);
   id      = 0;
@@ -339,9 +384,32 @@ int lookupProbe(vec3 pos, vec3 norm, int lod, out uint id, out ivec3 gridPos) {
   return 0;
   }
 
-void requestProbe(ivec3 gridPos, vec3 norm) {
+// One real hit per bucket. Rank its requested cell and normal, independently of the allocating probe's slot.
+void voteForHit(uint h, uint ray, ivec3 cell, uint normal) {
+  const uint candidate = probeRequestKey | ray;
+  uint current = atomicCompSwap(voteTable[h], 0xFFFFFFFFu, candidate);
+  while(current!=0xFFFFFFFFu && current!=candidate) {
+    const ProbeRequest other = hitRequest(current & ~probeRequestKey);
+    bool earlier = normal < other.normal;
+    for(int axis=2; axis>=0; --axis)
+      if(cell[axis]!=other.gridPos[axis])
+        earlier = cell[axis]<other.gridPos[axis];
+    if(!earlier)
+      return;
+    const uint prior = atomicCompSwap(voteTable[h], current, candidate);
+    if(prior==current)
+      return;
+    current = prior;
+    }
+  }
+
+void requestProbe(ivec3 gridPos, vec3 norm, uint ray) {
   // Through the vote table, cleared after this frame's allocation: the first sample to claim a bucket writes the
   // request, probe_hit_alloc allocates it in the next frame unless a pixel votes there. Up to maxRequests a frame.
+#if defined(ORDERED)
+  const uint h = probeGridPosHash(gridPos) % voteTable.length();
+  voteForHit(h, ray, gridPos, packSnorm4x8(vec4(norm, 0)));
+#else
   if(probeHeader.reqCount>=maxRequests)
     return;
   const uint h = probeGridPosHash(gridPos) % voteTable.length();
@@ -353,14 +421,15 @@ void requestProbe(ivec3 gridPos, vec3 norm) {
   req.request[i].gridPos = gridPos;
   req.request[i].normal  = packSnorm4x8(vec4(norm, 0));
   voteTable[h] = probeRequestKey | i;
+#endif
   }
 
 void stampProbe(uint id, uint stamp) {
-  if(int(probe[id].lastUse - stamp)<0)
+  if(int(sourceStamp(id) - stamp)<0)
     atomicMax(probe[id].lastUse, stamp);
   }
 
-bool findProbe(vec3 pos, vec3 norm, uint stamp, out uint id) {
+bool findProbe(vec3 pos, vec3 norm, uint stamp, uint ray, out uint id) {
   // The probe of the last frame at a hit, on the screen or not. A hit near the camera without one requests it; till
   // it is there, the probe of the next coarser lod at the hit (its corners are corners of this lod too) stands in.
   // Taking a probe stamps its use (probe_prune frees what nobody uses): with the stamp of the probe whose sample
@@ -370,7 +439,7 @@ bool findProbe(vec3 pos, vec3 norm, uint stamp, out uint id) {
   ivec3 gridPos;
   int   found = lookupProbe(pos, norm, lod, id, gridPos);
   if(found==0 && distance(pos, scene.camPos)<hitRadius)
-    requestProbe(gridPos, norm);
+    requestProbe(gridPos, norm, ray);
   if(found==1 && id!=0)
     stampProbe(id, stamp);
   if(found!=2 && lod<12) {
@@ -383,12 +452,12 @@ bool findProbe(vec3 pos, vec3 norm, uint stamp, out uint id) {
   return true;
   }
 
-vec3 bounce(vec3 pos, vec3 norm, uint probeId, uint stamp, bool hasPrev) {
+vec3 bounce(vec3 pos, vec3 norm, uint probeId, uint sampleId, uint stamp, bool hasPrev) {
   // The light of the hit's own surroundings: the probe of the last frame there; without one, this probe's own light
   // in the hit's direction. One more ray of the path from such a hit made a hut at noon 3-10 % lighter (the sky over
   // the street seen through the door) for +0,4 ms in combat: over the budget (step-2.md, «2а»).
   uint id = 0;
-  if(findProbe(pos, norm, stamp, id))
+  if(findProbe(pos, norm, stamp, probeId*samplesTotal + sampleId, id))
     return probeReadIrradiance(probesLighting, id, norm);
   return readSelf(probeId, hasPrev, norm);
   }
@@ -403,14 +472,8 @@ vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, ui
   if(sky)
     return vec4(skyRadiance(rayOrigin, rayDirection), badbit ? 0 : 1);
 
-  const vec4  nr     = texelFetch(gbufferNorm, uv, 0);
-  const float rt     = texelFetch(gbufferRayT, uv, 0).r;
-  const float rayT   = rt * probeRayDistance;
-  const vec3  pos    = rayOrigin + rayT*rayDirection;
-
-  vec3 norm = normalize(nr.xyz*2.0-vec3(1));
-  if(dot(norm, rayDirection)>0)
-    norm = -norm; // backfaces are fine for the path tracer: they face the probe
+  vec3 pos, norm;
+  const float rayT = readHit(uv, rayOrigin, rayDirection, pos, norm);
   const vec3 albedo = min(textureAlbedo(diff.rgb), vec3(0.95));
   const vec3 at     = pos + norm*0.5; // the hit distance is 16-bit: off the surface for the shadow rays
 
@@ -419,7 +482,7 @@ vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, ui
   // probe made again at the same
   // place: a new choice at every relight flickered (the cube's change passed the reset). The light still follows
   // the lamps, the sun and the time of day; the choice only spreads the error of the shadow over the probes.
-  const uint  seed = probeGridPosHash(ivec3(round(rayOrigin/probeGridStep)));
+  const uint  seed = probePositionKey(rayOrigin);
   const uint  key  = sampleId*2654435769u + seed*2447445413u;
 
   vec3 direct = vec3(0);
@@ -440,12 +503,40 @@ vec4 shadeSample(const vec3 rayOrigin, const vec3 rayDirection, uint probeId, ui
   direct += localLight(sp, key) * (max(1.0, scene.exposure) / scene.exposure);
 
   vec3 hit = albedo * direct * Fd_Lambert;
-  hit += albedo * bounce(pos, norm, probeId, stamp, hasPrev); // Fd_Lambert is in the probes' integration
+  hit += albedo * bounce(pos, norm, probeId, sampleId, stamp, hasPrev); // Fd_Lambert is in the probes' integration
   return vec4(hit, 1);
   }
 #endif
 
-#if defined(RELIGHT_NEW)
+#if defined(ORDER_REQUESTS)
+shared uint counts[gl_WorkGroupSize.x];
+
+void main() {
+  // A fixed order over the occupied buckets selects up to the same cap as the ordinary first-arrival queue.
+  // A lane owns every bucket in its stripe. Only the winning rays need their hit data read again.
+  const uint lane = gl_LocalInvocationIndex;
+  uint count = 0;
+  for(uint h=lane; h<voteTable.length(); h+=gl_WorkGroupSize.x)
+    if(voteTable[h]!=0xFFFFFFFFu)
+      ++count;
+  counts[lane] = count;
+  barrier();
+  uint index = 0;
+  for(uint i=0; i<lane; ++i)
+    index += counts[i];
+  if(lane==gl_WorkGroupSize.x-1)
+    probeHeader.reqCount = min(index+count, maxRequests);
+  for(uint h=lane; h<voteTable.length() && index<maxRequests && count>0; h+=gl_WorkGroupSize.x) {
+    const uint winner = voteTable[h];
+    if(winner==0xFFFFFFFFu)
+      continue;
+    req.request[index] = hitRequest(winner & ~probeRequestKey);
+    voteTable[h] = probeRequestKey | index;
+    ++index;
+    --count;
+    }
+  }
+#elif defined(RELIGHT_NEW)
 shared uint shIndex;
 
 void main() {
@@ -463,7 +554,7 @@ void main() {
       continue; // as in probe_trace.comp; the same for the whole workgroup
     const uint sampleId = gl_LocalInvocationIndex;
     const vec3 dir      = sampleSphere(sampleId, samplesTotal, 0);
-    const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, probe[probeId].lastUse, false);
+    const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, sourceStamp(probeId), false);
     imageStore(probesRadiance, gbufferCoord(probeId, sampleId), uvec4(clr.a>0 ? packRGB9E5(clr.rgb*probeStoreScale) : NoSample));
     }
   }
@@ -478,7 +569,7 @@ void main() {
     return; // a new probe lights all its samples in probe_relight_new.comp
 
   // a probe no pixel takes (only the bounce of other probes) is relit on one frame of offPeriod
-  if((bits & SEEN_BIT)==0 && (frameId + probeId)%offPeriod!=0)
+  if((bits & SEEN_BIT)==0 && !offscreenTurn(probeId))
     return;
   // The samples' turn is the probe's own count of relights (processProbe), not the frame's number. By the frame a probe
   // the screen takes only on every other frame (an edge the TAA's jitter crosses) relit on those frames the samples of
@@ -487,7 +578,7 @@ void main() {
   const uint turn     = probe[probeId].turn;
   const uint sampleId = (gl_GlobalInvocationID.x%perProbe)*relitPeriod + turn%relitPeriod;
   const vec3 dir      = sampleSphere(sampleId, samplesTotal, 0);
-  const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, probe[probeId].lastUse, true);
+  const vec4 clr      = shadeSample(probe[probeId].pos, dir, probeId, sampleId, sourceStamp(probeId), true);
   imageStore(probesRadiance, gbufferCoord(probeId, sampleId), uvec4(clr.a>0 ? packRGB9E5(clr.rgb*probeStoreScale) : NoSample));
   }
 #else
@@ -550,7 +641,7 @@ void processProbe(const uint probeId) {
   const bool fresh = (bits & NEW_BIT)!=0 || (bits & TRACED_BIT)==0;
   // a probe no pixel takes is integrated on the frames it is relit on (probe_relight), with their time
   const bool off   = !fresh && (bits & SEEN_BIT)==0;
-  if(off && (frameId + probeId)%offPeriod!=0)
+  if(off && !offscreenTurn(probeId))
     return;
   const float a = off ? 1.0 - pow(1.0 - alpha, float(offPeriod)) : alpha;
 

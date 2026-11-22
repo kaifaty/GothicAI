@@ -7,6 +7,7 @@
 #include <cassert>
 
 #include "commandline.h"
+#include "benchprobe.h"
 #include "resources.h"
 #include "loadprobe.h"
 #include "settings.h"
@@ -353,6 +354,13 @@ void Shaders::compileShaders() noexcept {
     probeRelightNew= computeShader("probe_relight_new.comp.sprv");
     probeLighting  = computeShader(string_frm("probe_lighting", materialMaps, ".comp.sprv"));
     probeStats     = computeShader("probe_stats.comp.sprv");
+    if(const auto* bench = BenchProbe::get(); bench!=nullptr && bench->active()) {
+      probeMakeHashOrdered   = computeShader("probe_make_hash_ordered.comp.sprv");
+      probeRelightOrdered    = computeShader("probe_relight_ordered.comp.sprv");
+      probeRelightNewOrdered = computeShader("probe_relight_new_ordered.comp.sprv");
+      probeLightingOrdered   = computeShader(string_frm("probe_lighting_ordered", materialMaps, ".comp.sprv"));
+      probeOrderRequests     = computeShader("probe_order_requests.comp.sprv");
+      }
 
     state.setBlendSource  (RenderState::BlendMode::One);
     state.setBlendDest    (RenderState::BlendMode::SrcAlpha);  // for debugging
