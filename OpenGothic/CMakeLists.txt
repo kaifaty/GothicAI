@@ -576,7 +576,7 @@ endif()
     tests/physics_bonds_contract.cpp)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL
-    tests/placed_items_contract.cpp tests/npc_live_fixture.cpp)
+    tests/placed_items_contract.cpp tests/npc_live_fixture.cpp tests/particle_key_span_contract.cpp)
   target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   # The society stand's world (docs/society-sim.md): runs gothic-body-runner --society-export twice on the
   # game's data (GOTHIC_DIR) and checks it against evals/npc-decisions/day_people.json and places.json.

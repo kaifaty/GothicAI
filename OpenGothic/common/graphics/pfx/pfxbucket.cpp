@@ -36,18 +36,18 @@ static constexpr float PlumeResponseMs = 120.f;
 static constexpr float PlumeMaxTan     = 2.747f;  // 70 degrees
 
 
-static uint64_t ppsDiff(const ParticleFx& decl, bool loop, uint64_t time0, uint64_t time1) {
-  if(time1<=time0)
+static uint64_t ppsDiff(const ParticleFx& decl, bool loop, uint64_t born, uint64_t now, uint64_t dt, uint64_t blockTime) {
+  if(dt==0)
     return 0;
-  if(decl.prefferedTime==0 && time0==0 && !loop)
+  if(decl.prefferedTime==0 && blockTime==0 && !loop)
     return uint64_t(decl.ppsValue*1000.f);
-  if(!loop) {
-    time0 = std::min(decl.prefferedTime,time0);
-    time1 = std::min(decl.prefferedTime,time1);
-    }
-  const float pps     = decl.ppsScale(time1)*decl.ppsValue;
-  uint64_t    emitted0 = uint64_t(pps*float(time0)/1000.f);
-  uint64_t    emitted1 = uint64_t(pps*float(time1)/1000.f);
+
+  const auto keys = decl.keySpan(loop,born,now,dt,blockTime);
+  if(keys.toMs<=keys.fromMs)
+    return 0;
+  const float pps      = keys.scale*decl.ppsValue;
+  uint64_t    emitted0 = uint64_t(pps*float(keys.fromMs)/1000.f);
+  uint64_t    emitted1 = uint64_t(pps*float(keys.toMs)/1000.f);
   return emitted1-emitted0;
   }
 
@@ -760,8 +760,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
         dE = p.count==0 && !emitter.spent ? uint64_t(blockSize) : 0;
         } else {
         // a looped pulse counts from the emitter's birth, not from its block (ParticleFx::keySpan)
-        const auto keys = decl.keySpan(emitter.isLoop,emitter.born,parent.now,dt,p.timeTotal);
-        dE = ppsDiff(decl,emitter.isLoop,keys.first,keys.second);
+        dE = ppsDiff(decl,emitter.isLoop,emitter.born,parent.now,dt,p.timeTotal);
         }
       tickEmit(p,emitter,dE);
       }

@@ -6,8 +6,6 @@
 
 #include <Tempest/Texture2d>
 
-#include <utility>
-
 #include "graphics/visualfx.h"
 #include "graphics/material.h"
 #include "graphics/pfx/pfxmotion.h"
@@ -55,6 +53,12 @@ class ParticleFx final {
       };
 
     using KeyList = std::vector<float>;
+
+    struct KeySpan {
+      double fromMs;
+      double toMs;
+      float  scale;
+      };
 
     std::string   dbgName;
 
@@ -189,11 +193,9 @@ class ParticleFx final {
     float         maxPps() const;
     float         shpScale(uint64_t time) const;
     float         ppsScale(uint64_t time) const;
-    // the span [first, second] of the emission keys over a step of dt ms that ends at the world's time now, for an
-    // emitter born at born whose block has counted blockTime ms: a looped one with keys (ppsIsLooping, looped) counts
-    // from its birth by the world's clock, modulo the keys' period, so its pulse keeps the beat of its light and its
-    // object's animation after its block was freed far away and taken again near; another counts its block's time
-    std::pair<uint64_t,uint64_t> keySpan(bool looped, uint64_t born, uint64_t now, uint64_t dt, uint64_t blockTime) const;
+    // Emission interval in ms and the scale at its end. Looped keys follow the world clock from birth, including
+    // after the block is reallocated. Other keys follow blockTime, capped at the lifetime for non-looped emitters.
+    KeySpan       keySpan(bool looped, uint64_t born, uint64_t now, uint64_t dt, uint64_t blockTime) const;
 
     // v in an emitter's own axes (the rows of its matrix, PfxSlot::setDirection) as a shift in the world:
     // shpOffsetVec_S at shpFOR_S OBJECT and the own light's place
@@ -213,6 +215,7 @@ class ParticleFx final {
     static Dir           loadDirType(std::string_view src);
     static Orientation   loadOrientation(std::string_view src);
 
-    float                fetchScaleKey(uint64_t time, const KeyList& k, float fps, bool smooth, bool loop) const;
+    float                ppsScaleAtKeyTime(double keyTime) const;
+    float                fetchScaleKey(double keyTime, const KeyList& k, bool smooth, bool loop) const;
   };
 
