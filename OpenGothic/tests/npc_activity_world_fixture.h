@@ -1,5 +1,16 @@
 // Live world fixture and point activity cases for placed_items_contract.cpp.
 
+bool activityCandidate(Npc& npc) { return !npc.isPlayer() && npc.isHuman() && !npc.isDead(); }
+
+void loadSavedNpc(Npc& npc,const std::vector<uint8_t>& bytes) {
+  Tempest::MemReader reader(bytes);
+  Serialize in(reader);
+  in.setContext(&npc.world());
+  npc.load(in,0,"/npc/");
+  npc.postValidate();
+  npc.setSimTier(NpcSimTier::Full);
+  }
+
 struct EventActor {
   Npc*            npc=nullptr;
   ActivityPhases  phases;
@@ -928,4 +939,16 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
     if(phases!=vmLoops || !dispatched) differences+="\n"+observed;
     }
   require(differences.empty(),("point activity dispatch:"+differences).c_str());
+  }
+
+void pointActivitiesInBothModes(Gothic& gothic) {
+  const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
+  const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
+  for(bool events:{false,true}) {
+    setenv("OPENGOTHIC_ACTIVITY_EVENTS",events ? "1" : "0",1);
+    gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+    pointActivitiesWorld(gothic,events);
+    gothic.clearGame().reset();
+    }
+  if(previousEvents) setenv("OPENGOTHIC_ACTIVITY_EVENTS",previousEvents->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_EVENTS");
   }
