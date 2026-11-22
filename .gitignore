@@ -5,6 +5,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+/character-tool/build/
+/character-tool/dist/
+/character-tool/src/*.egg-info/
 
 # Secrets and local config (.env.example is the template)
 .env
