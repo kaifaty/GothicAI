@@ -8,6 +8,8 @@
 #include "world/waymatrix.h"
 #include "world/world.h"
 
+#include <cmath>
+
 // Npc::tickRoutine owns the end of the row. Between wakes an active routine only checks its clocks.
 
 namespace {
@@ -47,6 +49,19 @@ bool Npc::canSuspendCampfireBody() const {
     return !state.waitPoints.empty() && bodyStateMasked()==BS_STAND && !nativeBodyAction();
   return state.stage==Stage::Hold && bodyStateMasked()==BS_SIT && animProgress("S_SIT")>=0 &&
          isOnFreePoint(point->point) && currentFpLock.point()==currentFp && currentFp->useCounter()==1;
+  }
+
+bool Npc::suspendCampfireBody() {
+  if(physic.bodySuspended())
+    return true;
+  if(!go2.empty()) {
+    // The first sample of a graph segment can preserve an authored height above the floor.
+    const auto floor=owner.physic()->landRay(position()+Tempest::Vec3(0,30,0),60);
+    if(!floor.hasCol || std::abs(floor.v.y-y)>5.f)
+      return false;
+    }
+  physic.suspendBody();
+  return true;
   }
 
 void Npc::wakeActivity(uint16_t wakes) {

@@ -776,11 +776,13 @@ void campfireApproachWorld(Gothic& gothic,ActivityEventsWorld& test,EventActor& 
   const auto center=npc.collosionCenter();
   const auto floor=world.physic()->landRay(at+Tempest::Vec3(0,30,0),60);
   const auto heightError=std::abs(floor.v.y-at.y);
-  require(npc.simTier()==NpcSimTier::Simplified && phase==Stage::Approach && npc.navigationGoal().point==&row &&
-          !hit() && NpcDefinitionContract::physicsPosition(npc)==at &&
-          std::hypot(step.x,step.z)<=travel+0.1f && floor.hasCol && heightError<=5.f &&
-          !world.physic()->sweep(center-step,center,12.f).hasCol && seat.useCounter()==1,
-          "the bodyless camper follows the supported route at its normal step length and cannot take the occupied seat");
+  require(npc.simTier()==NpcSimTier::Simplified && phase==Stage::Approach && npc.navigationGoal().point==&row,
+          "the bodyless approach retains its authored waypoint destination");
+  require(!hit() && NpcDefinitionContract::physicsPosition(npc)==at,"the absent capsule's placement follows the graph");
+  require(std::hypot(step.x,step.z)<=travel+0.1f && !world.physic()->sweep(center-step,center,12.f).hasCol,
+          "the bodyless walk takes one unobstructed step at graph speed");
+  require(floor.hasCol && heightError<=5.f,"the bodyless walk stays on its floor");
+  require(seat.useCounter()==1,"the approach leaves the occupied seat with its current owner");
 
   auto& camera=*gothic.camera();
   camera.reset(&npc);

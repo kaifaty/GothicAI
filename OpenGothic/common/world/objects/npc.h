@@ -198,7 +198,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     float      simplifiedMoveSpeed(WalkBit mode) const;
     bool       canSuspendCampfireBody() const;
     bool       campfireBodySuspended() const { return physic.bodySuspended(); }
-    void       suspendCampfireBody() { physic.suspendBody(); }
+    bool       suspendCampfireBody();
     void       resumeCampfireBody() { physic.resumeBody(); }
 
     void       tick(uint64_t dt);
