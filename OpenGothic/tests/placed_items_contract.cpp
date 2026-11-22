@@ -90,6 +90,7 @@ struct NpcDefinitionContract {
   static void tickRoutine(Npc& npc) { npc.aiState.loopNextTime=0; npc.tickRoutine(); }
   // The engine's next queued action, as the NPC's tick takes it.
   static void nextAiAction(Npc& npc) { npc.nextAiAction(npc.aiQueue,0); }
+  static void tickActivityDeadline(Npc& npc) { npc.tickActivityDeadline(); }
   static const AiQueue& queue(const Npc& npc) { return npc.aiQueue; }
   static bool walking(const Npc& npc) { return !npc.go2.empty(); }
   // An action at the head of the queue, as an interruption ahead of the queued use.
@@ -1818,6 +1819,7 @@ void activitySwitch(GameScript& script,const std::vector<std::string>& accepted,
 // The phases the engine starts and the uses it queues, per NPC, seen from the engine's side.
 class ActivityCalls final : public NpcActivityProbe {
   public:
+    const Npc* lastScriptRoll=nullptr;
     ActivityCalls() { previous=instance; instance=this; }
     ~ActivityCalls() override { instance=previous; }
     size_t phase(const Npc& npc,const std::string& symbol) const {
@@ -1832,7 +1834,7 @@ class ActivityCalls final : public NpcActivityProbe {
   private:
     void phaseBegin(const Npc* npc,std::string_view symbol) override { ++phases[{npc,std::string(symbol)}]; }
     void phaseEnd(int) override {}
-    void random(const Npc*,uint32_t,uint32_t,bool) override {}
+    void random(const Npc* npc,uint32_t,uint32_t,bool script) override { lastScriptRoll=script ? npc : nullptr; }
     void queued(const Npc* npc,const AiQueue::AiAction& a) override { if(a.act==AI_UseMob) ++useCount[npc]; }
     void point(const Npc&,const WayPoint*,const WayPoint*) override {}
     void mob(const Npc&,const Interactive&,bool) override {}
