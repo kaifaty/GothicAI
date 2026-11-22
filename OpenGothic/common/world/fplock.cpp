@@ -1,5 +1,6 @@
 #include "fplock.h"
 #include "waypoint.h"
+#include "world/objects/npc.h"
 
 #include "game/serialize.h"
 
@@ -23,22 +24,27 @@ FpLock::FpLock(FpLock &&other)
   }
 
 FpLock::~FpLock() {
-  if(pt)
-    pt->useCount--;
+  release();
   }
 
 FpLock &FpLock::operator=(FpLock &&other) {
-  if(pt)
-    pt->useCount--;
+  release();
   pt = other.pt;
   other.pt=nullptr;
   return *this;
   }
 
+void FpLock::release() {
+  if(pt && --pt->useCount==0)
+    for(auto* npc:pt->waiters)
+      npc->wakeActivity(ActivityEvents::Freed);
+  pt = nullptr;
+  }
+
 void FpLock::load(Serialize &fin) {
-  fin.read(pt);
-  if(pt)
-    pt->useCount++;
+  const WayPoint* saved = nullptr;
+  fin.read(saved);
+  *this = FpLock(saved);
   }
 
 void FpLock::save(Serialize &fout) const {

@@ -98,7 +98,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         break;
         }
       auto fp = act.point!=nullptr ? act.point : owner.findNextFreePoint(*this,act.s0);
-      if(fp!=nullptr) {
+      if(fp!=nullptr && canStartPointWalk(*fp,act.activity)) {
         attachToPoint(fp);
         if(usesSimplifiedMovement()) {
           act.point=fp;
@@ -117,12 +117,12 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         queue.pushFront(std::move(act));
         break;
         }
+      if(!canStartPointWalk(*act.point,act.activity))
+        break;
       if(usesSimplifiedMovement() && act.point->isFreePoint()) {
         act.i0=1;
         const auto* target=act.point;
-        const bool  own=act.activity;
         beginSimpleGoTo(std::move(act),*target);
-        go2.activity = own;
         break;
         }
       if(wayPath.last()!=act.point) {

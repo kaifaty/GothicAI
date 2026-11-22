@@ -4,25 +4,29 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
+#include <vector>
 #include <map>
 #include <string>
 #include <string_view>
 
-namespace ActivityDefinitions { struct MobActivity; }
+class WayPoint;
+namespace ActivityDefinitions { struct MobActivity; struct PointActivity; }
 
-// Routine activities at world objects run by events instead of a polled Loop (step E1,
-// reports/engine/2026-11-14-npc-data/d4-event-executor.md). Init stays the record phase (the
-// perception set in the VM, B_ResetAll, the walk to the routine point); then a small automaton
-// walks approach -> reserve and use -> hold, and its code runs only when one of the wakes below
-// arrives. End stays the record phase. The places of the objects are MobReservations.
+// Recorded routines keep Init and End. Between them, events drive the object's reservation
+// and use (E1), or the guard's free-point lock, pose and gesture (E2.2).
 namespace ActivityEvents {
+struct Record {
+  const ActivityDefinitions::MobActivity*   mob   = nullptr;
+  const ActivityDefinitions::PointActivity* point = nullptr;
+  };
+
 enum class Stage : uint8_t {
   Off,      // the state polls its Loop: no record, events off, or not the state's automaton
   Approach, // Init's commands are queued: wait for the queue to empty (arrival at the point)
   Attach,   // AI_UseMob is queued: wait for the attach, its failure or the queue
-  Wait,     // every object of the scheme in reach is taken: wait for a freed place
-  Hold,     // at the object: nothing runs until the end of the row or a lost object
+  WalkToPoint, // the chosen free point is acquired when the queued walk starts
+  Wait,     // waiting for a place in reach
+  Hold,     // using the object or standing at the guard post
   };
 
 // Why the automaton ran; one step may carry several.
@@ -37,22 +41,24 @@ enum Wake : uint16_t {
   RowEnd       = 1<<7, // the routine row ended (eTime)
   Interrupted  = 1<<8, // the state ended otherwise: another state, death, a reset, removal
   Watchdog     = 1<<9, // a wait outlived WatchdogMs: the activity restarts from the place check
+  Gesture      = 1<<10, // the state clock reached the next gesture draw
   };
-inline constexpr size_t WakeCount = 10;
+inline constexpr size_t WakeCount = 11;
 
-// Every wait of the automaton ends by the world clock: a lost event restarts the activity.
+// Recover a stalled approach or object wait on the world clock.
 inline constexpr uint64_t WatchdogMs    = 60*60*1000;
 // A reservation its owner never turned into a use expires: the place is free again.
 inline constexpr uint64_t ReservationMs = 10*60*1000;
 
 struct State final {
-  const ActivityDefinitions::MobActivity* activity = nullptr; // null: the state polls its Loop
+  const Record* activity = nullptr; // null: the state polls its Loop
   size_t   init       = size_t(-1);         // the Init symbol this automaton was set up for
   Stage    stage      = Stage::Off;
   uint16_t pending    = 0;                  // Wake bits not yet handled
   bool     awaitQueue = false;              // QueueDone when the queue is empty next time
   bool     restart    = false;              // the walk to the point was reset: start over with Init
   bool     retry      = false;              // the watchdog fired and was counted: look for the place again
+  std::vector<const WayPoint*> waitPoints; // locked candidates within reach of this guard
   gtime    deadline   = gtime::endOfTime(); // the watchdog of the current wait
   };
 

@@ -18,5 +18,6 @@ class FpLock final {
     const WayPoint* point() const { return pt; }
 
   private:
+    void release();
     const WayPoint* pt=nullptr;
   };

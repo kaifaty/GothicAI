@@ -108,6 +108,7 @@ void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
   }
 
 void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
+  stopActivityEvents(0);
   simpleMovement = {};
   endMeleeAiSpecial();
   meleeAiSpecialSlot = {};

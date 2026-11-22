@@ -215,7 +215,7 @@ class GameScript final : public GameRules {
     void      fixNpcPosition(Npc& npc, float angle0, float distBias) override;
     StartupFloor& startupFloor() { return floorDefer; }
 
-    const ActivityDefinitions::MobActivity* eventActivity(ScriptFn init) override;
+    const ActivityEvents::Record* eventActivity(ScriptFn init) override;
 
   private:
     friend struct NpcDefinitionContract;

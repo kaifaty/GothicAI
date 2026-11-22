@@ -1,4 +1,6 @@
 #include "npc.h"
+
+#include "asset/activitydefinitions.h"
 #include "npc_transformback.h"
 #include "npc_melee_shadow.h"
 #include "npc_melee.h"
@@ -375,13 +377,16 @@ void Npc::setSimTier(NpcSimTier t) {
   if(!loadedFpReferences)
     return;
   loadedFpReferences = false;
-  if(t!=NpcSimTier::Simplified || isPlayer() || !simplifiedMovementEnabled())
+  const bool graph = t==NpcSimTier::Simplified && !isPlayer() && simplifiedMovementEnabled();
+  const auto* record = owner.rules().eventActivity(aiState.funcIni);
+  const auto* guard = record ? record->point : nullptr;
+  if(!graph && !guard)
     return;
 
   // Names are the existing save representation. Defer their disambiguation
   // until the loaded world has assigned tiers, using the original saved pose.
   const auto resolve=[&](const WayPoint* point,const char* reference) {
-    if(point==nullptr || !point->isFreePoint())
+    if(point==nullptr || !point->isFreePoint() || (!graph && !point->checkName(guard->point)))
       return point;
     const WayPoint* nearest=nullptr;
     size_t matches=0;
@@ -398,6 +403,8 @@ void Npc::setSimTier(NpcSimTier t) {
       });
     if(matches<=1)
       return point;
+    if(!graph)
+      return nearest;
     owner.noteGraphFpLoadResolution();
     const auto symbol=owner.rules().symbolName(instanceSymbol());
     Log::i("npc_graph_fp_load_resolution npc=",!symbol.empty() ? symbol : displayName(),

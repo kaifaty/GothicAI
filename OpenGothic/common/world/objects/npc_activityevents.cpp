@@ -1,13 +1,12 @@
 #include "npc.h"
 
 #include "asset/activitydefinitions.h"
+#include "game/npcactivityhost.h"
 #include "world/mobreservations.h"
 #include "world/objects/interactive.h"
 #include "world/world.h"
 
-// The automaton of a routine activity at an object (world/activityevents.h). Its code runs only
-// in stepActivityEvents(), for a wake; tickActivityEvents() between wakes compares a time. The end of
-// the row is Npc::tickRoutine's, as for a polled Loop.
+// Npc::tickRoutine owns the end of the row. Between wakes an active routine only checks its clocks.
 
 namespace {
 gtime after(gtime now, uint64_t ms) {
@@ -26,15 +25,21 @@ void Npc::stopActivityEvents(uint16_t why) {
     return; // nothing set up: no reservation, no wait
   if(activityEvents.activity!=nullptr && why!=0)
     ActivityEvents::countWakes(aiState.hint,why,false);
-  auto& places = owner.mobReservations();
-  places.release(*this);
-  places.unwait(*this);
+  if(activityEvents.activity && activityEvents.activity->point) {
+    stopWaitingForPoints();
+    dropActivityCommand();
+    if(currentFp && currentFp->isFreePoint() && currentFp->checkName(activityEvents.activity->point->point))
+      attachToPoint(nullptr);
+    } else {
+    auto& places = owner.mobReservations();
+    places.release(*this);
+    places.unwait(*this);
+    }
   activityEvents = ActivityEvents::State();
   }
 
-void Npc::startActivityEvents(const ActivityDefinitions::MobActivity* activity) {
+void Npc::startActivityEvents(const ActivityEvents::Record* activity) {
   // Init ran: a state with its record and events on starts at the approach, a return starts over
-  stopActivityEvents(0);
   activityEvents.init     = aiState.funcIni.ptr;
   activityEvents.activity = activity;
   if(activityEvents.activity==nullptr)
@@ -59,6 +64,8 @@ bool Npc::armActivityEvents() {
 
 void Npc::tickActivityEvents() {
   auto& s = activityEvents;
+  if(s.activity->point && (aiQueue.size()!=0 || !go2.empty()))
+    return;
   if(s.restart) {
     runStateInit(); // Init again on this tick: the state stays started, an interruption still runs End
     return;
@@ -69,8 +76,11 @@ void Npc::tickActivityEvents() {
     }
   if(!s.retry && s.pending==0 && s.deadline<=owner.time())
     fireActivityWatchdog();
-  if(!s.retry && s.pending==0)
+  if(!s.retry && s.pending==0) {
+    if(s.activity->point)
+      tickPointGesture();
     return;
+    }
   const uint16_t wakes = s.pending;
   const bool     retry = s.retry;
   s.pending = 0;
@@ -86,7 +96,7 @@ void Npc::tickActivityDeadline() {
   using ActivityEvents::Stage;
   auto& s = activityEvents;
   const bool busy = aiQueue.size()>0 || !go2.empty();
-  if(s.activity==nullptr || s.retry || (s.stage!=Stage::Approach && s.stage!=Stage::Attach) || !busy)
+  if(s.activity==nullptr || s.retry || (s.stage!=Stage::Approach && s.stage!=Stage::Attach && s.stage!=Stage::WalkToPoint) || !busy)
     return;
   const auto now = owner.time();
   if(s.deadline<=now) {
@@ -119,12 +129,23 @@ void Npc::dropActivityCommand() {
     wayPath.clear();
     }
   aiQueue.removeActivity();
-  owner.mobReservations().release(*this);
+  if(activityEvents.activity->mob)
+    owner.mobReservations().release(*this);
   }
 
 void Npc::stepActivityEvents(uint16_t wakes) {
   using namespace ActivityEvents;
   auto& s = activityEvents;
+  if(s.activity->point) {
+    if((wakes & Watchdog) && s.stage==Stage::Approach) {
+      runStateInit();
+      return;
+      }
+    seekActivityPoint((wakes & Loaded)!=0);
+    if(!(wakes & Loaded))
+      tickPointGesture();
+    return;
+    }
   if(wakes & Watchdog) {
     // a walk to the routine point starts over, any other wait looks for the place again
     if(s.stage==Stage::Approach)
@@ -136,7 +157,7 @@ void Npc::stepActivityEvents(uint16_t wakes) {
   if(wakes & Loaded) {
     // after a load the saved queue and walk ran as they would with the polled Loop; now one check of the place:
     // an NPC attached to an object of its scheme holds it, whatever state the object is in; any other looks for one
-    if(currentInteract!=nullptr && currentInteract->checkMobName(s.activity->scheme)) {
+    if(currentInteract!=nullptr && currentInteract->checkMobName(s.activity->mob->scheme)) {
       countWakes(aiState.hint,0,true);
       s.stage    = Stage::Hold;
       s.deadline = gtime::endOfTime();
@@ -146,6 +167,7 @@ void Npc::stepActivityEvents(uint16_t wakes) {
     return;
     }
   switch(s.stage) {
+    case Stage::WalkToPoint:
     case Stage::Off:
       break;
     case Stage::Approach:
@@ -176,7 +198,7 @@ void Npc::seekActivityPlace() {
   using namespace ActivityEvents;
   auto&       s      = activityEvents;
   auto&       places = owner.mobReservations();
-  const auto& a      = *s.activity;
+  const auto& a      = *s.activity->mob;
   const auto  now    = owner.time();
   ActivityEvents::countWakes(aiState.hint,0,true);
   places.unwait(*this);
@@ -189,9 +211,7 @@ void Npc::seekActivityPlace() {
     return;
     }
   if(mob!=nullptr && !busy && (mob==currentInteract || places.reserve(*this,*mob))) {
-    auto use = AiQueue::aiUseMob(a.scheme,a.useState);
-    use.activity = true;
-    aiPush(std::move(use));
+    pushActivityCommand(AiQueue::aiUseMob(a.scheme,a.useState));
     s.stage      = Stage::Attach;
     s.awaitQueue = (mob==currentInteract); // no attach event comes for an object already in use
     s.deadline   = after(now,WatchdogMs);
@@ -201,4 +221,93 @@ void Npc::seekActivityPlace() {
   places.wait(*this,a.scheme);
   s.stage    = Stage::Wait;
   s.deadline = after(now,WatchdogMs);
+  }
+
+void Npc::pushActivityCommand(AiQueue::AiAction&& action) {
+  action.activity = true;
+  aiPush(std::move(action));
+  }
+
+bool Npc::canStartPointWalk(const WayPoint& point, bool activity) {
+  if(!point.isFreePoint() || !point.isLocked() || currentFpLock.point()==&point)
+    return true;
+  // Two queued GotoFPs can name the same post. Drop only this activity's following
+  // StandUp and AlignToFP; external and restored commands retain their queue order.
+  if(activity && activityEvents.stage==ActivityEvents::Stage::WalkToPoint) {
+    aiQueue.removeActivity();
+    wakeActivity(ActivityEvents::AttachFailed);
+    }
+  return false;
+  }
+
+void Npc::stopWaitingForPoints() {
+  for(auto* p:activityEvents.waitPoints)
+    p->stopWaiting(*this);
+  activityEvents.waitPoints.clear();
+  }
+
+void Npc::seekActivityPoint(bool loaded) {
+  using namespace ActivityEvents;
+  auto& s = activityEvents;
+  const auto& a = *s.activity->point;
+  auto& stage = hnpc->aivar[19];
+  countWakes(aiState.hint,0,true);
+  stopWaitingForPoints();
+
+  // Old saves can have several owners. Give up only this NPC's share.
+  if(currentFp && currentFp->isFreePoint() && currentFp->checkName(a.point) &&
+     (currentFpLock.point()!=currentFp || currentFp->useCounter()>1))
+    attachToPoint(nullptr);
+  const bool on = isOnFreePoint(a.point);
+  if(!on) {
+    const auto* post = owner.findFreePoint(*this,a.point,&s.waitPoints);
+    if(post!=nullptr) {
+      s.waitPoints.clear();
+      pushActivityCommand(AiQueue::aiGoToPoint(*post));
+      pushActivityCommand(AiQueue::aiStandup());
+      pushActivityCommand(AiQueue::aiAlignToFp());
+      stage        = a.walkingStage;
+      s.stage      = Stage::WalkToPoint;
+      s.awaitQueue = true;
+      s.deadline   = after(owner.time(),WatchdogMs);
+      return;
+      }
+    // An external walk may have ended away from the row. Return before waiting for a post there.
+    if(const auto* wp=owner.findWayPoint(hnpc->wp); wp && NpcEngineCalls::distanceToWaypoint(owner,*this,hnpc->wp)>a.approachDistance) {
+      s.waitPoints.clear();
+      pushActivityCommand(AiQueue::aiGoToPoint(*wp));
+      s.stage      = Stage::Approach;
+      s.awaitQueue = true;
+      s.deadline   = after(owner.time(),WatchdogMs);
+      return;
+      }
+    for(auto* p:s.waitPoints)
+      p->waitForFree(*this);
+    }
+  const auto next = on ? Stage::Hold : Stage::Wait;
+  if(!loaded || stage!=a.poseStage)
+    pushActivityCommand(on ? AiQueue::aiAlignToFp() : AiQueue::aiAlignToWp());
+  if(stage==a.walkingStage)
+    stage = a.arrivedStage;
+  if(stage==a.arrivedStage) {
+    pushActivityCommand(AiQueue::aiPlayAnim(a.enterAnimation));
+    stage = a.poseStage;
+    }
+  s.stage    = next;
+  s.deadline = gtime::endOfTime();
+  }
+
+void Npc::tickPointGesture() {
+  using namespace ActivityEvents;
+  const auto& s = activityEvents;
+  const auto& a = *s.activity->point;
+  if((s.stage!=Stage::Hold && s.stage!=Stage::Wait) || int32_t(stateTime()/1000)<=a.timerSeconds ||
+     hnpc->aivar[19]!=a.poseStage)
+    return;
+  countWakes(aiState.hint,Gesture,false);
+  const auto& gesture = a.gestures[owner.rules().rand(uint32_t(a.rollRange),this)];
+  if(!gesture.animation.empty())
+    pushActivityCommand(AiQueue::aiPlayAnim(gesture.animation));
+  if(gesture.resetTimer)
+    setStateTime(0);
   }

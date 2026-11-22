@@ -830,6 +830,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     auto      navigationPath() const -> const WayPath& { return wayPath; }
     auto      currentTaPoint() const -> const WayPoint*;
     void      attachToPoint(const WayPoint* p);
+    bool      isOnFreePoint(std::string_view name) const;
     GoToHint  moveHint() const { return go2.flag; }
     // Passive navigation telemetry: reads the active destination or a ready go-to queue head.
     struct NavigationGoal final {
@@ -1025,13 +1026,18 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      isPlayerEnabledState(const ::AiState& st) const;
     void      tickRoutine();
     void      runStateInit();
-    void      startActivityEvents(const ActivityDefinitions::MobActivity* activity);
+    void      startActivityEvents(const ActivityEvents::Record* activity);
     bool      armActivityEvents();
     void      tickActivityEvents();
     void      tickActivityDeadline();
     void      fireActivityWatchdog();
     void      dropActivityCommand();
     void      stepActivityEvents(uint16_t wakes);
+    void      seekActivityPoint(bool loaded);
+    void      stopWaitingForPoints();
+    bool      canStartPointWalk(const WayPoint& point, bool activity);
+    void      tickPointGesture();
+    void      pushActivityCommand(AiQueue::AiAction&& action);
     void      seekActivityPlace();
     int       invokeRoutine(ScriptFn function);
     void      nextAiAction(AiQueue& queue, uint64_t dt);

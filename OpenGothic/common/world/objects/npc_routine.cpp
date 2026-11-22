@@ -139,6 +139,7 @@ void Npc::runStateInit() {
   perceptionNextTime   = owner.tickCount();
   // The commands of an activity by events' Init are its own: it can take them back (world/activityevents.h).
   const auto* activity = owner.rules().eventActivity(aiState.funcIni);
+  stopActivityEvents(0);
   activityCommands = activity!=nullptr;
   invokeRoutine(aiState.funcIni);
   activityCommands = false;
