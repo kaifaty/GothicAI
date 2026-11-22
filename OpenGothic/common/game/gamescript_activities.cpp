@@ -1,12 +1,29 @@
 #include "gamescript.h"
 
-#include "world/world.h"
+#include "world/objects/npc.h"
 
-uint32_t GameScript::rollGuardGesture(const Npc& npc, uint32_t range) {
-  const auto roll=rollRandom(range,&npc,true);
-  if(auto* local=findSymbol("ZS_STAND_GUARDING_LOOP.RANDOM"))
-    local->set_int(int32_t(roll));
-  return roll;
+void GameScript::runPointGesture(Npc& npc, const ActivityDefinitions::PointActivity& point) {
+  const auto& loop=findSymbol(npc.aiState.funcLoop.ptr)->name();
+  auto draw=[&](int32_t range,const char* variable) {
+    const auto value=int32_t(rollRandom(uint32_t(range),&npc,true));
+    if(auto* local=findSymbol(loop+variable))
+      local->set_int(value);
+    return value;
+    };
+  const auto& gesture=point.gestures[size_t(draw(point.rollRange,".RANDOM"))];
+  if(!gesture.animation.empty())
+    npc.pushActivityCommand(AiQueue::aiPlayAnim(gesture.animation));
+  if(point.portal) {
+    const auto& portal=*point.portal;
+    const auto roll=draw(portal.rollRange,".EVENTRANDY");
+    const auto guild=npc.handle().guild;
+    const auto dead=findSymbol("RAVENISDEAD")->get_int();
+    const auto level=findSymbol("CURRENTLEVEL")->get_int();
+    if(roll==portal.triggerRoll && guild!=portal.excludedGuild && dead==portal.ravenDead && level==portal.world)
+      npc.invokeRoutine(findFunction(portal.function));
+    }
+  if(gesture.resetTimer)
+    npc.setStateTime(0);
   }
 
 bool GameScript::invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe) {

@@ -18,7 +18,8 @@ using namespace Tempest;
 bool Npc::setPosition(float ix, float iy, float iz) {
   if(x==ix && y==iy && z==iz)
     return false;
-  const bool liveTeleport = !isDown() && !ragdoll && (position()-Vec3(ix,iy,iz)).length()>300.f;
+  const auto displacement = position()-Vec3(ix,iy,iz);
+  const bool liveTeleport = !isDown() && !ragdoll && displacement.length()>300.f;
   const auto* skeleton = visual.visualSkeleton();
   std::optional<Ragdoll::State> movedBody, movedDormant;
   auto relocate = [&](Ragdoll::State& state) {
@@ -68,9 +69,9 @@ bool Npc::setPosition(float ix, float iy, float iz) {
   durtyTranform |= TR_Pos;
   physic.setPosition(Vec3{x,y,z});
   // A direct relocation can leave the waypoint pointer in place (npc_goto).
-  if(activityEvents.activity && activityEvents.activity->point && go2.empty() && currentFp &&
-     (activityEvents.stage==ActivityEvents::Stage::Wait || isGuardPoint(currentFp)) &&
-     !MoveAlgo::isClose(*this,*currentFp,MAX_AI_USE_DISTANCE)) {
+  if(activityEvents.activity && activityEvents.activity->point && go2.empty() &&
+     (activityEvents.stage==ActivityEvents::Stage::Wait || isActivityPoint(currentFp)) &&
+     (!currentFp || !MoveAlgo::isClose(*this,*currentFp,MAX_AI_USE_DISTANCE))) {
     stopWaitingForPoints();
     attachToPoint(nullptr);
     wakeActivity(ActivityEvents::Detached);

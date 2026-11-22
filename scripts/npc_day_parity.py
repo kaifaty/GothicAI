@@ -410,18 +410,21 @@ POINT_STATES = {"ZS_STAND_GUARDING": "STAND", "ZS_STAND_ARMSCROSSED": "STAND",
 
 
 def point_status(row, point, state, waypoint):
-    if point is None:
+    if point is None or row[2] == "-":
+        return False, False, False
+    _, _, ta_state, ta_wp = row[2].split()
+    if ta_wp != waypoint:
         return False, False, False
     kind = POINT_STATES[state]
-    same_target = row[2].split()[-1] == waypoint
-    on_wp = point["on_wp"] and same_target
-    on = same_target and (point["on"] and kind in point["name"] if kind else on_wp)
+    # STAND_WP has no typed FP: two routines can share the same waypoint.
+    on = point["on"] and kind in point["name"] if kind else point["on_wp"] and ta_state == state
     # End/Init may leave ZS empty without moving the body; a known different ZS is another pose.
     same_pose = row[3] in (state, "-")
     # Campfire sets BS_SIT (11); the other four forms set aivar[19]=0 on entering the pose.
     posed = row[10] == 11 if state == "ZS_SIT_CAMPFIRE" else point["stage"] == 0 and row[10] == 0
-    fallback = bool(same_pose and kind and not on and point["available"] == 0 and on_wp and row[10] == 0)
-    return bool(on), bool(same_pose and posed and (on or fallback)), fallback
+    fallback = bool(same_pose and kind and not on and point["available"] == 0 and point["on_wp"] and row[10] == 0)
+    # PEE checks IsOnFP again before entering its pose.
+    return bool(on), bool(same_pose and posed and (on or (fallback and state != "ZS_PEE"))), fallback
 
 
 def point_metrics(a, b, common, states):

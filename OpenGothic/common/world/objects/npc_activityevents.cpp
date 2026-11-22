@@ -25,17 +25,22 @@ void Npc::stopActivityEvents(uint16_t why) {
   if(activityEvents.init==size_t(-1))
     return; // nothing set up: no reservation, no wait
   const auto* record=activityEvents.activity;
-  const bool guard=record && record->point;
-  // The guard has already taken and counted its final step before End.
-  if(record && aiState.started && why!=0 && !(guard && why==ActivityEvents::RowEnd))
+  const bool atPoint=record && record->point;
+  // Point activities take and count their final step before End.
+  if(record && aiState.started && why!=0 && !(atPoint && why==ActivityEvents::RowEnd))
     ActivityEvents::countWakes(aiState.hint,why,false);
-  if(guard) {
+  if(atPoint) {
+    const auto& point=*record->point;
+    // A point Loop leaves its physical post through movement or interaction, even if End
+    // was queued before the pose began. The guard has its own accepted row handover.
+    const bool keepPoint=point.form!=ActivityDefinitions::PointActivity::Form::Guard &&
+                         isOnFreePoint(point.point) && currentFpLock.point()==currentFp;
     stopWaitingForPoints();
     if(why==ActivityEvents::RowEnd) {
       const auto& next=currentRoutine();
-      if(isGuardPoint(currentFp) && (next.callback!=aiState.funcIni || next.wayPointName()!=hnpc->wp))
+      if(!keepPoint && isActivityPoint(currentFp) && (next.callback!=aiState.funcIni || next.wayPointName()!=hnpc->wp))
         attachToPoint(nullptr);
-      // The last walk/align/gesture precedes End in the queue. Keep its guard ownership
+      // The last walk/align/gesture precedes End in the queue. Keep ownership
       // until the next state is known, including a dialogue queued during the handover.
       activityEvents=ActivityEvents::State();
       activityEvents.activity=record;
@@ -43,7 +48,7 @@ void Npc::stopActivityEvents(uint16_t why) {
       return;
       }
     dropActivityCommand();
-    if(isGuardPoint(currentFp) && !(why==0 && activityEvents.stage==ActivityEvents::Stage::Off))
+    if(!keepPoint && isActivityPoint(currentFp) && !(why==0 && activityEvents.stage==ActivityEvents::Stage::Off))
       attachToPoint(nullptr);
     } else {
     auto& places = owner.mobReservations();
@@ -72,9 +77,10 @@ void Npc::restoreActivityEvents(const ActivityEvents::Record* activity) {
   activityEvents.pending  = ActivityEvents::Loaded;
   }
 
-void Npc::tickActivityEvents() {
+void Npc::tickActivityEvents(bool runLoop) {
   auto& s = activityEvents;
-  if(s.activity->point && (aiQueue.size()!=0 || !go2.empty()))
+  const auto* point = s.activity->point;
+  if(point && (aiQueue.size()!=0 || !go2.empty()))
     return;
   if(s.restart && !(s.pending & ActivityEvents::RowEnd)) {
     runStateInit(); // Init again on this tick: the state stays started, an interruption still runs End
@@ -85,23 +91,25 @@ void Npc::tickActivityEvents() {
     s.pending   |= ActivityEvents::QueueDone;
     }
   if(!s.retry && s.pending==0 && s.deadline<=owner.time()) {
-    if(s.activity->point && s.stage==ActivityEvents::Stage::Wait)
+    if(point && s.stage==ActivityEvents::Stage::Wait)
       s.pending |= ActivityEvents::Visibility;
     else
       fireActivityWatchdog();
     }
-  if(!s.retry && s.pending==0) {
-    if(s.activity->point)
-      tickPointGesture();
-    return;
+  const auto wakes = s.pending;
+  if(wakes!=0 || s.retry) {
+    const auto retry = s.retry;
+    s.pending = 0;
+    s.retry   = false;
+    if(wakes!=0)
+      ActivityEvents::countWakes(aiState.hint,wakes,false);
+    stepActivityEvents(retry ? uint16_t(wakes|ActivityEvents::Watchdog) : wakes);
     }
-  const uint16_t wakes = s.pending;
-  const bool     retry = s.retry;
-  s.pending = 0;
-  s.retry   = false;
-  if(wakes!=0)
-    ActivityEvents::countWakes(aiState.hint,wakes,false);
-  stepActivityEvents(retry ? uint16_t(wakes|ActivityEvents::Watchdog) : wakes);
+  // Arrivals and releases are independent of the routine clock. The new timed poses
+  // draw only on the perception beat that would have run their Loop.
+  if(point && point->timed() &&
+     (point->form==ActivityDefinitions::PointActivity::Form::Guard ? !(wakes & ActivityEvents::Loaded) : runLoop))
+    tickPointGesture();
   }
 
 void Npc::tickActivityDeadline() {
@@ -151,13 +159,12 @@ void Npc::stepActivityEvents(uint16_t wakes) {
   using namespace ActivityEvents;
   auto& s = activityEvents;
   if(s.activity->point) {
-    if((wakes & Watchdog) && !(wakes & RowEnd) && s.stage==Stage::Approach) {
+    if((wakes & Watchdog) && !(wakes & RowEnd) && s.stage==Stage::Approach &&
+       s.activity->point->form==ActivityDefinitions::PointActivity::Form::Guard) {
       runStateInit();
       return;
       }
     seekActivityPoint(wakes);
-    if(!(wakes & Loaded))
-      tickPointGesture();
     return;
     }
   if(wakes & Watchdog) {
@@ -247,7 +254,7 @@ void Npc::pushActivityCommand(AiQueue::AiAction&& action) {
   aiPush(std::move(action));
   }
 
-bool Npc::isGuardPoint(const WayPoint* point) const {
+bool Npc::isActivityPoint(const WayPoint* point) const {
   const auto* record=activityEvents.activity;
   return record && record->point && point && point->isFreePoint() && point->checkName(record->point->point);
   }
@@ -260,24 +267,46 @@ void Npc::stopWaitingForPoints() {
 
 void Npc::seekActivityPoint(uint16_t wakes) {
   using namespace ActivityEvents;
+  using Form = ActivityDefinitions::PointActivity::Form;
   auto& s = activityEvents;
   const auto& a = *s.activity->point;
   auto& stage = hnpc->aivar[19];
   countWakes(aiState.hint,0,true);
   stopWaitingForPoints();
 
-  const auto* wp = NpcEngineCalls::resolveWaypoint(owner,*this,hnpc->wp);
+  if(a.form==Form::Waypoint) {
+    // Init already queued GotoWP and AlignToWP. Its Loop only enters the stance and gestures.
+    if(stage==a.initialStage) {
+      pushActivityCommand(AiQueue::aiPlayAnim(a.enterAnimation));
+      stage=a.poseStage;
+      }
+    s.stage=Stage::Hold;
+    s.deadline=gtime::endOfTime();
+    return;
+    }
+  const bool campfire = a.form==Form::Campfire;
+  const bool seated = campfire && ActivityDefinitions::bodyStateContains(int32_t(bodyState()),a.enterBodyState);
+  // The guard returns to its authored row after a lost walk. The other FP Loops
+  // choose from the NPC's actual position, including after a relocation or a load.
+  const auto* wp = a.form==Form::Guard ? NpcEngineCalls::resolveWaypoint(owner,*this,hnpc->wp) : nullptr;
   // An old save has no pending failure. A post beyond both the approach and the FP search
   // could only have come from a different destination, even if its name matches.
   const float reach = float(a.approachDistance) + WayMatrix::distanceThreshold;
-  const bool foreign = isGuardPoint(currentFp) && wp && (wakes & (Loaded|Detached)) &&
+  const bool foreign = wp && isActivityPoint(currentFp) && (wakes & (Loaded|Detached)) &&
                        currentFp->qDistTo(wp->position())>reach*reach;
-  if(isGuardPoint(currentFp) && (currentFpLock.point()!=currentFp || currentFp->useCounter()>1 ||
+  if(isActivityPoint(currentFp) && (currentFpLock.point()!=currentFp || currentFp->useCounter()>1 ||
                                  foreign || !isOnFreePoint(a.point)))
     attachToPoint(nullptr);
   const bool on = isOnFreePoint(a.point);
+  if(on && !currentFp->isGuarded())
+    currentFpLock=FpLock(currentFp,true); // Init can start on a post held by the preceding script.
+  if(seated) {
+    s.stage=Stage::Hold;
+    s.deadline=gtime::endOfTime();
+    return;
+    }
   bool occluded = false;
-  if(!on || (wakes & AttachFailed)) {
+  if(!on || (wp && (wakes & AttachFailed))) {
     const bool returning = wp && !(wakes & RowEnd) &&
                            (NpcEngineCalls::distanceToWaypoint(*this,wp)>a.approachDistance ||
                             ((wakes & (Detached|AttachFailed)) && currentFp!=wp));
@@ -287,7 +316,8 @@ void Npc::seekActivityPoint(uint16_t wakes) {
       pushActivityCommand(AiQueue::aiGoToPoint(*post));
       pushActivityCommand(AiQueue::aiStandup());
       pushActivityCommand(AiQueue::aiAlignToFp());
-      stage        = a.walkingStage;
+      if(!campfire)
+        stage = a.walkingStage;
       s.stage      = Stage::WalkToPoint;
       s.awaitQueue = true;
       s.deadline   = after(owner.time(),WatchdogMs);
@@ -307,30 +337,38 @@ void Npc::seekActivityPoint(uint16_t wakes) {
       p->waitForFree(*this);
     occluded = owner.findFreePoint(centerPosition(),a.point)!=nullptr;
     }
-  const auto next = on ? Stage::Hold : Stage::Wait;
+  s.stage    = on ? Stage::Hold : Stage::Wait;
+  s.deadline = occluded ? after(owner.time(),WatchdogMs) : gtime::endOfTime();
+  if(campfire) {
+    if(on) {
+      pushActivityCommand(AiQueue::aiAlignToFp());
+      pushActivityCommand(AiQueue::aiPlayAnimBs(a.enterAnimation,BodyState(a.enterBodyState)));
+      s.awaitQueue=true; // a cleared sitting command leaves the body standing
+      }
+    return;
+    }
   if(!(wakes & Loaded) || stage!=a.poseStage)
     pushActivityCommand(on ? AiQueue::aiAlignToFp() : AiQueue::aiAlignToWp());
   if(stage==a.walkingStage)
     stage = a.arrivedStage;
-  if(stage==a.arrivedStage) {
+  if(stage==a.arrivedStage && (a.form!=Form::Pee || on)) {
+    if(a.form==Form::Pee)
+      pushActivityCommand(AiQueue::aiAlignToFp());
+    if(a.form==Form::Pee || a.form==Form::ArmsCrossed)
+      pushActivityCommand(AiQueue::aiStandup());
     pushActivityCommand(AiQueue::aiPlayAnim(a.enterAnimation));
     stage = a.poseStage;
     }
-  s.stage    = next;
-  s.deadline = occluded ? after(owner.time(),WatchdogMs) : gtime::endOfTime();
   }
 
 void Npc::tickPointGesture() {
   using namespace ActivityEvents;
   const auto& s = activityEvents;
+  if(s.stage!=Stage::Hold && s.stage!=Stage::Wait)
+    return;
   const auto& a = *s.activity->point;
-  if((s.stage!=Stage::Hold && s.stage!=Stage::Wait) || int32_t(stateTime()/1000)<=a.timerSeconds ||
-     hnpc->aivar[19]!=a.poseStage)
+  if(int32_t(stateTime()/1000)<=a.timerSeconds || hnpc->aivar[19]!=a.poseStage)
     return;
   countWakes(aiState.hint,Gesture,false);
-  const auto& gesture = a.gestures[owner.rules().rollGuardGesture(*this,uint32_t(a.rollRange))];
-  if(!gesture.animation.empty())
-    pushActivityCommand(AiQueue::aiPlayAnim(gesture.animation));
-  if(gesture.resetTimer)
-    setStateTime(0);
+  owner.rules().runPointGesture(*this,a);
   }

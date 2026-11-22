@@ -444,8 +444,11 @@ def test_point_metrics_and_threshold_boundaries(tmp_path):
         # Collision with an NPC outside the selected activity must still be seen.
         b_rows.append(row(t, "OTHER#0", ta="-", fp="STAND" if t == 30 else "-", fp_x=100, on_fp=int(t == 30)))
         a_rows.append(row(t, "OTHER#0", ta="-"))
-        for rows in (a_rows, b_rows):
-            rows.append(row(t, "WP#0", ta="0 08:00-20:00 ZS_STAND_WP NW_A", zs="ZS_STAND_WP", aivar_19=0))
+        shift = "0 08:00-09:00" if t < 60 else "1 09:00-20:00"
+        a_rows.append(row(t, "WP#0", ta=f"{shift} ZS_STAND_WP NW_A", zs="ZS_STAND_WP"))
+        # Both transitions have an empty ZS on NW_A. Only the first has the scheduled form.
+        ta_b = "2 07:00-09:00 ZS_STAND_WP NW_A" if t < 60 else "3 09:00-20:00 ZS_GOTOBED NW_A"
+        b_rows.append(row(t, "WP#0", ta=ta_b, zs="-" if t in (0, 60) else "ZS_STAND_WP"))
     a, b = tmp_path / "a", tmp_path / "b"
     header = {**DONE, "minutes": 60, "period_min": 5}
     journal(a, a_rows, [], header)
@@ -464,8 +467,16 @@ def test_point_metrics_and_threshold_boundaries(tmp_path):
     assert points["missed"][0]["start_min"] == 60
     assert points["collisions"][0]["npcs"] == ["GUARD#0", "OTHER#0"]
     assert points == result["points"]["by_state"]["ZS_STAND_GUARDING"]
-    assert result["points"]["by_state"]["ZS_STAND_WP"]["pose_ratio"] == 1
-    assert result["points"]["by_state"]["ZS_STAND_WP"]["same_fp"] is None
+    wp = npc_day_parity.compare(aa, bb, activity_states={"ZS_STAND_WP"})
+    post = wp["points"]["total"]
+    assert post["same_fp"] is None
+    assert post["on_b"] == post["pose_b"] == 12
+    assert [e["delay_min"] for e in post["arrivals"]] == [0]
+    assert [e["start_min"] for e in post["missed"]] == [60]
+    assert wp["activity"]["total"]["stuck"] == post["missed"]
+    checks = npc_day_parity.evaluate(wp, json.loads(POINTS.read_text())["tolerances"])
+    assert {c["name"] for c in checks if not c["pass"]} == {
+        "min_point_pose_ratio", "max_point_missed_segments", "max_activity_stuck"}
     limits = {"min_point_same_fp": 7 / 12, "min_point_pose_ratio": 8 / 12, "max_point_pose_ratio": 8 / 12,
               "max_point_arrival_p95": 9.75, "max_point_arrival_max": 10, "max_point_missed_segments": 1,
               "max_point_double_occupancy": 1, "max_activity_stuck": 1}
@@ -564,15 +575,18 @@ def test_point_loss_late_arrival_collision_and_legal_fallback(tmp_path):
     assert not result["points"]["total"]["available"] and result["points"]["total"]["missed_segments"] == 0
     assert result["activity"]["total"]["stuck_npcs"] == 0
     assert all(c["pass"] for c in npc_day_parity.evaluate(result, {"max_activity_stuck": 0}))
-    # Campfire and PEE wait standing, without the target pose's body/stage.
-    for state, kind, body in (("ZS_SIT_CAMPFIRE", "CAMPFIRE", 11), ("ZS_PEE", "PEE", 0)):
+    # Both wait standing. Even stage zero cannot start the PEE pose without its point.
+    for state, kind, body, wait_stage in (("ZS_SIT_CAMPFIRE", "CAMPFIRE", 11, 1), ("ZS_PEE", "PEE", 0, 0)):
         camp_a, camp_b = tmp_path / (state + "-a"), tmp_path / (state + "-b")
         journal(camp_a, [dict(r, ta=f"0 08:00-20:00 {state} NW_A", zs=state, fp=kind, body=body) for r in reference], [], header)
-        journal(camp_b, [dict(r, ta=f"0 08:00-20:00 {state} NW_A", zs=state, fp="-", on_fp=0, body=0, aivar_19=1, fp_available=0)
+        journal(camp_b, [dict(r, ta=f"0 08:00-20:00 {state} NW_A", zs=state, fp="-", on_fp=0, body=0, aivar_19=wait_stage, fp_available=0)
                          for r in reference], [], header)
         result = npc_day_parity.compare(npc_day_parity.load(camp_a), npc_day_parity.load(camp_b), activity_states={state})
-        assert result["points"]["total"]["pose_ratio"] == 0
-        assert result["points"]["total"]["fallback_b"] == 13
+        points = result["points"]["total"]
+        assert points["pose_a"] == points["fallback_b"] == 13
+        assert points["pose_b"] == points["on_b"] == 0
+        assert points["pose_ratio_available"] is None
+        assert not points["arrivals"] and not points["missed"]
         assert all(c["pass"] for c in npc_day_parity.evaluate(result, limits))
     # A hold can start after TA changes. A waypoint bit must refer to A's target, not B's old TA.
     for case in ("held", "unheld", "wp", "held-ta"):

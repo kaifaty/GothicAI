@@ -1,4 +1,5 @@
 #include "physics/dynamicworld.h"
+#include "physics/physicsnoise.h"
 #include "physics/placedcensuscache.h"
 #include "graphics/bounds.h"
 #include "graphics/mesh/protomesh.h"
@@ -86,8 +87,8 @@ struct NpcDefinitionContract {
   static auto& activityEvents(Npc& npc) { return npc.activityEvents; }
   static bool& activityEventsOn(GameScript& script) { return script.activityEvents; }
   static auto& previousState(Npc& npc) { return npc.aiPrevState; }
-  // The engine's own routine step, without waiting for the perception period.
-  static void tickRoutine(Npc& npc) { npc.aiState.loopNextTime=0; npc.tickRoutine(); }
+  static void tickRoutine(Npc& npc) { npc.aiState.loopNextTime=npc.world().tickCount(); npc.tickRoutine(); }
+  static void tickScheduledRoutine(Npc& npc) { npc.tickRoutine(); }
   // The engine's next queued action, as the NPC's tick takes it.
   static void nextAiAction(Npc& npc) { npc.nextAiAction(npc.aiQueue,0); }
   static void tickActivityDeadline(Npc& npc) { npc.tickActivityDeadline(); }
@@ -1511,7 +1512,6 @@ std::vector<std::string> placementFirstWorld(Gothic& gothic) {
   return differences;
   }
 
-
 // D4.1: a routine activity from its record against the VM, at the same positions. The stream
 // interleaves the engine calls (VM externals; the template's calls of a record phase, whose
 // perception helper still runs in the VM), the queued commands and the phase results.
@@ -2055,7 +2055,7 @@ const WayPoint* activityRow(Npc& npc,size_t init,std::string& name,gtime* start=
   return point;
   }
 
-bool activityCandidate(Npc& npc) { return !npc.isPlayer() && npc.isHuman() && !npc.isDead(); }
+#include "npc_activity_world_fixture.h"
 
 // Every position of one activity at its real object: at the object, far from the point, the object
 // taken by other NPCs, already at the object, both sides of a distance approach, and the engine's
@@ -2173,7 +2173,8 @@ void activityDefinitionsWorld(Gothic& gothic) {
   std::vector<std::string> accepted;
   for(const auto& spec:worldActivities)
     accepted.emplace_back(spec.state);
-  activitySwitch(script,accepted,"ZS_ROAST_SCAVENGER",2);
+  constexpr size_t pointPhases=5*2; // Init and End of the five point activities; their polled Loops run in the VM.
+  activitySwitch(script,accepted,"ZS_ROAST_SCAVENGER",pointPhases);
   std::vector<WorldActivity> activities;
   std::set<Npc*> actors;
   for(const auto& spec:worldActivities) {
@@ -2197,8 +2198,8 @@ void activityDefinitionsWorld(Gothic& gothic) {
     actors.insert(activity.actor);
     activities.push_back(std::move(activity));
     }
-  require(NpcDefinitionContract::activities(script).phases.size()==3*activities.size()+2,
-          "the game must load the accepted mob phases and the guard Init and End");
+  require(NpcDefinitionContract::activities(script).phases.size()==3*activities.size()+pointPhases,
+          "the game must load the accepted mob phases and the point activities' Init and End");
   size_t events=0;
   for(auto& activity:activities)
     events+=activityAtObject(world,activity,actors);
@@ -2275,8 +2276,6 @@ void activityDefinitionsWorld(Gothic& gothic) {
 // tick, which drives the bodies, queues, objects and the clock. Every other NPC is under external
 // control, so only the actors of a position run their routines and perceptions. Exits that need the
 // short reservation window (death, reset, a reset queue) stop between the look and the queued use.
-#include "npc_activity_world_fixture.h"
-
 void activityEventsWorld(Gothic& gothic) {
   using ActivityEvents::Stage;
   // Events on in this session and in the one its load creates, whatever the environment says.
@@ -3885,6 +3884,7 @@ void moverChildSave() {
   gothic.isNpcInDialogFn=[](const Npc*) { return false; };
   gothic.setupGlobalScripts();
   GameMusic music;
+  pointActivitiesInBothModes(gothic);
   const auto placementWorldDifferences=placementFirstWorld(gothic);
   require(gothic.player()!=nullptr,"bench helper fixture has a player");
   routineTables(*gothic.player());

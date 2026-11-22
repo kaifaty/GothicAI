@@ -5,7 +5,6 @@
 #include "world/activityevents.h"
 
 #include <functional>
-#include <memory>
 #include <unordered_map>
 
 class Npc;
@@ -20,7 +19,7 @@ enum class Mode : uint8_t { Off, Accepted, All };
 Mode mode();
 // The states whose record parity is accepted; other captured states need "all".
 bool accepted(std::string_view state);
-// With events off, mobs poll the recorded Loop and the guard uses the VM.
+// With events off, mobs poll the recorded Loop and point states use the VM.
 bool events();
 
 struct Phase {
@@ -36,7 +35,7 @@ struct Definitions {
   Definitions(const Definitions&) = delete;
   Definitions& operator=(const Definitions&) = delete;
   std::unordered_map<std::string,ActivityDefinitions::MobActivity> activities;
-  std::unique_ptr<ActivityDefinitions::PointActivity> guard;
+  std::unordered_map<std::string,ActivityDefinitions::PointActivity> points;
   std::unordered_map<uint32_t,Phase> phases; // Init, Loop and End function symbols
   };
 Definitions resolve(const ActivityDefinitions::Library& library, const daedalus::DaedalusScript& script, Mode mode);

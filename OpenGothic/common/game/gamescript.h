@@ -216,7 +216,7 @@ class GameScript final : public GameRules {
     StartupFloor& startupFloor() { return floorDefer; }
 
     const ActivityEvents::Record* eventActivity(ScriptFn init) override;
-    uint32_t     rollGuardGesture(const Npc& npc, uint32_t range) override;
+    void         runPointGesture(Npc& npc, const ActivityDefinitions::PointActivity& point) override;
 
   private:
     friend struct NpcDefinitionContract;

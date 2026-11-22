@@ -81,11 +81,18 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
     const auto& stored = definitions.activities.emplace(name,activity).first->second;
     addPhases(name,{&stored,nullptr},stored.perceptions);
     }
-  const auto guard = library.points.find("ZS_STAND_GUARDING");
-  if(guard!=library.points.end() && guard->second.form==ActivityDefinitions::PointActivity::Form::Guard &&
-     guard->second.loopResult==LOOP_CONTINUE) {
-    definitions.guard = std::make_unique<ActivityDefinitions::PointActivity>(guard->second);
-    addPhases(guard->first,{nullptr,definitions.guard.get()},guard->second.perceptions);
+  using Form = ActivityDefinitions::PointActivity::Form;
+  constexpr std::array pointStates = {
+    std::pair{"ZS_STAND_GUARDING",Form::Guard}, std::pair{"ZS_SIT_CAMPFIRE",Form::Campfire},
+    std::pair{"ZS_STAND_ARMSCROSSED",Form::ArmsCrossed}, std::pair{"ZS_STAND_WP",Form::Waypoint},
+    std::pair{"ZS_PEE",Form::Pee},
+    };
+  for(const auto& [name,form]:pointStates) {
+    const auto it = library.points.find(name);
+    if(it==library.points.end() || it->second.form!=form || it->second.loopResult!=LOOP_CONTINUE)
+      continue;
+    const auto& stored = definitions.points.emplace(*it).first->second;
+    addPhases(it->first,{nullptr,&stored},stored.perceptions);
     }
   return definitions;
   }
@@ -108,18 +115,27 @@ int ActivityDefinitionRuntime::run(daedalus::DaedalusVm& vm, World& world, Npc& 
     vm.call_function<void>(vm.find_symbol_by_index(entry.helper));
     });
   if(const auto* point=entry.record.point) {
+    using Form = ActivityDefinitions::PointActivity::Form;
     if(entry.phase==ActivityDefinitions::Phase::End) {
-      npc.aiPush(AiQueue::aiPlayAnim(point->leaveAnimation));
-      } else {
-      // The importer verified the same distance-based Init as a mob, followed by the stage write.
-      ActivityDefinitions::MobActivity approach;
-      approach.perceptions = point->perceptions;
-      approach.walkMode = point->walkMode;
-      approach.approach = ActivityDefinitions::Approach::Distance;
-      approach.approachDistance = point->approachDistance;
-      ActivityDefinitions::run(approach,entry.phase,host);
-      npc.handle().aivar[19] = point->initialStage;
+      if(point->form==Form::Campfire)
+        npc.aiPush(AiQueue::aiPlayAnimBs(point->leaveAnimation,BodyState(point->leaveBodyState)));
+      else
+        npc.aiPush(AiQueue::aiPlayAnim(point->leaveAnimation));
+      return 0;
       }
+    ActivityDefinitions::resetForActivity(host,point->perceptions);
+    if(point->form==Form::Campfire && ActivityDefinitions::bodyStateContains(host.bodyState(),point->enterBodyState))
+      return 0;
+    host.setWalkMode(point->walkMode);
+    const auto wp=host.waypoint();
+    if(point->form==Form::Waypoint) {
+      host.gotoWaypoint(wp);
+      npc.aiPush(AiQueue::aiAlignToWp());
+      }
+    else if(host.distanceToWaypoint(wp)>point->approachDistance)
+      host.gotoWaypoint(wp);
+    if(point->form!=Form::Campfire)
+      npc.handle().aivar[19] = point->initialStage;
     return 0;
     }
   if(!observer)

@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <stdexcept>
 
+#include "asset/activitydefinitions.h"
 #include "game/bodycontroller.h"
 #include "world/objects/item.h"
 #include "world/world.h"
@@ -721,10 +722,12 @@ void Npc::clearAiQueue() {
   else if(activityEvents.stage==ActivityEvents::Stage::WalkToPoint)
     wakeActivity(ActivityEvents::QueueDone);
   else if(activityEvents.stage==ActivityEvents::Stage::Approach) {
-    // the walk to the routine point is gone: an empty queue is no arrival. The automaton starts over with Init
-    // on its next step, unless a new state replaces it first (startState: its End still runs).
-    activityEvents.restart    = true;
-    activityEvents.awaitQueue = false;
+    const auto* point = activityEvents.activity->point;
+    // The four new point forms resume after a cleared queue just as their Loops would.
+    if(!point || point->form==ActivityDefinitions::PointActivity::Form::Guard) {
+      activityEvents.restart    = true;
+      activityEvents.awaitQueue = false;
+      }
     }
   stopPhysicsInvestigation(false);
   currentLookAt    = nullptr;
@@ -757,7 +760,7 @@ void Npc::attachToPoint(const WayPoint *p) {
     wakeActivity(ActivityEvents::Detached);
   if(auto* probe=NpcActivityProbe::instance; probe && currentFp!=p) probe->point(*this,currentFp,p);
   currentFp     = p;
-  currentFpLock = FpLock(p,isGuardPoint(p) && (!p->isLocked() || p==currentFpLock.point()));
+  currentFpLock = FpLock(p,isActivityPoint(p) && (!p->isLocked() || p==currentFpLock.point()));
   }
 
 bool Npc::goToPosition(const Vec3& position) {
