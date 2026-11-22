@@ -170,7 +170,9 @@ void Npc::tickRoutine() {
 
   // A routine activity run by events (world/activityevents.h) runs no Loop: its automaton wakes on events
   // below. The end of its row stays here, on the same perception clock as a polled Loop's.
-  const bool events = armActivityEvents();
+  if(activityEvents.init!=aiState.funcIni.ptr)
+    restoreActivityEvents(owner.rules().eventActivity(aiState.funcIni));
+  const bool events = activityEvents.activity!=nullptr;
   const bool fastPath = (aiPolicy==NpcProcessPolicy::AiFar2 && routines.empty()); //HACK: don't process far away Npc
   if(aiState.loopNextTime<=owner.tickCount()) {
     aiState.loopNextTime = owner.tickCount() + perceptionTimeClampt();

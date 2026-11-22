@@ -107,7 +107,9 @@ struct Npc::BodyMovementTrace final {
   };
 
 void Npc::GoTo::save(Serialize& fout) const {
-  fout.write(npc, uint8_t(flag), wp, pos);
+  // A waypoint walk does not use pos. Keep its exact free point there for names shared by several posts.
+  const bool freePoint = (flag==GT_Way || flag==GT_NextFp) && wp && wp->isFreePoint();
+  fout.write(npc, uint8_t(flag), wp, freePoint ? wp->position() : pos);
   }
 
 void Npc::GoTo::load(Serialize& fin) {
@@ -378,23 +380,27 @@ void Npc::setSimTier(NpcSimTier t) {
     return;
   loadedFpReferences = false;
   const bool graph = t==NpcSimTier::Simplified && !isPlayer() && simplifiedMovementEnabled();
-  const auto* record = owner.rules().eventActivity(aiState.funcIni);
+  const auto* record = activityEvents.activity;
   const auto* guard = record ? record->point : nullptr;
   if(!graph && !guard)
     return;
 
-  // Names are the existing save representation. Defer their disambiguation
-  // until the loaded world has assigned tiers, using the original saved pose.
-  const auto resolve=[&](const WayPoint* point,const char* reference) {
+  // An exact saved destination identifies the guard's walk and lock. For a pose or an older
+  // save without that destination, keep the point nearest to the saved body.
+  const auto* savedWalk = (go2.flag==GT_Way || go2.flag==GT_NextFp) ? go2.wp : nullptr;
+  const auto resolve=[&](const WayPoint* point,const char* reference,bool walk=false) {
     if(point==nullptr || !point->isFreePoint() || (!graph && !point->checkName(guard->point)))
       return point;
     const WayPoint* nearest=nullptr;
+    const WayPoint* exact=nullptr;
     size_t matches=0;
     float distance=std::numeric_limits<float>::max();
     owner.forEachWayPoint([&](const WayPoint& candidate) {
       if(!candidate.isFreePoint() || candidate.name!=point->name)
         return;
       ++matches;
+      if(walk && point==savedWalk && guard && candidate.checkName(guard->point) && candidate.position()==go2.pos)
+        exact=&candidate;
       const float d=(candidate.position()-loadedFpPosition).quadLength();
       if(d<distance) {
         distance=d;
@@ -403,6 +409,8 @@ void Npc::setSimTier(NpcSimTier t) {
       });
     if(matches<=1)
       return point;
+    if(exact)
+      nearest=exact;
     if(!graph)
       return nearest;
     owner.noteGraphFpLoadResolution();
@@ -414,20 +422,22 @@ void Npc::setSimTier(NpcSimTier t) {
            ") changed=",nearest!=point);
     return nearest;
     };
-  currentFp=resolve(currentFp,"currentFp");
-  currentFpLock=FpLock(resolve(currentFpLock.point(),"currentFpLock"));
-  go2.wp=resolve(go2.wp,"goTo");
+  currentFp=resolve(currentFp,"currentFp",true);
+  currentFpLock=FpLock(resolve(currentFpLock.point(),"currentFpLock",true));
+  go2.wp=resolve(go2.wp,"goTo",true);
   WayPath path;
   while(const auto* point=wayPath.pop())
     path.add(*resolve(point,"path"));
   path.reverse();
   wayPath=std::move(path);
   for(auto* queue:{&aiQueue,&aiQueueOverlay}) {
+    bool terminal=queue==&aiQueue && pendingSimpleGoTo()!=nullptr;
     std::vector<AiQueue::AiAction> actions;
     actions.reserve(queue->size());
     while(queue->size()>0) {
       auto action=queue->pop();
-      action.point=resolve(action.point,"queue");
+      action.point=resolve(action.point,"queue",terminal);
+      terminal=false;
       actions.push_back(std::move(action));
       }
     for(auto i=actions.rbegin();i!=actions.rend();++i)

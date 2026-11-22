@@ -1970,14 +1970,12 @@ const WayPoint* World::findFreePoint(const Npc &npc, std::string_view name, std:
 
   const auto pos = npc.centerPosition();
   return wmatrix->findFreePoint(pos,name,[&](const WayPoint& wp) {
-    if(wp.isLocked() && occupied==nullptr)
+    if(wp.isLocked()) {
+      if(occupied)
+        occupied->push_back(&wp);
       return false;
-    if(!npc.canRayHitPoint(Tempest::Vec3(wp.pos.x,wp.pos.y+10,wp.pos.z)))
-      return false;
-    if(!wp.isLocked())
-      return true;
-    occupied->push_back(&wp);
-    return false;
+      }
+    return npc.canRayHitPoint(Tempest::Vec3(wp.pos.x,wp.pos.y+10,wp.pos.z));
     });
   }
 

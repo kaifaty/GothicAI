@@ -62,6 +62,7 @@ class GameRules {
     virtual int  invokeState(Npc* npc, Npc* other, Npc* victim, ScriptFn fn) = 0;
     // The record of a state whose activity runs by events (world/activityevents.h), null when its Loop is polled.
     virtual const ActivityEvents::Record* eventActivity(ScriptFn init) = 0;
+    virtual uint32_t rollGuardGesture(const Npc& npc, uint32_t range) = 0;
     virtual void invokeItem(Npc* npc, ScriptFn fn) = 0;
     virtual int  invokeCond(Npc& npc, std::string_view func) = 0;
     virtual void invokePickLock(Npc& npc, int success, int brokenOpen) = 0;

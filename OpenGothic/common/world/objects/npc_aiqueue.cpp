@@ -1,4 +1,5 @@
 #include "npc.h"
+#include "asset/activitydefinitions.h"
 
 #include <Tempest/Log>
 
@@ -98,7 +99,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         break;
         }
       auto fp = act.point!=nullptr ? act.point : owner.findNextFreePoint(*this,act.s0);
-      if(fp!=nullptr && canStartPointWalk(*fp,act.activity)) {
+      if(fp!=nullptr) {
         attachToPoint(fp);
         if(usesSimplifiedMovement()) {
           act.point=fp;
@@ -113,12 +114,19 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       break;
       }
     case AI_GoToPoint: {
+      if(act.point==nullptr)
+        break; // the saved waypoint is absent from this world
       if(isInAir() || !setInteraction(nullptr)) {
         queue.pushFront(std::move(act));
         break;
         }
-      if(!canStartPointWalk(*act.point,act.activity))
+      const auto* record=activityEvents.activity;
+      if(record && record->point && act.s0==record->point->point &&
+         act.point->isLocked() && currentFpLock.point()!=act.point) {
+        aiQueue.removeActivity();
+        wakeActivity(ActivityEvents::AttachFailed);
         break;
+        }
       if(usesSimplifiedMovement() && act.point->isFreePoint()) {
         act.i0=1;
         const auto* target=act.point;

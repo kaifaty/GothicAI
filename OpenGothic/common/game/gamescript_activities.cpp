@@ -2,6 +2,13 @@
 
 #include "world/world.h"
 
+uint32_t GameScript::rollGuardGesture(const Npc& npc, uint32_t range) {
+  const auto roll=rand(range,&npc);
+  if(auto* local=findSymbol("ZS_STAND_GUARDING_LOOP.RANDOM"))
+    local->set_int(int32_t(roll));
+  return roll;
+  }
+
 bool GameScript::invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe) {
   // The startup floor fix wraps the script externals; inside its window the phase keeps the VM path.
   if(floorDefer.active())

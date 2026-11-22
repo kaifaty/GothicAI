@@ -187,6 +187,13 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
 
   go2.load(fin);
   fin.read(currentFp,currentFpLock);
+  // A saved command can end the guard before the next routine tick. Bind its restored lock now,
+  // while the Loaded event still waits for the saved walk and commands.
+  if(aiState.started) {
+    const auto* record=owner.rules().eventActivity(aiState.funcIni);
+    if(record && record->point)
+      restoreActivityEvents(record);
+    }
   wayPath.load(fin);
 
   mvAlgo.load(fin);

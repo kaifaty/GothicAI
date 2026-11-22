@@ -1027,15 +1027,14 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      tickRoutine();
     void      runStateInit();
     void      startActivityEvents(const ActivityEvents::Record* activity);
-    bool      armActivityEvents();
+    void      restoreActivityEvents(const ActivityEvents::Record* activity);
     void      tickActivityEvents();
     void      tickActivityDeadline();
     void      fireActivityWatchdog();
     void      dropActivityCommand();
     void      stepActivityEvents(uint16_t wakes);
-    void      seekActivityPoint(bool loaded);
+    void      seekActivityPoint(uint16_t wakes);
     void      stopWaitingForPoints();
-    bool      canStartPointWalk(const WayPoint& point, bool activity);
     void      tickPointGesture();
     void      pushActivityCommand(AiQueue::AiAction&& action);
     void      seekActivityPlace();
