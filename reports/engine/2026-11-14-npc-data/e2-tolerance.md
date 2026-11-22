@@ -111,7 +111,7 @@ F1 исключает захват прежнего поста после сме
 | База: `models/HUMANS.MDH.json` | `1f81ce6804d5c4e96385fb0c8fbaeba06491724afb91136238efa2d3b4f8a82b` |
 | База: `worlds/NEWWORLD/vobs.json` | `19ed4cd4deed9b561defca57612babcc79579632f75befb991f74993b559f4dd` |
 
-`seed-73106-sources.json` и `seed-73107-sources.json` содержат SHA первичных и производных CSV, событий и заголовков; `runtime-sources.json` — источники базы, `verification.json` — HEAD, профиль и SHA мерила при генерации, `final-head.json` — повторная загрузка профиля через CLI на публикуемом HEAD вместе и по каждой форме. Независимое сравнение всех 608634 строк (`derivative-integrity.json`) подтвердило: меняются только `on_routine_wp` и `fp_available`, остальные 30 столбцов и события побайтно сохранены. Производные `seed-73106/npc-day.csv.gz` и `seed-73107/npc-day.csv.gz` читаются обычной командой без изменения формата.
+`seed-73106-sources.json` и `seed-73107-sources.json` содержат SHA первичных и производных CSV, событий и заголовков; `runtime-sources.json` — источники базы, `verification.json` — HEAD, профиль и SHA мерила при генерации, `final-head.json` — проверка через CLI на **историческом `bd6391ddc`** вместе и по каждой форме. Текущий HEAD и SHA мерила записаны отдельно в `review-f1-f4/replay-source.json`. Независимое сравнение всех 608634 строк (`derivative-integrity.json`) подтвердило: меняются только `on_routine_wp` и `fp_available`, остальные 30 столбцов и события побайтно сохранены. Производные `seed-73106/npc-day.csv.gz` и `seed-73107/npc-day.csv.gz` читаются обычной командой без изменения формата.
 
 Исторический рецепт создания производной на `bd6391ddc` (2026-11-22):
 
