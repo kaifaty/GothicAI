@@ -2025,7 +2025,7 @@ python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
   --out /absolute/activity.md --json /absolute/activity.json
 ```
 
-Point activities use `npc-day-parity.tolerances-points.json` (E2.1, **draft; lead approval required**).
+Point activities use `npc-day-parity.tolerances-points.json` (E2.1, **approved 2026-11-22 for 73106 -> 73107**).
 The complete shared-stream days 73106 and 73107 were recalculated with the verified HUMANS center
 offset and active-TA waypoint; all eight combinations of three rounded boundary bits give identical metrics.
 The result is 31585 samples, 341 arrivals, p95 0 / maximum 5 game minutes and no missed segments or collisions.
@@ -2034,6 +2034,14 @@ held FP agreement >=94%, pose time 0.99..1.01, arrival p95 <=5 / maximum <=10 ga
 zero missed segments, stuck NPCs and double occupancy. The FP allowance reflects two seated campfire
 NPCs exchanging points. Use `--activity-states` for the states being changed and inspect their margins.
 [Measurements, causes and headroom](../../reports/engine/2026-11-14-npc-data/e2-tolerance.md).
+
+The derived controls are `/mnt/shared/gothic-ai/npc-events-e2/accepted-calibration/seed-73106/`
+and `seed-73107/`; primary CSVs and their SHA-256 hashes are unchanged. The folder also contains
+the reproduction recipe, three rounded boundary bits, and unknown visibility lookups.
+Guarding has no metric-sensitive unknowns (fallback A/B 5084/5080). Four ARMSCROSSED visibility
+bits per seed remain unknown; all 256 archive pairs preserve all 12 gated values. Before comparing
+a future candidate across all five forms, run the archived `variants.py REPO CANDIDATE` to retain
+all 16 alternatives of control 73106. Archive-pair invariance does not prove candidate invariance.
 
 ```sh
 python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
