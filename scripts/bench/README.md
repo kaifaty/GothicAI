@@ -348,28 +348,21 @@ With probe GI active, the wait also restarts the probe pool, its frame clock, fo
 eye adaptation. During the fixed steps, a probe's grid position determines its offscreen relight phase.
 Ray hits vote by cell before the renderer selects up to 512 requests. Each bounce propagates the
 source probe's use stamp from the start of the relight.
-Issue #946 requires zero changed RGBA pixels at all four waited points in each acceptance pair.
-On the Ryzen RTX 3080 at 1920×1080 with VSM and the current default probe GI, two diagnostic runs of
-`1e5d5f3f2` differed by 81,107 pixels at the market, 329,222 at the harbour, 688,768 in the forest
-and 8,957 on the island. All four captures had identical G-buffers and direct sunlight on geometry.
-The first pass to differ on those surfaces was ambient lighting.
-[Measurements](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#ryzen-2026-11-22).
 `perf-market-teleport` captures the first frame after the return jump and still depends on loading.
 
-For a render change, compare off ↔ on as two consecutive runs on one host and binary, toggled by
-the feature's own variable:
-`uv run --no-project --with pillow --with numpy python
-reports/engine/2026-11-03-streaming-optimisation/shots_diff.py off=<dir> on=<dir>` must report 0
-changed pixels at the four waited points (`--all-pairs` compares every pair of several runs). If a
-point differs, run off and on once more: the change is accepted when every one of the four points
-gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
+Compare consecutive runs on one host with one binary. For an off ↔ on render check, toggle the
+feature's own variable between runs. Each acceptance pair must report zero changed RGBA pixels
+at all four waited points in the same comparison. Set `first` and `second` to the output directories
+and use `--host mac` for Metal.
 
-The virtual shadow maps stay on for the comparison on Ryzen: their GPU passes no longer depend on
-the order of shader invocations.
-[Report](../../reports/engine/2026-11-10-still-shots-repeat/README.md): the SSAO cycle's phase that
-was not reset, the two shader bugs behind the VSM noise (an uninitialised depth in
-`fog_epipolar.comp`, a page lost in `vsm_mark_pages.comp`), the second state of a still (whether the
-wait had to wait) and what is left.
+```sh
+uv run --no-project --with pillow --with numpy python \
+  reports/engine/2026-11-03-streaming-optimisation/shots_diff.py \
+  --host ryzen --shots perf-market,perf-harbour,perf-forest,perf-island a="$first" b="$second"
+```
+
+The Ryzen RTX 3080 pair at 1920×1080 with VSM and probe GI enabled and three Metal pairs at
+800×600 gave zero changed pixels in all four shots. [Measurements](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#ryzen-2026-11-22).
 
 `motion-vectors` and `motion-vectors-clips` check the motion vectors of objects (graphics plan 1b,
 [report](../../reports/render-features/2026-11-10-motion-vectors/step-1b.md)). `motion-vectors` takes stills: a still
