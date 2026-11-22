@@ -93,6 +93,7 @@ void Npc::clearState(bool noFinalize) {
 
 void Npc::finishState(bool noFinalize, uint16_t reason) {
   if(BodyController::deferNative(*this,[this,noFinalize,reason] { finishState(noFinalize,reason); })) return;
+  resumeCampfireBody();
   stopActivityEvents(reason);
   if(aiState.funcIni.isValid() && aiState.started) {
     if(!noFinalize)

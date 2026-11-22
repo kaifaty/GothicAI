@@ -1,6 +1,7 @@
 #include "npc.h"
 
 #include "asset/activitydefinitions.h"
+#include "game/bodycontroller.h"
 #include "game/npcactivityhost.h"
 #include "world/mobreservations.h"
 #include "world/objects/interactive.h"
@@ -15,6 +16,22 @@ gtime after(gtime now, uint64_t ms) {
   return now;
   }
 }
+
+bool Npc::canSuspendCampfireBody() const {
+  const auto* record = activityEvents.activity;
+  const auto* point  = record ? record->point : nullptr;
+  if(point==nullptr || point->form!=ActivityDefinitions::PointActivity::Form::Campfire ||
+     activityEvents.stage!=ActivityEvents::Stage::Hold || !aiState.started || aiState.eTime<=owner.time())
+    return false;
+  if(activityEvents.pending!=0 || activityEvents.awaitQueue || activityEvents.retry ||
+     externalCtrl || isAiBusy() || aiQueueOverlay.size()!=0 || !outputPipe->isFinished())
+    return false;
+  if(!simpleMovement.active || !usesSimplifiedMovement() || animationLodPinned() || isMeleeFighter() || isInAir() ||
+     BodyController::owns(*this) || (!physic.isEnabled() && !physic.bodySuspended()))
+    return false;
+  return bodyStateMasked()==BS_SIT && animProgress("S_SIT")>=0 &&
+         isOnFreePoint(point->point) && currentFpLock.point()==currentFp && currentFp->useCounter()==1;
+  }
 
 void Npc::wakeActivity(uint16_t wakes) {
   if(activityEvents.activity!=nullptr)

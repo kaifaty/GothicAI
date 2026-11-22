@@ -1186,7 +1186,8 @@ void Npc::tick(uint64_t dt) {
       }
     }
 
-  mvAlgo.tick(dt);
+  if(!campfireBodySuspended())
+    mvAlgo.tick(dt);
   implAiTick(dt);
   }
 
@@ -1240,6 +1241,10 @@ void Npc::setTarget(Npc *t) {
   if(currentTarget==t)
     return;
 
+  if(t!=nullptr) {
+    resumeCampfireBody();
+    t->resumeCampfireBody();
+    }
   currentTarget = t;
   if(!go2.empty() && !isPlayer())
     clearGoTo();

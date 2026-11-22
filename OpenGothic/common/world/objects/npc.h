@@ -196,6 +196,11 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     float      simplifiedMoveSpeed() const;
     // The same in another walk mode (WM_Walk, WM_Run), cm per ms of world time: the society export.
     float      simplifiedMoveSpeed(WalkBit mode) const;
+    bool       canSuspendCampfireBody() const;
+    bool       campfireBodySuspended() const { return physic.bodySuspended(); }
+    void       suspendCampfireBody() { physic.suspendBody(); }
+    void       resumeCampfireBody() { physic.resumeBody(); }
+
     void       tick(uint64_t dt);
     const NpcLogicalState& logicalBodyState() const { return logicalBody; }
     void       syncLogicalBodyState(bool rebuild=false);

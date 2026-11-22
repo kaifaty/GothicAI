@@ -755,6 +755,8 @@ void Npc::attachToPoint(const WayPoint *p) {
      (pending->act==AI_GoToNextFp || pending->act==AI_GoToPoint) &&
      currentFp==pending->point && go2.flag==GT_Way && p==go2.wp && p!=pending->point)
     return;
+  if(currentFp!=p && campfireBodySuspended())
+    resumeCampfireBody();
   if(currentFp!=p && activityEvents.activity && activityEvents.activity->point &&
      (activityEvents.stage==ActivityEvents::Stage::Hold || activityEvents.stage==ActivityEvents::Stage::Wait))
     wakeActivity(ActivityEvents::Detached);

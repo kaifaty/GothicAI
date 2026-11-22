@@ -173,7 +173,10 @@ class DynamicWorld final {
 
         void  setPosition(const Tempest::Vec3& pos);
         const Tempest::Vec3& position() const;
-        bool  hasBody() const { return obj!=nullptr; }
+        bool  hasBody() const;
+        bool  bodySuspended() const;
+        void  suspendBody();
+        void  resumeBody();
 
         void  setRotation(float a);
 

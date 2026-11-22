@@ -31,6 +31,17 @@ class ActivityEventsWorld final {
       gothic.gameSession()->tick(dt);
       gothic.gameSession()->updateAnimation(dt);
       }
+    void moveHero(const Tempest::Vec3& at, float heading) {
+      auto& hero=*world().player();
+      hero.setPosition(at);
+      hero.setDirection(heading);
+      hero.updateTransform();
+      auto& camera=*gothic.camera();
+      camera.setViewport(640,480);
+      camera.reset(&hero);
+      world().updateLandscape(camera);
+      world().updateNpcSimTiers();
+      }
     void step(size_t ticks=1) {
       for(size_t i=0;i<ticks;++i)
         advance(33);
@@ -723,7 +734,14 @@ void checkPointClip(const Npc& npc,std::string_view name,BodyState body=BS_NONE)
   require(count==size_t(!name.empty()),("unexpected number of queued clips for '"+std::string(name)+"'").c_str());
   }
 
-void pointActivitiesWorld(Gothic& gothic,bool events) {
+struct CampfireSave {
+  std::vector<uint8_t>  bytes;
+  Tempest::Vec3         position;
+  float                 heading=0.f;
+  };
+
+CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
+  CampfireSave distantCampfire;
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
   auto& world=test.world();
@@ -1007,6 +1025,51 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
         check(calls.phase(npc,a.state)==inits && npc.currentWayPoint()==fp && fp->useCounter()==1 &&
               ActivityDefinitions::bodyStateContains(npc.bodyState(),BS_SIT) && npc.handle().aivar[19]==73,
               "loading the seated NPC preserves its pose and lock without restarting Init");
+
+        auto& hero=*world.player();
+        const auto originalHero=hero.position();
+        const auto originalHeading=hero.rotation();
+        const auto* far=world.findWayPoint("NW_BIGFARM_SHEEP2_02");
+        check(far!=nullptr,"the distant observation point exists");
+        const auto feet=npc.position();
+        const auto heading=npc.rotation();
+        const auto center=npc.collosionCenter();
+        const Tempest::Vec3 across(130.f,0,0);
+        auto hit=[&] { return world.physic()->rayNpc(center-across,center+across,&hero).npcHit==&npc; };
+        auto seated=[&] {
+          return npc.position()==feet && npc.rotation()==heading && npc.currentWayPoint()==fp && fp->useCounter()==1 &&
+                 npc.bodyStateMasked()==BS_SIT && npc.animProgress("S_SIT")>=0 && calls.phase(npc,a.state)==inits;
+          };
+        test.moveHero(wp->position(),originalHeading);
+        check(hit() && seated(),"the seated NPC starts with a queryable collision body");
+        test.only({&npc});
+        const auto away=far->position()-feet;
+        const auto awayHeading=std::atan2(away.z,away.x)*180.f/float(M_PI);
+        test.moveHero(far->position(),awayHeading);
+        test.step(4);
+        check(npc.simTier()==NpcSimTier::Simplified,"the distant observation point is outside the Near rings");
+        check(npc.campfireBodySuspended()==events && hit()!=events,"the distant NPC loses collision only in event mode");
+        check(seated(),"the distant NPC keeps its seat, coordinates, heading and sitting pose");
+        if(events) {
+          distantCampfire.position=npc.position();
+          distantCampfire.heading=npc.rotation();
+          {
+            Tempest::MemWriter writer(distantCampfire.bytes);
+            Serialize out(writer);
+            Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+            gothic.gameSession()->save(out,"distant campfire",preview);
+          }
+          gothic.camera()->reset(&npc);
+          world.catchUpAnimation();
+          check(hit() && !npc.campfireBodySuspended() && seated(),"a camera cut restores the body before drawing");
+          test.moveHero(far->position(),awayHeading);
+          test.step(3);
+          check(npc.campfireBodySuspended(),"the seated body can be suspended again after a camera cut");
+          }
+        test.moveHero(wp->position(),originalHeading);
+        check(hit() && !npc.campfireBodySuspended() && seated(),"approaching restores one collision body at the original seated pose");
+        test.only({});
+        test.moveHero(originalHero,originalHeading);
         } else drain();
       }
     if(fire) {
@@ -1075,6 +1138,7 @@ void pointActivitiesWorld(Gothic& gothic,bool events) {
     if(phases!=vmLoops || !dispatched) differences+="\n"+observed;
     }
   require(differences.empty(),("point activity dispatch:"+differences).c_str());
+  return distantCampfire;
   }
 
 void pointActivitiesInBothModes(Gothic& gothic) {
@@ -1083,8 +1147,37 @@ void pointActivitiesInBothModes(Gothic& gothic) {
   for(bool events:{false,true}) {
     setenv("OPENGOTHIC_ACTIVITY_EVENTS",events ? "1" : "0",1);
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
-    pointActivitiesWorld(gothic,events);
+    const auto save=pointActivitiesWorld(gothic,events);
     gothic.clearGame().reset();
+    if(events) {
+      require(!save.bytes.empty(),"the distant campfire produced a complete save");
+      Tempest::MemReader reader(save.bytes);
+      Serialize in(reader);
+      gothic.setGame(std::make_unique<GameSession>(in));
+      ActivityEventsWorld test(gothic);
+      auto& world=test.world();
+      auto* npc=activityNpc(world,"BAU_944_EHNIM");
+      const auto* fp=world.findPoint("FP_SIT_CAMPFIRE_PAUSE_02",false);
+      const auto* wp=world.findWayPoint("NW_FARM2_FIELD_03_B");
+      require(npc && fp && wp && npc->currentWayPoint()==fp && fp->useCounter()==1 &&
+              npc->position()==save.position && npc->rotation()==save.heading &&
+              npc->bodyStateMasked()==BS_SIT && npc->animProgress("S_SIT")>=0,
+              "loading the whole game restores the exact occupied point and settled sitting animation");
+      gothic.camera()->setViewport(640,480);
+      ActivityCalls calls;
+      test.only({npc});
+      test.stepUntil(30,[&]{ return npc->campfireBodySuspended(); },"the loaded distant sitter parks its body");
+      const auto center=npc->collosionCenter();
+      const Tempest::Vec3 across(130.f,0,0);
+      test.moveHero(wp->position(),world.player()->rotation());
+      require(!npc->campfireBodySuspended() && world.physic()->rayNpc(center-across,center+across,world.player()).npcHit==npc &&
+              npc->position()==save.position && npc->rotation()==save.heading && npc->currentWayPoint()==fp &&
+              fp->useCounter()==1 && calls.phase(*npc,"ZS_SIT_CAMPFIRE")==0 &&
+              npc->bodyStateMasked()==BS_SIT && npc->animProgress("S_SIT")>=0,
+              "approaching after the whole-game load restores collision, position, seat and sitting pose");
+      std::puts("E3.1 campfire: distant collision removed, seat retained, approach and whole-game load preserved S_SIT");
+      gothic.clearGame().reset();
+      }
     }
   if(previousEvents) setenv("OPENGOTHIC_ACTIVITY_EVENTS",previousEvents->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_EVENTS");
   }
