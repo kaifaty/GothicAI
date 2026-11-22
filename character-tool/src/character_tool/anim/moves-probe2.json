@@ -1,0 +1,1666 @@
+{
+ "note": "Second Kimodo probe of step 6 (reports/Kimodo связки моделей и приёмы.md, «План второй пробы»). Travel in metres in the character's frame (x = its left, z = forward), 30 fps. Poses P_* are one-frame records made by probe2_poses.py from Gothic clips: reference for the probe only, shipped clips need our own poses.",
+ "stance": "HUMANS_1HST1-S_1H.MAN",
+ "samples": 8,
+ "seed": 7001,
+ "steps": 100,
+ "poses": {
+  "apex": {
+   "clip": "HUMANS-P_APEX_BACK.MAN.json"
+  },
+  "impact": {
+   "clip": "HUMANS-P_IMPACT.MAN.json"
+  },
+  "follow": {
+   "clip": "HUMANS-P_FOLLOW.MAN.json"
+  },
+  "kneel": {
+   "clip": "HUMANS-P_KNEEL.MAN.json"
+  },
+  "thrust": {
+   "clip": "HUMANS-P_THRUST.MAN.json"
+  },
+  "barge": {
+   "clip": "HUMANS-P_BARGE.MAN.json"
+  }
+ },
+ "moves": [
+  {
+   "id": "dash_back_d0_45",
+   "frames": 45,
+   "travel": [
+    0.0,
+    -2.0
+   ],
+   "text": "A person quickly dodges backward with a short hop into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ],
+    [
+     2.5,
+     1.5
+    ]
+   ]
+  },
+  {
+   "id": "dash_back_d1m_45",
+   "frames": 45,
+   "travel": [
+    0.0,
+    -2.0
+   ],
+   "text": "A person quickly dodges backward with a short hop into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       4,
+       0.06
+      ],
+      [
+       8,
+       0.27
+      ],
+      [
+       12,
+       0.55
+      ],
+      [
+       16,
+       0.8
+      ],
+      [
+       20,
+       0.93
+      ],
+      [
+       26,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 26,
+     "pose": "stance",
+     "at": 1
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ],
+    [
+     2.5,
+     1.5
+    ]
+   ]
+  },
+  {
+   "id": "dash_back_d2m_45",
+   "frames": 45,
+   "travel": [
+    0.0,
+    -2.0
+   ],
+   "text": "A person quickly dodges backward with a short hop into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       4,
+       0.06
+      ],
+      [
+       8,
+       0.27
+      ],
+      [
+       12,
+       0.55
+      ],
+      [
+       16,
+       0.8
+      ],
+      [
+       20,
+       0.93
+      ],
+      [
+       26,
+       1.0
+      ]
+     ],
+     "dense": true
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ],
+    [
+     2.5,
+     1.5
+    ]
+   ]
+  },
+  {
+   "id": "dash_back_d1j_45",
+   "frames": 45,
+   "travel": [
+    0.0,
+    -2.0
+   ],
+   "text": "A person quickly dodges backward with a short hop into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       3,
+       0.05
+      ],
+      [
+       6,
+       0.3
+      ],
+      [
+       10,
+       0.65
+      ],
+      [
+       13,
+       0.8
+      ],
+      [
+       17,
+       0.93
+      ],
+      [
+       22,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 22,
+     "pose": "stance",
+     "at": 1
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ],
+    [
+     2.5,
+     1.5
+    ]
+   ]
+  },
+  {
+   "id": "dash_back_d2j_45",
+   "frames": 45,
+   "travel": [
+    0.0,
+    -2.0
+   ],
+   "text": "A person quickly dodges backward with a short hop into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       3,
+       0.05
+      ],
+      [
+       6,
+       0.3
+      ],
+      [
+       10,
+       0.65
+      ],
+      [
+       13,
+       0.8
+      ],
+      [
+       17,
+       0.93
+      ],
+      [
+       22,
+       1.0
+      ]
+     ],
+     "dense": true
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ],
+    [
+     2.5,
+     1.5
+    ]
+   ]
+  },
+  {
+   "id": "dash_back_d0_60",
+   "frames": 60,
+   "travel": [
+    0.0,
+    -2.0
+   ],
+   "text": "A person quickly dodges backward with a short hop into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ],
+    [
+     2.5,
+     1.5
+    ]
+   ]
+  },
+  {
+   "id": "dash_back_d1m_60",
+   "frames": 60,
+   "travel": [
+    0.0,
+    -2.0
+   ],
+   "text": "A person quickly dodges backward with a short hop into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       4,
+       0.06
+      ],
+      [
+       8,
+       0.27
+      ],
+      [
+       12,
+       0.55
+      ],
+      [
+       16,
+       0.8
+      ],
+      [
+       20,
+       0.93
+      ],
+      [
+       26,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 26,
+     "pose": "stance",
+     "at": 1
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ],
+    [
+     2.5,
+     1.5
+    ]
+   ]
+  },
+  {
+   "id": "dash_back_d2m_60",
+   "frames": 60,
+   "travel": [
+    0.0,
+    -2.0
+   ],
+   "text": "A person quickly dodges backward with a short hop into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       4,
+       0.06
+      ],
+      [
+       8,
+       0.27
+      ],
+      [
+       12,
+       0.55
+      ],
+      [
+       16,
+       0.8
+      ],
+      [
+       20,
+       0.93
+      ],
+      [
+       26,
+       1.0
+      ]
+     ],
+     "dense": true
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ],
+    [
+     2.5,
+     1.5
+    ]
+   ]
+  },
+  {
+   "id": "dash_back_d1j_60",
+   "frames": 60,
+   "travel": [
+    0.0,
+    -2.0
+   ],
+   "text": "A person quickly dodges backward with a short hop into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       3,
+       0.05
+      ],
+      [
+       6,
+       0.3
+      ],
+      [
+       10,
+       0.65
+      ],
+      [
+       13,
+       0.8
+      ],
+      [
+       17,
+       0.93
+      ],
+      [
+       22,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 22,
+     "pose": "stance",
+     "at": 1
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ],
+    [
+     2.5,
+     1.5
+    ]
+   ]
+  },
+  {
+   "id": "dash_back_d2j_60",
+   "frames": 60,
+   "travel": [
+    0.0,
+    -2.0
+   ],
+   "text": "A person quickly dodges backward with a short hop into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       3,
+       0.05
+      ],
+      [
+       6,
+       0.3
+      ],
+      [
+       10,
+       0.65
+      ],
+      [
+       13,
+       0.8
+      ],
+      [
+       17,
+       0.93
+      ],
+      [
+       22,
+       1.0
+      ]
+     ],
+     "dense": true
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ],
+    [
+     2.5,
+     1.5
+    ]
+   ]
+  },
+  {
+   "id": "dash_left_d1m_45",
+   "frames": 45,
+   "travel": [
+    2.0,
+    0.0
+   ],
+   "text": "A person quickly sidesteps to the left to dodge, facing forward, into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       4,
+       0.06
+      ],
+      [
+       8,
+       0.27
+      ],
+      [
+       12,
+       0.55
+      ],
+      [
+       16,
+       0.8
+      ],
+      [
+       20,
+       0.93
+      ],
+      [
+       26,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 26,
+     "pose": "stance",
+     "at": 1
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ]
+   ]
+  },
+  {
+   "id": "dash_left_d1j_45",
+   "frames": 45,
+   "travel": [
+    2.0,
+    0.0
+   ],
+   "text": "A person quickly sidesteps to the left to dodge, facing forward, into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       3,
+       0.05
+      ],
+      [
+       6,
+       0.3
+      ],
+      [
+       10,
+       0.65
+      ],
+      [
+       13,
+       0.8
+      ],
+      [
+       17,
+       0.93
+      ],
+      [
+       22,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 22,
+     "pose": "stance",
+     "at": 1
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ]
+   ]
+  },
+  {
+   "id": "dash_right_d1m_45",
+   "frames": 45,
+   "travel": [
+    -2.0,
+    0.0
+   ],
+   "text": "A person quickly sidesteps to the right to dodge, facing forward, into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       4,
+       0.06
+      ],
+      [
+       8,
+       0.27
+      ],
+      [
+       12,
+       0.55
+      ],
+      [
+       16,
+       0.8
+      ],
+      [
+       20,
+       0.93
+      ],
+      [
+       26,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 26,
+     "pose": "stance",
+     "at": 1
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ]
+   ]
+  },
+  {
+   "id": "dash_right_d1j_45",
+   "frames": 45,
+   "travel": [
+    -2.0,
+    0.0
+   ],
+   "text": "A person quickly sidesteps to the right to dodge, facing forward, into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       3,
+       0.05
+      ],
+      [
+       6,
+       0.3
+      ],
+      [
+       10,
+       0.65
+      ],
+      [
+       13,
+       0.8
+      ],
+      [
+       17,
+       0.93
+      ],
+      [
+       22,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 22,
+     "pose": "stance",
+     "at": 1
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ]
+   ]
+  },
+  {
+   "id": "dash_fwd_d1m_45",
+   "frames": 45,
+   "travel": [
+    0.0,
+    2.0
+   ],
+   "text": "A person quickly lunges forward with one long step into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       4,
+       0.06
+      ],
+      [
+       8,
+       0.27
+      ],
+      [
+       12,
+       0.55
+      ],
+      [
+       16,
+       0.8
+      ],
+      [
+       20,
+       0.93
+      ],
+      [
+       26,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 26,
+     "pose": "stance",
+     "at": 1
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ]
+   ]
+  },
+  {
+   "id": "dash_fwd_d1j_45",
+   "frames": 45,
+   "travel": [
+    0.0,
+    2.0
+   ],
+   "text": "A person quickly lunges forward with one long step into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       3,
+       0.05
+      ],
+      [
+       6,
+       0.3
+      ],
+      [
+       10,
+       0.65
+      ],
+      [
+       13,
+       0.8
+      ],
+      [
+       17,
+       0.93
+      ],
+      [
+       22,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 22,
+     "pose": "stance",
+     "at": 1
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ]
+   ]
+  },
+  {
+   "id": "roll_back",
+   "frames": 60,
+   "travel": [
+    0.0,
+    -3.0
+   ],
+   "text": "A person quickly rolls backward over the shoulder and stands up into a ready-for-fight stance.",
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       21,
+       0.8
+      ]
+     ],
+     "heading": false
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ]
+  },
+  {
+   "id": "roll_left",
+   "frames": 60,
+   "travel": [
+    3.0,
+    0.0
+   ],
+   "text": "A person performs a quick roll to the left side and stands up into a ready-for-fight stance.",
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       21,
+       0.8
+      ]
+     ],
+     "heading": false
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ]
+  },
+  {
+   "id": "roll_right",
+   "frames": 60,
+   "travel": [
+    -3.0,
+    0.0
+   ],
+   "text": "A person performs a quick roll to the right side and stands up into a ready-for-fight stance.",
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       21,
+       0.8
+      ]
+     ],
+     "heading": false
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ]
+  },
+  {
+   "id": "roll_fwd",
+   "frames": 60,
+   "travel": [
+    0.0,
+    3.0
+   ],
+   "text": "A person quickly rolls forward over the shoulder and stands up in a controlled motion.",
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       21,
+       0.8
+      ]
+     ],
+     "heading": false
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ]
+  },
+  {
+   "id": "heavy_roll_back",
+   "frames": 75,
+   "travel": [
+    0.0,
+    -2.2
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "text": "A tired person rolls backward over the shoulder and slowly pushes up from one knee into a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       24,
+       0.8
+      ]
+     ],
+     "heading": false
+    },
+    {
+     "type": "fullbody",
+     "frame": 42,
+     "pose": "kneel",
+     "at": 0.97
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ]
+  },
+  {
+   "id": "barge_t1",
+   "frames": 60,
+   "travel": [
+    0.0,
+    1.8
+   ],
+   "text": "A person rushes forward and shoves hard with the left shoulder lowered.",
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       8,
+       0.05
+      ],
+      [
+       18,
+       0.5
+      ],
+      [
+       27,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 27,
+     "pose": "barge",
+     "at": 1.0
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 0.89
+    }
+   ]
+  },
+  {
+   "id": "barge_t2",
+   "frames": 60,
+   "travel": [
+    0.0,
+    1.8
+   ],
+   "text": "A person charges forward and hits with the left shoulder, leaning the torso forward.",
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       8,
+       0.05
+      ],
+      [
+       18,
+       0.5
+      ],
+      [
+       27,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 27,
+     "pose": "barge",
+     "at": 1.0
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 0.89
+    }
+   ]
+  },
+  {
+   "id": "charge_windup",
+   "frames": 60,
+   "travel": [
+    0.0,
+    0.0
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "text": "A person raises the right arm high above the head and holds it there.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "fullbody",
+     "frame": 15,
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "right-hand",
+     "frame": 15,
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "right-hand",
+     "frame": "end",
+     "pose": "apex",
+     "at": 0
+    }
+   ]
+  },
+  {
+   "id": "charge_hold",
+   "frames": 90,
+   "travel": [
+    0.0,
+    0.0
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "text": "A person stands still with the right arm raised high above the head, ready to strike.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "right-hand",
+     "frame": 0,
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "right-hand",
+     "frame": "end",
+     "pose": "apex",
+     "at": 0
+    }
+   ]
+  },
+  {
+   "id": "charge_release",
+   "frames": 60,
+   "travel": [
+    0.0,
+    0.4
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "text": "A person swings the right arm down hard from above the head to the front of the body, then returns to a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "right-hand",
+     "frame": 0,
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "fullbody",
+     "frame": 9,
+     "pose": "impact",
+     "at": 0.75
+    },
+    {
+     "type": "right-hand",
+     "frame": 9,
+     "pose": "impact",
+     "at": 0.75
+    },
+    {
+     "type": "right-hand",
+     "frame": 15,
+     "pose": "follow",
+     "at": 0.9
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ]
+  },
+  {
+   "id": "riposte_hand",
+   "frames": 75,
+   "travel": [
+    0.0,
+    0.6
+   ],
+   "text": "A person lunges forward and thrusts the right arm straight ahead at waist height, then pulls it back into a ready-for-fight stance.",
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       15,
+       0.833
+      ]
+     ]
+    },
+    {
+     "type": "right-hand",
+     "frame": 15,
+     "pose": "thrust",
+     "at": 0.833
+    },
+    {
+     "type": "right-hand",
+     "frame": 24,
+     "pose": "thrust",
+     "at": 0.833
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 0.5
+    }
+   ]
+  },
+  {
+   "id": "riposte_body",
+   "frames": 75,
+   "travel": [
+    0.0,
+    0.6
+   ],
+   "text": "A person lunges forward and thrusts the right arm straight ahead at waist height, then pulls it back into a ready-for-fight stance.",
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "fullbody",
+     "frame": 15,
+     "pose": "thrust",
+     "at": 0.833
+    },
+    {
+     "type": "right-hand",
+     "frame": 15,
+     "pose": "thrust",
+     "at": 0.833
+    },
+    {
+     "type": "right-hand",
+     "frame": 24,
+     "pose": "thrust",
+     "at": 0.833
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 0.5
+    }
+   ]
+  },
+  {
+   "id": "riposte_victim",
+   "frames": 75,
+   "travel": [
+    0.0,
+    -0.8
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ]
+   ],
+   "text": "A dazed person is stabbed in the stomach, doubles over in pain, staggers backward and collapses to the ground.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       "end",
+       1.0
+      ]
+     ]
+    }
+   ]
+  }
+ ]
+}

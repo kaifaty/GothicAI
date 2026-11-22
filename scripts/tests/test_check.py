@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -262,6 +263,25 @@ def test_non_python_resource_matches_filename(repository):
     }
 
 
+@pytest.mark.parametrize(("legacy", "test"), [
+    ("app/src/apppkg/local.py", "app/tests/nested/test_nested.py"),
+    ("app/data.json", "app/tests/test_resource.py"),
+])
+def test_symlink_target_selects_legacy_test(repository, legacy, test):
+    root, _ = repository
+    link = root / legacy
+    target = root / "package" / link.name
+    target.parent.mkdir()
+    link.rename(target)
+    link.symlink_to(os.path.relpath(target, link.parent))
+    git(root, "add", legacy, "package")
+
+    for level in ("direct", "full"):
+        matrix = selection(repository, target.relative_to(root).as_posix(), level=level)
+        assert [(g["name"], g["files"]) for g in matrix] == [("app", [test])]
+        assert selection(repository, f"elsewhere/{link.name}", level=level) == []
+
+
 @pytest.mark.parametrize("text", [
     "value = math.hypot(1, 2)",
     'path = "math.h.bak"',
@@ -493,6 +513,9 @@ def test_real_docs_select_nothing():
 
 
 @pytest.mark.parametrize("parts, expected", [
+    (("character-tool", "src", "character_tool", "head", "build_head.py"), {
+        "/".join(("scripts/content/npc", "test_build_head_shapes.py"))
+    }),
     (("server", "src", "gothic_ai", "gamedata", "base.py"), {
         "launcher/core/tests/test_checks.py"
     }),
