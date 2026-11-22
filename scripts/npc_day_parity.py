@@ -384,7 +384,7 @@ def activity_metrics(a, b, common, states):
                 # A count, not a share: a share of one state set's few samples admits no mismatch at all.
                 # No reference objects: object metrics are not applicable.
                 "mob_mismatch": counts["mob_a"] - counts["same_mob"] if counts["mob_a"] else None,
-                "extra_mob": share(counts["extra_mob"], counts["samples"] - counts["mob_a"]) if counts["mob_a"] else None,
+                "extra_mob": share(counts["extra_mob"], counts["samples"] - counts["mob_a"]),
                 "mob_time_ratio": share(counts["mob_b"], counts["mob_a"]),
                 "arrival_segments": len(arrivals),
                 "arrival_p50": percentile(delays, 0.5), "arrival_p95": percentile(delays, 0.95),
@@ -467,15 +467,17 @@ def point_metrics(a, b, common, states):
             item["collisions"].append({"t_min": sample[0], "point": pb["position"], "npcs": occupants})
 
     def segment(key, samples, previous):
+        if not valid:
+            return
         routine = samples[0][1][2].split()
         routine_state = routine[2] if len(routine) == 4 else None
         # A previous ZS can linger at the first sample of a new TA. It is not an arrival
         # for that new routine (e.g. arms crossed while the next TA is going to bed).
         available = [(t, ra) for t, ra in samples if (t, key) in selected and ra[3] in POINT_STATES
                      and (routine_state is None or ra[3] == routine_state)]
-        if not available:
+        state = routine_state or (available[0][1][3] if available else None)
+        if state not in POINT_STATES:
             return
-        state = available[0][1][3]
         prior_routine = previous[1][2].split() if previous is not None else []
         moved = (len(routine) == len(prior_routine) == 4 and routine[-1] != prior_routine[-1]
                  and previous[0] + a["header"].get("period_min", 5) == samples[0][0])
@@ -489,9 +491,9 @@ def point_metrics(a, b, common, states):
                     continue
                 point = run["points"].get((t, key))
                 status = point_status(run["rows"][(t, key)], point, state)
-                # TA changes before End/Init releases the old post. Its initial hold
-                # is not an arrival or lawful waiting at the new routine waypoint.
-                if old_point is not None and point is not None and point["position"] == old_point and status[0]:
+                # An old hold outside the new approach radius is not a new arrival.
+                # A suitable point already in that radius still fulfils the new TA.
+                if old_point is not None and point is not None and point["position"] == old_point and status[0] and not point["on_wp"]:
                     status = (False, False, False)
                 else:
                     old_point = None
@@ -499,15 +501,14 @@ def point_metrics(a, b, common, states):
             return observed
 
         reference = dict(observations(a))
-        arrived_a = [(t, ra[3]) for t, ra in available if reference[t][0]]
+        arrived_a = [t for t, status in reference.items() if status[0]]
         if not arrived_a:
             return
-        first_a, state = arrived_a[0]
+        first_a = arrived_a[0]
         observed = observations(b)
         arrivals_b = [t for t, status in observed if status[0]]
         # A whole lost activity cannot hide behind one legal wait sample.
-        reference_times = [t for t, ra in available if ra[3] == state and
-                           reference[t][0]]
+        reference_times = arrived_a
         lawful_wait = not arrivals_b and all(dict(observed)[t][2] for t in reference_times)
         first_b = arrivals_b[0] if arrivals_b else None
         # Waiting while no point is available is legitimate. Report it separately, and subtract
@@ -596,7 +597,8 @@ def compare(a, b, window=60.0, min_hero_distance=0.0, activity_states=None):
     points = point_metrics(a, b, common, activity_states)
     for item, point in [(activity["total"], points["total"]),
                         *[(activity["by_state"][state], point) for state, point in points["by_state"].items()]]:
-        item["stuck"] += point["missed"]
+        if point["available"]:
+            item["stuck"] += point["missed"]
         item["stuck_npcs"] = len({entry["key"] for entry in item["stuck"]})
     return {
         "a": {"path": a["path"], "header": a["header"]},
@@ -810,7 +812,7 @@ def markdown(result, checks, label_a, label_b):
               "BS_SIT for campfire. STAND_WP uses the routine waypoint (within the 500 cm approach radius).",
               "Legal fallback requires no available FP, the routine waypoint and a standing body; it is counted separately.",
               "Raw pose time is reported; acceptance excludes legal waiting in either run from both pose populations and held-point agreement.",
-              "When the routine waypoint changes, an initial hold of the previous post is not a new arrival.",
+              "When the routine waypoint changes, an old hold outside the new approach radius is not a new arrival.",
               "Observed legal waits do not count as late arrival.",
               "Missing point columns fail enabled point checks. Resolution is the journal step.", "",
               "| State | Samples | Same held FP raw / excluding legal fallback | On point A / B | Pose A / B | Pose B/A raw / outside A or B waiting | Arrival p95 / max, min | Missed segments | Double occupancy B |",

@@ -212,7 +212,12 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
     else if(state=="ZS_SIT_CAMPFIRE") pointName="CAMPFIRE";
     else if(state=="ZS_PEE") pointName="PEE";
     const int available=pointName.empty() ? -1 : (w.findFreePoint(*npc,pointName)!=nullptr ? 1 : 0);
-    const bool onRoutine=NpcEngineCalls::distanceToWaypoint(w,*npc,npc->handle().wp)<=500;
+    std::string_view routinePoint;
+    int routineIndex=0;
+    npc->forEachRoutine([&](const Npc::RoutineInfo& r) {
+      if(routineIndex++==ta) routinePoint=r.point;
+      });
+    const bool onRoutine=NpcEngineCalls::distanceToWaypoint(w,*npc,routinePoint)<=500;
     if(j.heights!=nullptr && npc->usesSimplifiedMovement() && !npc->isDead() && mob==nullptr) {
       // Verification only, at journal sample times; movement itself never rays.
       const auto ground=w.physic()->landRay(p+Tempest::Vec3(0,100,0));
