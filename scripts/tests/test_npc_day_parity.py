@@ -515,7 +515,9 @@ def test_point_loss_late_arrival_collision_and_legal_fallback(tmp_path):
                                    "--json", str(tmp_path / (name + ".json"))]) == (0 if name == "fallback" else 1)
         profile_failed = {c["name"] for c in json.loads((tmp_path / (name + ".json")).read_text())["checks"]
                           if not c["pass"]}
-        if name == "late":
+        if name == "lost":
+            assert {"max_point_missed_segments", "max_activity_stuck"} <= profile_failed
+        elif name == "late":
             assert "max_point_arrival_max" in profile_failed
         elif name == "double":
             assert profile_failed == {"max_point_double_occupancy"}
@@ -547,3 +549,32 @@ def test_point_loss_late_arrival_collision_and_legal_fallback(tmp_path):
         assert result["points"]["total"]["pose_ratio"] == 0
         assert result["points"]["total"]["fallback_b"] == 13
         assert all(c["pass"] for c in npc_day_parity.evaluate(result, limits))
+    # Both runs can still hold the old post after TA has switched to another waypoint.
+    post_a, post_b = tmp_path / "post-a", tmp_path / "post-b"
+    for path, arrival in ((post_a, 10), (post_b, 40)):
+        journal(path, [dict(r, ta="0 08:00-09:00 ZS_STAND_GUARDING NW_A" if r["t_min"] == 0 else
+                           "1 09:00-10:00 ZS_STAND_GUARDING NW_B", fp_x=100 if r["t_min"] < arrival else 200)
+                       for r in reference], [], header)
+    result = npc_day_parity.compare(npc_day_parity.load(post_a), npc_day_parity.load(post_b),
+                                   activity_states={"ZS_STAND_GUARDING"})
+    arrival = next(e for e in result["points"]["total"]["arrivals"] if e["start_min"] == 5)
+    assert arrival["arrival_a_min"] == 5 and arrival["arrival_b_min"] == 35 and arrival["delay_min"] == 30
+    profile = json.loads(POINTS.read_text())["tolerances"]
+    assert "max_point_arrival_max" in {c["name"] for c in npc_day_parity.evaluate(result, profile) if not c["pass"]}
+    # Two campfire seats, three NPCs: the waiting and seated NPC exchange roles.
+    swap_a, swap_b = tmp_path / "camp-swap-a", tmp_path / "camp-swap-b"
+    for path, seated in ((swap_a, 1), (swap_b, 2)):
+        journal(path, [row(t, f"CAMP{i}#0", ta="0 08:00-20:00 ZS_SIT_CAMPFIRE NW_FIRE",
+                           zs="ZS_SIT_CAMPFIRE", fp="CAMPFIRE" if i in (0, seated) else "-",
+                           fp_x=100 if i == 0 else 200, on_fp=int(i in (0, seated)),
+                           body=11 if i in (0, seated) else 0, aivar_19=1, fp_available=int(i in (0, seated)))
+                       for t in (0, 5, 10) for i in range(3)], [], {**header, "minutes": 10})
+    for left, right in ((swap_a, swap_b), (swap_b, swap_a)):
+        result = npc_day_parity.compare(npc_day_parity.load(left), npc_day_parity.load(right),
+                                       activity_states={"ZS_SIT_CAMPFIRE"})
+        points = result["points"]["total"]
+        assert points["pose_a"] == points["pose_b"] == 6
+        assert points["fallback_a"] == points["fallback_b"] == 3
+        assert points["pose_comparable_a"] == points["pose_comparable_b"] == 3
+        assert points["pose_ratio_available"] == 1 and points["missed_segments"] == points["double_occupancy"] == 0
+        assert all(c["pass"] for c in npc_day_parity.evaluate(result, profile))

@@ -2050,17 +2050,20 @@ The new sample columns follow every old column, in its original order:
 | `fp_available` | The script's point lookup for STAND / CAMPFIRE / PEE finds a point (1) or none (0); -1 outside these four forms |
 | `on_routine_wp` | `Npc_GetDistToWP(self, self.wp) <= 500`, using the engine call shared with the original script; independent of the nearest waypoint column |
 
-`points.total` and `points.by_state` report held-coordinate agreement (raw and with legal B fallback
+`points.total` and `points.by_state` report held-coordinate agreement (raw and with legal fallback in either run
 excluded), pose sample time B/A, signed first arrival p95/max, missed reference TA segments and
 double occupancy in B. The collision search includes occupants outside the state filter. Campfire
 pose uses body state 11 (`BS_SIT`); the other four forms use `aivar_19 == 0`. Physical arrival
 does not require an active ZS: End/Init can leave it empty while the NPC stays on point. Pose accepts
 the reference ZS or this transient empty ZS, but not a known different ZS. STAND_WP has no held
 free point: arrival/pose use `on_routine_wp`, and held-point agreement is not applicable.
+When TA changes the target waypoint, the initial uninterrupted hold of the previous free point
+is excluded from arrivals to the new post, independently in A and B.
 
 A legal fallback is a standing NPC near its routine waypoint with no suitable available free point.
 It has a separate A/B row. Raw pose time is reported (waiting for a campfire is not sitting); acceptance
-excludes legal B waiting samples from both pose populations and from held-point agreement. Observed legal waiting intervals are subtracted from a later arrival's delay.
+excludes samples with legal waiting in either run from both pose populations and from held-point agreement.
+Observed legal B waiting intervals are subtracted from a later arrival's delay.
 An entirely waiting segment is allowed only if **every reference on-point sample** has legal fallback
 in B. Waiting once cannot hide losing an otherwise empty point for the rest of the segment.
 Missing point columns fail enabled point checks. MOB metrics are **not applicable** when the selected
