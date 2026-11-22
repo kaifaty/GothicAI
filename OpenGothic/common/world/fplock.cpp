@@ -7,19 +7,19 @@
 FpLock::FpLock() {
   }
 
-FpLock::FpLock(const WayPoint &p)
-  :pt(&p){
-  pt->useCount++;
+FpLock::FpLock(const WayPoint &p) : FpLock(&p) {
   }
 
-FpLock::FpLock(const WayPoint *p)
-  :pt(p){
+FpLock::FpLock(const WayPoint *p, bool guard)
+  :pt(p),guarding(guard){
   if(pt)
     pt->useCount++;
+  if(pt && guarding)
+    ++pt->guardUsers;
   }
 
 FpLock::FpLock(FpLock &&other)
-  :pt(other.pt){
+  :pt(other.pt),guarding(other.guarding){
   other.pt=nullptr;
   }
 
@@ -30,11 +30,14 @@ FpLock::~FpLock() {
 FpLock &FpLock::operator=(FpLock &&other) {
   release();
   pt = other.pt;
+  guarding = other.guarding;
   other.pt=nullptr;
   return *this;
   }
 
 void FpLock::release() {
+  if(pt && guarding)
+    --pt->guardUsers;
   if(pt && --pt->useCount==0)
     for(auto* npc:pt->waiters)
       npc->wakeActivity(ActivityEvents::Freed);

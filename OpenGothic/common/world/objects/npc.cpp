@@ -388,9 +388,14 @@ void Npc::setSimTier(NpcSimTier t) {
   // An exact saved destination identifies the guard's walk and lock. For a pose or an older
   // save without that destination, keep the point nearest to the saved body.
   const auto* savedWalk = (go2.flag==GT_Way || go2.flag==GT_NextFp) ? go2.wp : nullptr;
+  const auto* retained=pendingSimpleGoTo();
+  const auto* retainedPost=guard && retained && retained->hasExactPoint() ? retained->point : nullptr;
   const auto resolve=[&](const WayPoint* point,const char* reference,bool walk=false) {
     if(point==nullptr || !point->isFreePoint() || (!graph && !point->checkName(guard->point)))
       return point;
+    // A graph walk may still be on an intermediate edge while its retained command owns the final post.
+    if(walk && retainedPost && retainedPost->name==point->name)
+      return retainedPost;
     const WayPoint* nearest=nullptr;
     const WayPoint* exact=nullptr;
     size_t matches=0;
@@ -423,7 +428,8 @@ void Npc::setSimTier(NpcSimTier t) {
     return nearest;
     };
   currentFp=resolve(currentFp,"currentFp",true);
-  currentFpLock=FpLock(resolve(currentFpLock.point(),"currentFpLock",true));
+  const auto* lock=resolve(currentFpLock.point(),"currentFpLock",true);
+  currentFpLock=FpLock(lock,isGuardPoint(lock));
   go2.wp=resolve(go2.wp,"goTo",true);
   WayPath path;
   while(const auto* point=wayPath.pop())
@@ -436,7 +442,8 @@ void Npc::setSimTier(NpcSimTier t) {
     actions.reserve(queue->size());
     while(queue->size()>0) {
       auto action=queue->pop();
-      action.point=resolve(action.point,"queue",terminal);
+      if(!action.hasExactPoint())
+        action.point=resolve(action.point,"queue",terminal);
       terminal=false;
       actions.push_back(std::move(action));
       }

@@ -1034,6 +1034,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      dropActivityCommand();
     void      stepActivityEvents(uint16_t wakes);
     void      seekActivityPoint(uint16_t wakes);
+    bool      isGuardPoint(const WayPoint* point) const;
     void      stopWaitingForPoints();
     void      tickPointGesture();
     void      pushActivityCommand(AiQueue::AiAction&& action);

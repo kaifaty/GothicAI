@@ -1,5 +1,5 @@
 #include "npc.h"
-#include "asset/activitydefinitions.h"
+#include "game/npcactivityhost.h"
 
 #include <Tempest/Log>
 
@@ -99,7 +99,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         break;
         }
       auto fp = act.point!=nullptr ? act.point : owner.findNextFreePoint(*this,act.s0);
-      if(fp!=nullptr) {
+      if(fp && (!fp->isGuarded() || currentFpLock.point()==fp)) {
         attachToPoint(fp);
         if(usesSimplifiedMovement()) {
           act.point=fp;
@@ -120,12 +120,22 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         queue.pushFront(std::move(act));
         break;
         }
-      const auto* record=activityEvents.activity;
-      if(record && record->point && act.s0==record->point->point &&
-         act.point->isLocked() && currentFpLock.point()!=act.point) {
-        aiQueue.removeActivity();
-        wakeActivity(ActivityEvents::AttachFailed);
-        break;
+      if(act.point->isLocked() && currentFpLock.point()!=act.point) {
+        // Old saves do not distinguish a guard's GotoFP from an external GotoWP.
+        const bool legacy=(activityEvents.pending & ActivityEvents::Loaded) && act.i1==0;
+        const bool claim=isGuardPoint(act.point) && (!act.s0.empty() || legacy);
+        if(claim) {
+          if(act.activity)
+            aiQueue.removeActivity();
+          wakeActivity(ActivityEvents::AttachFailed);
+          // A return behind the remaining commands also survives a save during an external walk.
+          if(act.activity && aiQueue.hasMovement()) {
+            if(const auto* row=NpcEngineCalls::resolveWaypoint(owner,*this,hnpc->wp))
+              pushActivityCommand(AiQueue::aiGoToPoint(*row));
+            }
+          }
+        if(claim || act.point->isGuarded())
+          break;
         }
       if(usesSimplifiedMovement() && act.point->isFreePoint()) {
         act.i0=1;

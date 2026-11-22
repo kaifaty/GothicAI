@@ -4,6 +4,7 @@
 #include "game/npcactivityhost.h"
 #include "world/mobreservations.h"
 #include "world/objects/interactive.h"
+#include "world/waymatrix.h"
 #include "world/world.h"
 
 // Npc::tickRoutine owns the end of the row. Between wakes an active routine only checks its clocks.
@@ -69,8 +70,12 @@ void Npc::tickActivityEvents() {
     s.awaitQueue = false;
     s.pending   |= ActivityEvents::QueueDone;
     }
-  if(!s.retry && s.pending==0 && s.deadline<=owner.time())
-    fireActivityWatchdog();
+  if(!s.retry && s.pending==0 && s.deadline<=owner.time()) {
+    if(s.activity->point && s.stage==ActivityEvents::Stage::Wait)
+      s.pending |= ActivityEvents::Visibility;
+    else
+      fireActivityWatchdog();
+    }
   if(!s.retry && s.pending==0) {
     if(s.activity->point)
       tickPointGesture();
@@ -220,7 +225,17 @@ void Npc::seekActivityPlace() {
 
 void Npc::pushActivityCommand(AiQueue::AiAction&& action) {
   action.activity = true;
+  if(const auto* point=activityEvents.activity->point) {
+    action.i1=AiQueue::AiAction::SavedGuardCommand;
+    if(action.act==AI_GoToPoint && action.point->isFreePoint())
+      action.s0=point->point;
+    }
   aiPush(std::move(action));
+  }
+
+bool Npc::isGuardPoint(const WayPoint* point) const {
+  const auto* record=activityEvents.activity;
+  return record && record->point && point && point->isFreePoint() && point->checkName(record->point->point);
   }
 
 void Npc::stopWaitingForPoints() {
@@ -237,21 +252,24 @@ void Npc::seekActivityPoint(uint16_t wakes) {
   countWakes(aiState.hint,0,true);
   stopWaitingForPoints();
 
-  // Old saves can have several owners. Give up only this NPC's share.
-  if(currentFp && currentFp->isFreePoint() && currentFp->checkName(a.point) &&
-     (currentFpLock.point()!=currentFp || currentFp->useCounter()>1))
+  const auto* wp = NpcEngineCalls::resolveWaypoint(owner,*this,hnpc->wp);
+  // An old save has no pending failure. A post beyond both the approach and the FP search
+  // could only have come from a different destination, even if its name matches.
+  const float reach = float(a.approachDistance) + WayMatrix::distanceThreshold;
+  const bool foreign = isGuardPoint(currentFp) && wp && (wakes & (Loaded|Detached)) &&
+                       currentFp->qDistTo(wp->position())>reach*reach;
+  if(isGuardPoint(currentFp) && (currentFpLock.point()!=currentFp || currentFp->useCounter()>1 ||
+                                 foreign || !isOnFreePoint(a.point)))
     attachToPoint(nullptr);
   const bool on = isOnFreePoint(a.point);
   bool occluded = false;
   if(!on || (wakes & AttachFailed)) {
-    const auto* wp = NpcEngineCalls::resolveWaypoint(owner,*this,hnpc->wp);
     const bool away = wp && NpcEngineCalls::distanceToWaypoint(*this,wp)>a.approachDistance;
-    const auto* post = away ? nullptr : owner.findFreePoint(*this,a.point,&s.waitPoints);
+    const bool returning = away || ((wakes & (Detached|AttachFailed)) && wp && currentFp!=wp);
+    const auto* post = returning ? nullptr : owner.findFreePoint(*this,a.point,&s.waitPoints);
     if(post!=nullptr) {
       s.waitPoints.clear();
-      auto walk = AiQueue::aiGoToPoint(*post);
-      walk.s0 = a.point; // the saved GotoFP search name distinguishes a contested post from an ordinary GotoWP
-      pushActivityCommand(std::move(walk));
+      pushActivityCommand(AiQueue::aiGoToPoint(*post));
       pushActivityCommand(AiQueue::aiStandup());
       pushActivityCommand(AiQueue::aiAlignToFp());
       stage        = a.walkingStage;

@@ -20,6 +20,7 @@ class WayPoint final {
 
     WayPoint& operator = (WayPoint&&)=default;
     bool isLocked() const { return useCount!=0; }
+    bool isGuarded() const { return guardUsers!=0; }
     bool isFreePoint() const;
     bool isConnected() const;
 
@@ -55,6 +56,7 @@ class WayPoint final {
 
   private:
     mutable uint32_t useCount=0;
+    mutable uint32_t guardUsers=0;
     mutable std::vector<Npc*> waiters;
 
     std::vector<Conn> conn;

@@ -42,8 +42,9 @@ enum Wake : uint16_t {
   Interrupted  = 1<<8, // the state ended otherwise: another state, death, a reset, removal
   Watchdog     = 1<<9, // a wait outlived WatchdogMs: the activity restarts from the place check
   Gesture      = 1<<10, // the state clock reached the next gesture draw
+  Visibility   = 1<<11, // recheck a free post previously hidden by an obstacle
   };
-inline constexpr size_t WakeCount = 11;
+inline constexpr size_t WakeCount = 12;
 
 // Recover a stalled approach or object wait on the world clock.
 inline constexpr uint64_t WatchdogMs    = 60*60*1000;

@@ -302,6 +302,7 @@ class GameScript final : public GameRules {
     bool game_initgerman     ();
     bool game_initenglish    ();
     int  hlp_random          (int bound);
+    uint32_t rollRandom(uint32_t bound, const Npc* actor, bool script);
     bool hlp_isvalidnpc      (std::shared_ptr<daedalus::INpc> npcRef);
     bool hlp_isitem          (std::shared_ptr<daedalus::IItem> itemRef, int instanceSymbol);
     bool hlp_isvaliditem     (std::shared_ptr<daedalus::IItem> itemRef);

@@ -191,8 +191,11 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   // while the Loaded event still waits for the saved walk and commands.
   if(aiState.started) {
     const auto* record=owner.rules().eventActivity(aiState.funcIni);
-    if(record && record->point)
+    if(record && record->point) {
       restoreActivityEvents(record);
+      if(isGuardPoint(currentFpLock.point()))
+        currentFpLock=FpLock(currentFpLock.point(),true);
+      }
     }
   wayPath.load(fin);
 
@@ -334,14 +337,14 @@ void Npc::saveAiState(Serialize& fout) const {
     auto action=saved.pop();
     action.i1=int(pendingItem)+1;
     saved.pushFront(std::move(action));
-    saved.save(fout);
+    saved.save(fout,owner);
     } else {
     // A vanished item must not fail the save: the action loads as a plain GotoItem.
     if(pending!=nullptr && pending->act==AI_GotoItem && pending->item!=nullptr)
       Log::e("npc_graph: ",displayName()," GotoItem target is no longer in the world; saved without it");
-    aiQueue.save(fout);
+    aiQueue.save(fout,owner);
     }
-  aiQueueOverlay.save(fout);
+  aiQueueOverlay.save(fout,owner);
 
   fout.write(uint32_t(routines.size()));
   for(auto& i:routines) {
@@ -362,8 +365,8 @@ void Npc::loadAiState(Serialize& fin) {
     aiState.hint = s.data();
     }
 
-  aiQueue.load(fin);
-  aiQueueOverlay.load(fin);
+  aiQueue.load(fin,owner);
+  aiQueueOverlay.load(fin,owner);
 
   uint32_t size=0;
   fin.read(size);

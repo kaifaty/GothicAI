@@ -3,7 +3,7 @@
 #include "world/world.h"
 
 uint32_t GameScript::rollGuardGesture(const Npc& npc, uint32_t range) {
-  const auto roll=rand(range,&npc);
+  const auto roll=rollRandom(range,&npc,true);
   if(auto* local=findSymbol("ZS_STAND_GUARDING_LOOP.RANDOM"))
     local->set_int(int32_t(roll));
   return roll;
