@@ -2071,9 +2071,9 @@ counts. A state present only in TA has an empty active-ZS row (undefined ratios)
 still contribute to per-state and total stuck counts. The collision search includes occupants outside the state filter. Campfire
 pose uses body state 11 (`BS_SIT`); the other four forms require standing body state 0 and `aivar_19 == 0`. Physical arrival
 does not require an active ZS: End/Init can leave it empty while the NPC stays on point. Pose accepts
-the reference ZS or this transient empty ZS, but not a known different ZS. STAND_WP has no held
-free point: arrival/pose use `on_routine_wp` only if B's target waypoint matches A's,
-and held-point agreement is not applicable. Fallback uses the same target check.
+the reference ZS or this transient empty ZS, but not a known different ZS. Physical arrival at any
+FP, STAND_WP arrival and legal fallback require the row's target waypoint to match A's.
+STAND_WP has no held free point: arrival/pose use `on_routine_wp`, and held-point agreement is not applicable.
 When TA changes the target waypoint, the initial uninterrupted hold of the previous free point
 outside the new approach radius is excluded from arrivals, independently in A and B. A newly acquired
 hold near the preceding target waypoint is also excluded. A suitable

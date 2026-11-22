@@ -413,8 +413,9 @@ def point_status(row, point, state, waypoint):
     if point is None:
         return False, False, False
     kind = POINT_STATES[state]
-    on_wp = point["on_wp"] and row[2].split()[-1] == waypoint
-    on = point["on"] and kind in point["name"] if kind else on_wp
+    same_target = row[2].split()[-1] == waypoint
+    on_wp = point["on_wp"] and same_target
+    on = same_target and (point["on"] and kind in point["name"] if kind else on_wp)
     # End/Init may leave ZS empty without moving the body; a known different ZS is another pose.
     same_pose = row[3] in (state, "-")
     # Campfire sets BS_SIT (11); the other four forms set aivar[19]=0 on entering the pose.
@@ -494,7 +495,7 @@ def point_metrics(a, b, common, states):
                 # An old hold outside the new approach radius is not a new arrival.
                 # It may be acquired after the TA changes, near the preceding waypoint.
                 old_post = moved and row[12] == previous[1][2].split()[3]
-                if point is not None and status[0] and not (point["on_wp"] and row[2].split()[-1] == waypoint) and (
+                if point is not None and status[0] and not point["on_wp"] and (
                         point["position"] == old_point or old_post):
                     old_point = point["position"]
                     status = (False, False, False)
