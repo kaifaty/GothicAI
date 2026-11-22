@@ -7,6 +7,7 @@
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "resources.h"
 #include "commandline.h"
+#include "camera.h"
 #include "gamemusic.h"
 #include "gothic.h"
 #include "game/gamescript.h"
@@ -49,7 +50,6 @@
 #include "game/physicssave.h"
 
 #include <rapidjson/document.h>
-
 #include <Tempest/MemReader>
 #include <Tempest/MemWriter>
 

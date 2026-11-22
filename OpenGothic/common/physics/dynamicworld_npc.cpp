@@ -12,12 +12,42 @@ bool isNpcMoveSkipped(const Tempest::Vec3& displacement) {
 DynamicWorld::NpcItem::~NpcItem() {
   if(owner==nullptr || obj==nullptr)
     return;
-  owner->npcList->del(obj);
+  if(!obj->suspended)
+    owner->npcList->del(obj);
   delete obj;
+  }
+
+bool DynamicWorld::NpcItem::hasBody() const {
+  return obj!=nullptr && !obj->suspended;
+  }
+
+bool DynamicWorld::NpcItem::bodySuspended() const {
+  return obj!=nullptr && obj->suspended;
+  }
+
+void DynamicWorld::NpcItem::suspendBody() {
+  if(!hasBody())
+    return;
+  // Keep the placement and dimensions for read-only queries and ordinary saves.
+  owner->npcList->del(obj);
+  obj->frozen = size_t(-1);
+  resetVirtual();
+  obj->shape = nullptr;
+  obj->suspended = true;
+  }
+
+void DynamicWorld::NpcItem::resumeBody() {
+  if(!bodySuspended())
+    return;
+  obj->createShape();
+  owner->npcList->add(obj);
+  owner->npcList->onMove(*obj);
+  obj->suspended = false;
   }
 
 void DynamicWorld::NpcItem::setPosition(const Tempest::Vec3& pos) {
   if(obj) {
+    resumeBody();
     resetVirtual();
     implSetPosition(pos);
     owner->npcList->onMove(*obj);
@@ -31,7 +61,10 @@ void DynamicWorld::NpcItem::implSetPosition(const Tempest::Vec3& pos) {
   }
 
 void DynamicWorld::NpcItem::setEnable(bool e) {
-  if(obj==nullptr || obj->enable==e)
+  if(obj==nullptr)
+    return;
+  resumeBody();
+  if(obj->enable==e)
     return;
   obj->enable = e;
   resetVirtual();
@@ -39,7 +72,7 @@ void DynamicWorld::NpcItem::setEnable(bool e) {
   }
 
 bool DynamicWorld::NpcItem::isEnabled() const {
-  return obj!=nullptr && obj->enable;
+  return hasBody() && obj->enable;
   }
 
 void DynamicWorld::NpcItem::setUserPointer(void *p) {
@@ -116,6 +149,7 @@ bool DynamicWorld::NpcItem::testMove(const Tempest::Vec3& to, CollisionTest& out
 bool DynamicWorld::NpcItem::testMove(const Tempest::Vec3& to, const Tempest::Vec3& pos0, CollisionTest& out) {
   if(!obj)
     return false;
+  resumeBody();
   auto prev = obj->pos;
   auto code = implTryMove(to,pos0,out);
   implSetPosition(prev);
@@ -126,6 +160,7 @@ DynamicWorld::MoveCode DynamicWorld::NpcItem::tryMove(const Tempest::Vec3& to, C
   if(!obj)
     return MoveCode::MC_Fail;
 
+  resumeBody();
   resetVirtual();
 
   auto dp = to - obj->pos;
@@ -199,6 +234,7 @@ DynamicWorld::NpcItem::VirtualMoveResult DynamicWorld::NpcItem::implMoveVirtual(
   result.position = obj->pos;
   if(!obj->enable || (carry && obj->virtualCharacter==nullptr))
     return result;
+  resumeBody();
   if(obj->virtualCharacter==nullptr) {
     obj->virtualCharacter = owner->world->createVirtualCharacter(obj->radius,obj->h,obj->pos);
     obj->virtualCharacter->setDiagnosticsEnabled(obj->virtualDiagnosticsEnabled);
@@ -437,7 +473,7 @@ DynamicWorld::MoveCode DynamicWorld::NpcItem::implTryMove(const Tempest::Vec3& t
   }
 
 bool DynamicWorld::NpcItem::hasCollision() const {
-  if(!obj)
+  if(!hasBody())
     return false;
   CollisionTest info;
   return owner->hasCollision(*this,info);

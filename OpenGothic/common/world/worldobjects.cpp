@@ -1011,11 +1011,20 @@ void WorldObjects::catchUpAnimation() {
   // Runs after the camera has moved for this frame and before anything is
   // drawn: an NPC the turn has brought into view gets its pose now.
   FrameProfile::add(FrameProfile::Amount::NpcAnimSyncOnRead,AnimationLod::takeSyncs());
-  // Nobody deferred in this frame's pass: every NPC consumed its pending time.
-  if(!AnimationLod::config().enabled || animationLodDeferred==0)
+  const bool catchUp = AnimationLod::config().enabled && animationLodDeferred!=0;
+  if(!catchUp && !campfireBodiesSuspended)
     return;
   AnimationLod::View view;
   if(!makeAnimationLodView(view))
+    return;
+  if(campfireBodiesSuspended) {
+    // A camera turn can bring a distant campfire into view in the same frame.
+    // Restore the collision entry on this thread before the parallel pose pass.
+    for(auto& npc:npcArr)
+      if(npc->campfireBodySuspended() && (mustUpdateAnimation(*npc,view) || view.visible(*npc)))
+        npc->resumeCampfireBody();
+    }
+  if(!catchUp)
     return;
   std::atomic<uint64_t> caught{0};
   AnimationLod::beginPass();

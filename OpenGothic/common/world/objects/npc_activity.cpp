@@ -12,6 +12,7 @@ void Npc::aiPush(AiQueue::AiAction&& a) {
   // collision, and OTHER may be null or a distant culprit, so native turning owns it.
   if(physicsNoiseCallback && (a.act==AI_TurnToNpc || a.act==AI_LookAtNpc))
     return;
+  resumeCampfireBody();
   a.physicsNoiseState = physicsNoiseCallback && a.act==AI_StartState;
   a.activity = a.activity || activityCommands;
   if(!a.activity && activityEvents.activity && activityEvents.activity->point) {
@@ -38,6 +39,7 @@ bool Npc::setInteraction(Interactive *id, bool quick) {
   if(id==nullptr)
     return (currentInteract==nullptr);
 
+  resumeCampfireBody();
   if(id->attach(*this)) {
     currentInteract = id;
     owner.mobReservations().attached(*this,*id);
