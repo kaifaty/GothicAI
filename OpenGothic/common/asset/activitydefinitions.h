@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -60,7 +61,7 @@ struct PointActivity {
   std::vector<Gesture> gestures; // indexed by the random outcome, [0, rollRange)
   int32_t initialStage = 1, walkingStage = 2, arrivedStage = 1, poseStage = 0; // aivar[19]
   int32_t loopResult = 0;
-  PortalEvent portal; // ArmsCrossed only
+  std::optional<PortalEvent> portal; // ArmsCrossed in the addon; Classic goes straight to the timer reset
   bool timed() const { return form==Form::Guard || form==Form::ArmsCrossed || form==Form::Waypoint; }
   std::string_view occupied() const { return form==Form::Campfire ? "wait" : "align_waypoint"; }
   bool operator==(const PointActivity&) const = default;

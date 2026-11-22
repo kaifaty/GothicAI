@@ -1367,15 +1367,22 @@ void pointMutations(const NpcSnapshot::Program& program,const fs::path& dir) {
   check(import({arms}).uncaptured.at(arms).find("missing portal call")!=std::string::npos,
         "the matching world, guild, Raven and draw distinguish a missing story call");
 
+  const auto portalDraw=locate("ZS_STAND_ARMSCROSSED_LOOP",[](auto op,auto next) {
+    return op.op==Op::PUSHI && op.immediate==200 && next.op==Op::BE;
+    });
+  std::fill(changed.data.bytecode.begin()+portalDraw,changed.data.bytecode.begin()+call+script.instruction_at(call).size,std::byte(Op::NOP));
+  check(import({arms}).uncaptured.at(arms).find("portal draw")!=std::string::npos,
+        "removing the entire portal branch from the addon cannot select Classic");
+
   changed.data.bytecode=program.data.bytecode;
   const auto trigger=locate("ZS_STAND_ARMSCROSSED_LOOP",[&](auto op,auto next) {
     return op.op==Op::PUSHI && op.immediate==1 && next.op==Op::PUSHV && next.symbol==roll->index();
     });
   changed.data.bytecode[trigger+1]=std::byte{3};
-  check(import({arms}).points.at(arms).portal.triggerRoll==3,"the story outcome follows the changed bytecode");
+  check(import({arms}).points.at(arms).portal.value().triggerRoll==3,"the story outcome follows the changed bytecode");
   }
 
-void realActivities(const NpcSnapshot::Program& program,const fs::path& base,const fs::path& dir) {
+void realActivities(const NpcSnapshot::Program& program,const fs::path& base,const fs::path& dir,bool addon) {
   const auto routines=base/"definitions"/program.sha256/"routines.json";
   const auto fresh=dir/"activity-base",file=fresh/"definitions"/program.sha256/"activities.json";
   const auto start=std::chrono::steady_clock::now();
@@ -1398,7 +1405,7 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
   using Form=ActivityDefinitions::PointActivity::Form;
   check(library.points.size()==5 && guard.form==Form::Guard && library.activities.size()==8,
         "five point forms and all eight mob records import from the installed program");
-  check(library.uncaptured.contains("ZS_WASH_FP"),"the similar WASH free point stays outside the PEE form");
+  if(addon) check(library.uncaptured.contains("ZS_WASH_FP"),"the similar WASH free point stays outside the PEE form");
   check(guard.point=="STAND" && guard.enterAnimation=="T_STAND_2_HGUARD" && guard.leaveAnimation=="T_HGUARD_2_STAND" &&
         guard.timerSeconds==5 && guard.rollRange==10 && guard.gestures[0].animation=="T_HGUARD_LOOKAROUND" &&
         guard.gestures[0].resetTimer,"real guard parameters match the bytecode study");
@@ -1413,9 +1420,12 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
         pee.enterAnimation=="T_STAND_2_PEE" && pee.leaveAnimation=="T_PEE_2_STAND","pee enters only on its FP");
   check(wp.form==Form::Waypoint && wp.point.empty() && wp.initialStage==1 && wp.poseStage==0 && wp.rollRange==10,
         "waypoint Init aligns unconditionally and the pose has no FP approach");
-  check(arms.form==Form::ArmsCrossed && arms.point=="STAND" && arms.rollRange==7 &&
-        arms.portal.rollRange==200 && arms.portal.triggerRoll==1 && arms.portal.world==4 && arms.portal.ravenDead==0 &&
-        arms.portal.excludedGuild==13 && arms.portal.function=="B_EVENT_PORTAL_EARTHQUAKE","arms has a separate portal draw");
+  check(arms.form==Form::ArmsCrossed && arms.point=="STAND" && arms.rollRange==7,"arms draws one of seven gestures");
+  if(addon)
+    check(arms.portal && arms.portal->rollRange==200 && arms.portal->triggerRoll==1 && arms.portal->world==4 &&
+          arms.portal->ravenDead==0 && arms.portal->excludedGuild==13 && arms.portal->function=="B_EVENT_PORTAL_EARTHQUAKE",
+          "addon arms has a separate portal draw");
+  else check(!arms.portal,"Classic arms goes directly from the gesture to the timer reset");
   for(const auto* a:{&arms,&pee})
     check(a->initialStage==1 && a->walkingStage==2 && a->arrivedStage==1 && a->poseStage==0 && a->approachDistance==500,
           "staged FP activities retain the original stage assignments");
@@ -1445,6 +1455,7 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
             "the v2 ready section retains the original mobs and guard");
       for(auto name:{"ZS_SIT_CAMPFIRE","ZS_PEE","ZS_STAND_ARMSCROSSED","ZS_STAND_WP"})
         check(ready.uncaptured.contains(name),"v2 keeps the original fallback for "+std::string(name));
+      std::cout<<"Ready v2: 8 mobs, 1 guard, 4 point states on the VM\n";
       }
     else {
       std::ifstream x(section,std::ios::binary),y(file,std::ios::binary);
@@ -1452,7 +1463,6 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
             "the ready base's activities.json equals a fresh import");
       }
     }
-  pointMutations(program,dir);
   }
 
 void realHelpers(const NpcSnapshot::Program& program,const fs::path& base) {
@@ -1557,9 +1567,10 @@ fs::path readyBase() {
   return {};
   }
 }
-int main() {
+int main(int argc,char** argv) {
   auto dir=fs::temp_directory_path()/("gothic-npc-snapshot-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   try {
+    if(argc>2) throw std::runtime_error("usage: gothic-npc-snapshot-contract [classic-program-base]");
     fs::create_directories(dir);
     fixture(dir);
     auto base=readyBase();
@@ -1569,9 +1580,11 @@ int main() {
       NpcSnapshot::write(program,dir/"real");
       check(NpcSnapshot::verify(program,dir/"real")==0,"real corpus verifies");
       runtimeItems(program,base);
-      realActivities(program,base,dir);
+      realActivities(program,base,dir,true);
+      pointMutations(program,dir);
       realHelpers(program,base);
       }
+    if(argc==2) realActivities(NpcSnapshot::load(argv[1]),argv[1],dir,false);
     fs::remove_all(dir);
     std::cout<<"NPC snapshot contract passed: "<<assertions<<" assertions\n";
     return 0;

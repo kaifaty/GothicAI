@@ -92,14 +92,17 @@ ActivityDefinitions::PointActivity point(const Json& json,int version) {
   else { a.rollRange=0; a.timerSeconds=0; }
   if(a.form==Form::ArmsCrossed) {
     const auto& event=at(json,"portal_event");
-    DefinitionJson::object(event,{"function","roll_range","trigger_roll","world","raven_dead","excluded_guild"});
-    a.portal.function=string(at(event,"function"));
-    a.portal.rollRange=integer(at(event,"roll_range"));
-    a.portal.triggerRoll=integer(at(event,"trigger_roll"));
-    a.portal.world=integer(at(event,"world"));
-    a.portal.ravenDead=integer(at(event,"raven_dead"));
-    a.portal.excludedGuild=integer(at(event,"excluded_guild"));
-    require(!a.portal.function.empty() && a.portal.triggerRoll>=0 && a.portal.triggerRoll<a.portal.rollRange,"invalid portal event");
+    if(!event.IsNull()) {
+      DefinitionJson::object(event,{"function","roll_range","trigger_roll","world","raven_dead","excluded_guild"});
+      auto& p=a.portal.emplace();
+      p.function=string(at(event,"function"));
+      p.rollRange=integer(at(event,"roll_range"));
+      p.triggerRoll=integer(at(event,"trigger_roll"));
+      p.world=integer(at(event,"world"));
+      p.ravenDead=integer(at(event,"raven_dead"));
+      p.excludedGuild=integer(at(event,"excluded_guild"));
+      require(!p.function.empty() && p.triggerRoll>=0 && p.triggerRoll<p.rollRange,"invalid portal event");
+      }
     ++fields;
     }
   require(json.MemberCount()==fields,"unexpected point parameter field");
