@@ -16,17 +16,19 @@ SCRIPT = Path(__file__).parents[1] / "npc_day_parity.py"
 STRICT = Path(__file__).parents[1] / "bench" / "npc-day-parity.tolerances.json"
 SIX_C = Path(__file__).parents[1] / "bench" / "npc-day-parity.tolerances-6c.json"
 ACTIVITY = Path(__file__).parents[2] / "scripts/bench/npc-day-parity.tolerances-activity.json"
+POINTS = Path(__file__).parents[2] / "scripts/bench/npc-day-parity.tolerances-points.json"
 DONE = {"seed": 7, "isolate": True, "minutes": 90, "period_min": 30, "end_reason": "done"}
 HEADER = ("t_min,at_min,key,symbol,alive,hp,hp_max,ta,zs,zs_ms,x,y,z,wp,wp_dist,queue,head,body,"
-          "inv_hash,inv_items,mob,tier,policy,hero").split(",")
+          "inv_hash,inv_items,mob,tier,policy,hero,fp,fp_x,fp_y,fp_z,on_fp,aivar_19,fp_available,on_routine_wp").split(",")
 
 
 def row(t, key, *, alive=1, hp=100, ta="0 08:00-20:00 ZS_STAND NW_A", zs="ZS_STAND", x=0.0, inv="00ff",
-        tier="full", hero="-", body=0, mob="-", wp="NW_A"):
+        tier="full", hero="-", body=0, mob="-", wp="NW_A", fp="-", fp_x=0, on_fp=0, aivar_19=0, fp_available=-1, on_routine_wp=1):
     return {"t_min": t, "at_min": t + 0.004, "key": key, "symbol": key.split("#")[0], "alive": alive, "hp": hp,
             "hp_max": 100, "ta": ta, "zs": zs, "zs_ms": 0, "x": x, "y": 0, "z": 0, "wp": wp, "wp_dist": 0,
             "queue": 0, "head": "-", "body": body, "inv_hash": inv, "inv_items": 1, "mob": mob, "tier": tier,
-            "policy": "far2", "hero": hero}
+            "policy": "far2", "hero": hero, "fp": fp, "fp_x": fp_x, "fp_y": 0, "fp_z": 0,
+            "on_fp": on_fp, "aivar_19": aivar_19, "fp_available": fp_available, "on_routine_wp": on_routine_wp}
 
 
 def journal(path, rows, events, header, compress=False):
@@ -282,13 +284,13 @@ def test_strict_profile_checks_queue_and_events_outside_sample_window(tmp_path):
 def test_activity_metrics_checks_and_state_filter(tmp_path):
     a_rows, b_rows = [], []
     for t in range(0, 45, 5):
-        ta = "first" if t <= 20 else "second"
+        ta = "0 08:00-08:25 ZS_SMITH NW_A" if t <= 20 else "1 08:25-09:00 ZS_SMITH NW_A"
         a_rows.append(row(t, "SMITH#0", ta=ta, zs="ZS_SMITH", mob="ANVIL" if t in (5, 10, 15, 20, 25, 30) else "-"))
-        b_rows.append(row(t, "SMITH#0", ta="different", zs="ZS_OTHER" if t == 20 else "ZS_SMITH",
+        b_rows.append(row(t, "SMITH#0", ta="9 08:00-09:00 ZS_SMITH NW_B", zs="ZS_OTHER" if t == 20 else "ZS_SMITH",
                           wp="NW_B" if t == 15 else "NW_A",
                           mob={10: "ANVIL", 15: "ORE", 20: "ANVIL"}.get(t, "-")))
-        a_rows.append(row(t, "READER#0", ta="read", zs="ZS_READ", mob="LECTERN" if t >= 5 else "-"))
-        b_rows.append(row(t, "READER#0", ta="read", zs="ZS_READ", mob="LECTERN"))
+        a_rows.append(row(t, "READER#0", ta="0 08:00-09:00 ZS_READ NW_A", zs="ZS_READ", mob="LECTERN" if t >= 5 else "-"))
+        b_rows.append(row(t, "READER#0", ta="0 08:00-09:00 ZS_READ NW_A", zs="ZS_READ", mob="LECTERN"))
         # Neither a non-routine animal nor the hero contributes to activities.
         for key, hero in (("WOLF#0", "-"), ("PC_HERO#0", "hero")):
             a_rows.append(row(t, key, ta="-" if hero == "-" else "hero", hero=hero, mob="OTHER"))
@@ -311,7 +313,7 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
     assert total["arrival_segments"] == 2
     assert total["arrival_p50"] == 0 and total["arrival_p95"] == pytest.approx(4.5)
     assert total["arrival_max"] == 5 and total["stuck_npcs"] == 1
-    assert total["stuck"] == [{"key": "SMITH#0", "state": "ZS_SMITH", "ta": "second", "start_min": 25,
+    assert total["stuck"] == [{"key": "SMITH#0", "state": "ZS_SMITH", "ta": "1 08:25-09:00 ZS_SMITH NW_A", "start_min": 25,
                                 "end_min": 40, "arrival_a_min": 0, "arrival_b_min": None, "delay_min": None}]
     smith = activity["by_state"]["ZS_SMITH"]
     assert smith["samples"] == 9 and smith["same_mob"] == 2 / 6 and smith["mob_mismatch"] == 4
@@ -391,20 +393,25 @@ def test_activity_metrics_checks_and_state_filter(tmp_path):
         assert {c["name"]: c["value"] for c in json.loads(data.read_text())["checks"]}[check] == 0
 
 
-def test_mob_mismatch_is_zero_without_occupied_samples(tmp_path):
-    rows = [row(t, "GUARD#0", ta="guard", zs="ZS_GUARD") for t in (0, 5, 10)]
+def test_mob_metrics_are_inapplicable_without_occupied_samples(tmp_path):
+    rows = [row(t, "GUARD#0", ta="0 08:00-09:00 ZS_GUARD NW_A", zs="ZS_GUARD") for t in (0, 5, 10)]
     a, b = tmp_path / "a", tmp_path / "b"
     journal(a, rows, [], DONE)
     journal(b, rows, [], DONE)
     result = npc_day_parity.compare(npc_day_parity.load(a), npc_day_parity.load(b), activity_states={"ZS_GUARD"})
-    assert result["activity"]["total"]["samples"] == 3 and result["activity"]["total"]["mob_mismatch"] == 0
+    assert result["activity"]["total"]["samples"] == 3 and result["activity"]["total"]["mob_mismatch"] is None
     assert [check["pass"] for check in npc_day_parity.evaluate(result, {"max_activity_mob_mismatch": 4})] == [True]
+    extra = tmp_path / "extra"
+    journal(extra, [dict(r, mob="BED") if r["t_min"] == 5 else r for r in rows], [], DONE)
+    result = npc_day_parity.compare(npc_day_parity.load(a), npc_day_parity.load(extra), activity_states={"ZS_GUARD"})
+    assert result["activity"]["total"]["extra_mob"] == 1 / 3
+    assert all(c["pass"] and not c["applicable"] for c in npc_day_parity.evaluate(result, {"max_activity_mob_mismatch": 0}))
 
 
 def test_activity_segments_repeat_after_no_routine_and_empty_metrics_fail(tmp_path):
     a_rows, b_rows = [], []
     for t in range(0, 25, 5):
-        ta = "-" if t == 10 else "same entry"
+        ta = "-" if t == 10 else "0 08:00-09:00 ZS_STAND NW_A"
         a_rows.append(row(t, "SMITH#0", ta=ta, mob="ANVIL" if t in (5, 15) else "-"))
         b_rows.append(row(t, "SMITH#0", ta=ta, mob="ANVIL" if t == 5 else "-"))
     a, b = tmp_path / "a", tmp_path / "b"
@@ -420,3 +427,243 @@ def test_activity_segments_repeat_after_no_routine_and_empty_metrics_fail(tmp_pa
     checks = npc_day_parity.evaluate(missing, {"min_activity_same_mob": 0, "max_activity_mob_mismatch": 4,
                                                "max_activity_arrival_p95": 5})
     assert all(not check["pass"] for check in checks)
+
+
+def test_point_metrics_and_threshold_boundaries(tmp_path):
+    a_rows, b_rows = [], []
+    for t in range(0, 65, 5):
+        ta = ("0 08:00-08:45 ZS_STAND_GUARDING NW_A" if t < 45 else
+              "1 08:45-09:00 ZS_STAND_GUARDING NW_A" if t < 60 else "2 09:00-10:00 ZS_STAND_GUARDING NW_A")
+        a_rows.append(row(t, "GUARD#0", ta=ta, zs="ZS_STAND_GUARDING", fp="STAND" if t >= 5 else "-",
+                          fp_x=100, on_fp=int(t >= 5), aivar_19=0 if t >= 5 else 2, fp_available=1))
+        # End/Init can briefly leave ZS empty while the NPC still holds the point and pose.
+        on_b = 10 <= t < 45 or t == 55
+        b_rows.append(row(t, "GUARD#0", ta=ta, zs="-" if t == 30 else "ZS_STAND_GUARDING", fp="STAND" if on_b else "-",
+                          fp_x=200 if t == 20 else 100, on_fp=int(on_b),
+                          aivar_19=0 if on_b else 2, fp_available=1))
+        # Collision with an NPC outside the selected activity must still be seen.
+        b_rows.append(row(t, "OTHER#0", ta="-", fp="STAND" if t == 30 else "-", fp_x=100, on_fp=int(t == 30)))
+        a_rows.append(row(t, "OTHER#0", ta="-"))
+        for rows in (a_rows, b_rows):
+            rows.append(row(t, "WP#0", ta="0 08:00-20:00 ZS_STAND_WP NW_A", zs="ZS_STAND_WP", aivar_19=0))
+    a, b = tmp_path / "a", tmp_path / "b"
+    header = {**DONE, "minutes": 60, "period_min": 5}
+    journal(a, a_rows, [], header)
+    journal(b, b_rows, [], header)
+    aa, bb = npc_day_parity.load(a), npc_day_parity.load(b)
+    result = npc_day_parity.compare(aa, bb, activity_states={"ZS_STAND_GUARDING"})
+    points = result["points"]["total"]
+    assert points["samples"] == 13 and points["on_a"] == points["pose_a"] == 12
+    assert points["on_b"] == points["pose_b"] == 8 and points["pose_ratio"] == 8 / 12
+    assert points["same_fp"] == 7 / 12  # the repeated name with different coordinates does not match
+    # Two physical delays distinguish the interpolated p95 from the maximum.
+    assert [entry["delay_min"] for entry in points["arrivals"]] == [5, 10]
+    assert points["arrival_p95"] == pytest.approx(9.75)
+    assert points["arrival_max"] == 10
+    assert points["missed_segments"] == points["stuck_npcs"] == points["double_occupancy"] == 1
+    assert points["missed"][0]["start_min"] == 60
+    assert points["collisions"][0]["npcs"] == ["GUARD#0", "OTHER#0"]
+    assert points == result["points"]["by_state"]["ZS_STAND_GUARDING"]
+    assert result["points"]["by_state"]["ZS_STAND_WP"]["pose_ratio"] == 1
+    assert result["points"]["by_state"]["ZS_STAND_WP"]["same_fp"] is None
+    limits = {"min_point_same_fp": 7 / 12, "min_point_pose_ratio": 8 / 12, "max_point_pose_ratio": 8 / 12,
+              "max_point_arrival_p95": 9.75, "max_point_arrival_max": 10, "max_point_missed_segments": 1,
+              "max_point_double_occupancy": 1, "max_activity_stuck": 1}
+    assert all(c["pass"] for c in npc_day_parity.evaluate(result, limits))
+    outside = {name: limit + (0.01 if name.startswith("min_") else -0.01) for name, limit in limits.items()}
+    assert all(not c["pass"] for c in npc_day_parity.evaluate(result, outside))
+    report = npc_day_parity.markdown(result, npc_day_parity.evaluate(result, limits), "A", "B")
+    assert "Point activities" in report and "legal routine-waypoint fallback" in report and "60–60" in report
+
+
+def test_point_loss_late_arrival_collision_and_legal_fallback(tmp_path):
+    reference = [row(t, "GUARD#0", ta="0 08:00-20:00 ZS_STAND_GUARDING NW_A", zs="ZS_STAND_GUARDING", fp="STAND", fp_x=100,
+                     on_fp=1, aivar_19=0, fp_available=1) for t in range(0, 65, 5)]
+    header = {**DONE, "minutes": 60, "period_min": 5}
+    a = tmp_path / "a"
+    other = [row(t, "GUARD2#0", ta="-") for t in range(0, 65, 5)]
+    journal(a, reference + other, [], header)
+    aa = npc_day_parity.load(a)
+    limits = {"min_point_same_fp": 0.98, "min_point_pose_ratio": 0.98, "max_point_pose_ratio": 1.02,
+              "max_point_arrival_p95": 5, "max_point_arrival_max": 5, "max_point_missed_segments": 0,
+              "max_point_double_occupancy": 0, "max_activity_stuck": 0,
+              "min_activity_same_mob": 0.99, "max_activity_mob_mismatch": 0,
+              "min_activity_mob_time_ratio": 0.99, "max_activity_mob_time_ratio": 1.01,
+              "max_activity_arrival_p95": 5, "max_activity_arrival_max": 5}
+    variants = {
+        "lost": [dict(r, fp="-", on_fp=0, aivar_19=0) for r in reference],
+        "late": [dict(r, fp="-", on_fp=0, aivar_19=2) if r["t_min"] < 30 else r for r in reference],
+        "double": reference + [dict(r, key="GUARD2#0") for r in reference],
+        "fallback": [dict(r, fp="-", on_fp=0, aivar_19=0, fp_available=0) for r in reference],
+    }
+    for name, rows in variants.items():
+        b = tmp_path / name
+        if name != "double":
+            rows = rows + other
+        journal(b, rows, [], header)
+        result = npc_day_parity.compare(aa, npc_day_parity.load(b), activity_states={"ZS_STAND_GUARDING"})
+        checks = npc_day_parity.evaluate(result, limits)
+        failed = {c["name"] for c in checks if not c["pass"]}
+        points = result["points"]["total"]
+        if name == "lost":
+            assert points["pose_ratio"] == 0 and points["missed_segments"] == 1
+            assert result["activity"]["total"]["stuck_npcs"] == 1
+            assert "max_activity_stuck" in failed and "max_point_missed_segments" in failed
+        elif name == "late":
+            assert points["arrival_max"] == 30
+            assert "max_point_arrival_max" in failed
+        elif name == "double":
+            assert failed == {"max_point_double_occupancy"}
+        else:
+            assert not failed and points["fallback_b"] == 13 and points["pose_ratio"] == 1
+            assert points["missed_segments"] == 0
+        assert all(c["pass"] and not c["applicable"] for c in checks if c["name"] in {
+            "min_activity_same_mob", "max_activity_mob_mismatch", "min_activity_mob_time_ratio",
+            "max_activity_mob_time_ratio", "max_activity_arrival_p95", "max_activity_arrival_max"})
+        assert npc_day_parity.main([str(a), str(b), "--activity-states", "ZS_STAND_GUARDING",
+                                   "--tolerances", str(POINTS), "--out", str(tmp_path / (name + ".md")),
+                                   "--json", str(tmp_path / (name + ".json"))]) == (0 if name == "fallback" else 1)
+        profile_failed = {c["name"] for c in json.loads((tmp_path / (name + ".json")).read_text())["checks"]
+                          if not c["pass"]}
+        if name == "lost":
+            assert {"max_point_missed_segments", "max_activity_stuck"} <= profile_failed
+        elif name == "late":
+            assert "max_point_arrival_max" in profile_failed
+        elif name == "double":
+            assert profile_failed == {"max_point_double_occupancy"}
+    # A single legal wait cannot disguise losing the rest of the activity to an empty point.
+    mixed = tmp_path / "mixed"
+    journal(mixed, [variants["fallback"][0], *variants["lost"][1:]], [], header)
+    result = npc_day_parity.compare(aa, npc_day_parity.load(mixed), activity_states={"ZS_STAND_GUARDING"})
+    assert result["points"]["total"]["missed_segments"] == 1
+    # Legal waiting in A does not excuse sleeping through the whole shift in B.
+    sleeping = tmp_path / "sleeping"
+    journal(sleeping, [dict(r, zs="ZS_SLEEP", body=12, on_routine_wp=0) for r in variants["fallback"]] + other, [], header)
+    waiting = npc_day_parity.load(tmp_path / "fallback")
+    result = npc_day_parity.compare(waiting, npc_day_parity.load(sleeping), activity_states={"ZS_STAND_GUARDING"})
+    profile = json.loads(POINTS.read_text())["tolerances"]
+    assert result["points"]["total"]["pose_ratio_available"] == 0
+    assert result["points"]["total"]["missed_segments"] == result["activity"]["total"]["stuck_npcs"] == 1
+    assert {"min_point_pose_ratio", "max_point_missed_segments", "max_activity_stuck"} <= {
+        c["name"] for c in npc_day_parity.evaluate(result, profile) if not c["pass"]}
+    assert all(c["pass"] for c in npc_day_parity.evaluate(
+        npc_day_parity.compare(waiting, waiting, activity_states={"ZS_STAND_GUARDING"}), profile))
+    # The previous point ZS can linger at the boundary of a new, unrelated routine.
+    transition_a, transition_b = tmp_path / "transition-a", tmp_path / "transition-b"
+    next_ta = "1 22:00-08:00 ZS_GOTOBED NW_BED"
+    journal(transition_a, [dict(reference[0], ta=next_ta)], [], header)
+    journal(transition_b, [dict(reference[0], ta=next_ta, zs="ZS_GOTOBED", fp="-", on_fp=0)], [], header)
+    transition = npc_day_parity.compare(npc_day_parity.load(transition_a), npc_day_parity.load(transition_b),
+                                       activity_states={"ZS_STAND_GUARDING"})
+    assert transition["points"]["total"]["missed_segments"] == 0
+    # Old journals remain usable for old profiles; point checks require the new fields.
+    samples = mixed / "npc-day.csv"
+    samples.write_text("\n".join(",".join(line.split(",")[:24]) for line in (a / "npc-day.csv").read_text().splitlines()) + "\n")
+    result = npc_day_parity.compare(aa, npc_day_parity.load(mixed), activity_states={"ZS_STAND_GUARDING"})
+    assert all(not c["pass"] for c in npc_day_parity.evaluate(result, {"max_point_missed_segments": 0, "min_point_same_fp": 0.9}))
+    assert not result["points"]["total"]["available"] and result["points"]["total"]["missed_segments"] == 0
+    assert result["activity"]["total"]["stuck_npcs"] == 0
+    assert all(c["pass"] for c in npc_day_parity.evaluate(result, {"max_activity_stuck": 0}))
+    # Campfire and PEE wait standing, without the target pose's body/stage.
+    for state, kind, body in (("ZS_SIT_CAMPFIRE", "CAMPFIRE", 11), ("ZS_PEE", "PEE", 0)):
+        camp_a, camp_b = tmp_path / (state + "-a"), tmp_path / (state + "-b")
+        journal(camp_a, [dict(r, ta=f"0 08:00-20:00 {state} NW_A", zs=state, fp=kind, body=body) for r in reference], [], header)
+        journal(camp_b, [dict(r, ta=f"0 08:00-20:00 {state} NW_A", zs=state, fp="-", on_fp=0, body=0, aivar_19=1, fp_available=0)
+                         for r in reference], [], header)
+        result = npc_day_parity.compare(npc_day_parity.load(camp_a), npc_day_parity.load(camp_b), activity_states={state})
+        assert result["points"]["total"]["pose_ratio"] == 0
+        assert result["points"]["total"]["fallback_b"] == 13
+        assert all(c["pass"] for c in npc_day_parity.evaluate(result, limits))
+    # A hold can start after TA changes. A waypoint bit must refer to A's target, not B's old TA.
+    for case in ("held", "unheld", "wp", "held-ta"):
+        post_a, post_b = tmp_path / (case + "-a"), tmp_path / (case + "-b")
+        state = "ZS_STAND_WP" if case == "wp" else "ZS_STAND_GUARDING"
+        for path, arrival in ((post_a, 10), (post_b, 40)):
+            journal(path, [dict(r, ta=f"0 08:00-09:00 {state} NW_A" if r["t_min"] == 0 or
+                               (case in ("wp", "held-ta") and path == post_b and r["t_min"] < arrival) else
+                               f"1 09:00-10:00 {state} NW_B", zs=state,
+                               wp="NW_A" if r["t_min"] < arrival else "NW_B",
+                               fp="-" if case == "wp" or (case == "unheld" and path == post_b and r["t_min"] == 0) else "STAND",
+                               on_fp=int(case != "wp" and not (case == "unheld" and path == post_b and r["t_min"] == 0)),
+                               fp_x=100 if r["t_min"] < arrival else 200,
+                               on_routine_wp=int(r["t_min"] == 0 or r["t_min"] >= arrival or
+                                                 (case in ("wp", "held-ta") and path == post_b)))
+                           for r in reference], [], header)
+        result = npc_day_parity.compare(npc_day_parity.load(post_a), npc_day_parity.load(post_b), activity_states={state})
+        arrival = next(e for e in result["points"]["total"]["arrivals"] if e["start_min"] == 5)
+        assert arrival["arrival_a_min"] == 5 and arrival["arrival_b_min"] == 35 and arrival["delay_min"] == 30
+        if case in ("wp", "held-ta"):
+            assert result["points"]["total"]["on_b"] == result["points"]["total"]["pose_b"] == 6
+        assert "max_point_arrival_max" in {c["name"] for c in npc_day_parity.evaluate(result, profile) if not c["pass"]}
+    # Two campfire seats, three NPCs: the waiting and seated NPC exchange roles.
+    swap_a, swap_b = tmp_path / "camp-swap-a", tmp_path / "camp-swap-b"
+    for path, seated in ((swap_a, 1), (swap_b, 2)):
+        journal(path, [row(t, f"CAMP{i}#0", ta="0 08:00-20:00 ZS_SIT_CAMPFIRE NW_FIRE",
+                           zs="ZS_SIT_CAMPFIRE", fp="CAMPFIRE" if i in (0, seated) else "-",
+                           fp_x=100 if i == 0 else 200, on_fp=int(i in (0, seated)),
+                           body=11 if i in (0, seated) else 0, aivar_19=1, fp_available=int(i in (0, seated)))
+                       for t in (0, 5, 10) for i in range(3)], [], {**header, "minutes": 10})
+    for left, right in ((swap_a, swap_b), (swap_b, swap_a)):
+        result = npc_day_parity.compare(npc_day_parity.load(left), npc_day_parity.load(right),
+                                       activity_states={"ZS_SIT_CAMPFIRE"})
+        points = result["points"]["total"]
+        assert points["pose_a"] == points["pose_b"] == 6
+        assert points["fallback_a"] == points["fallback_b"] == 3
+        assert points["pose_comparable_a"] == points["pose_comparable_b"] == 3
+        assert points["pose_ratio_available"] == 1 and points["missed_segments"] == points["double_occupancy"] == 0
+        assert all(c["pass"] for c in npc_day_parity.evaluate(result, profile))
+    # An already suitable held point fulfils even a one-sample new routine.
+    near_a, near_b = tmp_path / "near-a", tmp_path / "near-b"
+    near = [row(t, "PEE#0", ta=f"{t} 08:00-09:00 ZS_PEE NW_{t}", zs="ZS_PEE", fp="PEE", fp_x=100,
+                on_fp=1, aivar_19=0, fp_available=1) for t in (0, 5)]
+    journal(near_a, near, [], {**header, "minutes": 5})
+    journal(near_b, [near[0], dict(near[1], fp="-", on_fp=0, aivar_19=1)], [], {**header, "minutes": 5})
+    result = npc_day_parity.compare(npc_day_parity.load(near_a), npc_day_parity.load(near_b), activity_states={"ZS_PEE"})
+    assert result["points"]["total"]["missed_segments"] == result["activity"]["total"]["stuck_npcs"] == 1
+    assert {"max_point_missed_segments", "max_activity_stuck"} <= {
+        c["name"] for c in npc_day_parity.evaluate(result, profile) if not c["pass"]}
+    # The transient empty ZS is the same physical arrival in A and B.
+    empty_a, empty_b = tmp_path / "empty-a", tmp_path / "empty-b"
+    empty = [row(t, "CAMP#0", ta="0 08:00-09:00 ZS_SIT_CAMPFIRE NW_FIRE", zs="-" if t == 0 else "ZS_SIT_CAMPFIRE",
+                 fp="CAMPFIRE", fp_x=100, on_fp=1, body=11, fp_available=1) for t in (0, 5, 10, 15)]
+    journal(empty_a, empty, [], {**header, "minutes": 15})
+    journal(empty_b, [dict(r, fp="-", on_fp=0, body=1) if r["t_min"] < 15 else r for r in empty], [], {**header, "minutes": 15})
+    loaded = npc_day_parity.load(empty_a)
+    self_check = npc_day_parity.compare(loaded, loaded, activity_states={"ZS_SIT_CAMPFIRE"})
+    assert all(e["delay_min"] == 0 for e in self_check["points"]["total"]["arrivals"])
+    result = npc_day_parity.compare(loaded, npc_day_parity.load(empty_b), activity_states={"ZS_SIT_CAMPFIRE"})
+    assert result["points"]["total"]["arrival_max"] == 15
+    assert "max_point_arrival_max" in {c["name"] for c in npc_day_parity.evaluate(result, profile) if not c["pass"]}
+    # A scheduled point state need not have any active-ZS sample, even in a complete short journal.
+    for active in (("-",), ("-", "ZS_STAND")):
+        path = tmp_path / f"transition-only-{len(active)}"
+        state = "ZS_STAND_GUARDING"
+        journal(path, [row(5 * i, "GUARD#0", ta=f"0 08:00-09:00 {state} NW_A", zs=zs,
+                           fp="FP_STAND", on_fp=1, aivar_19=0, fp_available=1) for i, zs in enumerate(active)],
+                [], {**header, "minutes": 5 * (len(active) - 1)})
+        run = npc_day_parity.load(path)
+        same = npc_day_parity.compare(run, run, activity_states={state})
+        assert same["activity"]["by_state"]["-"]["samples"] == 1
+        assert same["activity"]["by_state"][state]["samples"] == 0
+        assert same["activity"]["by_state"][state]["same_zs"] is None
+        assert same["activity"]["total"]["mob_time_ratio"] is None
+        assert same["points"]["total"]["samples"] == len(active) and same["points"]["total"]["arrival_max"] == 0
+        assert all(c["pass"] for c in npc_day_parity.evaluate(same, profile))
+        mob_limits = {"max_activity_mob_mismatch": 0, "min_activity_mob_time_ratio": 0.99}
+        assert all(c["pass"] and not c["applicable"] for c in npc_day_parity.evaluate(same, mob_limits))
+        absent = npc_day_parity.compare(run, run, activity_states={"ZS_ABSENT"})
+        assert all(not c["pass"] and c["applicable"] for c in npc_day_parity.evaluate(absent, mob_limits))
+        # Item interaction is not a standing pose, even with a stale stage zero and empty ZS.
+        using_item = {**run, "rows": {k: (*r[:10], 14, *r[11:]) for k, r in run["rows"].items()}}
+        idle = npc_day_parity.compare(using_item, using_item, activity_states={state})
+        assert idle["points"]["total"]["pose_a"] == idle["points"]["total"]["pose_b"] == 0
+        assert all(c["pass"] for c in npc_day_parity.evaluate(idle, profile))
+        assert all(not c["applicable"] for c in npc_day_parity.evaluate(idle, profile) if "point_pose_ratio" in c["name"])
+        lost_pose = npc_day_parity.compare(run, using_item, activity_states={state})
+        pose_check = npc_day_parity.evaluate(lost_pose, {"min_point_pose_ratio": 0.99})[0]
+        assert pose_check["value"] == 0 and pose_check["applicable"] and not pose_check["pass"]
+        assert f"| {state} | 0 | — |" in npc_day_parity.markdown(same, [], "A", "B")
+        missing = {**run, "points": {k: {**p, "on": False, "available": 1} for k, p in run["points"].items()}}
+        lost = npc_day_parity.compare(run, missing, activity_states={state})
+        assert lost["points"]["total"]["missed_segments"] == lost["activity"]["total"]["stuck_npcs"] == 1
+        assert lost["activity"]["by_state"][state]["stuck_npcs"] == 1

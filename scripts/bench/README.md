@@ -1903,7 +1903,7 @@ explain the bounds and remaining combat/body work. `npcday` files:
 | File | Contents |
 |---|---|
 | `npc-day.json` | Tier mode, seed, private random streams, period, start time and hero; at the end the sample/event counts, wall time and the NPC tick time per tier |
-| `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag |
+| `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag; appended `fp,fp_x,fp_y,fp_z,on_fp,aivar_19,fp_available,on_routine_wp` |
 | `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
 | `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
 | `npc-day-script.json` | Opt-in `probe`: deterministic script calls by symbol/family, per-state engine Init/Loop/End entries, nested calls, inclusive VM instruction counts, externals and RNG sources. Header records `npc` or `shared` random streams. |
@@ -2025,6 +2025,80 @@ python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
   --tolerances scripts/bench/npc-day-parity.tolerances-activity.json \
   --out /absolute/activity.md --json /absolute/activity.json
 ```
+
+Point activities use `npc-day-parity.tolerances-points.json`. The lead accepted E2.1 preparation
+for strict E2.2 acceptance against control 73106 **with the same seed 73106**. All thresholds stay
+unchanged: the candidate must have **zero missed shifts and zero stuck NPCs**, with no NPC-specific exceptions.
+The complete shared-stream days 73106 and 73107 were recalculated with the verified HUMANS center
+offset and active-TA waypoint; all eight combinations of three rounded boundary bits give identical metrics.
+The current result is 31585 samples, 341 arrivals, p95 0 / maximum 5 game minutes, no collisions,
+but three missing fallback-only shifts of PAL_227 on SHIP_DECK_29 (one NPC in the tool's stuck counter).
+This is a cross-seed observation of the original, not an allowance of three or proof of an actual hang
+between samples. Both self-comparisons pass 12/12 (341 arrivals for 73106, 342 for 73107).
+The unchanged zero limits fail on the cross-seed pair:
+pooled and guarding checks pass 10/12; the other four forms pass 12/12. Historical 12/12 on
+`bd6391ddc` does not validate the corrected metric. Replay evidence is in `npc-events-e2/review-f1-f4/`.
+The cancelled prefix is excluded. The profile covers the five measured forms, pooled and individually:
+held FP agreement >=94%, pose time 0.99..1.01, arrival p95 <=5 / maximum <=10 game minutes,
+zero missed segments, stuck NPCs and double occupancy. The FP allowance reflects two seated campfire
+NPCs exchanging points. Use `--activity-states` for the states being changed and inspect their margins.
+[Measurements, causes and headroom](../../reports/engine/2026-11-14-npc-data/e2-tolerance.md).
+
+The derived controls are `/mnt/shared/gothic-ai/npc-events-e2/accepted-calibration/seed-73106/`
+and `seed-73107/`; primary CSVs and their SHA-256 hashes are unchanged. The folder also contains
+the reproduction recipe, three rounded boundary bits, and unknown visibility lookups.
+Guarding has no metric-sensitive unknowns (fallback A/B 5084/5080). Four ARMSCROSSED visibility
+bits per seed remain unknown; the 256-pair proof of identical gated values applies to `bd6391ddc`. Before comparing
+a future candidate across all five forms, run the archived `variants.py REPO CANDIDATE` to retain
+all 16 alternatives of control 73106. Archive-pair invariance does not prove candidate invariance.
+
+```sh
+python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
+  --activity-states ZS_STAND_GUARDING \
+  --tolerances scripts/bench/npc-day-parity.tolerances-points.json \
+  --out /absolute/points.md --json /absolute/points.json
+```
+
+The new sample columns follow every old column, in its original order:
+
+| Column | Meaning |
+|---|---|
+| `fp`, `fp_x`, `fp_y`, `fp_z` | Held free point name and coordinates in cm (`-`, zeros without one); repeated names do not identify a point |
+| `on_fp` | `Npc_IsOnFP(self, held_name)`: current point is free, its name matches, and it is close by `MoveAlgo::isClose(..., MAX_AI_USE_DISTANCE)`; the comparer also checks its activity name |
+| `aivar_19` | Raw script stage; 2 walking, 1 ready to enter, 0 pose for guarding, arms crossed, STAND_WP and PEE |
+| `fp_available` | The script's point lookup for STAND / CAMPFIRE / PEE finds a point (1) or none (0); -1 outside these four forms |
+| `on_routine_wp` | Distance <=500 cm to the active TA row's waypoint, using the existing `Npc_GetDistToWP` engine call; independent of the nearest waypoint and the lagging `self.wp` |
+
+`points.total` and `points.by_state` report held-coordinate agreement (raw and with legal fallback in either run
+excluded), pose sample time B/A, signed first arrival p95/max, missed reference TA segments and
+double occupancy in B. Point samples use the scheduled TA state; the activity table keeps actual active-ZS
+counts. A state present only in TA has an empty active-ZS row (undefined ratios), while its point misses
+still contribute to per-state and total stuck counts. The collision search includes occupants outside the state filter. Campfire
+pose uses body state 11 (`BS_SIT`); the other four forms require standing body state 0 and `aivar_19 == 0`. Physical arrival
+does not require an active ZS: End/Init can leave it empty while the NPC stays on point. Pose accepts
+the reference ZS or this transient empty ZS, but not a known different ZS. Physical arrival at any
+FP, STAND_WP arrival and legal fallback require the row's target waypoint to match A's.
+STAND_WP has no held free point: arrival/pose use `on_routine_wp`, and held-point agreement is not applicable.
+When TA changes the target waypoint, the initial uninterrupted hold of the previous free point
+outside the new approach radius is excluded from arrivals, independently in A and B. A newly acquired
+hold near the preceding target waypoint is also excluded. A suitable
+point already in that radius fulfils the new routine without leaving and reclaiming it.
+
+A legal fallback is a standing NPC near its routine waypoint with no suitable available free point.
+It has a separate A/B row. Raw pose time is reported (waiting for a campfire is not sitting); acceptance
+excludes a legal wait from both pose populations and held-point agreement only if the other run
+is also in the activity pose or legally waiting. An inactive candidate cannot hide behind A's wait.
+Observed legal B waiting intervals are subtracted from a later arrival's delay.
+An entirely waiting segment is allowed only if **every reference on-point sample** has legal fallback
+in B. Waiting once cannot hide losing an otherwise empty point for the rest of the segment.
+If A's entire shift has only legal waiting, B must fulfil it at least once (on-point or legal wait);
+otherwise it counts as a missing segment, with no invented physical arrival time for A.
+Missing point columns fail enabled point checks and never add point misses to legacy stuck counts.
+MOB checks are **not applicable** when the selected reference samples have no objects; Extra MOB
+still reports objects added only in B. An empty state selection still fails numeric checks. The shared
+`max_activity_stuck` gate includes unique NPCs from missed point segments as well as missing MOBs.
+TA-only point samples also make MOB checks inapplicable. Pose time 0/0 is inapplicable, while losing
+an observed reference pose gives ratio 0. Nonempty TA strings must have the four fields of `routineText`.
 
 ## Engine side
 

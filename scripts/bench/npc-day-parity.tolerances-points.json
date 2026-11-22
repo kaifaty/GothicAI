@@ -1,0 +1,17 @@
+{
+  "comment": "Lead decision 2026-11-22: E2.1 preparation accepted for strict E2.2 candidate acceptance against control 73106 with the same seed 73106. All 12 numerical/boolean thresholds remain unchanged; the candidate must have zero missed shifts and zero stuck NPCs, with no exceptions for PAL or other NPCs. The original 73106 -> 73107 pair remains a natural-variation observation: 31585 samples, 341 control arrivals, p95 0/max 5 minutes, 10/12 checks, three SHIP_DECK_29 windows for PAL_227_SCHIFFSWACHE#0 (50..55, 110..115, 170..175), one NPC in the tool's counter. This is neither an allowance of three nor proof of an actual character hang between samples. Both self-comparisons pass 12/12 (341 and 342 arrivals); the other four forms pass on the cross-seed pair. Guard fallback remains 5084/5080. Historical results and all network artifacts are preserved. See reports/engine/2026-11-14-npc-data/e2-tolerance.md.",
+  "tolerances": {
+    "require_done": true,
+    "require_full_length": true,
+    "max_only_samples": 0,
+    "max_missing_end": 0,
+    "min_point_same_fp": 0.94,
+    "min_point_pose_ratio": 0.99,
+    "max_point_pose_ratio": 1.01,
+    "max_point_arrival_p95": 5,
+    "max_point_arrival_max": 10,
+    "max_point_missed_segments": 0,
+    "max_point_double_occupancy": 0,
+    "max_activity_stuck": 0
+  }
+}

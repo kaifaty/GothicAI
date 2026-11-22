@@ -13,6 +13,7 @@
 
 #include "game/gamescript.h"
 #include "game/inventory.h"
+#include "game/npcactivityhost.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
@@ -21,6 +22,7 @@
 #include "world/activityevents.h"
 #include "world/mobreservations.h"
 #include "world/waypoint.h"
+#include "game/movealgo.h"
 #include "world/world.h"
 
 namespace {
@@ -153,12 +155,13 @@ void event(World& w, Journal& j, const Npc& npc, const Entry& e, const char* kin
   ++j.eventCount;
   }
 
-std::string routineText(World& w, const Npc& npc, int index) {
+std::string routineText(World& w, const Npc& npc, int index, Npc::RoutineInfo* row=nullptr) {
   std::string ret = "-";
   int i = 0;
   npc.forEachRoutine([&](const Npc::RoutineInfo& r) {
     if(i++!=index)
       return;
+    if(row!=nullptr) *row=r;
     char buf[48];
     std::snprintf(buf,sizeof(buf),"%02lld:%02lld-%02lld:%02lld",(long long)r.start.hour(),(long long)r.start.minute(),
                   (long long)r.end.hour(),(long long)r.end.minute());
@@ -198,7 +201,21 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
       }
     const auto  inv   = inventoryHash(*npc);
     const int   ta    = npc->currentRoutineIndex();
+    Npc::RoutineInfo routine{};
+    const auto taText = routineText(w,*npc,ta,&routine);
     const auto* mob   = npc->interactive();
+    const auto* point = npc->currentWayPoint();
+    if(point!=nullptr && !point->isFreePoint()) point=nullptr;
+    const bool onPoint=point!=nullptr && MoveAlgo::isClose(*npc,*point,MAX_AI_USE_DISTANCE);
+    // Availability is needed to distinguish legal waiting from losing an empty point.
+    // These are the five script forms calibrated by the point-activity bench, not executors.
+    const auto state=symbolName(w,routine.state.ptr);
+    std::string_view pointName;
+    if(state=="ZS_STAND_GUARDING" || state=="ZS_STAND_ARMSCROSSED") pointName="STAND";
+    else if(state=="ZS_SIT_CAMPFIRE") pointName="CAMPFIRE";
+    else if(state=="ZS_PEE") pointName="PEE";
+    const int available=pointName.empty() ? -1 : (w.findFreePoint(*npc,pointName)!=nullptr ? 1 : 0);
+    const bool onRoutine=NpcEngineCalls::distanceToWaypoint(w,*npc,routine.point)<=500;
     if(j.heights!=nullptr && npc->usesSimplifiedMovement() && !npc->isDead() && mob==nullptr) {
       // Verification only, at journal sample times; movement itself never rays.
       const auto ground=w.physic()->landRay(p+Tempest::Vec3(0,100,0));
@@ -212,10 +229,10 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
                    edge!=nullptr ? clean(edge->name).c_str() : "-",clean(goal.kind).c_str(),clean(goal.name).c_str());
       }
     std::fprintf(j.samples,
-                 "%.0f,%.4f,%s,%s,%d,%d,%d,%s,%s,%llu,%.1f,%.1f,%.1f,%s,%.1f,%zu,%s,%u,%016llx,%llu,%s,%s,%s,%s\n",
+                 "%.0f,%.4f,%s,%s,%d,%d,%d,%s,%s,%llu,%.1f,%.1f,%.1f,%s,%.1f,%zu,%s,%u,%016llx,%llu,%s,%s,%s,%s,%s,%.1f,%.1f,%.1f,%d,%d,%d,%d\n",
                  t,at,key->c_str(),e.symbol.c_str(),npc->isDead() ? 0 : 1,
                  npc->attribute(ATR_HITPOINTS),npc->attribute(ATR_HITPOINTSMAX),
-                 routineText(w,*npc,ta).c_str(),symbolName(w,npc->currentState().ptr).c_str(),
+                 taText.c_str(),symbolName(w,npc->currentState().ptr).c_str(),
                  (unsigned long long)npc->stateTime(),double(p.x),double(p.y),double(p.z),
                  wp!=nullptr ? clean(wp->name).c_str() : "-",
                  wp!=nullptr ? double((wp->position()-p).length()) : -1.0,
@@ -226,7 +243,12 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
                  npc->processPolicy()==NpcProcessPolicy::Player   ? "player" :
                  npc->processPolicy()==NpcProcessPolicy::AiNormal ? "normal" :
                  npc->processPolicy()==NpcProcessPolicy::AiFar    ? "far" : "far2",
-                 npc->isPlayer() ? "hero" : "-");
+                 npc->isPlayer() ? "hero" : "-",
+                 point!=nullptr ? clean(point->name).c_str() : "-",
+                 point!=nullptr ? double(point->position().x) : 0.0,
+                 point!=nullptr ? double(point->position().y) : 0.0,
+                 point!=nullptr ? double(point->position().z) : 0.0,
+                 onPoint ? 1 : 0,npc->handle().aivar[19],available,onRoutine ? 1 : 0);
     ++j.rowCount;
     }
   std::fflush(j.samples);
@@ -393,7 +415,7 @@ bool NpcDayJournal::start(World& w, const Options& options, std::string& error) 
     return false;
     }
   std::fprintf(j.samples,"t_min,at_min,key,symbol,alive,hp,hp_max,ta,zs,zs_ms,x,y,z,wp,wp_dist,queue,head,body,"
-                         "inv_hash,inv_items,mob,tier,policy,hero\n");
+                         "inv_hash,inv_items,mob,tier,policy,hero,fp,fp_x,fp_y,fp_z,on_fp,aivar_19,fp_available,on_routine_wp\n");
   std::fprintf(j.events,"t_min,key,kind,value,x,y,z\n");
   std::fprintf(j.cost,"t_min,wall_s,near_hero_30m,near_hero_60m,world_ticks,npc_full,npc_simplified,to_full,"
                       "to_simplified,full_tick_ms,simplified_tick_ms,full_npc_ticks,simplified_npc_ticks,native_combat_npc_ticks,native_mobsi_approach_npc_ticks,"
