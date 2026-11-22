@@ -34,7 +34,7 @@ struct MobActivity {
   bool operator==(const MobActivity&) const = default;
   };
 
-// The form fixes the order and conditions of the three phases.
+// The form fixes the order and conditions of the three phases. Only Guard runs as events.
 struct PointActivity {
   enum class Form { Guard, Campfire, ArmsCrossed, Waypoint, Pee };
   static constexpr std::array<std::string_view,5> FormNames={"guard","campfire","arms_crossed","waypoint","pee"};
