@@ -1,4 +1,5 @@
 #include "commandline.h"
+#include "settings.h"
 #include "graphics/crownlight.h"
 #include "graphics/material.h"
 #include "graphics/mesh/submesh/animmesh.h"
@@ -15,7 +16,6 @@
 #include "graphics/texturescreendemand.h"
 #include "graphics/treeboughasset.h"
 #include "resources.h"
-#include "settings.h"
 #include "texturebudget.h"
 #include "textureflow.h"
 #include "texturelevels.h"
@@ -3222,15 +3222,6 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
 
 int main(int argc, char** argv) {
   try {
-    if(argc==2 && std::string_view(argv[1])=="--vsm-pairs") {
-      Fixture fixture;
-      CommandLine commandLine(0,nullptr);
-      Tempest::VulkanApi api;
-      Tempest::Device device(api);
-      vsmPairCapRecords(device);
-      std::cout << "{\"test\":\"vsm_pairs\",\"passed\":true,\"assertions\":" << assertions << "}\n";
-      return 0;
-      }
     ddsMipTails();
     textureLevelMaths();
     textureFlowMaths();
