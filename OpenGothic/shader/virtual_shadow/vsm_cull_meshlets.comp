@@ -85,7 +85,14 @@ bool meshletInEntry(const vec4 local, const Instance obj, const float scale, con
 
 void cullCandidate(const uint c) {
   const uvec4   cand    = candidates[c];
-  const Cluster cluster = shadowCluster(clusters[cand.x]);
+  Cluster cluster = clusters[cand.x];
+  if(cand.w!=0u) {
+    // SunCaster in visualobjects_levelband.cpp, shared by the sphere test, count and emission.
+    cluster.shadowFirstMeshlet = instanceMem[cand.w];
+    cluster.shadowMeshletCount = int(instanceMem[cand.w+1u]);
+    cluster.shadowCommandId    = instanceMem[cand.w+2u];
+    }
+  cluster = shadowCluster(cluster);
   const uint    entry   = cand.y & 0xFFFFu;
   const uint    bin     = cand.y >> 16;
   const uint    lane    = gl_LocalInvocationIndex;
