@@ -2053,7 +2053,9 @@ The new sample columns follow every old column, in its original order:
 
 `points.total` and `points.by_state` report held-coordinate agreement (raw and with legal fallback in either run
 excluded), pose sample time B/A, signed first arrival p95/max, missed reference TA segments and
-double occupancy in B. The collision search includes occupants outside the state filter. Campfire
+double occupancy in B. Point samples use the scheduled TA state; the activity table keeps actual active-ZS
+counts. A state present only in TA has an empty active-ZS row (undefined ratios), while its point misses
+still contribute to per-state and total stuck counts. The collision search includes occupants outside the state filter. Campfire
 pose uses body state 11 (`BS_SIT`); the other four forms use `aivar_19 == 0`. Physical arrival
 does not require an active ZS: End/Init can leave it empty while the NPC stays on point. Pose accepts
 the reference ZS or this transient empty ZS, but not a known different ZS. STAND_WP has no held

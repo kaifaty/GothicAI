@@ -443,7 +443,7 @@ def test_point_metrics_and_threshold_boundaries(tmp_path):
         b_rows.append(row(t, "OTHER#0", ta="-", fp="STAND" if t == 30 else "-", fp_x=100, on_fp=int(t == 30)))
         a_rows.append(row(t, "OTHER#0", ta="-"))
         for rows in (a_rows, b_rows):
-            rows.append(row(t, "WP#0", zs="ZS_STAND_WP", aivar_19=0))
+            rows.append(row(t, "WP#0", ta="0 08:00-20:00 ZS_STAND_WP NW_A", zs="ZS_STAND_WP", aivar_19=0))
     a, b = tmp_path / "a", tmp_path / "b"
     header = {**DONE, "minutes": 60, "period_min": 5}
     journal(a, a_rows, [], header)
@@ -609,3 +609,23 @@ def test_point_loss_late_arrival_collision_and_legal_fallback(tmp_path):
     result = npc_day_parity.compare(loaded, npc_day_parity.load(empty_b), activity_states={"ZS_SIT_CAMPFIRE"})
     assert result["points"]["total"]["arrival_max"] == 15
     assert "max_point_arrival_max" in {c["name"] for c in npc_day_parity.evaluate(result, profile) if not c["pass"]}
+    # A scheduled point state need not have any active-ZS sample, even in a complete short journal.
+    for active in (("-",), ("-", "ZS_STAND")):
+        path = tmp_path / f"transition-only-{len(active)}"
+        state = "ZS_STAND_GUARDING"
+        journal(path, [row(5 * i, "GUARD#0", ta=f"0 08:00-09:00 {state} NW_A", zs=zs,
+                           fp="FP_STAND", on_fp=1, aivar_19=0, fp_available=1) for i, zs in enumerate(active)],
+                [], {**header, "minutes": 5 * (len(active) - 1)})
+        run = npc_day_parity.load(path)
+        same = npc_day_parity.compare(run, run, activity_states={state})
+        assert same["activity"]["by_state"]["-"]["samples"] == 1
+        assert same["activity"]["by_state"][state]["samples"] == 0
+        assert same["activity"]["by_state"][state]["same_zs"] is None
+        assert same["activity"]["total"]["mob_time_ratio"] is None
+        assert same["points"]["total"]["samples"] == len(active) and same["points"]["total"]["arrival_max"] == 0
+        assert all(c["pass"] for c in npc_day_parity.evaluate(same, profile))
+        assert f"| {state} | 0 | — |" in npc_day_parity.markdown(same, [], "A", "B")
+        missing = {**run, "points": {k: {**p, "on": False, "available": 1} for k, p in run["points"].items()}}
+        lost = npc_day_parity.compare(run, missing, activity_states={state})
+        assert lost["points"]["total"]["missed_segments"] == lost["activity"]["total"]["stuck_npcs"] == 1
+        assert lost["activity"]["by_state"][state]["stuck_npcs"] == 1

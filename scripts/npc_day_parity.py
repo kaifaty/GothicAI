@@ -325,7 +325,7 @@ def routine_segments(run):
         yield key, samples
 
 
-def activity_metrics(a, b, common, states):
+def activity_metrics(a, b, common, states, point_states):
     """Reference-TA samples and first occupied samples within reference TA segments.
 
     Arrival offsets are signed (B minus A). A segment belongs to the reference
@@ -337,6 +337,9 @@ def activity_metrics(a, b, common, states):
         return by_state.setdefault(state, {"samples": 0, "same_zs": 0, "same_wp": 0,
                                            "mob_a": 0, "mob_b": 0, "same_mob": 0, "extra_mob": 0,
                                            "arrivals": [], "stuck": []})
+
+    for state in point_states:
+        tally(state)
 
     selected_samples = set(common)
     for sample in common:
@@ -437,9 +440,12 @@ def point_metrics(a, b, common, states):
     seen_collisions = set()
     for sample in common:
         ra, rb = a["rows"][sample], b["rows"][sample]
-        if ra[2] == "-" or ra[3] not in POINT_STATES:
+        if ra[2] == "-":
             continue
-        state = ra[3]
+        routine = ra[2].split()
+        state = routine[2] if len(routine) == 4 else ra[3]
+        if state not in POINT_STATES:
+            continue
         item = tally(state)
         item["samples"] += 1
         pa, pb = a["points"].get(sample), b["points"].get(sample)
@@ -593,8 +599,8 @@ def compare(a, b, window=60.0, min_hero_distance=0.0, activity_states=None):
     raw_zs_a, raw_zs_b = a["events"].get("zs_start", {}), b["events"].get("zs_start", {})
     diverged = [key for key, npc in per_npc.items() if npc["zs_diff"] or npc["pos_max"] > 5]
     first = [npc["first_zs_diff"] for npc in per_npc.values() if npc["first_zs_diff"] is not None]
-    activity = activity_metrics(a, b, common, activity_states)
     points = point_metrics(a, b, common, activity_states)
+    activity = activity_metrics(a, b, common, activity_states, points["by_state"])
     for item, point in [(activity["total"], points["total"]),
                         *[(activity["by_state"][state], point) for state, point in points["by_state"].items()]]:
         if point["available"]:
@@ -784,6 +790,7 @@ def markdown(result, checks, label_a, label_b):
               f"Arrival resolution is the journal step: A {fmt(activity['period_min_a'])}, B {fmt(activity['period_min_b'])} game minutes "
               "(5 minutes in npc-day-parity). Segment bounds are the first/last observed samples, including day edges.",
               "Undefined ratios or arrivals are shown as —. MOB checks are not applicable without reference objects.",
+              "Scheduled point states with no active-ZS samples have empty ratios; their point misses still count as stuck.",
               f"Summary states: {', '.join(activity['states']) if activity['states'] is not None else 'all'}; the state table always includes all states.", "",
               "| State | Samples | Same ZS | Same MOB | MOB mismatches | Extra MOB | Same WP | MOB samples A / B | MOB time B/A | Arrival p50 / p95 / max, min | Stuck NPCs |",
               "|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -808,6 +815,7 @@ def markdown(result, checks, label_a, label_b):
                          f"{entry['arrival_a_min']} / {entry['arrival_b_min']} | {entry['delay_min']} |")
     lines.append("")
     lines += ["## Point activities", "",
+              "Point samples are grouped by the scheduled TA state.",
               "Held points are identified by coordinates; equal names alone do not match. Pose follows aivar[19],",
               "BS_SIT for campfire. STAND_WP uses the routine waypoint (within the 500 cm approach radius).",
               "Legal fallback requires no available FP, the routine waypoint and a standing body; it is counted separately.",
