@@ -1399,7 +1399,8 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
       vm.find_symbol_by_name("C_NPCHASATTACKREASONTOKILL")->address(),
       };
     size_t bytecode=0,outcomeChecks=0,equipmentChecks=0;
-    ActivityStream stream(world,npc,[&](uint32_t pc) {
+    // The native Greg helper consumes external returns without executing a VM instruction.
+    ActivityStream stream(world,npc,ActivityStream::Externals::Skip,[&](uint32_t pc) {
       outcomeChecks+=pc==fleeCheck || pc==forcedRansack || pc==ransack;
       equipmentChecks+=std::ranges::find(equipmentRules,pc)!=equipmentRules.end();
       });
@@ -1737,7 +1738,7 @@ void fleeAndWatchPhases(World& world,Npc& npc,Npc& hero) {
     npc.setStateTime(0);
     const auto overlayPc=vm.find_symbol_by_name("B_SAY_OVERLAY")->address();
     size_t overlayInstructions=0;
-    ActivityStream stream(world,npc,[&](uint32_t pc) { overlayInstructions+=pc==overlayPc; });
+    ActivityStream stream(world,npc,ActivityStream::Externals::Skip,[&](uint32_t pc) { overlayInstructions+=pc==overlayPc; });
     size_t vmCalls=0,validateCalls=0,invocations=0;
     const auto count=vm.add_call_observer([&](const auto& sym) {
       vmCalls+=sym.name()=="ZS_FLEE" || sym.name()=="ZS_FLEE_LOOP" || sym.name()=="ZS_FLEE_END" ||

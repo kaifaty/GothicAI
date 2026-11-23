@@ -1110,16 +1110,17 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
       auto* checkedActor=script.findSymbol("C_BODYSTATECONTAINS.SLF");
       checkedBody->set_int(BS_STAND);
       checkedActor->set_instance(std::static_pointer_cast<daedalus::INpc>(hero.handlePtr()));
-      ActivityStream stream(world,*npc);
+      ActivityStream stream(world,*npc,ActivityStream::Externals::Skip);
       Contract::tickRoutine(*npc);
       require(checkedBody->get_int()==BS_SWIM &&
               checkedActor->get_instance()==std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()),
               "unconscious: Init leaves the last body check arguments in the saved VM symbols");
-      require(npc->hasPerc(PERC_ASSESSMAGIC) && npc->handle().aivar[0]==1 && npc->handle().aivar[16]==1 &&
-              npc->handle().aivar[66]==1 && rewards==1 && hero.experience()>beforeXp,
-              "unconscious: Init restores magic perception, records a loss and awards victory XP once");
       const auto init=activityQueue(*npc);
       const auto gained=hero.experience()-beforeXp;
+      require(npc->hasPerc(PERC_ASSESSMAGIC) && npc->handle().aivar[0]==1 && npc->handle().aivar[16]==1 &&
+              npc->handle().aivar[66]==1 && rewards==size_t(!native) &&
+              gained==npc->handle().level*script.intSymbol("XP_PER_VICTORY",-1),
+              "unconscious: Init restores magic perception, records a loss and awards victory XP once");
       if(native) require(init==originalInit && gained==originalXp,"unconscious: Init queue and experience match Daedalus");
       else { originalInit=init; originalXp=gained; }
 
@@ -1132,7 +1133,8 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
       if(native) save(knockedOut,"unconscious before recovery");
       npc->setStateTime(wakeAt);
       Contract::tickRoutine(*npc);
-      require(!npc->isUnconscious() && npc->handle().aivar[10]==0 && rewards==1 &&
+      require(!npc->isUnconscious() && npc->handle().aivar[10]==0 && rewards==size_t(!native) &&
+              hero.experience()-beforeXp==gained &&
               phaseCalls==(native ? 0u : 4u) && stream.records==(native ? 4u : 0u) &&
               activityCount(stream.events,"phase ZS_UNCONSCIOUS_LOOP")==2,
               "unconscious: the deadline ends the state once through the selected executor");
