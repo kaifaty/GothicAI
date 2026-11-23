@@ -2220,8 +2220,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
       loadCampfireGroup(gothic,save);
       gothic.clearGame().reset();
       quietSoundAtPost(gothic);
-      npcDeathLifecycle(gothic);
-      npcUnconsciousLifecycle(gothic);
+      npcRecoveryAfterActivityChecks(gothic);
       }
     }
   if(previousEvents) setenv("OPENGOTHIC_ACTIVITY_EVENTS",previousEvents->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_EVENTS");
