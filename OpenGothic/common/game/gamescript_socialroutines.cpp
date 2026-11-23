@@ -452,12 +452,12 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
   constexpr size_t talkedToPlayer = 5; // AIV_TALKEDTOPLAYER
   constexpr size_t partyMember = 15; // AIV_PARTYMEMBER
   constexpr size_t toughGuyNewsOverride = 25; // AIV_TOUGHGUYNEWSOVERRIDE
+  constexpr size_t ambientNewsOverride = 58; // AIV_NEWSOVERRIDE
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
   const auto seated = [&](const std::shared_ptr<daedalus::INpc>& actor) {
     return ActivityDefinitions::bodyStateContains(npc_getbodystate(actor),BS_SIT);
     };
-  const auto predicate = [&](std::string_view name) { return vm.call_function<int32_t>(name,self)!=0; };
   auto& talkFix = *findSymbol("ZSTALKBUGFIX");
 
   const std::string_view name = symbol.name();
@@ -500,8 +500,12 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
       if(self->type==NpcType::G2_TAL_AMBIENT || self->type==NpcType::G2_BL_AMBIENT ||
          self->type==NpcType::G2_OC_AMBIENT || self->type==NpcType::G2_AMBIENT) {
         vm.call_function<void>("B_ASSIGNAMBIENTINFOS",self);
-        if(predicate("C_NPCBELONGSTOCITY"))
-          vm.call_function<void>("B_ASSIGNCITYGUIDE",self);
+        if(belongsToCity(self)) {
+          findSymbol("B_ASSIGNCITYGUIDE.SLF")->set_instance(self);
+          const auto owner = hlp_getinstanceid(self);
+          if(auto* guide = findInfo(findSymbolIndex("DIA_CITYGUIDE")))
+            guide->npc = owner;
+          }
         }
       static constexpr std::string_view noPartyPotion[] = {"PARDOS_NW","PARDOS","BIFF_DI","BIFF_NW","BIFF"};
       const auto selfId = hlp_getinstanceid(self);
@@ -511,11 +515,15 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
       if(!excluded && self->aivar[partyMember]==1)
         vm.call_function<void>("B_ADDON_GIVEPOTION",self);
       const bool canOfferNews = self->aivar[toughGuyNewsOverride]==0;
-      const bool toughGuy = predicate("C_NPCISTOUGHGUY");
+      const bool toughGuy = isToughGuy(self);
       if(canOfferNews && toughGuy)
         vm.call_function<void>("B_ASSIGNTOUGHGUYNEWS",self);
-      if(predicate("C_NPCHASAMBIENTNEWS"))
-        vm.call_function<void>("B_ASSIGNAMBIENTNEWS",self);
+      findSymbol("C_NPCHASAMBIENTNEWS.SLF")->set_instance(self);
+      if(self->aivar[ambientNewsOverride]!=1) {
+        const auto noCrime = findSymbol("CRIME_NONE")->get_int();
+        if(playerCrime(self)!=noCrime)
+          vm.call_function<void>("B_ASSIGNAMBIENTNEWS",self);
+        }
       }
     if(self->guild==GIL_DRAGON)
       ai_playani(self,"T_STAND_2_TALK");
@@ -551,7 +559,7 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
     npc_setrefusetalk(other(),20);
     const bool unfriendly = npc_getattitude(self,other())!=ATT_FRIENDLY;
     const bool publicRoom = wld_getplayerportalguild()==int32_t(GIL_PUBLIC);
-    const bool bothered = predicate("C_NPCISBOTHEREDBYPLAYERROOMGUILD");
+    const bool bothered = vm.call_function<int32_t>("C_NPCISBOTHEREDBYPLAYERROOMGUILD",self)!=0;
     if((unfriendly && publicRoom) || bothered)
       ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),0,"");
     result = 0;

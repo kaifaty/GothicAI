@@ -547,6 +547,7 @@ void talkPhases(Gothic& gothic) {
     }
   restore();
   assessTalkEntry(world,npc,player);
+  talkTopicAssignments(world,npc,player);
   }
 
 void stockQuestJournalEntry(GameScript& script, const std::string& topic) {

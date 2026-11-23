@@ -2599,6 +2599,13 @@ void GameScript::adjustPetzCrime(const std::shared_ptr<daedalus::INpc>& witness,
     }
   }
 
+bool GameScript::belongsToCity(const std::shared_ptr<daedalus::INpc>& npc) {
+  constexpr size_t city = 1; // crimeJurisdictions index
+  findSymbol("C_NPCBELONGSTOCITY.SLF")->set_instance(npc);
+  findSymbol("C_NPCBELONGSTOOLDCAMP.SLF")->set_instance(npc);
+  return crimeJurisdictionMembership(npc.get())[city];
+  }
+
 bool GameScript::isToughGuy(const std::shared_ptr<daedalus::INpc>& self) {
   findSymbol("C_NPCISTOUGHGUY.SLF")->set_instance(self);
   constexpr size_t tough = 57;

@@ -1,5 +1,93 @@
 #pragma once
 
+void talkTopicAssignments(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  const auto before=events;
+  auto& actor=npc.handle();
+  auto& player=hero.handle();
+  const auto originalActor=std::tuple(actor.guild,actor.type,actor.voice,npc.attitude());
+  const auto npcVars=std::to_array(actor.aivar),heroVars=std::to_array(player.aivar);
+  const auto npcQueue=Contract::queue(npc),heroQueue=Contract::queue(hero);
+  auto& talkFix=*vm.find_symbol_by_name("ZSTALKBUGFIX");
+  const auto savedFix=talkFix.get_int();
+  enum Site { AmbientInfos, City, OldCamp, Guide, Tough, ToughNews, Ambient, Crime, Absolution, AmbientNews };
+  constexpr std::array helpers={"B_ASSIGNAMBIENTINFOS","C_NPCBELONGSTOCITY","C_NPCBELONGSTOOLDCAMP",
+      "B_ASSIGNCITYGUIDE","C_NPCISTOUGHGUY","B_ASSIGNTOUGHGUYNEWS","C_NPCHASAMBIENTNEWS",
+      "B_GETPLAYERCRIME","B_GETCURRENTABSOLUTIONLEVEL","B_ASSIGNAMBIENTNEWS"};
+  std::array<daedalus::DaedalusSymbol*,helpers.size()> slots;
+  std::array<std::shared_ptr<daedalus::DaedalusInstance>,helpers.size()> savedSlots;
+  std::array<uint32_t,helpers.size()> addresses;
+  for(size_t i=0;i<helpers.size();++i) {
+    addresses[i]=vm.find_symbol_by_name(helpers[i])->address();
+    slots[i]=vm.find_symbol_by_name(std::string(helpers[i])+".SLF");
+    savedSlots[i]=slots[i]->get_instance();
+    }
+  std::array topics={"DIA_CITYGUIDE","DIA_TOUGHGUY_NEWS","DIA_AMBIENT_NEWS"};
+  std::array<std::shared_ptr<daedalus::IInfo>,topics.size()> infos;
+  std::ranges::transform(topics,infos.begin(),[&](const auto* name) {
+    return std::static_pointer_cast<daedalus::IInfo>(vm.find_symbol_by_name(name)->get_instance());
+    });
+  const std::array savedOwners={infos[0]->npc,infos[1]->npc,infos[2]->npc};
+  const auto self=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto init=script.findFunction("ZS_TALK");
+  actor.guild=GIL_MIL;
+  actor.voice=0; // No stock militia voice-specific assignment.
+  npc.setAttitude(ATT_FRIENDLY);
+  for(bool oldCamp:{false,true}) {
+    actor.type=oldCamp ? NpcType::G2_OC_AMBIENT : NpcType::G2_AMBIENT;
+    for(bool native:{false,true}) {
+      if(native && (!before || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+        continue;
+      events=native;
+      actor.aivar[25]=actor.aivar[58]=int(oldCamp);
+      actor.aivar[57]=1;
+      actor.aivar[15]=0;
+      actor.aivar[1]=script.intSymbol("CRIME_THEFT",-1);
+      actor.aivar[2]=int32_t(world.time().day());
+      actor.aivar[46]=script.intSymbol("ABSOLUTIONLEVEL_CITY",-1);
+      player.aivar[4]=0;
+      Contract::queue(npc).clear();
+      Contract::queue(hero).clear();
+      for(auto* slot:slots) slot->set_instance(nullptr);
+      for(const auto& info:infos) info->npc=-1;
+      std::vector<Site> called;
+      vm.observe_instructions([&](const auto&) {
+        if(const auto it=std::ranges::find(addresses,vm.pc()); it!=addresses.end())
+          called.push_back(Site(it-addresses.begin()));
+        });
+      script.invokeState(&npc,&hero,nullptr,init);
+      vm.observe_instructions({});
+      const auto expected=oldCamp ? std::vector<Site>{AmbientInfos,City,OldCamp,Tough,Ambient} :
+          std::vector<Site>{AmbientInfos,City,OldCamp,Guide,Tough,ToughNews,Ambient,Crime,Absolution,OldCamp,City,OldCamp,AmbientNews};
+      require(called==(native ? (oldCamp ? std::vector<Site>{AmbientInfos} :
+                                   std::vector<Site>{AmbientInfos,ToughNews,AmbientNews}) : expected),
+              "talk topics: the assigned topics and nested crime callbacks keep their order");
+      for(size_t i=0;i<slots.size();++i) {
+        const bool used=std::ranges::find(expected,Site(i))!=expected.end();
+        require(slots[i]->get_instance()==(used ? self : nullptr),"talk topics: stock saved formals keep their recipients");
+        }
+      for(const auto& info:infos)
+        require(info->npc==(oldCamp ? -1 : int32_t(npc.instanceSymbol())),"talk topics: stock info recipients agree");
+      }
+    }
+  for(size_t i=0;i<slots.size();++i) slots[i]->set_instance(savedSlots[i]);
+  for(size_t i=0;i<infos.size();++i) infos[i]->npc=savedOwners[i];
+  const auto [guild,type,voice,attitude]=originalActor;
+  actor.guild=guild;
+  actor.type=type;
+  actor.voice=voice;
+  npc.setAttitude(attitude);
+  std::copy(npcVars.begin(),npcVars.end(),actor.aivar);
+  std::copy(heroVars.begin(),heroVars.end(),player.aivar);
+  Contract::queue(npc)=npcQueue;
+  Contract::queue(hero)=heroQueue;
+  talkFix.set_int(savedFix);
+  events=before;
+  }
+
 void specialDamagePerceptions(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();

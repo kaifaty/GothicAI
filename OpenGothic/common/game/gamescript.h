@@ -526,6 +526,7 @@ class GameScript final : public GameRules {
     void memorizePlayerCrime(const std::shared_ptr<daedalus::INpc>& witness, const std::shared_ptr<daedalus::INpc>& offender, int32_t crime);
     int32_t currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>& self);
     void adjustPetzCrime(const std::shared_ptr<daedalus::INpc>& witness, std::optional<int32_t> newCrime);
+    bool belongsToCity(const std::shared_ptr<daedalus::INpc>& npc);
     bool isToughGuy(const std::shared_ptr<daedalus::INpc>& self);
     bool wantsToCallGuards(const std::shared_ptr<daedalus::INpc>& npc);
     void callGuards();
