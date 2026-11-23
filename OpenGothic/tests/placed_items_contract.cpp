@@ -49,6 +49,8 @@
 #include "graphics/pfx/particlefx.h"
 #include "world/bullet.h"
 #include "game/physicssave.h"
+#include "storyruntime.h"
+#include "storygraph/exec.h"
 
 #include <rapidjson/document.h>
 #include <Tempest/MemReader>
@@ -3924,6 +3926,50 @@ void moverChildSave() {
   auto savedPose=child.origin;
   savedPose.translate(25,0,0);
   child.item->setObjMatrix(savedPose);
+
+  const auto journalStart=gothic.world()->script().questLog().questCount();
+  const std::string note="StoryGraph contract note";
+  const std::string mission="StoryGraph contract mission";
+  {
+    using namespace storygraph::ex;
+    const std::string absent="StoryGraph contract absent";
+    storygraph::Program program;
+    const auto step=[&](std::string fn, const std::string& topic, storygraph::ExprP value) {
+      auto& action=program.steps.emplace_back();
+      action.kind=storygraph::Step::Call;
+      action.call=call(std::move(fn),{str(topic),std::move(value)});
+      };
+    step("LOG_ADDENTRY",absent,str("ignored"));
+    step("LOG_SETTOPICSTATUS",absent,integer(int32_t(QuestLog::Status::Obsolete)));
+    step("LOG_CREATETOPIC",absent,integer(-1));
+    step("LOG_CREATETOPIC",note,integer(QuestLog::Note));
+    step("LOG_SETTOPICSTATUS",note,integer(int32_t(QuestLog::Status::Success)));
+    step("LOG_ADDENTRY",note,str("first"));
+    step("LOG_CREATETOPIC",note,integer(QuestLog::Mission));
+    step("LOG_SETTOPICSTATUS",note,integer(256));
+    step("LOG_ADDENTRY",note,str("second"));
+    step("LOG_SETTOPICSTATUS",mission,integer(int32_t(QuestLog::Status::Failed)));
+    step("LOG_CREATETOPIC",mission,integer(QuestLog::Note));
+    auto& vm=gothic.world()->script().getVm();
+    size_t journalCalls=0;
+    vm.observe_externals([&](const auto& fn) { journalCalls+=fn.name().starts_with("LOG_"); });
+    StoryRuntime story(nullptr);
+    const auto result=story.interpreter(vm).run(program);
+    vm.observe_externals({});
+    require(result.ok,result.error.c_str());
+    require(journalCalls==0,"live StoryGraph journal effects must bypass VM externals");
+  }
+  const auto requireJournal=[&](const QuestLog& journal) {
+    require(journal.questCount()==journalStart+2,"StoryGraph journal must ignore absent and invalid effects");
+    const auto& first=journal.quest(journalStart);
+    const auto& second=journal.quest(journalStart+1);
+    require(first.name==note && first.section==QuestLog::Note && first.status==QuestLog::Status::Success &&
+            first.entry==std::vector<std::string>{"first","second"},
+            "StoryGraph journal must preserve note section, valid status and entry order");
+    require(second.name==mission && second.section==QuestLog::Mission && second.status==QuestLog::Status::Failed &&
+            second.entry.empty(),"a status before creation must create an ordered Mission");
+    };
+  requireJournal(gothic.world()->script().questLog());
   std::vector<uint8_t> bytes;
   {
     Tempest::MemWriter writer(bytes);
@@ -3943,6 +3989,7 @@ void moverChildSave() {
     Serialize in(reader);
     gothic.setGame(std::make_unique<GameSession>(in));
   }
+  requireJournal(gothic.world()->script().questLog());
   const auto& restored=findChild(*gothic.world());
   require(gothic.world()->script().getVm().global_item()->get_instance()==
           std::static_pointer_cast<daedalus::IItem>(restored.item->handlePtr()),

@@ -11,8 +11,8 @@
 
 #include "game/gamescript.h"
 
-#include "eval.h"
-#include "program.h"
+#include "storygraph/eval.h"
+#include "storygraph/program.h"
 
 class Npc;
 
@@ -90,6 +90,8 @@ class StoryRuntime final {
     void                clear();
 
   private:
+    class LiveExternals;
+
     // the director's variables in this VM: made with their first value if missing
     void                ensureVars();
 

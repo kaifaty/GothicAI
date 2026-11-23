@@ -17,16 +17,26 @@ using storygraph::ExprP;
 using storygraph::Expr;
 using daedalus::DaedalusDataType;
 
-namespace {
-
-class LiveStoryExternals final : public storygraph::Externals {
+class StoryRuntime::LiveExternals final : public storygraph::Externals {
   public:
-    LiveStoryExternals(GameScript& script, bool effects)
+    LiveExternals(GameScript& script, bool effects)
       : script(script), fallback(script.getVm()), effects(effects) {}
 
     storygraph::Value call(const daedalus::DaedalusSymbol& fn, const std::vector<storygraph::Value>& args) override {
       using storygraph::Value;
       const std::string_view name=fn.name();
+      if(effects && !fn.has_return() && args.size()==2 && args[0].type==Value::Str) {
+        if(name=="LOG_CREATETOPIC" && args[1].type==Value::Int)
+          script.log_createtopic(args[0].s,args[1].i);
+        else if(name=="LOG_SETTOPICSTATUS" && args[1].type==Value::Int)
+          script.log_settopicstatus(args[0].s,args[1].i);
+        else if(name=="LOG_ADDENTRY" && args[1].type==Value::Str)
+          script.log_addentry(args[0].s,args[1].s);
+        else
+          return fallback.call(fn,args);
+        return Value::integer(0);
+        }
+
       const bool deadQuery=name=="NPC_ISDEAD";
       const bool query=fn.has_return() && fn.rtype()==DaedalusDataType::INT &&
                        (deadQuery || name=="NPC_KNOWSINFO" || name=="NPC_HASITEMS" ||
@@ -68,8 +78,6 @@ class LiveStoryExternals final : public storygraph::Externals {
     storygraph::VmExternals fallback;
     bool effects;
   };
-
-}
 
 StoryRuntime::StoryRuntime(std::function<std::string(const std::string&,const std::string&)> ownLine)
   :ownLine(std::move(ownLine)) {
@@ -196,7 +204,7 @@ storygraph::Interpreter& StoryRuntime::interpreter(daedalus::DaedalusVm& v) {
     return *interp;
   interp.reset();
   if(auto* sc=script(); sc!=nullptr && &sc->getVm()==&v)
-    engine = std::make_unique<LiveStoryExternals>(*sc,true);
+    engine = std::make_unique<LiveExternals>(*sc,true);
   else
     engine = std::make_unique<storygraph::VmExternals>(v);
   interp = std::make_unique<storygraph::Interpreter>(v,*engine);
@@ -339,7 +347,7 @@ std::optional<storygraph::Value> StoryRuntime::evaluate(const ExprP& e, std::str
     }
   ensureLifter();
   lifted->whyNotLifted(e);  // lifts the script functions it calls
-  LiveStoryExternals engine(*sc,false);
+  LiveExternals engine(*sc,false);
   storygraph::Evaluator ev(sc->getVm(),lifted->helpers(),engine);
   auto r=ev.eval(e);
   error = ev.why();
