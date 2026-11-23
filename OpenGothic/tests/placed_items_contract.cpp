@@ -2167,8 +2167,9 @@ void activityEventsWorld(Gothic& gothic) {
                              " (start "+away->name+")");
 
   // Interrupted on the approach through the queue: End runs, the previous state is the activity and the commands
-  // left behind are the same as with OPENGOTHIC_ACTIVITY_EVENTS=0, with the same stream of engine calls, queued
-  // commands and phases throughout. The same one routine tick after a reset queue on the approach
+  // left behind are the same as with OPENGOTHIC_ACTIVITY_EVENTS=0. Compare engine calls, queued commands and phases,
+  // comparing the perception preset by the state it installs since its native calls bypass the VM observer.
+  // The same one routine tick after a reset queue on the approach
   // (Npc_ClearAIQueue), which starts the walk over: the polled Loop looks for the object instead, so the stream
   // does not compare there.
   auto approachInterrupted=[&](bool events,bool reset) {
@@ -2185,13 +2186,28 @@ void activityEventsWorld(Gothic& gothic) {
       harad.clearAiQueue();
       NpcDefinitionContract::tickRoutine(harad);
       }
+    std::array<ScriptFn,PERC_Count> callbacks;
+    for(uint8_t slot=0;slot<PERC_Count;++slot)
+      callbacks[slot]=NpcDefinitionContract::perception(harad,PercType(slot));
+    const auto preset=std::tuple{harad.handle().senses,harad.handle().senses_range,
+                                 NpcDefinitionContract::perceptionTime(harad),callbacks};
+    if(stream && !events) {
+      auto& trace=stream->events;
+      const std::string guard="NPC_ISINSTATE(self,"+
+                              std::to_string(test.world().script().findFunction("ZS_GUARD_PASSAGE").ptr)+")->";
+      require(trace.size()>=19 && trace[0]=="phase "+state && trace[1].starts_with(guard) &&
+              trace[2].starts_with("NPC_KNOWSINFO(") && trace[3].starts_with("NPC_SETPERCTIME(") &&
+              std::all_of(trace.begin()+4,trace.begin()+19,[](const auto& call) { return call.starts_with("NPC_PERCENABLE("); }),
+              "the polled Init must trace its normal perception preset");
+      trace.erase(trace.begin()+1,trace.begin()+19);
+      }
     require(!harad.wasInState(ScriptFn(anvil.phases.init)),"before the interruption the activity is no previous state");
     NpcDefinitionContract::pushFront(harad,AiQueue::aiStartState(ScriptFn(cool.phases.init),1,nullptr,nullptr,""));
     NpcDefinitionContract::nextAiAction(harad);
     require(harad.isInState(ScriptFn(cool.phases.init)),"the queued interruption must switch the state");
     const auto ends=stream ? activityCount(stream->events,"phase "+state+"_END") : phases.phase(harad,state+"_END");
     const auto result=std::tuple{ends,harad.wasInState(ScriptFn(anvil.phases.init)),
-                                 stream ? stream->events : std::vector<std::string>{},activityQueue(harad)};
+                                 stream ? stream->events : std::vector<std::string>{},activityQueue(harad),preset};
     stream.reset();
     NpcDefinitionContract::activityEventsOn(test.world().script())=true;
     return result;
@@ -2204,6 +2220,8 @@ void activityEventsWorld(Gothic& gothic) {
       return at.first==a.end() && at.second==b.end() ? std::string() :
              ": polled '"+(at.first!=a.end() ? *at.first : "")+"', by events '"+(at.second!=b.end() ? *at.second : "")+"'";
       };
+    require(std::get<4>(polled)==std::get<4>(byEvents),
+            "the polled and event approaches must install the same senses, callback bindings and perception interval");
     auto difference=firstDifference(std::get<2>(polled),std::get<2>(byEvents));
     if(difference.empty())
       difference=firstDifference(std::get<3>(polled),std::get<3>(byEvents));
