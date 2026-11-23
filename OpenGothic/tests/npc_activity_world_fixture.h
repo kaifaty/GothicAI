@@ -3104,6 +3104,149 @@ void monsterBodyPerception(World& world, Npc& monster, Npc& body) {
   std::puts("Monster body perception: original and native feeding eligibility and interruption agree");
   }
 
+void specialMonsterRoutines(GameSession& session, World& world, Npc& wolf, Npc& sheep, Npc& hero) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  auto& random=NpcDefinitionContract::random(script);
+  const auto initialRandom=random;
+  const auto previousEvents=events;
+  const auto previousTime=world.time();
+  auto* shepherd=activityNpc(world,"BAU_932_BALTHASAR");
+  const auto* destination=world.findWayPoint("NW_BIGMILL_FARM3_BALTHASAR");
+  require(shepherd && destination,"monster routines: the sheep fixture needs Balthasar and the destination");
+  auto* alias=script.findSymbol("BALTHASAR");
+  const auto previousAlias=alias->get_instance();
+  alias->set_instance(std::static_pointer_cast<daedalus::INpc>(shepherd->handlePtr()));
+  const std::array actors={&wolf,&sheep,&hero,shepherd};
+  struct ActorState { Tempest::Vec3 position; std::string waypoint; uint64_t timer; };
+  std::array<ActorState,actors.size()> saved;
+  for(size_t i=0;i<actors.size();++i)
+    saved[i]={actors[i]->position(),actors[i]->handle().wp,actors[i]->stateTime()};
+  auto& wolfHandle=wolf.handle();
+  const auto wolfVars=std::to_array(wolfHandle.aivar);
+  const auto sheepVars=std::to_array(sheep.handle().aivar);
+  const auto wolfGuild=wolfHandle.guild;
+  const auto wolfHealth=wolfHandle.attribute[ATR_HITPOINTS];
+  const auto attitude=wolf.attitude();
+  const auto tempAttitude=wolf.tempAttitude();
+  const auto dragon=activityPhases(script,"ZS_MM_RTN_DRAGONREST");
+  const auto playerFollow=activityPhases(script,"ZS_MM_RTN_FOLLOW_SHEEP");
+  const auto balthasarFollow=activityPhases(script,"ZS_MM_RTN_FOLLOW_SHEEP_BALTHASAR");
+  const auto summoned=activityPhases(script,"ZS_MM_RTN_SUMMONED");
+  const auto place=[](Npc& npc,Tempest::Vec3 position) {
+    npc.setPosition(position);
+    npc.updateTransform();
+    };
+  const auto restore=[&] {
+    for(size_t i=0;i<actors.size();++i) {
+      place(*actors[i],saved[i].position);
+      actors[i]->handle().wp=saved[i].waypoint;
+      actors[i]->setStateTime(saved[i].timer);
+      }
+    std::copy(wolfVars.begin(),wolfVars.end(),wolfHandle.aivar);
+    std::copy(sheepVars.begin(),sheepVars.end(),sheep.handle().aivar);
+    wolfHandle.guild=wolfGuild;
+    wolfHandle.attribute[ATR_HITPOINTS]=wolfHealth;
+    wolf.setAttitude(attitude);
+    wolf.setTempAttitude(tempAttitude);
+    };
+
+  std::vector<std::vector<std::string>> original;
+  for(bool native:{false,true}) {
+    restore();
+    random=initialRandom;
+    events=native;
+    size_t index=0;
+    auto invoke=[&](Npc& actor,size_t phase,int expected) {
+      actor.clearAiQueue();
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { ++instructions; });
+      const auto result=script.invokeState(&actor,nullptr,nullptr,ScriptFn(phase));
+      vm.observe_instructions({});
+      require(result==expected && (instructions==0)==native,"monster routines: original bytecode executes only in VM mode");
+      auto witness=activityQueue(actor);
+      witness.push_back(actor.handle().wp);
+      witness.push_back(std::to_string(actor.stateTime()));
+      for(auto slot:{15,19,29,62})
+        witness.push_back(std::to_string(actor.handle().aivar[slot]));
+      witness.push_back(std::to_string(actor.handle().attribute[ATR_HITPOINTS]));
+      witness.push_back(std::to_string(actor.attitude()));
+      witness.push_back(std::to_string(actor.tempAttitude()));
+      auto nextRandom=random;
+      witness.push_back(std::to_string(nextRandom()));
+      if(native)
+        require(witness==original[index],"monster routines: commands, timers, attitude and random draw agree");
+      else
+        original.push_back(std::move(witness));
+      ++index;
+      };
+
+    session.setTime(gtime(0,23,0));
+    wolfHandle.guild=GIL_DRAGON;
+    wolfHandle.aivar[32]=22;
+    wolfHandle.aivar[33]=6;
+    wolfHandle.attribute[ATR_HITPOINTS]=wolfHandle.attribute[ATR_HITPOINTSMAX]-2;
+    const auto injured=wolfHandle.attribute[ATR_HITPOINTS];
+    invoke(wolf,dragon.init,0);
+    invoke(wolf,dragon.loop,LOOP_CONTINUE);
+    invoke(wolf,dragon.loop,LOOP_CONTINUE);
+    require(wolfHandle.attribute[ATR_HITPOINTS]==injured+1 && wolfHandle.aivar[19]==0,"dragon rest: the second beat regenerates one HP");
+    session.setTime(gtime(1,6,0));
+    invoke(wolf,dragon.loop,LOOP_END);
+    require(wolf.aiQueueFront() && wolf.aiQueueFront()->func==script.findFunction(MonsterScheduler),"dragon rest: the rest window returns to the dispatcher");
+    invoke(wolf,dragon.end,0);
+    wolfHandle.guild=wolfGuild;
+    wolfHandle.attribute[ATR_HITPOINTS]=wolfHealth;
+
+    invoke(sheep,playerFollow.init,0);
+    sheep.handle().aivar[15]=0;
+    invoke(sheep,playerFollow.loop,LOOP_CONTINUE);
+    require(sheep.aiQueueFront() && sheep.aiQueueFront()->s0.starts_with("R_ROAM"),"sheep follow: a sheep out of the party plays a roaming gesture");
+    sheep.handle().aivar[15]=1;
+    place(hero,sheep.position()+Tempest::Vec3(800,0,0));
+    invoke(sheep,playerFollow.loop,LOOP_CONTINUE);
+    place(hero,sheep.position()+Tempest::Vec3(250,0,0));
+    invoke(sheep,playerFollow.loop,LOOP_CONTINUE);
+    require(sheep.aiQueueFront() && sheep.aiQueueFront()->target==&hero,"sheep follow: a close party sheep faces the hero");
+    invoke(sheep,playerFollow.end,0);
+
+    invoke(sheep,balthasarFollow.init,0);
+    place(*shepherd,destination->position()+Tempest::Vec3(1200,0,0));
+    place(sheep,shepherd->position()+Tempest::Vec3(250,0,0));
+    invoke(sheep,balthasarFollow.loop,LOOP_CONTINUE);
+    require(sheep.aiQueueFront() && sheep.aiQueueFront()->target==shepherd,"sheep follow: the flock faces Balthasar while he is away from the destination");
+    place(*shepherd,destination->position());
+    invoke(sheep,balthasarFollow.loop,LOOP_CONTINUE);
+    const auto* roam=sheep.aiQueueFront();
+    require(roam && roam->func==script.findFunction("ZS_MM_RTN_ROAM") && roam->i0==1 && roam->s0==destination->name,
+            "sheep follow: arrival queues roaming at Balthasar's destination");
+    invoke(sheep,balthasarFollow.end,0);
+
+    wolfHandle.aivar[62]=0;
+    invoke(wolf,summoned.init,0);
+    require(wolfHandle.aivar[15]==1 && wolf.attitude()==ATT_FRIENDLY && wolf.tempAttitude()==ATT_FRIENDLY,
+            "summoned routine: Init makes the creature a friendly party member");
+    place(hero,wolf.position()+Tempest::Vec3(800,0,0));
+    wolf.setStateTime(1000);
+    invoke(wolf,summoned.loop,LOOP_CONTINUE);
+    require(wolfHandle.aivar[62]==0 && wolf.stateTime()==1000 && wolf.aiQueueFront() && wolf.aiQueueFront()->target==&hero,
+            "summoned routine: finding a far hero queues approach before the timer advances");
+    place(hero,wolf.position()+Tempest::Vec3(250,0,0));
+    invoke(wolf,summoned.loop,LOOP_CONTINUE);
+    require(wolfHandle.aivar[62]==1 && wolf.stateTime()==0,"summoned routine: the timer advances close to the hero");
+    invoke(wolf,summoned.end,0);
+    }
+  restore();
+  session.setTime(previousTime);
+  random=initialRandom;
+  events=previousEvents;
+  alias->set_instance(previousAlias);
+  wolf.clearAiQueue();
+  sheep.clearAiQueue();
+  std::puts("Special monster routines: original and native dragon rest, both sheep followers and summoned creature agree");
+  }
+
 std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -3261,6 +3404,7 @@ std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   monsterEnemyPerception(world,*wolf,sheep,hero);
   monsterHuntAndEatBodyPhases(world,*wolf,sheep);
   monsterBodyPerception(world,*wolf,sheep);
+  specialMonsterRoutines(session,world,*wolf,sheep,hero);
   const auto attack=script.findFunction("ZS_MM_ATTACK");
   require(wolf->startState(attack,site->name),"the wolf must enter attack before saving");
   wolf->setTarget(&hero);

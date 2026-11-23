@@ -6,6 +6,7 @@ namespace {
 constexpr std::string_view roam = "FP_ROAM";
 constexpr std::string_view campfire = "FP_CAMPFIRE";
 constexpr size_t routinePosition = 19;
+constexpr std::string_view roamGestures[] = {"R_ROAM1","R_ROAM2","R_ROAM3"};
 
 // Stock NotR AIVAR slots used by the combat states in the verified program.
 enum MonsterCombatVar : size_t {
@@ -31,6 +32,17 @@ enum MonsterCombatVar : size_t {
   pursuitDistance = 69,
   noFightParker = 71,
   };
+
+void regenerateDragon(daedalus::INpc& actor) {
+  if(actor.guild!=GIL_DRAGON)
+    return;
+  auto& position = actor.aivar[routinePosition];
+  ++position;
+  if(position>=2 && actor.attribute[ATR_HITPOINTS]<actor.attribute[ATR_HITPOINTSMAX]) {
+    ++actor.attribute[ATR_HITPOINTS];
+    position = 0;
+    }
+  }
 }
 
 bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
@@ -98,10 +110,9 @@ bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
         }
       }
     else if(rest && rollRandom(1000,&npc,true)<=5) {
-      static constexpr std::string_view variations[] = {"R_ROAM1","R_ROAM2","R_ROAM3"};
       const auto choice = rollRandom(3,&npc,true);
       findSymbol("ZS_MM_RTN_REST_LOOP.RANDOMMOVE")->set_int(int32_t(choice));
-      npc.aiPush(AiQueue::aiPlayAnim(variations[choice]));
+      npc.aiPush(AiQueue::aiPlayAnim(roamGestures[choice]));
       }
     result = LOOP_CONTINUE;
     return true;
@@ -222,13 +233,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     };
 
   npc_gettarget(self);
-  if(self->guild==GIL_DRAGON) {
-    ++ai[routinePosition];
-    if(ai[routinePosition]>=2 && self->attribute[ATR_HITPOINTS]<self->attribute[ATR_HITPOINTSMAX]) {
-      ++self->attribute[ATR_HITPOINTS];
-      ai[routinePosition] = 0;
-      }
-    }
+  regenerateDragon(*self);
   removeRavensStoneGuardians(npc);
 
   const bool atOldWorldRamp = findSymbol("CURRENTLEVEL")->get_int()==findSymbol("OLDWORLD_ZEN")->get_int() &&
@@ -477,6 +482,153 @@ bool GameScript::runMonsterEatBody(Npc& npc, const daedalus::DaedalusSymbol& sym
     return false;
   ai_playani(self,"T_EAT_2_STAND");
   result = 0;
+  return true;
+  }
+
+bool GameScript::runMonsterDragonRest(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const auto phase = symbol.name();
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  if(phase=="ZS_MM_RTN_DRAGONREST") {
+    npc.setPerceptionTime(1000);
+    self->aivar[monsterPriority] = findSymbol("PRIO_EAT")->get_int();
+    if(hlp_getinstanceid(self)!=hlp_getinstanceid(findSymbol("DRAGON_TESTMODELL")->get_instance())) {
+      enableMonsterRoutinePerceptions(npc);
+      npc.setPerceptionEnable(PERC_ASSESSPLAYER,findFunction("B_MM_ASSESSPLAYER").ptr);
+      }
+    npc.setPerceptionEnable(PERC_ASSESSTALK,findFunction("B_ASSESSTALK").ptr);
+    beginMonsterRoutine(npc);
+    if(wld_isfpavailable(self,roam))
+      ai_gotofp(self,roam);
+    else
+      ai_aligntowp(self);
+    self->aivar[routinePosition] = 0;
+    result = 0;
+    return true;
+    }
+  if(phase=="ZS_MM_RTN_DRAGONREST_LOOP") {
+    if(endMonsterRoutine(npc,MonsterRest)) {
+      result = LOOP_END;
+      return true;
+      }
+    regenerateDragon(*self);
+    if(rollRandom(1000,&npc,true)<=5) {
+      const auto gesture = rollRandom(3,&npc,true);
+      findSymbol("ZS_MM_RTN_DRAGONREST_LOOP.RANDOMMOVE")->set_int(int32_t(gesture));
+      ai_standup(self);
+      ai_playani(self,roamGestures[gesture]);
+      }
+    result = LOOP_CONTINUE;
+    return true;
+    }
+  if(phase!="ZS_MM_RTN_DRAGONREST_END")
+    return false;
+  ai_playani(self,"T_REST_2_STAND");
+  result = 0;
+  return true;
+  }
+
+bool GameScript::runMonsterSheepFollow(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const auto phase = symbol.name();
+  if(phase=="ZS_MM_RTN_FOLLOW_SHEEP" || phase=="ZS_MM_RTN_FOLLOW_SHEEP_BALTHASAR") {
+    npc.setPerceptionTime(1000);
+    npc.setPerceptionEnable(PERC_ASSESSPLAYER,findFunction("B_MM_ASSESSPLAYER").ptr);
+    if(phase=="ZS_MM_RTN_FOLLOW_SHEEP") {
+      npc.setPerceptionEnable(PERC_ASSESSTALK,findFunction("B_ASSESSTALK").ptr);
+      npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction("B_ASSESSMAGIC").ptr);
+      }
+    result = 0;
+    return true;
+    }
+  if(phase=="ZS_MM_RTN_FOLLOW_SHEEP_END" || phase=="ZS_MM_RTN_FOLLOW_SHEEP_BALTHASAR_END") {
+    result = 0;
+    return true;
+    }
+
+  constexpr std::string_view destination = "NW_BIGMILL_FARM3_BALTHASAR";
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  std::shared_ptr<daedalus::INpc> leader;
+  if(phase=="ZS_MM_RTN_FOLLOW_SHEEP_LOOP") {
+    if(self->aivar[partyMember]!=1) {
+      const auto gesture = rollRandom(3,&npc,true);
+      findSymbol("ZS_MM_RTN_FOLLOW_SHEEP_LOOP.RANDOMMOVE")->set_int(int32_t(gesture));
+      ai_playani(self,roamGestures[gesture]);
+      result = LOOP_CONTINUE;
+      return true;
+      }
+    leader = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+    }
+  else if(phase=="ZS_MM_RTN_FOLLOW_SHEEP_BALTHASAR_LOOP") {
+    leader = std::dynamic_pointer_cast<daedalus::INpc>(findSymbol("BALTHASAR")->get_instance());
+    if(npc_getdisttowp(leader,destination)<=500) {
+      ai_startstate(self,int(findFunction("ZS_MM_RTN_ROAM").ptr),1,destination);
+      result = LOOP_CONTINUE;
+      return true;
+      }
+    }
+  else {
+    return false;
+    }
+  if(npc_getdisttonpc(self,leader)>500) {
+    if(!monsterTargetHasBodyState(self,BS_SWIM))
+      ai_setwalkmode(self,int(WalkBit::WM_Run));
+    ai_gotonpc(self,leader);
+    }
+  else {
+    ai_turntonpc(self,leader);
+    self->wp = npc_getnearestwp(self);
+    }
+  result = LOOP_CONTINUE;
+  return true;
+  }
+
+bool GameScript::runMonsterSummoned(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const auto phase = symbol.name();
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const bool wisp = hlp_getinstanceid(self)==hlp_getinstanceid(findSymbol("WISP_DETECTOR")->get_instance());
+  if(phase=="ZS_MM_RTN_SUMMONED") {
+    npc.setPerceptionTime(1000);
+    npc.setPerceptionEnable(PERC_ASSESSPLAYER,findFunction("B_MM_ASSESSPLAYER").ptr);
+    npc.setPerceptionEnable(PERC_ASSESSENEMY,findFunction("B_MM_ASSESSENEMY").ptr);
+    npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction("B_ASSESSMAGIC").ptr);
+    npc.setPerceptionEnable(PERC_ASSESSDAMAGE,findFunction("B_MM_ASSESSDAMAGE").ptr);
+    npc.setPerceptionEnable(PERC_ASSESSFIGHTSOUND,findFunction("B_MM_ASSESSOTHERSDAMAGE").ptr);
+    npc.setPerceptionEnable(PERC_ASSESSTALK,findFunction(wisp ? "B_ASSESSTALK" : "B_SUMMONEDASSESSTALK").ptr);
+    findSymbol("B_SETATTITUDE.ATT")->set_int(ATT_FRIENDLY);
+    findSymbol("B_SETATTITUDE.SLF")->set_instance(self);
+    npc_setattitude(self,ATT_FRIENDLY);
+    npc_settempattitude(self,ATT_FRIENDLY);
+    self->aivar[partyMember] = 1;
+    ai_standup(self);
+    ai_setwalkmode(self,int(WalkBit::WM_Run));
+    result = 0;
+    return true;
+    }
+  if(phase=="ZS_MM_RTN_SUMMONED_END") {
+    result = 0;
+    return true;
+    }
+  if(phase!="ZS_MM_RTN_SUMMONED_LOOP")
+    return false;
+
+  // The summoned Wisp still uses its item detector and quest logic.
+  if(wisp)
+    vm.call_function("B_MM_WISPDETECT");
+  const auto actor = std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+  if(npc_getdisttonpc(actor,hero)>500) {
+    ai_gotonpc(actor,hero);
+    }
+  else if(const auto time = npc_getstatetime(actor); time>=1) {
+    if(!npc_canseenpc(actor,hero))
+      ai_turntonpc(actor,hero);
+    auto& elapsed = actor->aivar[summonTime];
+    elapsed += time;
+    if(elapsed>=findSymbol("MONSTER_SUMMON_TIME")->get_int())
+      npc_changeattribute(actor,ATR_HITPOINTS,-actor->attribute[ATR_HITPOINTSMAX]);
+    npc_setstatetime(actor,0);
+    }
+  actor->wp = npc_getnearestwp(actor);
+  result = LOOP_CONTINUE;
   return true;
   }
 
