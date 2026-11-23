@@ -7,6 +7,8 @@ constexpr std::string_view roam = "FP_ROAM";
 constexpr std::string_view campfire = "FP_CAMPFIRE";
 constexpr size_t routinePosition = 19;
 constexpr std::string_view roamGestures[] = {"R_ROAM1","R_ROAM2","R_ROAM3"};
+constexpr int32_t humanGuildSeparator = int32_t(GIL_SEPERATOR_HUM);
+constexpr int32_t orcGuildSeparator = int32_t(GIL_SEPERATOR_ORC);
 
 // Stock NotR AIVAR slots used by the combat states in the verified program.
 enum MonsterCombatVar : size_t {
@@ -160,7 +162,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     // These script parameters are serialized as static instance locals.
     findSymbol("C_NPCISMONSTERMAGE.SLF")->set_instance(self);
     const auto guild = self->guild;
-    return guild>GIL_SEPERATOR_ORC || guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON ||
+    return guild>orcGuildSeparator || guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON ||
            guild==GIL_DRAGON || guild==GIL_ICEGOLEM || guild==GIL_FIREGOLEM || guild==GIL_SKELETON_MAGE;
     };
 
@@ -661,7 +663,7 @@ bool GameScript::monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monste
     return false;
 
   const auto guild = body->guild;
-  const bool humanoid = guild<GIL_SEPERATOR_HUM || guild>GIL_SEPERATOR_ORC;
+  const bool humanoid = guild<humanGuildSeparator || guild>orcGuildSeparator;
   const bool smallAnimal = guild==GIL_SHEEP || guild==GIL_GIANT_RAT || guild==GIL_MOLERAT;
   const bool commonPrey = smallAnimal || guild==GIL_HARPY || guild==GIL_WOLF || guild==GIL_SUMMONED_WOLF ||
                          guild==GIL_GOBBO || guild==GIL_WARAN || guild==GIL_LURKER;
@@ -676,7 +678,7 @@ bool GameScript::monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monste
     case GIL_WARAN:
       return guild==GIL_SCAVENGER || guild==GIL_HARPY || guild==GIL_GOBBO;
     case GIL_WOLF:
-      return monster->aivar[realId]!=findSymbol("ID_KEILER")->get_int() && (guild<GIL_SEPERATOR_HUM || smallAnimal);
+      return monster->aivar[realId]!=findSymbol("ID_KEILER")->get_int() && (guild<humanGuildSeparator || smallAnimal);
     case GIL_SUMMONED_WOLF:
       return smallAnimal;
     case GIL_MINECRAWLER:
@@ -697,7 +699,7 @@ bool GameScript::monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monste
 void GameScript::runMonsterAssessBody() {
   const auto self = std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const auto other = std::static_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
-  if(self->guild>GIL_SEPERATOR_ORC || npc_getheighttonpc(self,other)>findSymbol("PERC_DIST_HEIGHT")->get_int() ||
+  if(self->guild>orcGuildSeparator || npc_getheighttonpc(self,other)>findSymbol("PERC_DIST_HEIGHT")->get_int() ||
      self->aivar[monsterPriority]==findSymbol("PRIO_ATTACK")->get_int() || !monsterWantsToEat(self,other))
     return;
   if(npc_isinstate(self,int(findFunction("ZS_MM_ATTACK").ptr))) {
@@ -724,9 +726,9 @@ bool GameScript::monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>&
     case GIL_LURKER:
       return guild==GIL_GOBBO;
     case GIL_SNAPPER:
-      return guild<GIL_SEPERATOR_HUM || guild==GIL_GOBBO || small;
+      return guild<humanGuildSeparator || guild==GIL_GOBBO || small;
     case GIL_SHADOWBEAST:
-      return guild<GIL_SEPERATOR_HUM || guild>GIL_SEPERATOR_ORC || small;
+      return guild<humanGuildSeparator || guild>orcGuildSeparator || small;
     default:
       return false;
     }
@@ -741,7 +743,7 @@ void GameScript::runMonsterAssessEnemy() {
     return;
   if(self->aivar[noFightParker]==1 || other->aivar[noFightParker]==1)
     return;
-  if(self->aivar[enemyOverride]==1 && other->guild<GIL_SEPERATOR_HUM)
+  if(self->aivar[enemyOverride]==1 && other->guild<humanGuildSeparator)
     return;
 
   const auto levelInspector = hlp_getnpc(int(findSymbolIndex("PC_LEVELINSPEKTOR")));
@@ -763,7 +765,7 @@ void GameScript::runMonsterAssessEnemy() {
     return;
   if(npc_getheighttonpc(self,other)>findSymbol("PERC_DIST_HEIGHT")->get_int())
     return;
-  if(other->guild>GIL_SEPERATOR_HUM && npc_isplayer(other) && wld_getguildattitude(self->guild,other->guild)!=ATT_HOSTILE)
+  if(other->guild>humanGuildSeparator && npc_isplayer(other) && wld_getguildattitude(self->guild,other->guild)!=ATT_HOSTILE)
     return;
 
   const auto distance = npc_getdisttonpc(self,other);
