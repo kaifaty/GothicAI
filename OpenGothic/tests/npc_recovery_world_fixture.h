@@ -895,7 +895,8 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
       restoreCalls+=symbol.name().starts_with("USEITPO_HEALTH_") || symbol.name()=="USEITPO_MANA_01" ||
                     symbol.name()=="USEITPO_MANA_04" || symbol.name()=="USE_MEATBUGFLESH" ||
                     symbol.name()=="USE_CHEESE" || symbol.name()=="USE_BEER" || symbol.name()=="USE_BLUEPLANT" ||
-                    symbol.name()=="USEITPO_PERM_DEX" || symbol.name()=="USEITPO_LITTLEMANA";
+                    symbol.name()=="USEITPO_PERM_DEX" || symbol.name()=="USEITPO_LITTLEMANA" ||
+                    symbol.name()=="USE_APPLE" || symbol.name()=="USE_MUSHROOM_01";
       });
 
     require(Settings::physicsFlags().meleeHealInterrupt,"health potions: the fixture uses deferred potion effects");
@@ -905,6 +906,11 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     vm.global_self()->set_instance(std::static_pointer_cast<daedalus::INpc>(hero.handlePtr()));
     const auto self=vm.global_self()->get_instance(),other=vm.global_other()->get_instance(),
                victim=vm.global_victim()->get_instance(),itemGlobal=vm.global_item()->get_instance();
+    auto* apples=script.findSymbol("APPLE_BONUS");
+    auto* mushrooms=script.findSymbol("DUNKELPILZ_BONUS");
+    const auto oldApples=apples->get_int(),oldMushrooms=mushrooms->get_int();
+    apples->set_int(24);
+    mushrooms->set_int(49);
     const std::array potionUse={std::tuple{"ITPO_HEALTH_01",ATR_HITPOINTS,20,70},
                                 std::tuple{"ITPO_HEALTH_02",ATR_HITPOINTS,20,90},
                                 std::tuple{"ITPO_HEALTH_03",ATR_HITPOINTS,20,120},
@@ -966,7 +972,8 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     npc->handle().attribute[ATR_HITPOINTS]=20;
     npc->handle().attribute[ATR_MANA]=20;
     const std::array foodUse={std::tuple{"ITFO_CHEESE",15,0},std::tuple{"ITFO_BEER",3,1},
-                              std::tuple{"ITPL_BLUEPLANT",5,5},std::tuple{"ITAT_MEATBUGFLESH",10,0}};
+                              std::tuple{"ITPL_BLUEPLANT",5,5},std::tuple{"ITAT_MEATBUGFLESH",10,0},
+                              std::tuple{"ITFO_APPLE",3,0},std::tuple{"ITPL_MUSHROOM_01",5,0}};
     int hp=0,mana=0;
     for(const auto& [food,healthDose,manaDose]:foodUse) {
       const auto [id,initialItems]=startUse(food);
@@ -978,7 +985,27 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
               pool.hp==hp && pool.mana==mana && pool.remaining==Healing::FoodDuration &&
               npc->itemCount(id)==initialItems,"item restores: food adds both ordered doses to the gradual pool and consumes once");
       }
-    require(restoreCalls==(native ? 0u : potionUse.size()+permanentUse.size()+foodUse.size()),
+    require(apples->get_int()==24 && mushrooms->get_int()==49,
+            "cumulative food: a nonplayer receives only the ordinary food refill");
+    const auto heroAttributes=std::to_array(hero.handle().attribute);
+    const auto heroStrengthTraining=hero.handle().aivar[81],heroManaTraining=hero.handle().aivar[83];
+    hero.handle().attribute[ATR_HITPOINTSMAX]=200;
+    hero.handle().attribute[ATR_MANAMAX]=200;
+    hero.handle().attribute[ATR_HITPOINTS]=20;
+    hero.handle().attribute[ATR_MANA]=20;
+    script.invokeItem(&hero,script.findFunction("USE_APPLE"));
+    script.invokeItem(&hero,script.findFunction("USE_MUSHROOM_01"));
+    require(apples->get_int()==0 && mushrooms->get_int()==0 &&
+            hero.attribute(ATR_HITPOINTS)==28 && hero.attribute(ATR_MANA)==25 &&
+            hero.attribute(ATR_STRENGTH)==heroAttributes[ATR_STRENGTH]+1 && hero.attribute(ATR_MANAMAX)==205 &&
+            hero.handle().aivar[81]==heroStrengthTraining+1 && hero.handle().aivar[83]==heroManaTraining+5,
+            "cumulative food: the hero's thresholds award strength and mana once and reset the saved counters");
+    std::copy(heroAttributes.begin(),heroAttributes.end(),hero.handle().attribute);
+    hero.handle().aivar[81]=heroStrengthTraining;
+    hero.handle().aivar[83]=heroManaTraining;
+    apples->set_int(oldApples);
+    mushrooms->set_int(oldMushrooms);
+    require(restoreCalls==(native ? 0u : potionUse.size()+permanentUse.size()+foodUse.size()+2),
             "item restores: only fallback executes the callback bodies");
     vm.global_self()->set_instance(previousSelf);
     std::copy(attributes.begin(),attributes.end(),npc->handle().attribute);
@@ -1153,6 +1180,9 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   require(potionScript.findSymbol("B_READYSPELL.SPELL")->get_int()==potionScript.findSymbol("SPL_ICEBOLT")->get_int() &&
           potionScript.findSymbol("B_READYSPELL.MANA")->get_int()==20,
           "equipment: normal load keeps the last spell and cost written by ready spell");
+  require(potionScript.findSymbol("APPLE_BONUS")->get_int()==24 &&
+          potionScript.findSymbol("DUNKELPILZ_BONUS")->get_int()==49,
+          "cumulative food: ordinary load restores both VM-era progress counters");
   auto* drinker=activityNpc(potionWorld,actor);
   const auto potion=potionScript.findSymbolIndex("ITPO_HEALTH_03");
   require(drinker && Contract::pendingItemUse(*drinker)==potion && drinker->attribute(ATR_HITPOINTS)==125 &&

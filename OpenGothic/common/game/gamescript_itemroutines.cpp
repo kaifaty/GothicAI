@@ -11,6 +11,58 @@
 #include <stdexcept>
 #include <vector>
 
+bool GameScript::applyCumulativeFoodEffect(std::string_view callback) {
+  const bool apple = callback=="USE_APPLE";
+  if(!apple && callback!="USE_MUSHROOM_01")
+    return false;
+
+  auto* self = vm.global_self();
+  auto* change = findSymbol("NPC_CHANGEATTRIBUTE");
+  vm.push_reference(self);
+  vm.push_reference(findSymbol("ATR_HITPOINTS"));
+  vm.push_reference(findSymbol(apple ? "HP_APPLE" : "HP_MUSHROOM_01"));
+  vm.unsafe_call_external(change);
+  vm.push_reference(self);
+  vm.unsafe_call_external(findSymbol("NPC_ISPLAYER"));
+  if(vm.pop_int()==0)
+    return true;
+
+  auto* counter = findSymbol(apple ? "APPLE_BONUS" : "DUNKELPILZ_BONUS");
+  const auto caller = vm.unsafe_get_gi();
+  const auto count = [&] { return vm.get_int(caller,counter,0); };
+  vm.set_int(caller,counter,0,std::bit_cast<int32_t>(uint32_t(count())+1u));
+
+  const auto print = [&](const char* notice) {
+    vm.push_reference(findSymbol(notice));
+    vm.unsafe_call_external(findSymbol("PRINT"));
+    };
+  if(apple) {
+    if(count()==7)
+      print("PRINT_EAT1");
+    if(count()==15)
+      print("PRINT_EAT2");
+    }
+  if(count()!=(apple ? 25 : 50))
+    return true;
+
+  if(apple)
+    print("PRINT_EAT3");
+  vm.push_reference(self);
+  vm.push_reference(findSymbol(apple ? "ATR_STRENGTH" : "ATR_MANA_MAX"));
+  vm.push_int(apple ? 1 : 5);
+  vm.unsafe_call_bl(findSymbol("B_RAISEATTRIBUTE"));
+  if(!apple) {
+    vm.push_reference(self);
+    vm.push_reference(findSymbol("ATR_MANA"));
+    vm.push_int(5);
+    vm.unsafe_call_external(change);
+    }
+  vm.push_reference(findSymbol(apple ? "$14176" : "$14605")); // Each callback's stock LevelUp string.
+  vm.unsafe_call_external(findSymbol("SND_PLAY"));
+  vm.set_int(caller,counter,0,0);
+  return true;
+  }
+
 void GameScript::loadNativeTradeInventory() {
   if(!nativeRoutineProgram)
     return;
