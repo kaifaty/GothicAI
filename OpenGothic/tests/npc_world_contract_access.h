@@ -21,6 +21,8 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled);
 struct NpcDefinitionContract {
   static auto& definitions(GameScript& script) { return script.npcDefinitions; }
   static auto& placements(GameScript& script) { return script.placementDefinitions; }
+  static int32_t& storyChapter(GameScript& script) { return script.storyChapter; }
+  static void saveChapter(GameScript& script, Serialize& out) { script.saveSym(out,*script.findSymbol("KAPITEL")); }
   static auto& activities(GameScript& script) { return script.activityDefinitions; }
   static auto& aiState(Npc& npc) { return npc.aiState; }
   static int32_t& lastHitSpell(Npc& npc) { return npc.lastHitSpell; }

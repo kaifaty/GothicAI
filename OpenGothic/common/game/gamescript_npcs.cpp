@@ -167,11 +167,11 @@ void GameScript::loadNativeNpcGlobals() {
     bindings.emplace_back(source,target);
     }
 
-  vm.override_function("B_INITNPCGLOBALS",std::function<void()>{[this, chapter, unsetChapter, defaultChapter,
+  findSymbol(chapter)->bind_global_int(storyChapter);
+  vm.override_function("B_INITNPCGLOBALS",std::function<void()>{[this, unsetChapter, defaultChapter,
                                                                 lookup, bindings=std::move(bindings)] {
-    auto* chapterState=findSymbol(chapter);
-    if(chapterState->get_int()==unsetChapter)
-      chapterState->set_int(defaultChapter);
+    if(storyChapter==unsetChapter)
+      storyChapter=defaultChapter;
     for(const auto& [source,target]:bindings) {
       vm.push_int(source);
       vm.unsafe_call_external(findSymbol(lookup));
