@@ -72,6 +72,7 @@ class GameScript final : public GameRules {
 
     bool         hasSymbolName(std::string_view fn);
     void         runStartup(std::string_view fn);
+    void         runWorldInit(std::string_view fn);
 
     auto         createNpc(Npc& owner, size_t instance, std::string_view waypoint, uint32_t& kind) -> std::shared_ptr<NpcRecord> override;
     uint32_t     initializeInstanceNpc(const std::shared_ptr<NpcRecord>& npc, size_t instance) override;

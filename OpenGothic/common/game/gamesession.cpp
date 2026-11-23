@@ -640,7 +640,7 @@ void GameSession::initScripts(bool firstTime) {
   string_frm init("init_",name);
   if(vm->hasSymbolName(init)) {
     LoadProbe::Startup::Detail::Scope call("script_function",[&]{return std::string(std::string_view(init));});
-    vm->getVm().call_function(init);
+    vm->runWorldInit(init);
     }
 
   script.stop();
