@@ -358,6 +358,16 @@ async def graph_programs(
     deeper = [c["text"] for c in await link.dialog_choices(npc, "DIR_CHOICE_TEST.2")]
     check("choice_offers_more", deeper == ["Опыт"], str(deeper))
 
+    # Close the fixture window without playing the stock farewell or starting its chapter screen.
+    exit_topic = {
+        "id": "DIR_PROGRAM_WINDOW_EXIT",
+        "npc": npc,
+        "description": "Завершить проверку диалога",
+        "nr": 54,
+        "program": [{"do": "call", "call": ["call", "AI_STOPPROCESSINFOS", ["inst", "SELF"]]}],
+    }
+    await story.apply({"op": "add_node", "node": exit_topic})
+
     # At one frame per second the preceding speech can delay opening, then the new
     # streamed line can hold the choices for another 50 seconds. Share one budget.
     await link.debug("teleport", near=npc, distance=150)
@@ -372,19 +382,21 @@ async def graph_programs(
             await asyncio.sleep(0.3)
         return seen
 
+    def at_topics(entries: list[str]) -> bool:
+        return ask["description"] in entries and exit_topic["description"] in entries
+
     await link.start_talk(npc)
-    window: list[list[str]] = [await menu(lambda m: ask["description"] in m)]
+    window = [await menu(at_topics)]
     exp_before = (await hero())[1]
     for pick, then in ((ask["description"], ["Золото", "Дальше"]), ("Дальше", ["Опыт"]), ("Опыт", None)):
         if pick not in window[-1]:
             break
         await link.pick_in_menu(pick)
-        window.append(await menu(lambda m, then=then: m == then if then else ask["description"] in m))
+        window.append(await menu(lambda m, then=then: m == then if then else at_topics(m)))
     gained = (await hero())[1] - exp_before
-    at_topics = ask["description"] in window[-1]
     closed = False
-    if at_topics:
-        await link.pick_in_menu(window[-1][-1])  # the last topic ends the talk
+    if at_topics(window[-1]):
+        await link.pick_in_menu(exit_topic["description"])
         closed = await _until_async(
             link.story_state,
             lambda state: state.get("dialog") is False and state.get("cutscene") is False,
@@ -392,7 +404,6 @@ async def graph_programs(
         )
     resumed = False
     if closed:
-        # Xardas's first exit opens a six-second chapter screen after the dialog closes.
         # The bridge handles this application-level ping on the next unpaused world tick.
         try:
             await link.ping(timeout=max(0, window_deadline - time.monotonic()))
@@ -400,6 +411,7 @@ async def graph_programs(
             pass
         else:
             resumed = True
+    await story.apply({"op": "remove_node", "node": exit_topic["id"]})
     check(
         "window",
         window[1:3] == [["Золото", "Дальше"], ["Опыт"]] and gained == 3 and resumed,
