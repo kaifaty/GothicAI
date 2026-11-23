@@ -118,6 +118,9 @@ std::optional<Value> storygraph::callFunction(daedalus::DaedalusVm& vm, const da
       error = "no engine function " + ident(fn.name());
       return std::nullopt;
       }
+    } else if(fn.name()=="B_STARTOTHERROUTINE" || fn.name()=="B_GIVEPLAYERXP") {
+    // Authored actions reuse the same installed rules as stock nested calls.
+    vm.unsafe_call_bl(&fn);
     } else {
     vm.unsafe_call(&fn);
     }

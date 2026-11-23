@@ -30,11 +30,15 @@ RoutineDefinitionRuntime::Definitions RoutineDefinitionRuntime::resolve(const Ro
   return definitions;
   }
 
+bool RoutineDefinitionRuntime::enabled() {
+  const auto* value=std::getenv("OPENGOTHIC_ROUTINE_RECORDS");
+  return value==nullptr || std::strcmp(value,"0")!=0;
+  }
+
 RoutineDefinitionRuntime::Definitions RoutineDefinitionRuntime::load(const std::filesystem::path& base,
                                                                      const daedalus::DaedalusScript& program,
                                                                      std::string_view sha256) {
-  const auto* enabled=std::getenv("OPENGOTHIC_ROUTINE_RECORDS");
-  if(enabled==nullptr || std::strcmp(enabled,"0")!=0)
+  if(enabled())
     return resolve(RoutineDefinitions::read(base,sha256),program);
   return {};
   }

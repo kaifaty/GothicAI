@@ -4,6 +4,7 @@
 #include "daedalus/classes.h"
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <random>
 #include <unordered_map>
@@ -72,6 +73,7 @@ class GameScript final : public GameRules {
 
     bool         hasSymbolName(std::string_view fn);
     void         runStartup(std::string_view fn);
+    void         runWorldInit(std::string_view fn);
 
     auto         createNpc(Npc& owner, size_t instance, std::string_view waypoint, uint32_t& kind) -> std::shared_ptr<NpcRecord> override;
     uint32_t     initializeInstanceNpc(const std::shared_ptr<NpcRecord>& npc, size_t instance) override;
@@ -249,6 +251,14 @@ class GameScript final : public GameRules {
     bool invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe);
     bool invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);
     bool runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runFearOrSleepSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runFreezeOrWhirlwindSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    void stopInterruptedSpell(Npc& npc, bool resumeRoutine = false);
+    bool invokeNativeStatusPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
+    void stopMagicFear(Npc& npc);
+    void stopMagicSleep(Npc& npc);
+    void sayMagicReaction(Npc& npc, std::string_view line, bool overlay);
+    void raisePaladinZombie(Npc& npc);
     bool runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     int32_t giveInventoryItems(const std::shared_ptr<daedalus::INpc>& giver,
                                const std::shared_ptr<daedalus::INpc>& taker, int32_t item, int32_t amount);
@@ -268,6 +278,7 @@ class GameScript final : public GameRules {
     bool runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHealSelf(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -290,17 +301,40 @@ class GameScript final : public GameRules {
     bool nativeMonsterPerceptionsEnabled();
     bool invokeNativeMonsterPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);
     void runMonsterAssessBody();
+    void runMonsterAssessDamage();
     void runMonsterAssessEnemy();
+    void runMonsterAssessOthersDamage();
+    void runMonsterAssessPlayer();
+    void runMonsterAssessWarn();
+    void runMonsterAssessSurprise();
+    void runMonsterAssessQuietSoundSleep();
+    void runMonsterSummonedAssessTalk();
     bool monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monster, const std::shared_ptr<daedalus::INpc>& body);
     bool monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey);
     bool monsterTargetHasBodyState(const std::shared_ptr<daedalus::INpc>& target, int32_t state);
+    bool monsterTargetIsDown(const std::shared_ptr<daedalus::INpc>& target);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runShrinkState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runMagicHurtState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    void magicHurtNpc(const std::shared_ptr<daedalus::INpc>& attacker, const std::shared_ptr<daedalus::INpc>& target,
+                      int32_t damage);
+    bool usesNativeShrinkSpell(const Item* item) const;
+    int runShrinkMana(Npc& caster, int mana, bool release);
+    void castShrink(Npc& caster, Npc* target);
+    std::optional<int> runStockSpellMana(Npc& caster, int mana);
+    bool runStockSpellCast(Npc& caster, std::string_view function, int32_t level);
+    void assessMagic(Npc& npc);
+    void clearNpcPerceptions(const std::shared_ptr<daedalus::INpc>& npc);
+    void givePlayerXp(int32_t amount);
+    void loadNativeQuestLog(const std::function<bool()>& enabled);
+    void closeQuestTopic(std::string_view topic, int32_t mission, int32_t common, int32_t endChapter);
     bool monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window);
     void enableMonsterRoutinePerceptions(Npc& npc);
     void beginMonsterRoutine(Npc& npc, bool desynchronize = true, WalkBit mode = WalkBit::WM_Walk);
     bool endMonsterRoutine(Npc& npc, MonsterRoutine routine);
     void removeRavensStoneGuardians(Npc& npc);
     void loadNativeRoutines();
+    void loadNativeRoutineExchange();
 
     using NativeRoutineCallback = bool (GameScript::*)(Npc&, const daedalus::DaedalusSymbol&, int&);
     enum class RoutineWake : uint8_t { Timer, Sleep, Smalltalk, Herald, Concert };

@@ -4067,37 +4067,6 @@ void bindNpcGlobals(World& world) {
   std::puts("NPC global bindings: all 310 aliases and chapter semantics match with zero script instructions");
   }
 
-void pointActivitiesInBothModes(Gothic& gothic) {
-  const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
-  const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
-  for(bool events:{false,true}) {
-    setenv("OPENGOTHIC_ACTIVITY_EVENTS",events ? "1" : "0",1);
-    gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
-    if(events && NpcSnapshot::load(baseProgramIndex().dir.parent_path()).sha256==
-                 "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
-      refreshAtInsert(*gothic.world());
-      if(NpcDefinitionRuntime::enabled())
-        transformNpcRecords(*gothic.world());
-      initializePerceptionRanges(*gothic.world());
-      bindNpcGlobals(*gothic.world());
-      }
-    const auto save=pointActivitiesWorld(gothic,events);
-    itemRoutinePhasesWorld(gothic,events);
-    ActivityEventsWorld paired(gothic);
-    pairedSmalltalkWorld(paired,events);
-    sleepRoutineWorld(gothic,events,false);
-    sleepRoutineWorld(gothic,events,true);
-    gothic.clearGame().reset();
-    seatedActivitiesWorld(gothic,events);
-    if(events) {
-      loadCampfireGroup(gothic,save);
-      gothic.clearGame().reset();
-      quietSoundAtPost(gothic);
-      npcRecoveryAfterActivityChecks(gothic);
-      }
-    }
-  if(previousEvents) setenv("OPENGOTHIC_ACTIVITY_EVENTS",previousEvents->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_EVENTS");
-  }
 // Rare rows use their authored actor and waypoint where the release worlds contain them.
 // The concert and the test model's three rows name points absent from the four release waynets.
 struct RoutineWitnessSite {
@@ -4287,106 +4256,7 @@ void monsterThreatAndFleePhases(World& world, Npc& monster, Npc& hero) {
   std::puts("Monster threat and flee: original and native phases agree at the pursuit distance and warning time boundaries");
   }
 
-void monsterEnemyPerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
-  auto& script=world.script();
-  auto& vm=script.getVm();
-  auto& events=NpcDefinitionContract::activityEventsOn(script);
-  const auto previousEvents=events;
-  const auto handler=script.findFunction("B_MM_ASSESSENEMY");
-  const auto sleepingHandler=script.findFunction("B_MM_ASSESSQUIETSOUND_SLEEP");
-  const auto handlerPc=script.findSymbol(size_t(handler.ptr))->address();
-  const auto sleepingPc=script.findSymbol(size_t(sleepingHandler.ptr))->address();
-  const auto origin=wolf.position()+Tempest::Vec3(0,500,0);
-  const std::array actors={&wolf,&sheep,&hero};
-  struct ActorState {
-    Tempest::Vec3 position;
-    int32_t sensesRange;
-    bool externalControl;
-    decltype(std::to_array(wolf.handle().aivar)) vars;
-    };
-  std::array<ActorState,actors.size()> saved;
-  for(size_t i=0;i<actors.size();++i) {
-    auto& npc=*actors[i];
-    auto& handle=npc.handle();
-    saved[i]={npc.position(),handle.senses_range,npc.isExternalControl(),std::to_array(handle.aivar)};
-    npc.setExternalControl(false);
-    handle.senses_range=2000;
-    for(auto slot:{4,15,61,71})
-      handle.aivar[slot]=0;
-    handle.aivar[26]=1;
-    }
-  struct Scene { Npc& listener; Npc& source; int distance; const char* next; };
-  const std::array scenes={Scene{wolf,sheep,250,nullptr},Scene{wolf,hero,250,"ZS_MM_ATTACK"},
-                           Scene{wolf,hero,250,"ZS_MM_THREATENENEMY"},Scene{wolf,sheep,250,"ZS_MM_HUNT"},
-                           Scene{sheep,wolf,250,"ZS_MM_FLEE"},Scene{sheep,wolf,400,nullptr}};
-  for(size_t i=0;i<scenes.size();++i) {
-    const auto& scene=scenes[i];
-    auto& listener=scene.listener;
-    auto& source=scene.source;
-    listener.setPosition(origin);
-    listener.updateTransform();
-    source.setPosition(origin+Tempest::Vec3(float(scene.distance),0,0));
-    source.updateTransform();
-    require(listener.canSeeNpc(source,true),"monster enemy perception: the target must be visible to the listener");
-    std::vector<std::string> original;
-    for(bool native:{false,true}) {
-      events=native;
-      source.handle().aivar[71]=i==0 ? 1 : 0;
-      listener.handle().aivar[26]=i==1 ? 0 : 1;
-      listener.setTarget(nullptr);
-      listener.clearAiQueue();
-      listener.aiPush(AiQueue::aiWait(173));
-      listener.setPerceptionEnable(PERC_ASSESSENEMY,handler.ptr);
-      size_t handlerEntries=0;
-      vm.observe_instructions([&](const auto&) { handlerEntries+=vm.pc()==handlerPc; });
-      const bool delivered=listener.perceptionProcess(source,nullptr,listener.qDistTo(source),PERC_ASSESSENEMY);
-      vm.observe_instructions({});
-      require(delivered && handlerEntries==(native ? 0u : 1u),"monster enemy perception: the world uses the selected handler");
-      const auto* front=listener.aiQueueFront();
-      if(scene.next) {
-        require(front && front->act==AI_StartState && front->func==script.findFunction(scene.next) && front->target==&source &&
-                !listener.hasPerc(PERC_ASSESSENEMY),"monster enemy perception: the reaction replaces the queue and clears perceptions");
-        require(listener.target()==(i==2 ? nullptr : &source),"monster enemy perception: threatening leaves the current target unchanged");
-        }
-      else
-        require(front && front->act==AI_Wait && listener.hasPerc(PERC_ASSESSENEMY),"monster enemy perception: rejecting the source leaves the queue and perceptions intact");
-      const auto queue=activityQueue(listener);
-      if(native)
-        require(queue==original,"monster enemy perception: original and native leave the same queue");
-      else
-        original=queue;
-      }
-    source.handle().aivar[71]=0;
-    }
-  require(script.guildAttitude(wolf,hero)==ATT_HOSTILE,"monster enemy perception: the sleeping wolf must treat the hero as hostile");
-  for(bool native:{false,true}) {
-    events=native;
-    hero.handle().aivar[71]=1;
-    size_t sleepingEntries=0,enemyEntries=0;
-    vm.observe_instructions([&](const auto&) {
-      sleepingEntries+=vm.pc()==sleepingPc;
-      enemyEntries+=vm.pc()==handlerPc;
-      });
-    script.invokeState(&wolf,&hero,nullptr,sleepingHandler);
-    vm.observe_instructions({});
-    require(sleepingEntries==1 && enemyEntries==(native ? 0u : 1u),
-            "monster enemy perception: the sleeping callback must use the same handler through a nested VM call");
-    }
-  events=previousEvents;
-  for(size_t i=0;i<actors.size();++i) {
-    auto& npc=*actors[i];
-    npc.setPosition(saved[i].position);
-    npc.updateTransform();
-    npc.handle().senses_range=saved[i].sensesRange;
-    npc.setExternalControl(saved[i].externalControl);
-    std::copy(saved[i].vars.begin(),saved[i].vars.end(),npc.handle().aivar);
-    if(!npc.isPlayer()) {
-      npc.clearAiQueue();
-      npc.setTarget(nullptr);
-      }
-    }
-  std::puts("Monster enemy perception: original and native reject, attack, threaten, hunt and flee identically");
-  }
+#include "npc_beast_perception_world_fixture.h"
 
 void monsterHuntAndEatBodyPhases(World& world, Npc& monster, Npc& target) {
   auto& script=world.script();
@@ -4822,9 +4692,12 @@ std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   monsterAttackPhases(world,*wolf,hero);
   monsterThreatAndFleePhases(world,*wolf,hero);
   monsterEnemyPerception(world,*wolf,sheep,hero);
+  monsterSummonedDismissal(world,hero);
   monsterHuntAndEatBodyPhases(world,*wolf,sheep);
   monsterBodyPerception(world,*wolf,sheep);
   specialMonsterRoutines(session,world,*wolf,sheep,hero);
+  monsterDamagePerception(world,*wolf,sheep,hero);
+  monsterPlayerWarnAndSurprise(world,*wolf,sheep,hero);
   const auto attack=script.findFunction("ZS_MM_ATTACK");
   require(wolf->startState(attack,site->name),"the wolf must enter attack before saving");
   wolf->setTarget(&hero);
@@ -4924,3 +4797,5 @@ void ravenStoneGuardianRoutines(World& world) {
   }
 
 #include "npc_remaining_routine_world_fixture.h"
+
+#include "npc_spell_world_fixture.h"

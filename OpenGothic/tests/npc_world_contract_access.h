@@ -1,14 +1,19 @@
 #pragma once
 
+#include "storygraph/eval.h"
+
 // Test-only access keeps the production creation entry point unchanged.
 struct NpcDefinitionContract {
   static auto& definitions(GameScript& script) { return script.npcDefinitions; }
   static auto& placements(GameScript& script) { return script.placementDefinitions; }
   static auto& activities(GameScript& script) { return script.activityDefinitions; }
   static auto& aiState(Npc& npc) { return npc.aiState; }
+  static int32_t& lastHitSpell(Npc& npc) { return npc.lastHitSpell; }
   static auto& activityEvents(Npc& npc) { return npc.activityEvents; }
   static bool& activityEventsOn(GameScript& script) { return script.activityEvents; }
   static auto& previousState(Npc& npc) { return npc.aiPrevState; }
+  static void lastHitSpell(Npc& npc, int32_t spell) { npc.lastHitSpell=spell; }
+  static ScriptFn perceptionCallback(const Npc& npc, PercType type) { return npc.perception[type].func; }
   static void tickRoutine(Npc& npc) { npc.aiState.loopNextTime=npc.world().tickCount(); npc.tickRoutine(); }
   static void tickScheduledRoutine(Npc& npc) { npc.tickRoutine(); }
   // The engine's next queued action, as the NPC's tick takes it.
