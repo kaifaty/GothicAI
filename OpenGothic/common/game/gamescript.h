@@ -413,6 +413,7 @@ class GameScript final : public GameRules {
     bool isGateGuard(const std::shared_ptr<daedalus::INpc>& self);
     bool isBotheredByPlayerRoomGuild(const std::shared_ptr<daedalus::INpc>& self);
     bool isPlayerFakeBandit(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool hasFakeGuild(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void desynchronizeNpc();
     void sayToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other, std::string_view line);
     void turnToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
