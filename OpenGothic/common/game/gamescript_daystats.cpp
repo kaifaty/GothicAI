@@ -2,8 +2,7 @@
 #include "daedalus/classes.h"
 #include "utils/jsonescape.h"
 
-#include <Tempest/Log>
-
+#include <cstdio>
 #include <cstdlib>
 
 namespace {
@@ -26,8 +25,8 @@ DayScriptStats::DayScriptStats(const RoutineDefinitions::Library& routines) {
 
 DayScriptStats::~DayScriptStats() {
   if(!traceProgram.empty())
-    Tempest::Log::i("script probe ",traceProgram,": ",counts(instructionsBySymbol),
-                    " unattributed=",unattributedInstructions);
+    std::fprintf(stderr,"script probe %s: %s unattributed=%llu\n",traceProgram.c_str(),
+                 counts(instructionsBySymbol).c_str(),static_cast<unsigned long long>(unattributedInstructions));
   }
 
 void DayScriptStats::trace(daedalus::DaedalusVm& vm, const char* program) {
