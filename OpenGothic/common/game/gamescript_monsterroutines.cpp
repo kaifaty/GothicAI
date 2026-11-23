@@ -12,18 +12,23 @@ enum MonsterCombatVar : size_t {
   invincible = 4,
   lastTarget = 7,
   pursuitEnd = 8,
+  partyMember = 15,
   selectSpell = 20,
   hitByOtherNpc = 22,
   waitBeforeAttack = 23,
+  threatenBeforeAttack = 26,
   followTime = 27,
   followInWater = 28,
   monsterPriority = 29,
+  realId = 43,
   maxDistanceToWaypoint = 59,
   originalFightTactic = 60,
+  enemyOverride = 61,
   summonTime = 62,
   loadGame = 65,
   stateTime = 68,
   pursuitDistance = 69,
+  noFightParker = 71,
   };
 }
 
@@ -128,6 +133,12 @@ void GameScript::validateMonsterTarget(const std::shared_ptr<daedalus::INpc>& se
     }
   }
 
+bool GameScript::monsterTargetHasBodyState(const std::shared_ptr<daedalus::INpc>& target, int32_t state) {
+  findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(state);
+  findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(target);
+  return ActivityDefinitions::bodyStateContains(npc_getbodystate(target),state);
+  }
+
 bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   auto& ai = self->aivar;
@@ -188,15 +199,10 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
   if(phase!="ZS_MM_ATTACK_LOOP")
     return false;
 
-  const auto targetHasBodyState = [&](int32_t state) {
-    const auto target = other();
-    findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(state);
-    findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(target);
-    return ActivityDefinitions::bodyStateContains(npc_getbodystate(target),state);
-    };
   const auto targetIsRunningOrJumping = [&] {
-    const bool jumping = targetHasBodyState(BS_JUMP);
-    const bool running = targetHasBodyState(BS_RUN);
+    const auto target = other();
+    const bool jumping = monsterTargetHasBodyState(target,BS_JUMP);
+    const bool running = monsterTargetHasBodyState(target,BS_RUN);
     return running || jumping;
     };
   const auto targetIsDown = [&](const std::shared_ptr<daedalus::INpc>& target) {
@@ -260,8 +266,8 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     return true;
     }
 
-  const bool diving = targetHasBodyState(BS_DIVE);
-  const bool swimming = targetHasBodyState(BS_SWIM);
+  const bool diving = monsterTargetHasBodyState(other(),BS_DIVE);
+  const bool swimming = monsterTargetHasBodyState(other(),BS_SWIM);
   if(ai[followInWater]==0 && (diving || swimming)) {
     stop();
     result = LOOP_END;
@@ -407,4 +413,120 @@ bool GameScript::runMonsterFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol
   ai_flee(self);
   result = LOOP_CONTINUE;
   return true;
+  }
+
+bool GameScript::nativeMonsterPerceptionsEnabled() {
+  return nativeRoutineProgram && activityEvents && !floorDefer.active() &&
+         ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off &&
+         vm.global_self()->is_instance_of<daedalus::INpc>() && vm.global_other()->is_instance_of<daedalus::INpc>();
+  }
+
+bool GameScript::invokeNativeMonsterPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe) {
+  if(symbol.name()!="B_MM_ASSESSENEMY" || !nativeMonsterPerceptionsEnabled())
+    return false;
+  probe.fromRecord();
+  runMonsterAssessEnemy();
+  return true;
+  }
+
+bool GameScript::monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey) {
+  // Keep the serialized script locals in the same state as the original call.
+  findSymbol("C_PREDATORFOUNDPREY.SLF")->set_instance(predator);
+  findSymbol("C_PREDATORFOUNDPREY.OTH")->set_instance(prey);
+  const auto guild = prey->guild;
+  const bool small = guild==GIL_SHEEP || guild==GIL_GIANT_RAT || guild==GIL_MOLERAT ||
+                     (guild==GIL_SCAVENGER && prey->aivar[realId]!=findSymbol("ID_ORCBITER")->get_int());
+  switch(predator->guild) {
+    case GIL_WOLF:
+      return predator->aivar[realId]!=findSymbol("ID_KEILER")->get_int() && small;
+    case GIL_LURKER:
+      return guild==GIL_GOBBO;
+    case GIL_SNAPPER:
+      return guild<GIL_SEPERATOR_HUM || guild==GIL_GOBBO || small;
+    case GIL_SHADOWBEAST:
+      return guild<GIL_SEPERATOR_HUM || guild>GIL_SEPERATOR_ORC || small;
+    default:
+      return false;
+    }
+  }
+
+void GameScript::runMonsterAssessEnemy() {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::static_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+  const auto item = int(findSymbolIndex("ITMI_INNOSEYE_MIS"));
+  if(npc_hasitems(hero,item)>=1 && self->guild==GIL_DRAGON)
+    return;
+  if(self->aivar[noFightParker]==1 || other->aivar[noFightParker]==1)
+    return;
+  if(self->aivar[enemyOverride]==1 && other->guild<GIL_SEPERATOR_HUM)
+    return;
+
+  const auto levelInspector = hlp_getnpc(int(findSymbolIndex("PC_LEVELINSPEKTOR")));
+  findSymbol("B_MM_ASSESSENEMY.PCL")->set_instance(levelInspector);
+  if(hlp_getinstanceid(other)==hlp_getinstanceid(levelInspector))
+    return;
+  const auto magicGolem = hlp_getnpc(int(findSymbolIndex("MAGICGOLEM")));
+  const auto lares = hlp_getnpc(int(findSymbolIndex("VLK_449_LARES")));
+  findSymbol("B_MM_ASSESSENEMY.MGO")->set_instance(magicGolem);
+  findSymbol("B_MM_ASSESSENEMY.LAR")->set_instance(lares);
+  if(hlp_getinstanceid(self)==hlp_getinstanceid(magicGolem) && hlp_getinstanceid(other)==hlp_getinstanceid(lares))
+    return;
+  if(npc_getdisttowp(self,"OC_RAMP_07")<=500 || other->aivar[invincible]==1)
+    return;
+
+  const bool diving = monsterTargetHasBodyState(other,BS_DIVE);
+  const bool swimming = monsterTargetHasBodyState(other,BS_SWIM);
+  if(self->aivar[followInWater]==0 && (diving || swimming))
+    return;
+  if(npc_getheighttonpc(self,other)>findSymbol("PERC_DIST_HEIGHT")->get_int())
+    return;
+  if(other->guild>GIL_SEPERATOR_HUM && npc_isplayer(other) && wld_getguildattitude(self->guild,other->guild)!=ATT_HOSTILE)
+    return;
+
+  const auto distance = npc_getdisttonpc(self,other);
+  const auto activeRange = findSymbol("PERC_DIST_MONSTER_ACTIVE_MAX")->get_int();
+  if(self->senses_range>activeRange && distance>activeRange && !npc_canseenpc(self,other))
+    return;
+  if(self->guild==GIL_ORC || self->guild==GIL_FRIENDLY_ORC) {
+    const bool standing = monsterTargetHasBodyState(other,BS_STAND);
+    const bool sneaking = monsterTargetHasBodyState(other,BS_SNEAK);
+    if((standing || sneaking) && !npc_canseenpc(self,other))
+      return;
+    }
+  if(!npc_canseenpcfreelos(self,other))
+    return;
+
+  const auto start = [&](std::string_view state, bool setTarget = true) {
+    npc_clearaiqueue(self);
+    if(setTarget)
+      npc_settarget(self,other);
+    vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+    ai_startstate(self,int(findFunction(state).ptr),0,"");
+    };
+  if(self->aivar[partyMember]==1) {
+    if(int32_t(other->type)!=findSymbol("NPCTYPE_FRIEND")->get_int())
+      start("ZS_MM_ATTACK");
+    return;
+    }
+  if(self->aivar[threatenBeforeAttack]==0) {
+    start("ZS_MM_ATTACK");
+    return;
+    }
+  const auto hunt = findFunction("ZS_MM_HUNT");
+  if(npc_isinstate(self,int(findFunction("ZS_MM_EATBODY").ptr)) || npc_isinstate(self,int(hunt.ptr))) {
+    if(distance<=findSymbol("FIGHT_DIST_MONSTER_ATTACKRANGE")->get_int())
+      start("ZS_MM_ATTACK");
+    return;
+    }
+  if(monsterPredatorFoundPrey(self,other)) {
+    start("ZS_MM_HUNT");
+    return;
+    }
+  if(monsterPredatorFoundPrey(other,self)) {
+    if(distance<=findSymbol("FIGHT_DIST_MONSTER_FLEE")->get_int() && !npc_isinstate(other,int(hunt.ptr)))
+      start("ZS_MM_FLEE");
+    return;
+    }
+  start("ZS_MM_THREATENENEMY",false);
   }

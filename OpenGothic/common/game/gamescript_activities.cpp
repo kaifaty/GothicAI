@@ -9,6 +9,10 @@ void GameScript::loadNativeRoutines() {
   if(!nativeRoutineProgram || !activityEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return;
 
+  vm.override_function("B_MM_ASSESSENEMY",std::function<void()>{[this] { runMonsterAssessEnemy(); }},[this] {
+    return nativeMonsterPerceptionsEnabled();
+    });
+
   static constexpr NativeRoutinePhase routines[] = {
     {"ZS_GOTOBED",            &GameScript::runMovementRoutine},
     {"ZS_SLEEP",              &GameScript::runMovementRoutine, 0, RoutineWake::Sleep},
