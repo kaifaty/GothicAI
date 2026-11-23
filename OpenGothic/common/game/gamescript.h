@@ -249,6 +249,14 @@ class GameScript final : public GameRules {
     bool runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runBanditCamp(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runDormantGolem(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool invokeNativeRoutineReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
+    void wakeDormantGolem(Npc& npc);
+    void assessSleepTalk(Npc& npc);
+    void runPortalEarthquake(Npc& npc);
+    void resetRoutineNpc(const std::shared_ptr<daedalus::INpc>& self);
+    bool npcBodyStateContains(const std::shared_ptr<daedalus::INpc>& self, BodyState state);
     bool runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);

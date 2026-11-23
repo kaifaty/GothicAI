@@ -132,6 +132,45 @@ bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
   return true;
   }
 
+bool GameScript::runDormantGolem(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const std::string_view name = symbol.name();
+  auto& body = npc.handle();
+  auto& position = body.aivar[routinePosition];
+  result = LOOP_CONTINUE;
+
+  if(name=="ZS_GOLEMDOWN") {
+    body.senses = int32_t(SensesBit::SENSE_SMELL);
+    body.senses_range = 2000;
+    npc.setPerceptionTime(1000);
+    npc.setPerceptionEnable(PERC_ASSESSPLAYER,findFunction("B_GOLEMRISE").ptr);
+    position = 1;
+    }
+  else if(name=="ZS_GOLEMDOWN_LOOP" && position==1) {
+    npc.aiPush(AiQueue::aiPlayAnim("T_DEAD"));
+    position = 0;
+    }
+  return true;
+  }
+
+void GameScript::wakeDormantGolem(Npc& npc) {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+  const auto remains = mob_hasitems("NW_GOLEMCHEST",int(findSymbolIndex("ITSE_GOLEMCHEST_MIS")));
+  const auto distance = npc_getdisttonpc(self,hero);
+  if(remains!=0 || distance>700)
+    return;
+
+  npc.aiPush(AiQueue::aiPlayAnim("T_RISE"));
+  auto& body = npc.handle();
+  body.no_focus = 0;
+  body.name[0] = findSymbol("$27152")->get_string(); // Localized name from the stock program.
+  body.flags = NpcFlag::NONE;
+  ai_startstate(self,int(findFunction("ZS_MM_ATTACK").ptr),0,"");
+  body.bodystate_interruptable_override = 0;
+  body.start_aistate = int32_t(findFunction(monsterScheduler).ptr);
+  body.aivar[32] = -1; // AIV_MM_RESTSTART = ONLYROUTINE
+  }
+
 bool GameScript::monsterTargetHasBodyState(const std::shared_ptr<daedalus::INpc>& target, int32_t state) {
   findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(state);
   findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(target);
