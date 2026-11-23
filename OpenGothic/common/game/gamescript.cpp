@@ -1167,6 +1167,8 @@ int GameScript::invokeMana(Npc &npc, Npc* target, int mana) {
 
   if(usesNativeShrinkSpell(npc.activeWeapon()))
     return runShrinkMana(npc,mana,false);
+  if(const auto result=runStockSpellMana(npc,mana))
+    return *result;
   return vm.call_function<int>(fn,mana);
   }
 
@@ -1197,8 +1199,11 @@ void GameScript::invokeSpell(Npc &npc, Npc* target, Item &it) {
   try {
     if(fn->name()=="SPELL_CAST_SHRINK" && usesNativeShrinkSpell(&it)) {
       castShrink(npc,target);
+      return;
       }
-    else if(fn->count()==1) {
+    if(runStockSpellCast(npc,fn->name(),splLevel))
+      return;
+    if(fn->count()==1) {
       // this is a leveled spell
       vm.call_function<void>(fn, splLevel);
       } else {
