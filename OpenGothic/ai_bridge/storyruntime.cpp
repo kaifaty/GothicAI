@@ -17,6 +17,34 @@ using storygraph::ExprP;
 using storygraph::Expr;
 using daedalus::DaedalusDataType;
 
+namespace {
+
+class StoryProgramExternals final : public storygraph::Externals {
+  public:
+    StoryProgramExternals(daedalus::DaedalusVm& vm, GameScript& script) : script(script), fallback(vm) {}
+
+    storygraph::Value call(const daedalus::DaedalusSymbol& fn, const std::vector<storygraph::Value>& args) override {
+      using storygraph::Value;
+      if(fn.name()=="NPC_SETREFUSETALK" && !fn.has_return() && args.size()==2 &&
+         args[0].type==Value::Inst && args[1].type==Value::Int) {
+        if(!args[0].inst)
+          return Value::integer(0);
+        const auto record=std::dynamic_pointer_cast<daedalus::INpc>(args[0].inst);
+        if(auto* npc=script.findNpc(static_cast<NpcRecord*>(record.get()))) {
+          npc->setRefuseTalkSeconds(args[1].i);
+          return Value::integer(0);
+          }
+        }
+      return fallback.call(fn,args);
+      }
+
+  private:
+    GameScript& script;
+    storygraph::VmExternals fallback;
+  };
+
+}
+
 StoryRuntime::StoryRuntime(std::function<std::string(const std::string&,const std::string&)> ownLine)
   :ownLine(std::move(ownLine)) {
   }
@@ -141,7 +169,10 @@ storygraph::Interpreter& StoryRuntime::interpreter(daedalus::DaedalusVm& v) {
   if(runFor==&v && interp!=nullptr)
     return *interp;
   interp.reset();
-  engine = std::make_unique<storygraph::VmExternals>(v);  // the engine's own functions, as the VM calls them
+  if(auto* sc=script(); sc!=nullptr && &sc->getVm()==&v)
+    engine = std::make_unique<StoryProgramExternals>(v,*sc);
+  else
+    engine = std::make_unique<storygraph::VmExternals>(v);
   interp = std::make_unique<storygraph::Interpreter>(v,*engine);
   interp->ownLine = [this](const std::string& npc, const std::string& text) { return ownLine(npc,text); };
   interp->choices = [this](const storygraph::Step& s) { return choices && choices(s); };

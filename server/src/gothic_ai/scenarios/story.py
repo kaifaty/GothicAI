@@ -407,6 +407,26 @@ async def graph_programs(
     counts = live.get("programs") or {}
     check("counters", counts.get("replaced", 0) >= 1 and counts.get("failed") == 0, str(counts))
 
+    # A director program may use the same timed refusal effect as a lifted stock dialogue.
+    refusal = ["call", "NPC_REFUSETALK", ["inst", "SELF"]]
+    attitude = ["call", "NPC_GETATTITUDE", ["inst", "SELF"], ["inst", "OTHER"]]
+    before = await link.story_eval(npc, [refusal, attitude])
+    refuse_node = {
+        "id": "DIR_REFUSE_TEST",
+        "npc": npc,
+        "description": "Проверка отказа от разговора",
+        "nr": 52,
+        "program": [
+            {"do": "call", "call": ["call", "NPC_SETREFUSETALK", ["inst", "SELF"], ["int", 15]]},
+        ],
+    }
+    await story.apply({"op": "add_node", "node": refuse_node})
+    chosen = asyncio.ensure_future(wait_message(link, DialogChosen, lambda m: m.node == refuse_node["id"], 10))
+    await link.choose_dialog(npc, refuse_node["id"])
+    await chosen
+    after = await link.story_eval(npc, [refusal, attitude])
+    check("refuse_talk", len(before) == 2 and before[0] == 0 and after == [1, before[1]], f"{before} -> {after}")
+
     for name, outcome in results.items():
         log.info("%-18s %s", name, outcome)
     return results

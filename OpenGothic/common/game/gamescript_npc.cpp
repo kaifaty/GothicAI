@@ -106,7 +106,7 @@ int GameScript::npc_gettalentvalue(std::shared_ptr<daedalus::INpc> npcRef, int s
 void GameScript::npc_setrefusetalk(std::shared_ptr<daedalus::INpc> npcRef, int timeSec) {
   auto npc = findNpc(npcRef);
   if(npc)
-    npc->setRefuseTalk(uint64_t(std::max(timeSec*1000,0)));
+    npc->setRefuseTalkSeconds(timeSec);
   }
 
 bool GameScript::npc_refusetalk(std::shared_ptr<daedalus::INpc> npcRef) {
