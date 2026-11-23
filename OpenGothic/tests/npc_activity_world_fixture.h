@@ -1770,6 +1770,109 @@ void damagePerceptions(World& world,Npc& npc,Npc& hero) {
   std::puts("Damage perception: stock damage and spell end routes preserve warnings, attack reasons, crime and retargeting");
   }
 
+void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  const auto phases=activityPhases(script,"ZS_ATTACK");
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  auto& aivar=npc.handle().aivar;
+  const auto savedAivar=std::to_array(aivar);
+  auto& state=Contract::aiState(npc).funcIni;
+  const auto savedState=state;
+  const auto savedTime=npc.stateTime();
+  const auto savedAttitude=npc.tempAttitude();
+  auto* savedTarget=npc.target();
+  auto* savedOther=npc.stateOther();
+  auto& hp=npc.handle().attribute[NpcAttribute::HITPOINTS];
+  const auto savedHp=hp;
+  const auto maxHp=npc.handle().attribute[NpcAttribute::HITPOINTS_MAX];
+  const auto savedInvincible=hero.handle().aivar[4];
+  const auto outputOrder=Contract::outputOrder(script);
+  const auto heal=script.findFunction("ZS_HEALSELF");
+  const auto arenaRunning=script.intSymbol("AF_RUNNING",-1);
+  const auto arenaAfter=script.intSymbol("AF_AFTER",-1);
+  require(!hero.isDown() && maxHp>2 && npc.qDistTo(hero)<500.f*500.f,"human attack: a standing fight with a live target");
+  hero.handle().aivar[4]=0;
+  state=ScriptFn(phases.init);
+  std::vector<std::string> original;
+  auto originalRandom=Contract::random(script);
+  for(bool native:{false,true}) {
+    enabled=native;
+    std::copy(savedAivar.begin(),savedAivar.end(),aivar);
+    hp=savedHp;
+    npc.setTempAttitude(savedAttitude);
+    npc.setTarget(&hero);
+    npc.clearAiQueue();
+    npc.setStateTime(0);
+    aivar[9]=script.intSymbol("AR_NONE",-1);
+    aivar[27]=10;
+    aivar[59]=0;
+    aivar[63]=1000;
+    Contract::outputOrder(script)=outputOrder;
+    script.setSeed(73106);
+    ActivityStream stream(world,npc);
+    size_t bytecode=0;
+    const auto count=vm.add_call_observer([&](const auto& symbol) {
+      bytecode+=symbol.name()=="ZS_ATTACK" || symbol.name()=="ZS_ATTACK_LOOP" || symbol.name()=="ZS_ATTACK_END";
+      });
+    script.invokeState(&npc,&hero,nullptr,ScriptFn(phases.init));
+    require(npc.hasPerc(PERC_ASSESSSURPRISE) && aivar[7]==int32_t(hero.instanceSymbol()) &&
+            aivar[8]==0 && aivar[19]==0 && aivar[68]==0,
+            "human attack: Init prepares the target, perceptions and pursuit");
+
+    npc.clearAiQueue();
+    aivar[23]=1;
+    require(script.invokeState(&npc,&hero,nullptr,ScriptFn(phases.loop))==LOOP_CONTINUE && aivar[23]==0 &&
+            npc.aiQueueFront() && npc.aiQueueFront()->act==AI_Wait && npc.aiQueueFront()->i0==800,
+            "human attack: an ordinary Loop waits before attacking when requested");
+    auto queue=Contract::queue(npc);
+    bool attacks=false;
+    while(queue.size()>0)
+      attacks |= queue.pop().act==AI_Attack;
+    require(attacks,"human attack: the live target receives the ordinary attack action");
+
+    aivar[63]=0;
+    require(script.invokeState(&npc,&hero,nullptr,ScriptFn(phases.loop))==LOOP_END && aivar[8]==1 &&
+            Contract::queue(npc).size()==1 && npc.aiQueueFront()->act==AI_StandUp,
+            "human attack: outside combat range the pursuit ends and the attack queue is cleared");
+    npc.clearAiQueue();
+    hp=maxHp/2-1;
+    aivar[45]=arenaRunning;
+    script.invokeState(&npc,&npc,nullptr,ScriptFn(phases.end));
+    vm.remove_call_observer(count);
+    queue=Contract::queue(npc);
+    require(aivar[45]==arenaAfter && npc.stateOther()==&hero && queue.size()==2 &&
+            queue.pop().act==AI_RemoveWeapon,"human attack: End restores the last target, closes the arena fight and sheathes");
+    const auto next=queue.pop();
+    require(next.act==AI_StartState && next.func==heal && next.target==&hero && next.i0==0 &&
+            bytecode==(native ? 0u : 4u) && stream.records==(native ? 4u : 0u),
+            "human attack: End queues healing and all four calls use the selected executor");
+    std::erase_if(stream.events,[](const auto& event) {
+      return !(event.starts_with("phase ") || event.starts_with("result ") ||
+               event.starts_with("queue ") || event.starts_with("random "));
+      });
+    if(!native) {
+      original=std::move(stream.events);
+      originalRandom=Contract::random(script);
+      } else {
+      require(original==stream.events && originalRandom==Contract::random(script),
+              "human attack: phase results, action queue and RNG match the original");
+      }
+    }
+  enabled=wasEnabled;
+  state=savedState;
+  std::copy(savedAivar.begin(),savedAivar.end(),aivar);
+  hero.handle().aivar[4]=savedInvincible;
+  hp=savedHp;
+  npc.setStateTime(int64_t(savedTime));
+  npc.setTarget(savedTarget);
+  npc.setOther(savedOther);
+  npc.setTempAttitude(savedAttitude);
+  std::puts("Human attack: Init, ordinary Loop, distance abort and End match the VM");
+  }
+
 void quietSoundRooms(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -1946,6 +2049,7 @@ void quietSoundRooms(Gothic& gothic) {
   observePlayerPhases(world,*npc,hero,false);
   drawWeaponPerceptions(world,*npc,hero);
   damagePerceptions(world,*npc,hero);
+  humanAttackPhases(world,*npc,hero);
   for(bool privateRoom:{false,true}) {
     std::vector<std::string> original;
     for(bool native:{false,true}) {

@@ -46,6 +46,7 @@ void GameScript::loadNativeRoutines() {
     {"ZS_CLEARROOM",          &GameScript::runClearRoom},
     {"ZS_REACTTODAMAGE",       &GameScript::runHumanReaction},
     {"ZS_REACTTOWEAPON",       &GameScript::runHumanReaction},
+    {"ZS_ATTACK",              &GameScript::runHumanAttack},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
     {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_REST",        &GameScript::runMonsterRoutine},

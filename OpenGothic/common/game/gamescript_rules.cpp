@@ -493,6 +493,244 @@ void GameScript::runDamageReaction() {
   vm.call_function<void>("B_ATTACK",self,attacker,findSymbol("AR_REACTTODAMAGE")->get_int(),0);
   }
 
+bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  constexpr size_t lastFightAgainstPlayer = 0; // AIV_LASTFIGHTAGAINSTPLAYER
+  constexpr size_t invincible = 4; // AIV_INVINCIBLE
+  constexpr size_t lastTarget = 7; // AIV_LASTTARGET
+  constexpr size_t pursuitEnded = 8; // AIV_PURSUITEND
+  constexpr size_t attackReason = 9; // AIV_ATTACKREASON
+  constexpr size_t ransacked = 10; // AIV_RANSACKED
+  constexpr size_t guardPassageStatus = 12; // AIV_GUARDPASSAGE_STATUS
+  constexpr size_t guardCalls = 19; // AIV_TAPOSITION
+  constexpr size_t selectedSpell = 20; // AIV_SELECTSPELL
+  constexpr size_t hitByOther = 22; // AIV_HITBYOTHERNPC
+  constexpr size_t waitBeforeAttack = 23; // AIV_WAITBEFOREATTACK
+  constexpr size_t lastAbsolution = 24; // AIV_LASTABSOLUTIONLEVEL
+  constexpr size_t followTime = 27; // AIV_MM_FOLLOWTIME
+  constexpr size_t followInWater = 28; // AIV_MM_FOLLOWINWATER
+  constexpr size_t arenaFight = 45; // AIV_ARENAFIGHT
+  constexpr size_t lastPlayerAttackReason = 47; // AIV_LASTPLAYERAR
+  constexpr size_t maxDistanceToWayPoint = 59; // AIV_MAXDISTTOWP
+  constexpr size_t originalTactic = 60; // AIV_ORIGINALFIGHTTACTIC
+  constexpr size_t fightDistanceCancel = 63; // AIV_FIGHTDISTCANCEL
+  constexpr size_t lastFightComment = 64; // AIV_LASTFIGHTCOMMENT
+  constexpr size_t loadedGame = 65; // AIV_LOADGAME
+  constexpr size_t killedByPlayer = 67; // AIV_KILLEDBYPLAYER
+  constexpr size_t stateTime = 68; // AIV_STATETIME
+  constexpr size_t pursuitDistance = 69; // AIV_DIST
+
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto hero = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance()); };
+  const auto constant = [&](std::string_view name) { return findSymbol(name)->get_int(); };
+  const auto absolution = [&] { return vm.call_function<int32_t>("B_GETCURRENTABSOLUTIONLEVEL",self); };
+  const auto bodyState = [&](int32_t body) { return vm.call_function<int32_t>("C_BODYSTATECONTAINS",other(),body)!=0; };
+  const auto targetDown = [&] { return vm.call_function<int32_t>("C_NPCISDOWN",other())!=0; };
+  const auto stopPursuit = [&] {
+    npc_clearaiqueue(self);
+    ai_standup(self);
+    };
+  const auto turnToTarget = [&] { vm.call_function<void>("B_TURNTONPC",self,other()); };
+  const auto say = [&](std::string_view line) { vm.call_function<void>("B_SAY",self,other(),line); };
+  const auto start = [&](std::string_view state) { ai_startstate(self,int(findFunction(state).ptr),0,""); };
+  const auto targetValue = [&](size_t slot) { const auto target = other(); return target ? target->aivar[slot] : 0; };
+  const auto guild = [](const std::shared_ptr<daedalus::INpc>& actor) { return actor ? int32_t(actor->guild) : 0; };
+  auto& aivar = self->aivar;
+  const std::string_view name = symbol.name();
+  if(name=="ZS_ATTACK") {
+    result = 0;
+    vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+    npc_percenable(self,PERC_ASSESSSURPRISE,int(findFunction("B_ASSESSSURPRISE").ptr));
+    vm.call_function<void>("B_VALIDATEOTHER");
+    aivar[lastTarget] = hlp_getinstanceid(other());
+    if(vm.call_function<int32_t>("C_WANTTOFLEE",self,other())!=0) {
+      npc_clearaiqueue(self);
+      vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+      npc_settarget(self,other());
+      start("ZS_FLEE");
+      return true;
+      }
+    if(aivar[loadedGame]==0)
+      vm.call_function<void>("B_SAY_ATTACKREASON");
+    if(npc_isinfightmode(self,int(FightMode::FMODE_NONE))) {
+      ai_equipbestrangedweapon(self);
+      ai_equipbestmeleeweapon(self);
+      }
+    ai_standup(self);
+    vm.call_function<void>("B_STOPLOOKAT",self);
+    turnToTarget();
+    ai_setwalkmode(self,constant("NPC_RUN"));
+    aivar[guardPassageStatus] = constant("GP_NONE");
+    aivar[lastAbsolution] = absolution();
+    aivar[pursuitEnded] = 0;
+    aivar[stateTime] = 0;
+    aivar[guardCalls] = 0;
+    aivar[hitByOther] = 0;
+    aivar[selectedSpell] = 0;
+    return true;
+    }
+
+  if(name=="ZS_ATTACK_LOOP") {
+    result = LOOP_CONTINUE;
+    vm.call_function<void>("B_GREG_COMESTODEXTER");
+    npc_gettarget(self);
+    if(npc_getdisttonpc(self,other())>aivar[fightDistanceCancel]) {
+      stopPursuit();
+      aivar[pursuitEnded] = 1;
+      result = LOOP_END;
+      return true;
+      }
+    if(aivar[pursuitEnded]==0 && npc_getstatetime(self)>aivar[followTime]) {
+      stopPursuit();
+      aivar[pursuitEnded] = 1;
+      aivar[pursuitDistance] = npc_getdisttonpc(self,other());
+      aivar[stateTime] = npc_getstatetime(self);
+      if(guild(other())<constant("GIL_SEPERATOR_HUM"))
+        say("$RUNCOWARD");
+      }
+    if(aivar[pursuitEnded]==1) {
+      if(npc_getdisttonpc(self,other())>self->senses_range) {
+        result = LOOP_END;
+        return true;
+        }
+      if(npc_getstatetime(self)>aivar[stateTime]) {
+        const bool jumping = bodyState(BS_JUMP);
+        const bool running = bodyState(BS_RUN);
+        if((!jumping && !running) || npc_getdisttonpc(self,other())<aivar[pursuitDistance]) {
+          aivar[pursuitEnded] = 0;
+          npc_setstatetime(self,0);
+          aivar[stateTime] = 0;
+          } else {
+          turnToTarget();
+          aivar[pursuitDistance] = npc_getdisttonpc(self,other());
+          aivar[stateTime] = npc_getstatetime(self);
+          }
+        }
+      return true;
+      }
+    if(absolution()>aivar[lastAbsolution]) {
+      stopPursuit();
+      result = LOOP_END;
+      return true;
+      }
+    const bool diving = bodyState(BS_DIVE);
+    const bool swimming = bodyState(BS_SWIM);
+    if(aivar[followInWater]==0 && (diving || swimming)) {
+      stopPursuit();
+      aivar[pursuitEnded] = 1;
+      result = LOOP_END;
+      return true;
+      }
+    if(aivar[waitBeforeAttack]>=1) {
+      ai_wait(self,0.8f);
+      aivar[waitBeforeAttack] = 0;
+      }
+    if(aivar[maxDistanceToWayPoint]>0) {
+      const bool targetOutside = npc_getdisttowp(other(),self->wp)>aivar[maxDistanceToWayPoint];
+      const bool selfOutside = npc_getdisttowp(self,self->wp)>aivar[maxDistanceToWayPoint];
+      self->fight_tactic = targetOutside && selfOutside ? constant("FAI_NAILED") : aivar[originalTactic];
+      }
+    const bool jumping = bodyState(BS_JUMP);
+    const bool running = bodyState(BS_RUN);
+    if(!jumping && !running)
+      npc_setstatetime(self,0);
+    if(aivar[guardCalls]==0 && npc_getstatetime(self)>2) {
+      vm.call_function<void>("B_CALLGUARDS");
+      aivar[guardCalls] = 1;
+      }
+    if(aivar[guardCalls]==1 && npc_getstatetime(self)>8) {
+      vm.call_function<void>("B_CALLGUARDS");
+      aivar[guardCalls] = 2;
+      }
+    vm.call_function<void>("B_CREATEAMMO",self);
+    vm.call_function<void>("B_SELECTWEAPON",self,other());
+    if(!targetDown() && hlp_isvalidnpc(other())) {
+      if(targetValue(invincible)==0)
+        ai_attack(self);
+      else
+        npc_clearaiqueue(self);
+      aivar[lastTarget] = hlp_getinstanceid(other());
+      return true;
+      }
+    npc_clearaiqueue(self);
+    if(targetDown() && npc_isplayer(other()) && hlp_isvalidnpc(other()))
+      npc_settempattitude(self,npc_getpermattitude(self,hero()));
+    if(aivar[attackReason]!=constant("AR_KILL")) {
+      npc_perceiveall(self);
+      npc_getnexttarget(self);
+      }
+    const bool fakeBandit = vm.call_function<int32_t>("C_PLAYERISFAKEBANDIT",self,other())!=0;
+    const bool vulnerable = targetValue(invincible)==0;
+    const bool nearHeight = npc_getheighttonpc(self,other())<constant("PERC_DIST_HEIGHT");
+    const bool nearDistance = npc_getdisttonpc(self,other())<constant("PERC_DIST_INTERMEDIAT");
+    const bool player = npc_isplayer(other());
+    const bool down = targetDown();
+    if(!(self->guild==GIL_BDT && fakeBandit) && vulnerable && nearHeight && (player || nearDistance) &&
+       !down && hlp_isvalidnpc(other())) {
+      if(wld_getguildattitude(int(self->guild),guild(other()))==ATT_HOSTILE) {
+        const auto reason = constant("AR_GUILDENEMY");
+        aivar[attackReason] = reason;
+        if(player) {
+          aivar[lastPlayerAttackReason] = reason;
+          aivar[lastFightAgainstPlayer] = constant("FIGHT_CANCEL");
+          aivar[lastFightComment] = 0;
+          }
+        } else if(npc_getattitude(self,other())==ATT_HOSTILE) {
+        aivar[attackReason] = aivar[lastPlayerAttackReason];
+        }
+      return true;
+      }
+    npc_clearaiqueue(self);
+    if(aivar[lastTarget]!=hlp_getinstanceid(hero()) && aivar[lastFightAgainstPlayer]==constant("FIGHT_CANCEL"))
+      aivar[lastFightComment] = 1;
+    result = LOOP_END;
+    return true;
+    }
+
+  if(name!="ZS_ATTACK_END")
+    return false;
+  result = 0;
+  vm.global_other()->set_instance(hlp_getnpc(aivar[lastTarget]));
+  if(aivar[pursuitEnded]==1) {
+    if(self->type!=NpcType::G2_FRIEND && npc_isplayer(other()) && hlp_isvalidnpc(other()))
+      npc_settempattitude(self,ATT_HOSTILE);
+    if(aivar[arenaFight]==constant("AF_RUNNING"))
+      aivar[arenaFight] = constant("AF_AFTER");
+    }
+  if(aivar[pursuitEnded]==0) {
+    if(absolution()>aivar[lastAbsolution])
+      say("$WISEMOVE");
+    else
+      vm.call_function<void>("B_SAY_ATTACKEND");
+    }
+  if(wld_getguildattitude(int(self->guild),guild(hero()))!=ATT_HOSTILE && targetValue(killedByPlayer)==1)
+    vm.call_function<void>("B_SETATTITUDE",self,int(ATT_FRIENDLY));
+  if(vm.call_function<int32_t>("C_NPCHASATTACKREASONTOKILL",self)!=0 && npc_isinstate(other(),int(ZS_Unconscious)))
+    vm.call_function<void>("B_FINISHINGMOVE",self,other());
+  ai_removeweapon(self);
+  const bool near = npc_getdisttonpc(self,other())<constant("PERC_DIST_INTERMEDIAT");
+  const bool alwaysRansack = vm.call_function<int32_t>("C_NPCRANSACKSALWAYS",self)!=0;
+  const bool robbed = targetValue(ransacked)!=0;
+  const bool wantToRansack = vm.call_function<int32_t>("C_WANTTORANSACK",self)!=0;
+  const bool down = targetDown();
+  if(near && (alwaysRansack || !robbed) && wantToRansack && down) {
+    if(const auto target = other())
+      target->aivar[ransacked] = 1;
+    if(guild(other())<constant("GIL_SEPERATOR_HUM")) {
+      start("ZS_RANSACKBODY");
+      return true;
+      }
+    if(npc_hasitems(other(),int(findSymbolIndex("ITFOMUTTONRAW")))>0 &&
+       hlp_getinstanceid(findSymbol("ALLIGATORJACK")->get_instance())==hlp_getinstanceid(self)) {
+      start("ZS_GETMEAT");
+      return true;
+      }
+    }
+  if(self->attribute[NpcAttribute::HITPOINTS]<self->attribute[NpcAttribute::HITPOINTS_MAX]/2)
+    start("ZS_HEALSELF");
+  return true;
+  }
+
 bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   constexpr size_t lastFightAgainstPlayer = 0; // AIV_LASTFIGHTAGAINSTPLAYER
   constexpr size_t repeatedWarning = 19; // AIV_TAPOSITION
