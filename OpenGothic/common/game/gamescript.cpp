@@ -99,6 +99,7 @@ GameScript::GameScript(GameSession &owner)
   loadNativeNpcGlobals();
   loadNativeRoutines();
   loadNativeRoomReaction();
+  loadNativeHumanPerceptions();
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
   }
@@ -1125,7 +1126,8 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
     phase.fromRecord();
     runQuietSoundReaction(*npc);
     }
-  else if(sym!=nullptr && npc!=nullptr && (invokeNativeRoomPerception(*sym,phase) || invokeNativeMonsterPerception(*sym,phase))) {
+  else if(npc!=nullptr && ((sym!=nullptr && (invokeNativeRoomPerception(*sym,phase) || invokeNativeMonsterPerception(*sym,phase))) ||
+                           invokeNativeHumanPerception(fn,phase))) {
     // The perception ran in the engine.
     }
   else if(sym!=nullptr && sym->rtype() == daedalus::DaedalusDataType::INT) {
