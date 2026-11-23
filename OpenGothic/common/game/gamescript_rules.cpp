@@ -82,9 +82,14 @@ bool GameScript::invokeNativeRoomPerception(const daedalus::DaedalusSymbol& symb
 void GameScript::loadNativeRoomReaction() {
   if(!nativeRoutineProgram)
     return;
-  vm.override_function("B_ASSESSENTERROOM",std::function<int32_t()>{[this] { return runEnterRoomReaction(); }},[this] {
-    return nativeRoomReactionsEnabled();
-    });
+  const auto enabled = [this] { return nativeRoomReactionsEnabled(); };
+  vm.override_function("B_ASSESSENTERROOM",std::function<int32_t()>{[this] { return runEnterRoomReaction(); }},enabled);
+  vm.override_function("C_NPCISBOTHEREDBYPLAYERROOMGUILD",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [this](auto& machine) -> daedalus::DaedalusNakedCall {
+      const auto npc = std::dynamic_pointer_cast<daedalus::INpc>(machine.pop_instance());
+      machine.push_reference(findSymbol(isBotheredByPlayerRoomGuild(npc) ? "TRUE" : "FALSE"));
+      return {};
+      }},enabled);
   }
 
 void GameScript::setPerceptionPreset(bool normal) {

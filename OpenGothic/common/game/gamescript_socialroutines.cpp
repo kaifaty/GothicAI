@@ -562,7 +562,7 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
     npc_setrefusetalk(other(),20);
     const bool unfriendly = npc_getattitude(self,other())!=ATT_FRIENDLY;
     const bool publicRoom = wld_getplayerportalguild()==int32_t(GIL_PUBLIC);
-    const bool bothered = vm.call_function<int32_t>("C_NPCISBOTHEREDBYPLAYERROOMGUILD",self)!=0;
+    const bool bothered = isBotheredByPlayerRoomGuild(self);
     if((unfriendly && publicRoom) || bothered)
       ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),0,"");
     result = 0;
