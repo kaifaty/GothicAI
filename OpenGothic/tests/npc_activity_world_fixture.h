@@ -1409,7 +1409,7 @@ void quietSoundRooms(Gothic& gothic) {
   EventActor activity;
   activity.npc=npc;
   activity.state="ZS_STAND_WP";
-  activity.phases=activityPhases(script,activity.state);
+  activity.phases=activityPhases(script,activity.state.c_str());
   activity.pointName=post->name;
   const auto stand=ScriptFn(activity.phases.init);
   npc->clearRoutine();
