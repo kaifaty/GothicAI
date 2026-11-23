@@ -349,6 +349,8 @@ void GameScript::loadNativeHumanPerceptions() {
   damageCallback = findFunction("B_ASSESSDAMAGE");
   enemyCallback = findFunction("B_ASSESSENEMY");
   playerCallback = findFunction("B_ASSESSPLAYER");
+  theftCallback = findFunction("B_ASSESSTHEFT");
+  useMobCallback = findFunction("B_ASSESSUSEMOB");
   stopShortZapCallback = findFunction("B_STOPSHORTZAPPED");
   const auto enabled = [this] { return nativeHumanPerceptionsEnabled(); };
   vm.override_function("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }},enabled);
@@ -367,8 +369,10 @@ void GameScript::loadNativeHumanPerceptions() {
 
 bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase) {
   const bool stopShortZap = fn==stopShortZapCallback;
+  const bool propertyCrime = fn==theftCallback || fn==useMobCallback;
   if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=warnCallback && fn!=fightSoundCallback &&
-      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !stopShortZap) || !nativeHumanPerceptionsEnabled())
+      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !propertyCrime && !stopShortZap) ||
+     !nativeHumanPerceptionsEnabled())
     return false;
   phase.fromRecord();
   if(fn==drawWeaponCallback)
@@ -379,6 +383,8 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
     phase.result = runEnemyReaction();
   else if(fn==playerCallback)
     runPlayerAssessment();
+  else if(propertyCrime)
+    runPropertyCrime(fn==useMobCallback);
   else if(fn==warnCallback)
     runWarnReaction();
   else if(fn==fightSoundCallback)
@@ -781,6 +787,47 @@ int32_t GameScript::runEnemyReaction() {
     return 1;
     }
   return 0;
+  }
+
+void GameScript::runPropertyCrime(bool usingMob) {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto item = [&] { return std::dynamic_pointer_cast<daedalus::IItem>(vm.global_item()->get_instance()); };
+  const auto culprit = other();
+  if(!npc_isplayer(culprit) || self==nullptr)
+    return;
+  const bool indoors = wld_getplayerportalguild()>=int32_t(GIL_NONE);
+  if(indoors && npc_getheighttonpc(self,culprit)>findSymbol("PERC_DIST_INDOOR_HEIGHT")->get_int())
+    return;
+  if(wld_getguildattitude(int32_t(self->guild),int32_t(culprit->guild))==ATT_FRIENDLY) {
+    const bool personallyOwned = usingMob ? npc_isdetectedmobownedbynpc(culprit,self)
+                                          : npc_ownedbynpc(item(),self) && hlp_isvaliditem(item());
+    if(!personallyOwned)
+      return;
+    }
+  const bool possession = usingMob ? vm.call_function<int32_t>("C_ISUSEDMOBMYPOSSESSION",self,other())!=0
+                                   : vm.call_function<int32_t>("C_ISTAKENITEMMYPOSSESSION",self,other(),item())!=0;
+  if(!possession)
+    return;
+  if(!npc_canseenpc(self,other())) {
+    const bool supervising = npc_isinstate(self,int(findFunction("ZS_CLEARROOM").ptr)) ||
+                             npc_isinstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr));
+    if(!supervising || !npc_isinplayersroom(self))
+      return;
+    }
+  if(usingMob) {
+    const auto scheme = npc_getdetectedmob(other());
+    findSymbol("B_ASSESSUSEMOB.DETMOB")->set_string(scheme);
+    if(scheme!="CHESTSMALL" && scheme!="CHESTBIG")
+      return;
+    }
+  if(vm.call_function<int32_t>("C_WANTTOATTACKTHIEF",self,other())==0) {
+    if(isGateGuard(self))
+      memorizePlayerCrime(self,other(),findSymbol("CRIME_THEFT")->get_int());
+    return;
+    }
+  const auto reason = findSymbol(usingMob ? "AR_USEMOB" : "AR_THEFT")->get_int();
+  startNpcAttack(self,other(),reason,0);
   }
 
 void GameScript::runPlayerAssessment() {
