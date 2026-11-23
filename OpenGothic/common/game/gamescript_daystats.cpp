@@ -79,14 +79,21 @@ void DayScriptStats::call(const daedalus::DaedalusSymbol& symbol, const daedalus
   if(auto* p=phase()) {
     if(contexts.back().root) contexts.back().root=false; else ++p->nested;
     }
-  stack.push_back({symbol.name(),symbol.address(),false});
+  stack.push_back({symbol.name(),symbol.address()});
   }
 
 void DayScriptStats::instruction(const daedalus::DaedalusInstruction& instruction, uint32_t pc) {
   // An overridden BL can return without entering bytecode. It still counts as a
   // call, but must not become the top-level owner of later random draws.
-  while(!stack.empty() && !stack.back().entered && stack.back().address!=pc) stack.pop_back();
-  if(!stack.empty()) stack.back().entered=true;
+  while(!stack.empty() && stack.back().instructions==nullptr && stack.back().address!=pc) stack.pop_back();
+  if(stack.empty()) {
+    ++unattributedInstructions;
+    } else {
+    auto& frame=stack.back();
+    if(frame.instructions==nullptr)
+      frame.instructions=&instructionsBySymbol[frame.name];
+    ++*frame.instructions;
+    }
   if(auto* p=phase()) ++p->instructions;
   if(instruction.op==daedalus::DaedalusOpcode::RSR && !stack.empty()) stack.pop_back();
   }
@@ -138,7 +145,10 @@ std::string DayScriptStats::json() const {
     families[found==creationKinds.end() ? family(name) : found->second]+=count;
     }
   std::string out="{\"metric\":\"vm_instructions_inclusive\",\"calls\":"+std::to_string(calls)+",\"random\":"+std::to_string(rolls)+
-                  ",\"families\":"+counts(families)+",\"symbols\":"+counts(symbols)+",\"random_sources\":"+counts(sources)+",\"states\":{";
+                  ",\"families\":"+counts(families)+",\"symbols\":"+counts(symbols)+
+                  ",\"instructions_by_symbol\":"+counts(instructionsBySymbol)+
+                  ",\"unattributed_instructions\":"+std::to_string(unattributedInstructions)+
+                  ",\"random_sources\":"+counts(sources)+",\"states\":{";
   bool first=true;
   for(const auto& [name,state]:states) {
     if(!first) out+=",";

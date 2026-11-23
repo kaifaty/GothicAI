@@ -43,6 +43,7 @@ void GameScript::loadNativeRoutines() {
     {"ZS_STAND_DEMENTOR",     &GameScript::runSocialRoutine},
     {"ZS_STAND_RANGERMEETING",&GameScript::runSocialRoutine},
     {"ZS_OBSERVEPLAYER",      &GameScript::runObservePlayer},
+    {"ZS_CLEARROOM",          &GameScript::runClearRoom},
     {"ZS_DEAD",               &GameScript::runDeadState},
     {"ZS_UNCONSCIOUS",        &GameScript::runUnconsciousState},
     {"ZS_HEALSELF",           &GameScript::runHealSelf},
@@ -106,12 +107,8 @@ void GameScript::enableMonsterRoutinePerceptions(Npc& npc) {
 
 void GameScript::beginMonsterRoutine(Npc& npc, bool desynchronize, WalkBit mode) {
   npc.aiPush(AiQueue::aiSetWalkMode(mode));
-  if(desynchronize) {
-    const auto delay = rollRandom(1000,&npc,true);
-    findSymbol("B_MM_DESYNCHRONIZE.MSEC")->set_int(int32_t(delay));
-    if(delay>0)
-      npc.aiPush(AiQueue::aiWait(delay));
-    }
+  if(desynchronize)
+    desynchronizeNpc();
   const auto& waypoint = npc.handle().wp;
   if(NpcEngineCalls::nearestWaypoint(world(),npc)!=waypoint)
     NpcEngineCalls::gotoWaypoint(world(),npc,waypoint);

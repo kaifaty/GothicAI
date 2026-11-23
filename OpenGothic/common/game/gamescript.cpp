@@ -1125,6 +1125,9 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
     phase.fromRecord();
     runQuietSoundReaction(*npc);
     }
+  else if(sym!=nullptr && npc!=nullptr && invokeNativeRoomPerception(*sym,phase)) {
+    // The perception ran in the engine.
+    }
   else if(sym!=nullptr && sym->rtype() == daedalus::DaedalusDataType::INT) {
     ret = vm.call_function<int>(sym);
     }
