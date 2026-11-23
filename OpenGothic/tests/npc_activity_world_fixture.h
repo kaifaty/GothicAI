@@ -704,7 +704,7 @@ void guardCampfireChange(Gothic& gothic) {
   const auto* row=world.findWayPoint("OW_DJG_ROCKCAMP_01");
   const auto* fire=world.findPoint("FP_CAMPFIRE_DJG_ROCKCAMP_01",false);
   require(npc && row && fire,"Gestath and his camp must be in OLDWORLD");
-  diegoRouteBoundaries(world,*npc);
+  oldWorldNpcCases(world,*npc);
   EventActor guard;
   guard.state="ZS_STAND_GUARDING";
   guard.phases=activityPhases(script,guard.state.c_str());

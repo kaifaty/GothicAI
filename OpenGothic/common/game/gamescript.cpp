@@ -98,6 +98,7 @@ GameScript::GameScript(GameSession &owner)
   loadNativeKillNpc();
   loadNativeNpcGlobals();
   loadNativeMonsterAttitudes();
+  loadNativeWorldEntry();
   loadNativeRoutineExchange();
   loadNativeRoutines();
   loadNativeRoomReaction();

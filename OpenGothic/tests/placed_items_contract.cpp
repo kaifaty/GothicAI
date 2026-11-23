@@ -85,7 +85,7 @@ namespace {
 using NpcWorldFixture::activityNpc;
 using NpcWorldFixture::activityQueue;
 using NpcWorldFixture::companionPlayerPerceptions;
-using NpcWorldFixture::diegoRouteBoundaries;
+using NpcWorldFixture::oldWorldNpcCases;
 using NpcWorldFixture::fightSoundPerceptions;
 using NpcWorldFixture::loadSavedNpc;
 using NpcWorldFixture::require;
