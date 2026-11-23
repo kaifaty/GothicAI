@@ -32,7 +32,7 @@ class DayScriptStats {
 
   private:
     struct Context { std::string state, phase; bool root=true; };
-    struct Frame { std::string name; uint32_t address; bool entered=false; };
+    struct Frame { std::string name; uint32_t address; uint64_t* instructions=nullptr; };
     void call(const daedalus::DaedalusSymbol& symbol, const daedalus::DaedalusVm& vm);
     void instruction(const daedalus::DaedalusInstruction& instruction, uint32_t pc);
     void external(const daedalus::DaedalusSymbol& symbol);
@@ -40,8 +40,8 @@ class DayScriptStats {
     std::string family(std::string_view name) const;
     bool active=true;
     uint64_t callObserver=0;
-    uint64_t calls=0, rolls=0;
-    std::map<std::string,uint64_t> symbols, sources;
+    uint64_t calls=0, rolls=0, unattributedInstructions=0;
+    std::map<std::string,uint64_t> symbols, sources, instructionsBySymbol;
     std::map<std::string,State> states;
     std::map<std::string,std::string> creationKinds;
     std::set<std::string> perceptions, dialogs;

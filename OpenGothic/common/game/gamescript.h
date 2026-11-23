@@ -253,6 +253,7 @@ class GameScript final : public GameRules {
     bool runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -350,9 +351,25 @@ class GameScript final : public GameRules {
       int32_t heightLimit = 0;
       int32_t indoorHeightLimit = 0;
       };
+    bool nativeRoomReactionsEnabled() const;
+    bool invokeNativeRoomPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
     void loadNativeRoomReaction();
     int32_t runEnterRoomReaction();
+    int32_t runExitIfRoomLeft();
+    void runPortalCollisionReaction();
+    void runClearRoomTalk();
     void runQuietSoundReaction(Npc& listener);
+
+    void setPerceptionPreset(bool normal);
+    void clearPerceptions(const std::shared_ptr<daedalus::INpc>& self);
+    bool isGateGuard(const std::shared_ptr<daedalus::INpc>& self);
+    bool isBotheredByPlayerRoomGuild(const std::shared_ptr<daedalus::INpc>& self);
+    bool isPlayerFakeBandit(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    void desynchronizeNpc();
+    void sayToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other, std::string_view line);
+    void turnToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    void lookAtNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    void stopLookAtNpc(const std::shared_ptr<daedalus::INpc>& self);
     static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                        RoutineDefinitionRuntime::Definitions& routines,
                                        NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,

@@ -26,7 +26,7 @@ bool GameScript::runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& sy
     npc.aiPush(AiQueue::aiRemoveWeapon());
     };
   auto standardInit = [&] {
-    vm.call_function<void>("PERCEPTION_SET_NORMAL");
+    setPerceptionPreset(true);
     reset();
     };
   auto goToWaypoint = [&] {
@@ -110,14 +110,14 @@ bool GameScript::runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& sy
   if(name=="ZS_FOLLOW_PLAYER" || name=="ZS_GUIDE_PLAYER") {
     const bool following = name=="ZS_FOLLOW_PLAYER";
     if(!following) {
-      vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+      setPerceptionPreset(false);
       reset();
       }
     properties.senses = int32_t(SensesBit::SENSE_SEE) | int32_t(SensesBit::SENSE_HEAR) | int32_t(SensesBit::SENSE_SMELL);
     properties.senses_range = 2000;
     npc.setPerceptionTime(following ? 300 : 1000);
     if(following)
-      vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+      setPerceptionPreset(false);
     enable(PERC_ASSESSPLAYER,following ? "B_ASSESSFOLLOWPLAYER" : "B_ASSESSGUIDEPLAYER");
     enable(PERC_ASSESSENEMY,"B_ASSESSENEMY");
     enable(PERC_ASSESSTALK,"B_ASSESSTALK");
