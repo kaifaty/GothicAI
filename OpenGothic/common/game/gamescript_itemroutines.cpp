@@ -2005,9 +2005,11 @@ bool GameScript::invokeNativeMobState(const daedalus::DaedalusSymbol& symbol) {
     return false;
 
   const auto& name = symbol.name();
+  int32_t result = 0;
   if(name=="B_SCGETTREASURE_S1") {
     // Digging is conditional on the HERO global and changes nothing for other actors.
-    return hlp_getinstanceid(vm.global_self()->get_instance())!=hlp_getinstanceid(vm.global_hero()->get_instance());
+    return hlp_getinstanceid(vm.global_self()->get_instance())!=hlp_getinstanceid(vm.global_hero()->get_instance()) ||
+           invokeStockProgram(symbol,result);
     }
 
   // Ordinary NPCs bind the hero without opening documents or production menus.
@@ -2030,7 +2032,7 @@ bool GameScript::invokeNativeMobState(const daedalus::DaedalusSymbol& symbol) {
   const auto self = hlp_getinstanceid(vm.global_self()->get_instance());
   const auto hero = hlp_getnpc(int32_t(findSymbolIndex("PC_HERO")));
   if(self==hlp_getinstanceid(hero))
-    return false;
+    return invokeStockProgram(symbol,result);
   if(book!=std::end(mayaBooks)) {
     readMayaBookForNpc(vm,*book,hero);
     return true;

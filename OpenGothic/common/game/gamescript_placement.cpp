@@ -946,6 +946,16 @@ void GameScript::invokeWorldTrigger(std::string_view fn) {
       }
     if(runIslandSpawnTrigger(vm,*symbol) || runAddonNpcTrigger(vm,*symbol))
       return;
+
+    static constexpr std::string_view storyTriggers[] = {
+      "B_GIVESTUNTBONUS_FUNC", "B_RAVENSESCAPEINTOTEMPELAVI", "EVT_RAVEN_AWAKE_FUNC",
+      "VALLEY_SHOWCASE_TRIGGERSCRIPT_FUNC", "EVT_ARCHOLDEAD_FUNC", "EVT_DIBRIDGE_OPEN_FUNC",
+      "EVT_FINAL_DOOR_SAY_01", "B_ADDON_PORTAL_ACTIVATED", "B_EVENT_PORTAL_FIRST_EARTHQUAKE",
+      "EVT_ORNAMENT_SWITCH_FARM_01_FUNC", "EVT_SC_ENTER_LIBRARY",
+      };
+    int32_t result = 0;
+    if(std::ranges::find(storyTriggers,symbol->name())!=std::end(storyTriggers) && invokeStockProgram(*symbol,result))
+      return;
     }
   vm.call_function(symbol);
   }
