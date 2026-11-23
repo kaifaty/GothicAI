@@ -3196,6 +3196,114 @@ void assessMagicPerception(World& world) {
   std::puts("Magic perception: root dispatch, fear exceptions, fight sound, queue and perception cleanup match");
   }
 
+void playerXpRule(World& world) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  auto* xp=script.findSymbol("B_GIVEPLAYERXP");
+  auto* amount=script.findSymbol("B_GIVEPLAYERXP.ADD_XP");
+  auto* text=script.findSymbol("B_GIVEPLAYERXP.CONCATTEXT");
+  const auto& symbols=vm.symbols();
+  const auto temporary=std::ranges::find_if(symbols,[](const auto& symbol) {
+    return symbol.name()=="$PHOENIX_FAKE_STRINGS";
+    });
+  require(xp && amount && text && world.player() && temporary!=symbols.end(),"the XP fixture needs its stock bindings");
+  auto* scratch=vm.find_symbol_by_index(temporary->index());
+  const auto strings=[&] {
+    std::vector<std::string> value;
+    for(uint16_t i=0;i<scratch->count();++i)
+      value.emplace_back(scratch->get_string(i));
+    return value;
+    };
+  const auto oldStrings=strings();
+  const auto restoreStrings=[&] {
+    for(uint16_t i=0;i<oldStrings.size();++i)
+      scratch->set_string(oldStrings[i],i);
+    };
+  const auto oldAmount=amount->get_int();
+  const std::string oldText=text->get_string();
+  auto& record=world.player()->handle();
+  const auto fields=[&] {
+    return std::tuple(record.exp,record.exp_next,record.level,record.attribute[ATR_HITPOINTS],
+                      record.attribute[ATR_HITPOINTSMAX],record.lp);
+    };
+  const auto oldFields=fields();
+  const auto oldSelf=vm.global_self()->get_instance(), oldHero=vm.global_hero()->get_instance();
+  const auto oldGi=vm.unsafe_get_gi();
+
+  const auto integer=[&](uint16_t depth) {
+    const auto& frame=vm.stack_frame(depth);
+    if(frame.reference)
+      return std::get<daedalus::DaedalusSymbol*>(frame.value)->get_int(frame.index,frame.context.get());
+    return std::get<int32_t>(frame.value);
+    };
+  const auto string=[&](uint16_t depth) {
+    const auto& frame=vm.stack_frame(depth);
+    return std::get<daedalus::DaedalusSymbol*>(frame.value)->get_string(frame.index,frame.context.get());
+    };
+  using Notice=std::tuple<std::string,std::string,int32_t,int32_t,std::string,int32_t>;
+
+  const struct Case {
+    int32_t level, experience, threshold, award, result, next, resultLevel;
+    } cases[]={
+    {0,100,9000,25,125,500,0},
+    {0,499,9000,1,500,1500,1},
+    {2,1000,3000,10000,11000,5000,3},
+    {2,INT32_MAX-2,INT32_MAX,10,INT32_MIN+7,INT32_MAX,2},
+    {1,INT32_MAX-3,INT32_MAX-3,1,INT32_MAX-2,INT32_MIN+1496,2}
+    };
+  for(const auto& c:cases) {
+    const auto run=[&](bool native) {
+      events=native;
+      restoreStrings();
+      record.level=c.level;
+      record.exp=c.experience;
+      record.exp_next=c.threshold;
+      record.attribute[ATR_HITPOINTS]=78;
+      record.attribute[ATR_HITPOINTSMAX]=123;
+      record.lp=16;
+      size_t instructions=0;
+      std::vector<Notice> notices;
+      const auto observer=vm.add_call_observer([&](const auto& symbol) {
+        if(symbol.name()=="B_CHECKLOG")
+          notices.emplace_back(symbol.name(),"",0,0,"",0);
+        });
+      vm.observe_instructions([&](const auto&) { if(vm.pc()==xp->address()) ++instructions; });
+      vm.observe_externals([&](const auto& symbol) {
+        if(symbol.name()=="PRINTSCREEN")
+          notices.emplace_back(symbol.name(),string(4),integer(3),integer(2),string(1),integer(0));
+        if(symbol.name()=="SND_PLAY")
+          notices.emplace_back(symbol.name(),string(0),0,0,"",0);
+        });
+      std::string error;
+      const auto result=storygraph::callFunction(vm,*xp,{storygraph::Value::integer(c.award)},error);
+      require(result.has_value(),error.c_str());
+      vm.remove_call_observer(observer);
+      vm.observe_instructions({});
+      vm.observe_externals({});
+      const bool levelUp=c.level!=c.resultLevel;
+      require(record.exp==c.result && record.exp_next==c.next && record.level==c.resultLevel &&
+              record.attribute[ATR_HITPOINTS]==(levelUp ? 90 : 78) &&
+              record.attribute[ATR_HITPOINTSMAX]==(levelUp ? 135 : 123) && record.lp==(levelUp ? 26 : 16),
+              "XP must retain the original single-level threshold, wrap and stat changes");
+      require((instructions==0)==native && amount->get_int()==c.award &&
+              vm.global_self()->get_instance()==oldSelf && vm.global_hero()->get_instance()==oldHero && vm.unsafe_get_gi()==oldGi,
+              "the XP helper must save the amount and restore its calling context");
+      return std::tuple(fields(),std::string(text->get_string()),strings(),notices);
+      };
+    const auto stock=run(false);
+    require(run(true)==stock,"the new XP rule must match saved fields, string scratch and exact notification arguments");
+    }
+  std::tie(record.exp,record.exp_next,record.level,record.attribute[ATR_HITPOINTS],
+           record.attribute[ATR_HITPOINTSMAX],record.lp)=oldFields;
+  amount->set_int(oldAmount);
+  text->set_string(oldText);
+  restoreStrings();
+  events=previousEvents;
+  std::puts("Player XP: stock wrap, single level-up, saved text, notices and quest hook match");
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
@@ -3217,7 +3325,10 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     auto spellActions=spellVictimPhasesWorld(gothic,events);
     if(events) require(spellActions==vmSpellActions,"spell victim: both executors queue the same commands in order");
     else vmSpellActions=std::move(spellActions);
-    if(stockMagic) assessMagicPerception(*gothic.world());
+    if(stockMagic) {
+      assessMagicPerception(*gothic.world());
+      playerXpRule(*gothic.world());
+      }
     gothic.clearGame().reset();
     seatedActivitiesWorld(gothic,events);
     if(events) {

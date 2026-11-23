@@ -80,12 +80,14 @@ void GameScript::loadNativeRoutines() {
       }
     }
 
+  const auto enabled=[this] {
+    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+    };
   using Handle=std::shared_ptr<daedalus::INpc>;
   vm.override_function("B_MAGICHURTNPC",std::function<void(Handle,Handle,int32_t)>{
-    [this](Handle attacker, Handle target, int32_t damage) { magicHurtNpc(attacker,target,damage); }},
-    [this] {
-      return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
-      });
+    [this](Handle attacker, Handle target, int32_t damage) { magicHurtNpc(attacker,target,damage); }},enabled);
+  vm.override_function("B_GIVEPLAYERXP",std::function<void(int32_t)>{
+    [this](int32_t amount) { givePlayerXp(amount); }},enabled);
   }
 
 bool GameScript::runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol&, int& result) {

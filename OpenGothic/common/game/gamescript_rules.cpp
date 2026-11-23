@@ -9,6 +9,7 @@
 #include "world/objects/npc.h"
 
 #include <algorithm>
+#include <bit>
 
 std::string_view GameScript::symbolName(size_t id) {
   if(auto* symbol = findSymbol(id))
@@ -620,6 +621,63 @@ bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& s
   if(drain && hp>fullDamage)
     npc_changeattribute(std::dynamic_pointer_cast<daedalus::INpc>(other()),ATR_HITPOINTS,fullDamage);
   return true;
+  }
+
+void GameScript::givePlayerXp(int32_t amount) {
+  const auto add=[](int32_t a,int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a)+uint32_t(b));
+    };
+  const auto hero=[&] {
+    return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+    };
+  const auto print=[&](daedalus::DaedalusSymbol* text,const char* y,const char* font) {
+    vm.push_reference(text);
+    vm.push_int(-1);
+    vm.push_reference(findSymbol(y));
+    vm.push_reference(findSymbol(font));
+    vm.push_int(2);
+    vm.unsafe_call_external(findSymbol("PRINTSCREEN"));
+    };
+
+  auto* savedAmount=findSymbol("B_GIVEPLAYERXP.ADD_XP");
+  auto* text=findSymbol("B_GIVEPLAYERXP.CONCATTEXT");
+  savedAmount->set_int(amount);
+  const auto current=hero();
+  vm.unsafe_set_gi(current);
+  if(current) {
+    if(current->level==0)
+      current->exp_next=500;
+    current->exp=add(current->exp,amount);
+    }
+
+  // The original formatting calls also update the VM's temporary strings.
+  text->set_string(findSymbol("PRINT_XPGAINED")->get_string());
+  vm.push_reference(text);
+  vm.push_reference(savedAmount);
+  vm.unsafe_call_external(findSymbol("INTTOSTRING"));
+  vm.unsafe_call_external(findSymbol("CONCATSTRINGS"));
+  text->set_string(vm.pop_string());
+  print(text,"YPOS_XPGAINED","FONT_SCREENSMALL");
+
+  const auto levelUp=hero();
+  vm.unsafe_set_gi(levelUp);
+  if(!levelUp || levelUp->exp>=levelUp->exp_next) {
+    if(levelUp) {
+      levelUp->level=add(levelUp->level,1);
+      const auto threshold=std::bit_cast<int32_t>(500u*(uint32_t(levelUp->level)+1u));
+      levelUp->exp_next=add(levelUp->exp_next,threshold);
+      const auto health=findSymbol("HP_PER_LEVEL")->get_int();
+      levelUp->attribute[ATR_HITPOINTSMAX]=add(levelUp->attribute[ATR_HITPOINTSMAX],health);
+      levelUp->attribute[ATR_HITPOINTS]=add(levelUp->attribute[ATR_HITPOINTS],health);
+      levelUp->lp=add(levelUp->lp,findSymbol("LP_PER_LEVEL")->get_int());
+      }
+    print(findSymbol("PRINT_LEVELUP"),"YPOS_LEVELUP","FONT_SCREEN");
+    // Reference the verified program's LevelUp literal to preserve the temporary string slots.
+    vm.push_reference(findSymbol("$12941"));
+    vm.unsafe_call_external(findSymbol("SND_PLAY"));
+    }
+
+  vm.unsafe_call_bl(findSymbol("B_CHECKLOG"));
   }
 
 int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {

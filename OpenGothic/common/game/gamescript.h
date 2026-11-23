@@ -272,6 +272,7 @@ class GameScript final : public GameRules {
     void castShrink(Npc& caster, Npc* target);
     void assessMagic(Npc& npc);
     void clearNpcPerceptions(const std::shared_ptr<daedalus::INpc>& npc);
+    void givePlayerXp(int32_t amount);
     bool monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window);
     void enableMonsterRoutinePerceptions(Npc& npc);
     void beginMonsterRoutine(Npc& npc, bool desynchronize = true, WalkBit mode = WalkBit::WM_Walk);
