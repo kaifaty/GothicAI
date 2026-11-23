@@ -573,12 +573,14 @@ namespace daedalus {
 		///
 		/// \param name The name of the function to override.
 		/// \param callback The C++ function to register as the external.
-		void override_function(std::string_view name, std::function<DaedalusNakedCall(DaedalusVm&)> const& callback) {
+		/// \param enabled An optional predicate evaluated before dispatch. False executes the script body.
+		void override_function(std::string_view name, std::function<DaedalusNakedCall(DaedalusVm&)> const& callback,
+		                       std::function<bool()> enabled = {}) {
 			auto* sym = find_symbol_by_name(name);
 			if (sym == nullptr) throw DaedalusSymbolNotFound {std::string {name}};
 			if (sym->is_external()) throw DaedalusVmException {"symbol " + sym->name() + " is already an external"};
 
-			_m_function_overrides[sym->address()] = {[callback](DaedalusVm& machine) { callback(machine); }, {}};
+			_m_function_overrides[sym->address()] = {[callback](DaedalusVm& machine) { callback(machine); }, std::move(enabled)};
 		}
 
 		/// \brief Overrides a function in Daedalus code with an external definition.
