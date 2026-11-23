@@ -93,3 +93,63 @@ bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
   result = 0;
   return true;
   }
+
+bool GameScript::runShrinkState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const std::string_view name=symbol.name();
+  const auto self=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  result=LOOP_CONTINUE;
+
+  if(name=="ZS_MAGICSHRUNK") {
+    npc_settarget(self,std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance()));
+    return true;
+    }
+  if(name=="ZS_MAGICSHRUNK_LOOP") {
+    ai_flee(self);
+    return true;
+    }
+  // Both End phases leave the scale and reduced attributes in place.
+  if(name.ends_with("_END"))
+    return true;
+
+  auto& record=npc.handle();
+  auto& stage=record.aivar[42]; // AIV_MM_SHRINKSTATE, also used by the spell and saved NPCs.
+  if(name=="ZS_MAGICSHRINK") {
+    if(npc_hasbodyflag(self,BS_FLAG_INTERRUPTABLE))
+      ai_standupquick(self);
+    else
+      ai_standup(self);
+    stage=0;
+    return true;
+    }
+
+  static constexpr float scale[]={
+    0.90f,0.85f,0.80f,0.75f,0.70f,0.65f,0.60f,0.55f,0.50f,0.45f,0.40f,0.35f,0.30f
+    };
+  if(stage>=0 && stage<int(std::size(scale))) {
+    const auto next=stage+1;
+    const auto value=scale[stage];
+    mdl_setmodelscale(self,value,value,value);
+    stage=next;
+    }
+  else if(stage==13) {
+    for(const auto attribute:{ATR_HITPOINTS,ATR_HITPOINTSMAX,ATR_STRENGTH})
+      npc_changeattribute(self,attribute,-(record.attribute[attribute]*9/10));
+    record.protection[PROT_BLUNT]/=10;
+    record.protection[PROT_EDGE]/=10;
+    record.protection[PROT_FIRE]/=10;
+    record.protection[PROT_FLY]=0;
+    record.protection[PROT_MAGIC]/=10;
+    record.protection[PROT_POINT]/=10;
+    stage=14;
+    }
+  else if(stage==14) {
+    const auto shrunk=findFunction("ZS_MAGICSHRUNK");
+    npc_clearaiqueue(self);
+    record.start_aistate=int32_t(shrunk.ptr);
+    ai_startstate(self,int(shrunk.ptr),1,"");
+    result=LOOP_END;
+    return true;
+    }
+  ai_wait(self,0.38f);
+  return true;
+  }

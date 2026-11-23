@@ -51,6 +51,8 @@ void GameScript::loadNativeRoutines() {
     {"ZS_MM_RTN_EATGROUND",   &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_WUSEL",       &GameScript::runRoamingRoutine},
     {"ZS_MM_RTN_ORCSIT",      &GameScript::runMonsterRoutine},
+    {"ZS_MAGICSHRINK",        &GameScript::runShrinkState},
+    {"ZS_MAGICSHRUNK",        &GameScript::runShrinkState},
     };
   for(const auto& routine : routines) {
     for(const std::string_view suffix : {"", "_LOOP", "_END"}) {

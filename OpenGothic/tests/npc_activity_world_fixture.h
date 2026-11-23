@@ -2560,6 +2560,91 @@ void itemRoutinePhasesWorld(Gothic& gothic,bool events) {
     }
   }
 
+void shrinkSpellStates(World& world) {
+  const auto program=NpcSnapshot::load(baseProgramIndex().dir.parent_path());
+  if(program.sha256!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
+    return;
+
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  const auto previousEvents=events;
+  auto* sheep=script.findSymbol("SHEEP");
+  const auto* wp=world.findWayPoint("NW_FARM4_BALTHASAR");
+  const auto shrinking=script.findFunction("ZS_MAGICSHRINK");
+  const auto shrunk=script.findFunction("ZS_MAGICSHRUNK");
+  require(sheep && wp && world.player() && shrinking.isValid() && shrunk.isValid(),
+          "the shrink fixture needs a monster, its states and the hero");
+  const auto previousSheep=sheep->get_instance();
+  size_t stateCalls=0;
+  const auto observer=vm.add_call_observer([&](const auto& function) {
+    if(function.name().starts_with("ZS_MAGICSHR")) ++stateCalls;
+    });
+  std::vector<uint8_t> previousSave;
+  const auto run=[&](bool native) {
+    events=native;
+    auto* npc=world.addNpc(sheep->index(),wp->position());
+    require(npc!=nullptr,"the shrink fixture must insert a live sheep");
+    npc->setScale(1.1f,1.2f,1.3f);
+    auto& record=npc->handle();
+    record.attribute[ATR_HITPOINTS]=319;
+    record.attribute[ATR_HITPOINTSMAX]=493;
+    record.attribute[ATR_STRENGTH]=167;
+    for(int i=0;i<PROT_MAX;++i)
+      record.protection[i]=10*i+9;
+
+    const auto snapshot=[&] {
+      npc->updateTransform();
+      return std::tuple(npc->transform().at(1,1),npcRecordFields(*npc),activityQueue(*npc),npc->target());
+      };
+    std::vector<decltype(snapshot())> steps;
+    stateCalls=0;
+    require(npc->startState(shrinking,""),"the monster must start shrinking");
+    Contract::tickRoutine(*npc);
+    steps.push_back(snapshot());
+    require(std::abs(std::get<0>(steps.back())-1.2f)<0.001f,"Init must preserve the pre-spell scale");
+    for(int stage=0;stage<=14;++stage) {
+      npc->clearAiQueue();
+      Contract::tickRoutine(*npc);
+      steps.push_back(snapshot());
+      if(stage==4) {
+        if(!native)
+          previousSave=savedNpc(*npc);
+        else {
+          npc->setScale(1.f,1.f,1.f);
+          npc->handle().aivar[42]=-1;
+          loadSavedNpc(*npc,previousSave);
+          require(npc->isInState(shrinking) && Contract::aiState(*npc).started && snapshot()==steps.back(),
+                  "loading a VM save must restore the active shrink phase, scale and wait command");
+          }
+        }
+      }
+    const auto* next=npc->aiQueueFront();
+    require(next && next->act==AI_StartState && next->func==shrunk && next->i0==1,
+            "the completed shrink must queue the permanent shrunken state");
+    Contract::nextAiAction(*npc);
+    require(npc->isInState(shrunk),"the NPC must enter the shrunken state through the queue");
+    Contract::tickRoutine(*npc);
+    require(npc->target()==world.player(),"the shrunken monster must target the hero");
+    steps.push_back(snapshot());
+    Contract::tickRoutine(*npc);
+    steps.push_back(snapshot());
+    npc->clearState(false);
+    steps.push_back(snapshot());
+    require(std::abs(std::get<0>(steps.back())-0.3f)<0.001f && (stateCalls==0)==native,
+            "the selected executor must keep the final scale after End");
+    world.removeNpc(*npc);
+    sheep->set_instance(previousSheep);
+    return steps;
+    };
+  const auto stock=run(false);
+  require(run(true)==stock,"the shrink states must match VM scale, attributes, target and commands");
+  vm.remove_call_observer(observer);
+  events=previousEvents;
+  std::puts("Shrink spell states: staged effects, old save and permanent shrunken state match stock");
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
@@ -2568,6 +2653,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
     const auto save=pointActivitiesWorld(gothic,events);
     itemRoutinePhasesWorld(gothic,events);
+    if(events) shrinkSpellStates(*gothic.world());
     ActivityEventsWorld paired(gothic);
     pairedSmalltalkWorld(paired,events);
     sleepRoutineWorld(gothic,events);
