@@ -234,3 +234,39 @@ bool GameScript::runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol
   npc.setStateTime(0);
   return true;
   }
+
+bool GameScript::invokeNativeMobState(const daedalus::DaedalusSymbol& symbol) {
+  if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
+     ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
+    return false;
+
+  // These stock S1 callbacks only bind the hero for an ordinary NPC. Their player branches open
+  // documents or production menus. Sleep also checks the diagnostic Rockefeller instance.
+  static constexpr std::string_view callbacks[] = {
+    "SLEEPABIT_S1", "POTIONALCHEMY_S1", "MAKERUNE_S1", "GOLDHACKEN_S1", "PRAYIDOL_S1", "PRAYSHRINE_S1",
+    "USE_BOOKSTAND_01_S1", "USE_BOOKSTAND_ADDON_BL_S1", "USE_BOOKSTANDDEMENTOR_S1",
+    "USE_BOOKSTANDALCHEMY1_S1", "USE_BOOKSTANDALCHEMY2_S1", "USE_BOOKSTANDALCHEMY3_S1",
+    "USE_BOOKSTANDANIMALS1_S1", "USE_BOOKSTANDANIMALS2_S1", "USE_BOOKSTANDANIMALS3_S1",
+    "USE_BOOKSTANDHISTORY1_S1", "USE_BOOKSTANDHISTORY2_S1", "USE_BOOKSTANDHISTORY3_S1",
+    "USE_BOOKSTAND_KREISE_01_S1", "USE_BOOKSTAND_KREISE_02_S1", "USE_BOOKSTAND_KREISE_03_S1",
+    "USE_BOOKSTAND_KREISE_04_S1", "USE_BOOKSTAND_KREISE_05_S1", "USE_BOOKSTAND_KREISE_06_S1",
+    "BOOKSTAND_MILTEN_01_S1", "BOOKSTAND_MILTEN_02_S1", "BOOKSTAND_MILTEN_03_S1", "BOOKSTAND_ENGOR_01_S1",
+    };
+  const auto& name = symbol.name();
+  if(std::ranges::find(callbacks,name)==std::end(callbacks))
+    return false;
+  const auto self = hlp_getinstanceid(vm.global_self()->get_instance());
+  const auto hero = hlp_getnpc(int32_t(findSymbolIndex("PC_HERO")));
+  if(self==hlp_getinstanceid(hero))
+    return false;
+  if(name=="SLEEPABIT_S1") {
+    const auto rock = hlp_getnpc(int32_t(findSymbolIndex("PC_ROCKEFELLER")));
+    if(self==hlp_getinstanceid(rock))
+      return false;
+    findSymbol("SLEEPABIT_S1.HER")->set_instance(hero);
+    findSymbol("SLEEPABIT_S1.ROCK")->set_instance(rock);
+    } else {
+    findSymbol(name+".HER")->set_instance(hero);
+    }
+  return true;
+  }

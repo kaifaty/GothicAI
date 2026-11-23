@@ -413,6 +413,7 @@ class GameScript final : public GameRules {
     auto  findFocus(std::string_view name) -> daedalus::IFocus;
 
     void storeItem(Item* it);
+    bool invokeNativeMobState(const daedalus::DaedalusSymbol& symbol);
 
     bool aiOutput   (Npc &from, std::string_view name, bool overlay);
     bool aiOutputSvm(Npc &from, std::string_view name, std::string_view svm, Npc* target, bool overlay);

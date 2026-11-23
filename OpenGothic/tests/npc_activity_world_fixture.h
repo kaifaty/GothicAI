@@ -4596,9 +4596,24 @@ void sleepRoutineWorld(Gothic& gothic,bool events,bool deep) {
 
   auto& vm=world.script().getVm();
   size_t vmLoops=0;
+  size_t vmBed=0;
+  size_t vmAlchemy=0;
+  const auto actor=std::static_pointer_cast<daedalus::INpc>(matteo->handlePtr());
   const auto observer=vm.add_call_observer([&](const auto& function) {
     vmLoops+=function.name()==loopName;
+    if(vm.global_self()->get_instance()==actor) {
+      vmBed+=function.name()=="SLEEPABIT_S1";
+      vmAlchemy+=function.name()=="POTIONALCHEMY_S1";
+      }
     });
+  const auto hero=vm.find_symbol_by_name("PC_HERO")->get_instance();
+  auto& sleepHero=*vm.find_symbol_by_name("SLEEPABIT_S1.HER");
+  auto& sleepRock=*vm.find_symbol_by_name("SLEEPABIT_S1.ROCK");
+  auto& alchemyHero=*vm.find_symbol_by_name("POTIONALCHEMY_S1.HER");
+  const auto production=vm.find_symbol_by_name("PLAYER_MOBSI_PRODUCTION")->get_int();
+  sleepHero.set_instance(nullptr);
+  sleepRock.set_instance(hero);
+  alchemyHero.set_instance(nullptr);
   const auto settled=[&] {
     const auto* object=matteo->interactive();
     return matteo->isInState(ScriptFn(sleep.init)) && object && object->checkMobName("BEDHIGH") &&
@@ -4611,6 +4626,13 @@ void sleepRoutineWorld(Gothic& gothic,bool events,bool deep) {
           "only ordinary sleep registers the quiet sound callback during Init");
   test.step(90);
   require(settled() && (vmLoops==0)==events,"sleep routine: a held bed remains settled with the selected executor");
+  require(vmBed==(events ? 0u : 1u) && hero && sleepHero.get_instance()==hero &&
+          sleepRock.get_instance()==vm.find_symbol_by_name("PC_ROCKEFELLER")->get_instance(),
+          "the authored bed must update its two saved instance slots through the selected executor");
+  world.script().useInteractive(matteo->handlePtr(),"POTIONALCHEMY_S1");
+  require(vmAlchemy==(events ? 0u : 1u) && alchemyHero.get_instance()==hero && matteo->isAiQueueEmpty() &&
+          vm.find_symbol_by_name("PLAYER_MOBSI_PRODUCTION")->get_int()==production,
+          "an NPC's alchemy callback must bind the hero and leave the player menu and NPC queue alone");
   vm.remove_call_observer(observer);
 
   if(deep) {
