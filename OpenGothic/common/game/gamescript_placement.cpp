@@ -675,6 +675,19 @@ void runTeleportStation(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol
 
 bool runAddonNpcTrigger(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& function) {
   const auto& name = function.name();
+  if(name=="B_FUNCTION_TOUCH_AND_GET_KILLED") {
+    // The script passes the SELF symbol ID, even when its instance is unset.
+    vm.push_int(int32_t(vm.global_self()->index()));
+    vm.unsafe_call_bl(vm.find_symbol_by_name("B_KILLNPC"));
+    return true;
+    }
+  if(name=="EVT_ADDON_ADANOSDOOR_ENTRANCE_VOICESCRIPT") {
+    vm.push_reference(vm.global_self());
+    vm.push_reference(vm.global_self());
+    vm.push_reference(vm.find_symbol_by_name("$52010")); // $ADDON_OPENADANOSTEMPLE
+    vm.unsafe_call_bl(vm.find_symbol_by_name("B_SAY"));
+    return true;
+    }
   if(name=="EVT_TELEPORTSTATION_FUNC") {
     runTeleportStation(vm,function);
     return true;
