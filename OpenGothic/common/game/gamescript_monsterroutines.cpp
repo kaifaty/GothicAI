@@ -767,7 +767,7 @@ void GameScript::runMonsterAssessDamage() {
     }
   npc_clearaiqueue(self);
   npc_settarget(self,source);
-  vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+  clearPerceptions(self);
   ai_startstate(self,predator ? int(findFunction("ZS_MM_FLEE").ptr) : attack,0,"");
   }
 
@@ -781,7 +781,7 @@ void GameScript::runMonsterAssessOthersDamage() {
 
   const auto attack = [&](const std::shared_ptr<daedalus::INpc>& target) {
     npc_clearaiqueue(self);
-    vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+    clearPerceptions(self);
     npc_settarget(self,target);
     ai_startstate(self,int(findFunction("ZS_MM_ATTACK").ptr),0,"");
     };
@@ -797,7 +797,7 @@ void GameScript::runMonsterAssessOthersDamage() {
     }
   if(self->guild==GIL_WOLF && npc_isdead(victim) && npc_isplayer(other) && other->guild==GIL_WOLF && victim->guild==GIL_WOLF) {
     npc_clearaiqueue(self);
-    vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+    clearPerceptions(self);
     const auto summoned = int(findFunction("ZS_MM_RTN_SUMMONED").ptr);
     self->start_aistate = summoned;
     ai_startstate(self,summoned,0,"");
@@ -855,7 +855,7 @@ void GameScript::runMonsterAssessWarn() {
   const auto attackVictim = [&] {
     npc_clearaiqueue(self);
     npc_settarget(self,victim);
-    vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+    clearPerceptions(self);
     ai_startstate(self,attackState,0,"");
     };
   if(self->guild>orcGuildSeparator) {
