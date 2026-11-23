@@ -1400,11 +1400,21 @@ void quietSoundRooms(Gothic& gothic) {
   const auto* otherRoom=world.findWayPoint("NW_FARM1_INHOUSE_01");
   const auto* beyond=world.findWayPoint("NW_FARM1_ENTRANCE_01");
   require(npc && post && otherRoom && beyond,"quiet sound: Lobart's house needs two rooms and an exit fixture");
-  // This offset from INHOUSE_02 stays in FARM01. INHOUSE_01 lies on the FARM03 portal floor.
-  auto inside=post->groundPos+Tempest::Vec3(0,0,-180);
-  const auto floor=world.physic()->landRay(inside+Tempest::Vec3(0,100,0),250);
-  require(floor.hasCol,"quiet sound: the same-room position must have a floor");
-  inside.y=floor.v.y;
+  // Movement caches the ground ray's portal. The BSP room alone also contains untagged furniture surfaces.
+  constexpr std::string_view portal="S:FARM01_NW_CITY_BODENDIELEN_01";
+  const auto at=post->groundPos;
+  std::optional<Tempest::Vec3> inside;
+  for(const auto offset : {Tempest::Vec3(-180,0,0),Tempest::Vec3(180,0,0),Tempest::Vec3(0,0,180),Tempest::Vec3(0,0,-180),
+                           Tempest::Vec3(-180,0,180),Tempest::Vec3(-180,0,-180),Tempest::Vec3(180,0,180),Tempest::Vec3(180,0,-180)}) {
+    const auto floor=world.physic()->landRay(at+offset+Tempest::Vec3(0,40,0),120);
+    const Tempest::Vec3 eyes(0,160,0);
+    if(floor.sector!=nullptr && std::string_view(floor.sector)==portal &&
+       !world.physic()->ray(at+eyes,floor.v+eyes).hasCol) {
+      inside=floor.v;
+      break;
+      }
+    }
+  require(inside.has_value(),"quiet sound: the guest needs a clear floor position on the listener's portal");
   auto& hero=*world.player();
   auto& events=Contract::activityEventsOn(script);
   const bool enabled=events;
@@ -1422,13 +1432,13 @@ void quietSoundRooms(Gothic& gothic) {
     test.only({});
     test.stop(*npc);
     npc->clearGoTo();
-    test.moveHero(sameRoom ? inside : otherRoom->groundPos,0);
+    test.moveHero(sameRoom ? *inside : otherRoom->groundPos,0);
     test.start(activity,post->groundPos,npc,false);
     npc->setAttitude(ATT_NEUTRAL);
     Contract::tickRoutine(*npc);
     for(size_t i=0;i<PERC_Count;++i)
       if(i!=PERC_ASSESSQUIETSOUND) npc->setPerceptionDisable(PercType(i));
-    test.only({npc});
+    test.only({npc,&hero});
     try {
       test.stepUntil(120,[&] {
         return world.guildOfRoom(npc->portalName())==int32_t(GIL_PUBLIC) &&
@@ -1450,14 +1460,11 @@ void quietSoundRooms(Gothic& gothic) {
       }
     npc->setDirection(hero.position()-npc->position());
     npc->updateTransform();
+    if(sameRoom) test.step();
     npc->setStateTime(0);
     require(npc->isInState(stand) && npc->hasPerc(PERC_ASSESSQUIETSOUND) && npc->qDistTo(hero)<1000.f*1000.f,
             "quiet sound: the standing listener is close enough to check the room");
-    if(sameRoom) {
-      const auto room=world.roomAt(npc->position());
-      require(!room.empty() && room==world.roomAt(hero.position()) && npc->canSeeNpc(hero,false),
-              "quiet sound: the listener sees the hero in the same geometric room");
-      }
+    if(sameRoom) require(npc->canSeeNpc(hero,false),"quiet sound: the listener sees the guest in his portal");
     };
   struct Site { bool sameRoom; int height; const char* label; };
   for(const Site site : {Site{true,0,"same room"},Site{false,0,"separate room"},Site{true,251,"indoor height"}}) {
@@ -1659,12 +1666,13 @@ void quietSoundAtPost(Gothic& gothic) {
     gothic.gameSession()->save(out,"quiet sound before impact",preview);
   }
   const auto originalTurn=run("original",1100.f,false,true);
-  gothic.clearGame().reset();
-  {
+  const auto reload=[&] {
+    gothic.clearGame().reset();
     Tempest::MemReader reader(save);
     Serialize in(reader);
     gothic.setGame(std::make_unique<GameSession>(in));
-  }
+    };
+  reload();
   {
     ActivityEventsWorld test(gothic);
     auto* npc=activityNpc(test.world(),actor);
@@ -1677,6 +1685,8 @@ void quietSoundAtPost(Gothic& gothic) {
   // The cooldown is one tick longer than the native turn. Keep the same stance for the boundary check.
   ActivityEventsWorld(gothic).step();
   run("threshold",1000.f,true,false);
+  // The height cases move the player off the ground. Start the room checks from the saved pose.
+  reload();
   quietSoundRooms(gothic);
   gothic.clearGame().reset();
   std::filesystem::remove_all(directory);
