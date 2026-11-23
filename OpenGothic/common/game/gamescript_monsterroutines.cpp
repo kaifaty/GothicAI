@@ -132,21 +132,6 @@ bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
   return true;
   }
 
-void GameScript::validateMonsterTarget(const std::shared_ptr<daedalus::INpc>& self) {
-  auto& ai = self->aivar;
-  auto& otherSymbol = *vm.global_other();
-  if(!hlp_isvalidnpc(std::dynamic_pointer_cast<daedalus::INpc>(otherSymbol.get_instance()))) {
-    const auto restored = hlp_getnpc(ai[lastTarget]);
-    otherSymbol.set_instance(restored);
-    npc_settarget(self,restored);
-    ai[loadGame] = 1;
-    } else {
-    npc_gettarget(self);
-    ai[lastTarget] = hlp_getinstanceid(std::dynamic_pointer_cast<daedalus::INpc>(otherSymbol.get_instance()));
-    ai[loadGame] = 0;
-    }
-  }
-
 bool GameScript::monsterTargetHasBodyState(const std::shared_ptr<daedalus::INpc>& target, int32_t state) {
   findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(state);
   findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(target);
@@ -178,7 +163,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     enable(PERC_ASSESSWARN,"B_MM_ASSESSWARN");
     enable(PERC_ASSESSSURPRISE,"B_MM_ASSESSSURPRISE");
 
-    validateMonsterTarget(self);
+    validateCombatTarget(self);
     if(self->guild==GIL_SHEEP) {
       npc_clearaiqueue(self);
       clearPerceptions(self);
@@ -393,7 +378,7 @@ bool GameScript::runMonsterFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol
   const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
   if(phase=="ZS_MM_FLEE") {
     npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction("B_ASSESSMAGIC").ptr);
-    validateMonsterTarget(self);
+    validateCombatTarget(self);
     ai_standup(self);
     ai_setwalkmode(self,int(WalkBit::WM_Run));
     npc_sendpassiveperc(self,PERC_ASSESSWARN,other(),self);
