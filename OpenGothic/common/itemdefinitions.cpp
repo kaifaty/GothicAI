@@ -1,6 +1,7 @@
 #include "itemdefinitions.h"
 #include "itemrecordfields.h"
 
+#include "asset/itemdocuments.h"
 #include "definitionjson.h"
 
 #include <fstream>
@@ -69,17 +70,6 @@ template<class T> void field(T& out, const Json& value, bool function, std::vect
     }
   }
 }
-
-std::string_view ItemDefinitions::documentArguments(std::string_view function) {
-  constexpr std::pair<std::string_view,std::string_view> signatures[]={
-    {"DOC_SETPAGES","i"},{"DOC_SETPAGE","isi"},{"DOC_SETFONT","is"},{"DOC_SETMARGINS","iiiiii"},
-    {"DOC_PRINTLINE","is"},{"DOC_PRINTLINES","is"},{"DOC_SETLEVEL","s"},{"DOC_SETLEVELCOORDS","iiii"},
-    };
-  for(const auto& [name,types]:signatures)
-    if(name==function)
-      return types;
-  return {};
-  }
 
 ItemDefinitions::Library ItemDefinitions::read(const std::filesystem::path& base, std::string_view programSha256) {
   const auto file=base/"definitions"/programSha256/"items.json";

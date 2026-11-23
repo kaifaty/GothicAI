@@ -1,8 +1,8 @@
 #include "baseimport.h"
 #include "definitionjson.h"
-#include "itemdefinitions.h"
 #include "npcsnapshot.h"
 #include "programdata.h"
+#include "asset/itemdocuments.h"
 #include "asset/npcdefinitions.h"
 #include "daedalus/vm.h"
 
@@ -103,14 +103,16 @@ Json readDocumentCalls(DaedalusVm& vm,const DaedalusSymbol& fn,const StaticDocum
   return calls;
   }
 
-size_t writeItemDocuments(const fs::path& base,const NpcSnapshot::Program& program) {
-  const auto library=ItemDefinitions::read(base,program.sha256);
+size_t writeItemDocuments(const fs::path& items,const NpcSnapshot::Program& program) {
+  const auto library=DefinitionJson::read(items);
   auto vm=DaedalusVm(DaedalusScript::from_program(program.data));
   std::set<std::string> roots;
-  for(const auto& [name,definition]:library.items) {
-    const auto& callback=definition.symbols.at("on_state").at(0);
-    if(!callback.empty())
-      roots.insert(callback);
+  for(const auto& record:library["records"].GetArray()) {
+    if(std::string_view(record["status"].GetString())!="captured")
+      continue;
+    const auto& callback=record["fields"]["on_state"][rapidjson::SizeType(0)];
+    if(callback.IsString())
+      roots.insert(DefinitionJson::string(callback));
     }
   rapidjson::Document out;
   auto& allocator=out.GetAllocator();
@@ -137,7 +139,7 @@ size_t writeItemDocuments(const fs::path& base,const NpcSnapshot::Program& progr
   put(out,"version",Json(ItemDefinitions::DocumentVersion),allocator);
   put(out,"program_sha256",text(program.sha256,allocator),allocator);
   put(out,"records",std::move(entries),allocator);
-  DefinitionJson::write(base/"definitions"/program.sha256/"item-documents.json",out);
+  DefinitionJson::write(items.parent_path()/"item-documents.json",out);
   return count;
   }
 }
@@ -166,7 +168,7 @@ int BaseImport::convertItemDefinitions(const fs::path& base) {
     if(NpcSnapshot::verifyItems(program,file)!=0)
       throw std::runtime_error("item definitions: constructor comparison failed: "+name);
     if(program.sha256==NpcDefinitions::TalentWriteProgram)
-      documents+=writeItemDocuments(base,program);
+      documents+=writeItemDocuments(file,program);
     }
   const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
   std::cout<<"written and verified "<<programs<<" item definition programs";

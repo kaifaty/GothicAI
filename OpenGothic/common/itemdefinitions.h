@@ -11,8 +11,6 @@
 #include <vector>
 
 namespace ItemDefinitions {
-inline constexpr std::string_view DocumentFormat = "gothic-item-documents";
-inline constexpr int32_t DocumentVersion = 1;
 struct Definition {
   ItemRecord record{};
   // One entry per function/owner field; empty names retain the record's 0/-1 sentinel.
@@ -34,8 +32,6 @@ struct Library {
   std::map<std::string,Document> documents;
   };
 
-// The document setters supported by the static record, with their argument kinds after the handle.
-std::string_view documentArguments(std::string_view function);
 // Reads definitions/<program SHA>/items.json. Errors name the file, item and field.
 // This module knows records and symbol names, without a script VM.
 Library read(const std::filesystem::path& base, std::string_view programSha256);
