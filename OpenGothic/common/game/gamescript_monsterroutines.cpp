@@ -24,8 +24,7 @@ bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
     enable(PERC_ASSESSWARN,"B_MM_ASSESSWARN");
     enable(PERC_ASSESSQUIETSOUND,"B_MM_ASSESSQUIETSOUND_SLEEP");
     beginMonsterRoutine(npc);
-    if(wld_isfpavailable(self,roam))
-      ai_gotofp(self,roam);
+    ai_gotofp(self,roam);
     npc.aiPush(AiQueue::aiPlayAnim("T_PERCEPTION"));
     npc.aiPush(AiQueue::aiPlayAnimBs("T_STAND_2_SLEEP",BS_LIE));
     result = 0;
@@ -36,8 +35,7 @@ bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
     enableMonsterRoutinePerceptions(npc);
     beginMonsterRoutine(npc);
     if(name=="ZS_MM_RTN_EATGROUND") {
-      if(wld_isfpavailable(self,roam))
-        ai_gotofp(self,roam);
+      ai_gotofp(self,roam);
       npc.aiPush(AiQueue::aiPlayAnim("T_STAND_2_EAT"));
       mdl_applyrandomani(self,"S_EAT","R_ROAM1");
       mdl_applyrandomani(self,"S_EAT","R_ROAM2");
@@ -52,8 +50,8 @@ bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
     }
 
   if(name=="ZS_MM_RTN_SLEEP_LOOP" || name=="ZS_MM_RTN_EATGROUND_LOOP") {
-    const size_t startHour = name=="ZS_MM_RTN_SLEEP_LOOP" ? 30 : 36;
-    result = endMonsterRoutine(npc,startHour) ? LOOP_END : LOOP_CONTINUE;
+    const auto routine = name=="ZS_MM_RTN_SLEEP_LOOP" ? MonsterSleep : MonsterEatGround;
+    result = endMonsterRoutine(npc,routine) ? LOOP_END : LOOP_CONTINUE;
     return true;
     }
 
@@ -61,14 +59,13 @@ bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
     const bool rest = name=="ZS_MM_RTN_REST_LOOP";
     if(rest)
       removeRavensStoneGuardians(npc);
-    if(endMonsterRoutine(npc,rest ? 32 : 40)) {
+    if(endMonsterRoutine(npc,rest ? MonsterRest : MonsterOrcSit)) {
       result = LOOP_END;
       return true;
       }
     if(position==1) {
       const auto point = rest ? roam : campfire;
-      if(wld_isfpavailable(self,point))
-        ai_gotofp(self,point);
+      ai_gotofp(self,point);
       if(npc.isOnFreePoint(point)) {
         if(!rest)
           npc.aiPush(AiQueue::aiPlayAnimBs("T_STAND_2_GUARDSLEEP",BS_SIT));

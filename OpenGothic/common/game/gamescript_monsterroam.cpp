@@ -8,7 +8,6 @@
 bool GameScript::runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   constexpr std::string_view freePoint = "FP_ROAM";
   constexpr size_t positionStage = 19;
-  constexpr size_t roamStartHour = 34, wuselStartHour = 38;
   constexpr int32_t inPosition = 0, outOfPosition = 1;
 
   const std::string_view name = symbol.name();
@@ -35,7 +34,7 @@ bool GameScript::runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
     return true;
 
   if(name=="ZS_MM_RTN_ROAM_LOOP") {
-    if(endMonsterRoutine(npc,roamStartHour)) {
+    if(endMonsterRoutine(npc,MonsterRoam)) {
       result = LOOP_END;
       return true;
       }
@@ -61,7 +60,7 @@ bool GameScript::runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
     }
 
   if(name=="ZS_MM_RTN_WUSEL_LOOP") {
-    if(endMonsterRoutine(npc,wuselStartHour)) {
+    if(endMonsterRoutine(npc,MonsterWusel)) {
       result = LOOP_END;
       return true;
       }

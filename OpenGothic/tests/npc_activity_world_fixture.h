@@ -2127,10 +2127,11 @@ MonsterRoutineSave monsterRoutinesWorld(Gothic& gothic) {
   const auto rest=ScriptFn(script.findSymbolIndex("ZS_MM_RTN_REST"));
   const auto sleep=ScriptFn(script.findSymbolIndex("ZS_MM_RTN_SLEEP"));
   require(scheduler.isValid(),"monster routine fixture needs the original dispatcher");
-  auto compare=[&](Npc& npc,const char* what,size_t expectedPhases,const auto& act) {
+  auto compare=[&](Npc& npc,const char* what,size_t expectedPhases,const auto& prepare,const auto& act) {
     std::vector<std::string> original;
     for(bool events:{false,true}) {
       Contract::activityEventsOn(script)=events;
+      prepare();
       script.setSeed(73106);
       ActivityStream stream(world,npc);
       act();
@@ -2175,8 +2176,13 @@ MonsterRoutineSave monsterRoutinesWorld(Gothic& gothic) {
     npc.setSimTier(NpcSimTier::Full);
     npc.setProcessPolicy(NpcProcessPolicy::AiNormal);
     const auto vars=std::to_array(npc.handle().aivar);
-    compare(npc,site.state,5,[&] {
+    auto prepare=[&] {
       test.stop(npc);
+      npc.clearGoTo();
+      npc.setOther(nullptr);
+      npc.setVictim(nullptr);
+      npc.setTarget(nullptr);
+      npc.setPerceptionTime(1000);
       test.freePoint(fp);
       session.setTime(gtime(0,23,59));
       std::copy(vars.begin(),vars.end(),npc.handle().aivar);
@@ -2185,6 +2191,8 @@ MonsterRoutineSave monsterRoutinesWorld(Gothic& gothic) {
       npc.setPosition(point->position());
       npc.attachToPoint(point);
       require(npc.startState(state,point->name),"the monster must enter its fixture state");
+      };
+    compare(npc,site.state,5,prepare,[&] {
       Contract::tickRoutine(npc);
       npc.clearAiQueue();
       npc.setPosition(fp->position());
@@ -2213,13 +2221,15 @@ MonsterRoutineSave monsterRoutinesWorld(Gothic& gothic) {
   auto& sheep=*activityNpc(world,MonsterSaveActor);
   const auto vars=std::to_array(sheep.handle().aivar);
   require(sheep.handle().start_aistate==int32_t(scheduler.ptr),"the fixture sheep must use the dispatcher as its start state");
-  compare(sheep,"monster dispatcher",5,[&] {
+  auto prepare=[&] {
     test.stop(sheep);
     std::copy(vars.begin(),vars.end(),sheep.handle().aivar);
     for(size_t i=30;i<42;++i) sheep.handle().aivar[i]=0;
     sheep.handle().aivar[30]=22;
     sheep.handle().aivar[31]=6;
     sheep.handle().aivar[34]=-1;
+    };
+  compare(sheep,"monster dispatcher",5,prepare,[&] {
     auto choose=[&](gtime when,ScriptFn expected) {
       session.setTime(when);
       sheep.handle().aivar[29]=0;

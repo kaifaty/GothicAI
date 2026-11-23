@@ -70,9 +70,7 @@ bool GameScript::runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol&, 
   // Overlapping windows keep the priority of the original scheduler. With no match it starts REST.
   std::string_view next = "ZS_MM_RTN_REST";
   for(const auto& window : monsterRoutineWindows) {
-    const auto start = aivar[size_t(findSymbol(window.start)->get_int())];
-    const auto end = aivar[size_t(findSymbol(window.end)->get_int())];
-    if(monsterRoutineWindowActive(start,end)) {
+    if(monsterRoutineWindowActive(npc,window)) {
       next = window.state;
       break;
       }
@@ -83,7 +81,10 @@ bool GameScript::runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol&, 
   return true;
   }
 
-bool GameScript::monsterRoutineWindowActive(int32_t start, int32_t end) {
+bool GameScript::monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window) {
+  const auto& aivar = npc.handlePtr()->aivar;
+  const auto start = aivar[window.stockStart];
+  const auto end = aivar[window.stockEnd];
   return start==-1 || wld_istime(start,0,end,0); // ONLYROUTINE
   }
 
@@ -112,10 +113,8 @@ void GameScript::beginMonsterRoutine(Npc& npc, bool desynchronize, WalkBit mode)
     NpcEngineCalls::gotoWaypoint(world(),npc,waypoint);
   }
 
-bool GameScript::endMonsterRoutine(Npc& npc, size_t startHourAivar) {
-  // The verified program stores the end hour immediately after the start hour for each monster routine.
-  const auto& aivar = npc.handle().aivar;
-  if(monsterRoutineWindowActive(aivar[startHourAivar],aivar[startHourAivar+1]))
+bool GameScript::endMonsterRoutine(Npc& npc, MonsterRoutine routine) {
+  if(monsterRoutineWindowActive(npc,monsterRoutineWindows[routine]))
     return false;
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   ai_startstate(self,int(findFunction(monsterScheduler).ptr),1,"");
