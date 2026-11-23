@@ -148,6 +148,56 @@ bool GameScript::isPlayerFakeBandit(const std::shared_ptr<daedalus::INpc>& self,
          findSymbol("CURRENTLEVEL")->get_int()==findSymbol("ADDONWORLD_ZEN")->get_int() && guild==GIL_BDT;
   }
 
+bool GameScript::hasFakeGuild(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("C_PLAYERHASFAKEGUILD.OTH")->set_instance(other);
+  findSymbol("C_PLAYERHASFAKEGUILD.SLF")->set_instance(self);
+  const auto armor = npc_getequippedarmor(other);
+  findSymbol("C_PLAYERHASFAKEGUILD.ITM")->set_instance(armor);
+  auto& rangerComment = *findSymbol("C_PLAYERHASFAKEGUILD.NSC_COMMENTRANGERARMOR");
+  rangerComment.set_int(1);
+  constexpr size_t ignoresArmor = 73; // AIV_IGNORESARMOR
+  constexpr size_t ignoresFakeGuild = 70; // AIV_IGNORESFAKEGUILD
+  if(self && (self->aivar[ignoresArmor]==1 || self->aivar[ignoresFakeGuild]==1))
+    return false;
+  // This guard check reads global SELF. The rest of the rule uses SLF and OTH.
+  if(isGateGuard(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance())))
+    return false;
+  const bool fakeBandit = isPlayerFakeBandit(self,other);
+  const auto listenerGuild = self ? self->guild : int32_t(GIL_NONE);
+  const bool hasArmor = npc_hasequippedarmor(other);
+  if(fakeBandit && listenerGuild==GIL_BDT)
+    return !hasArmor;
+  if(!hasArmor || other->guild!=listenerGuild)
+    return false;
+  if(hlp_isitem(armor,int(findSymbolIndex("ITAR_RANGER_ADDON"))))
+    return rangerComment.get_int()==1;
+
+  const auto wears = [&](std::initializer_list<std::string_view> items) {
+    return std::ranges::any_of(items,[&](std::string_view item) {
+      return hlp_isitem(armor,int(findSymbolIndex(item)));
+      });
+    };
+  const auto mercenaryArmor = [&] { return wears({"ITAR_SLD_L","ITAR_SLD_M","ITAR_SLD_H"}); };
+  switch(listenerGuild) {
+    case GIL_NONE:
+      return !wears({"ITAR_LEATHER_L","ITAR_BAU_M","ITAR_BAU_L","ITAR_VLK_H","ITAR_VLK_M","ITAR_VLK_L"});
+    case GIL_MIL:
+      return !wears({"ITAR_MIL_M","ITAR_MIL_L"});
+    case GIL_PAL:
+      return !wears({"ITAR_PAL_H","ITAR_PAL_M"});
+    case GIL_SLD:
+      return !mercenaryArmor();
+    case GIL_DJG:
+      return !mercenaryArmor() && !wears({"ITAR_DJG_CRAWLER","ITAR_DJG_H","ITAR_DJG_M","ITAR_DJG_L"});
+    case GIL_NOV:
+      return !wears({"ITAR_NOV_L"});
+    case GIL_KDF:
+      return !wears({"ITAR_KDF_H","ITAR_KDF_L"});
+    default:
+      return true;
+    }
+  }
+
 void GameScript::desynchronizeNpc() {
   const auto delay = hlp_random(1000);
   findSymbol("B_MM_DESYNCHRONIZE.MSEC")->set_int(delay);
@@ -419,6 +469,9 @@ void GameScript::loadNativeHumanPerceptions() {
     }},enabled);
   vm.override_function("C_NPCISDOWN",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return isNpcDownInScript(npc);
+    }},enabled);
+  vm.override_function("C_PLAYERHASFAKEGUILD",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    return hasFakeGuild(self,other);
     }},enabled);
   }
 
@@ -1080,7 +1133,7 @@ void GameScript::runPlayerAssessment() {
   const auto hasBodyState = [&](const std::shared_ptr<daedalus::INpc>& actor, int32_t state) {
     return vm.call_function<int32_t>("C_BODYSTATECONTAINS",actor,state)!=0;
     };
-  const auto fakeGuild = [&] { return vm.call_function<int32_t>("C_PLAYERHASFAKEGUILD",self,other())!=0; };
+  const auto fakeGuild = [&] { return hasFakeGuild(self,other()); };
   const auto assessTalk = [&] {
     self->aivar[startedTalk] = 1;
     vm.unsafe_call_bl(findSymbol("B_ASSESSTALK"));

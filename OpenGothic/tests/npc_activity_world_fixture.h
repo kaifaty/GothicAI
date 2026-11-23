@@ -2696,59 +2696,7 @@ void enemyPerceptions(World& world,Npc& npc,Npc& hero) {
   std::puts("Enemy perception: direct, player and talk assessment match the VM for delay, observation, guild and override");
   }
 
-void playerAssessmentRoutes(World& world,Npc& npc,Npc& hero) {
-  using Contract=NpcDefinitionContract;
-  auto& script=world.script();
-  auto& vm=script.getVm();
-  auto& enabled=Contract::activityEventsOn(script);
-  const bool wasEnabled=enabled;
-  const auto assess=script.findFunction("B_ASSESSPLAYER");
-  const auto follow=script.findFunction("B_ASSESSFOLLOWPLAYER");
-  const auto observe=script.findFunction("ZS_OBSERVEPLAYER");
-  const auto assessPc=vm.find_symbol_by_name("B_ASSESSPLAYER")->address();
-  auto& comment=*vm.find_symbol_by_name("PLAYER_DRAWWEAPONCOMMENT");
-  const auto savedComment=comment.get_int();
-  const auto savedFlag=npc.handle().aivar[19];
-  const auto savedAttitude=npc.attitude();
-  const auto savedInvincible=hero.handle().aivar[4];
-  npc.setAttitude(ATT_NEUTRAL);
-  hero.handle().aivar[4]=0;
-  require(npc.canSeeNpc(hero,false) && npc.portalName()==hero.portalName() &&
-          world.guildOfRoom(npc.portalName())==int32_t(GIL_PUBLIC),
-          "player assessment: the fixture has a visible guest in the same public room");
-  for(const auto route:{assess,follow}) {
-    std::vector<std::string> original;
-    for(bool native:{false,true}) {
-      enabled=native;
-      comment.set_int(1);
-      npc.handle().aivar[19]=1;
-      npc.clearAiQueue();
-      npc.aiPush(AiQueue::aiWait(173));
-      npc.setPerceptionEnable(PERC_ASSESSPLAYER,route.ptr);
-      size_t bytecode=0,followCalls=0;
-      vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==assessPc; });
-      const auto count=vm.add_call_observer([&](const auto& sym) { followCalls+=sym.name()=="B_ASSESSFOLLOWPLAYER"; });
-      const bool delivered=npc.perceptionProcess(hero,nullptr,npc.qDistTo(hero),PERC_ASSESSPLAYER);
-      vm.remove_call_observer(count);
-      vm.observe_instructions({});
-      require(delivered && bytecode==(native ? 0u : 1u) && followCalls==(route==follow ? 1u : 0u),
-              "player assessment: direct and follower perceptions use the chosen executor");
-      const auto* next=npc.aiQueueFront();
-      require(next && next->act==AI_StartState && next->func==observe && next->target==&hero && next->i0==1 &&
-              comment.get_int()==1 && !npc.hasPerc(PERC_ASSESSPLAYER),
-              "player assessment: room entry wins before weapon handling and replaces the old queue");
-      auto queue=activityQueue(npc);
-      if(native) require(original==queue,"player assessment: both routes reproduce the original room queue");
-      else original=std::move(queue);
-      }
-    }
-  enabled=wasEnabled;
-  comment.set_int(savedComment);
-  npc.handle().aivar[19]=savedFlag;
-  npc.setAttitude(savedAttitude);
-  hero.handle().aivar[4]=savedInvincible;
-  std::puts("Player assessment: direct and follower routes preserve room priority");
-  }
+#include "npc_player_assessment_world_fixture.h"
 
 void propertyCrimePerceptions(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
