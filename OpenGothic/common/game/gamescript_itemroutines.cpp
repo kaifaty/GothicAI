@@ -9,6 +9,7 @@
 #include <bit>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 bool GameScript::applyCumulativeFoodEffect(std::string_view callback) {
@@ -1121,6 +1122,138 @@ bool GameScript::applyEquipmentStatEffect(Npc& npc, uint32_t callback) {
     else {
       npc_changeattribute(actor,std::get<Attribute>(change.stat),std::bit_cast<int32_t>(delta));
       }
+    }
+  return true;
+  }
+
+bool GameScript::applyStatefulEquipmentEffect(Npc& npc, std::string_view callback) {
+  const bool equip = callback.starts_with("EQUIP_");
+  if(!equip && !callback.starts_with("UNEQUIP_"))
+    return false;
+  const auto item = callback.substr(equip ? 6 : 8);
+  static constexpr struct Belt {
+    std::string_view item;
+    const char* equipped;
+    const char* armor;
+    } belts[] = {
+      {"ITBE_ADDON_LEATHER_01", "LEATHER01_EQUIPPED", "LEATHERARMOR_EQUIPPED"},
+      {"ITBE_ADDON_SLD_01",     "SLD01_EQUIPPED",     "SLDARMOR_EQUIPPED"},
+      {"ITBE_ADDON_NOV_01",     "NOV01_EQUIPPED",     "NOVARMOR_EQUIPPED"},
+      {"ITBE_ADDON_MIL_01",     "MIL01_EQUIPPED",     "MILARMOR_EQUIPPED"},
+      {"ITBE_ADDON_KDF_01",     "KDF01_EQUIPPED",     "KDFARMOR_EQUIPPED"},
+      {"ITBE_ADDON_MC",         "MC_EQUIPPED",        "MCARMOR_EQUIPPED"},
+      };
+  static constexpr struct ArtifactSet {
+    std::array<std::string_view,3> items;
+    const char* prefix;
+    const char* visual;
+    const char* sound;
+    std::optional<Attribute> maximum;
+    } sets[] = {
+      {{"ITAM_ADDON_HEALTH", "ITRI_ADDON_HEALTH_01", "ITRI_ADDON_HEALTH_02"}, "HP", "$12935", "$12936", ATR_HITPOINTSMAX},
+      {{"ITAM_ADDON_MANA",   "ITRI_ADDON_MANA_01",   "ITRI_ADDON_MANA_02"  }, "MA", "$12937", "$12938", ATR_MANAMAX},
+      {{"ITAM_ADDON_STR",    "ITRI_ADDON_STR_01",    "ITRI_ADDON_STR_02"   }, "STR","$12939", "$12940", std::nullopt},
+      };
+  const auto belt = std::ranges::find(belts,item,&Belt::item);
+  const auto set = std::ranges::find_if(sets,[&](const ArtifactSet& entry) {
+    return std::ranges::find(entry.items,item)!=entry.items.end();
+    });
+  const bool manaStaff = item=="ZAUBERSTAB";
+  if(belt==std::end(belts) && set==std::end(sets) && !manaStaff)
+    return false;
+
+  const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  struct RestoreContext {
+    daedalus::DaedalusVm& vm;
+    std::shared_ptr<daedalus::DaedalusInstance> caller;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+    } restore{vm,vm.unsafe_get_gi()};
+  const auto read = [&](std::string_view name) { return findSymbol(name)->get_int(); };
+  const auto yes = read("TRUE");
+  const auto no = read("FALSE");
+  const auto add = [&](const char* member, uint16_t index, uint32_t delta) {
+    vm.unsafe_set_gi(actor);
+    auto* field = findSymbol(member);
+    const auto current = uint32_t(vm.get_int(actor,field,index));
+    vm.set_int(actor,field,index,std::bit_cast<int32_t>(current+delta));
+    };
+  if(manaStaff) {
+    if(!npc_isplayer(actor))
+      return true;
+    npc_changeattribute(actor,ATR_MANAMAX,equip ? 20 : -20);
+    if(equip) {
+      npc_changeattribute(actor,ATR_MANA,20);
+      } else {
+      vm.unsafe_set_gi(actor);
+      auto* field = findSymbol("C_NPC.ATTRIBUTE");
+      if(vm.get_int(actor,field,ATR_MANA)>=20)
+        npc_changeattribute(actor,ATR_MANA,-20);
+      else
+        vm.set_int(actor,field,ATR_MANA,0);
+      }
+    return true;
+    }
+  if(belt!=std::end(belts)) {
+    const bool leather = belt==std::begin(belts);
+    auto* flag = findSymbol(belt->equipped);
+    if(!leather)
+      flag->set_int(equip ? yes : no);
+    const auto protect = [&](Protection protection, const char* amount) {
+      const auto delta = uint32_t(read(amount));
+      add("C_NPC.PROTECTION",protection,equip ? delta : 0u-delta);
+      };
+    for(const auto protection : {PROT_EDGE,PROT_BLUNT,PROT_POINT})
+      protect(protection,"BELT_PROT_01");
+    if(leather) {
+      if(!npc_isplayer(actor))
+        return true;
+      flag->set_int(equip ? yes : no);
+      }
+    if(read(belt->armor)==yes) {
+      for(const auto protection : {PROT_EDGE,PROT_BLUNT,PROT_POINT})
+        protect(protection,"BA_BONUS01");
+      const bool monasteryEquip = equip && item=="ITBE_ADDON_MC";
+      for(const auto protection : {PROT_MAGIC,PROT_FIRE})
+        protect(protection,monasteryEquip ? "BA_BONUS01" : "BA_BONUS02");
+      }
+    return true;
+    }
+
+  const std::string prefix(set->prefix);
+  const auto amulet = prefix+"_AMULETT_EQUIPPED";
+  const auto firstRing = prefix+"_RING_1_EQUIPPED";
+  const auto secondRing = prefix+"_RING_2_EQUIPPED";
+  auto* value = findSymbol("C_"+prefix+"_ARTEFAKTVALUE."+prefix+"_ARTEFAKT_VALUE");
+  const auto effectFlag = prefix+"_ARTEFAKT_EFFEKT";
+  const auto calculateBonus = [&] {
+    value->set_int(0);
+    const bool hasAmulet = read(amulet)==yes;
+    const int rings = int(read(firstRing)==yes) + int(read(secondRing)==yes);
+    if(hasAmulet && rings==2 && read(effectFlag)==no) {
+      wld_playeffect(findSymbol(set->visual)->get_string(),actor,actor,0,0,0,no);
+      snd_play(findSymbol(set->sound)->get_string());
+      findSymbol(effectFlag)->set_int(yes);
+      }
+    static constexpr const char* ringBonuses[] = {nullptr,"_RING_SOLO_BONUS","_RING_DOUBLE_BONUS"};
+    static constexpr const char* amuletBonuses[] = {"_AMULETT_SOLO_BONUS","_AMULETT_EINRING_BONUS","_AMULETT_ARTEFAKT_BONUS"};
+    const auto* bonus = hasAmulet ? amuletBonuses[rings] : ringBonuses[rings];
+    if(bonus!=nullptr)
+      value->set_int(read(prefix+bonus));
+    return value->get_int();
+    };
+
+  auto* previous = findSymbol(std::string(callback)+".OLDVALUE");
+  auto* current = findSymbol(std::string(callback)+".NEWVALUE");
+  previous->set_int(calculateBonus());
+  const auto& flag = item==set->items[0] ? amulet : (item==set->items[1] ? firstRing : secondRing);
+  findSymbol(flag)->set_int(equip ? yes : no);
+  current->set_int(calculateBonus());
+  const auto delta = uint32_t(current->get_int())-uint32_t(previous->get_int());
+  if(set->maximum) {
+    add("C_NPC.ATTRIBUTE",*set->maximum,delta);
+    } else {
+    add("C_NPC.PROTECTION",PROT_EDGE,delta);
+    add("C_NPC.PROTECTION",PROT_BLUNT,delta);
     }
   return true;
   }

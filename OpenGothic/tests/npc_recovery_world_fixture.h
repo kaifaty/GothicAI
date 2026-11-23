@@ -745,15 +745,17 @@ auto stockArmorSetEffects(World& world, bool native) {
   require(mika && mika->currentArmor() && mika->currentArmor()->clsId()==armor && !hero.currentArmor() &&
           armorFlag.get_int()==0 && beltFlag.get_int()==0,"armor sets: the stock guard wears the armor and the hero starts without the set");
   const auto npcProtection=std::to_array(mika->handle().protection);
-  size_t armorCalls=0, accessoryCalls=0;
+  size_t armorCalls=0, beltCalls=0, accessoryCalls=0;
   auto& vm=script.getVm();
   const auto observer=vm.add_call_observer([&](const auto& fn) {
     armorCalls+=fn.name()=="EQUIP_ITAR_MIL_L" || fn.name()=="UNEQUIP_ITAR_MIL_L";
+    beltCalls+=fn.name()=="EQUIP_ITBE_ADDON_MIL_01" || fn.name()=="UNEQUIP_ITBE_ADDON_MIL_01";
     accessoryCalls+=fn.name()=="EQUIP_ITRI_PROT_TOTAL_01" || fn.name()=="UNEQUIP_ITRI_PROT_TOTAL_01" ||
                     fn.name()=="EQUIP_ITAM_DEX_STRG_01" || fn.name()=="UNEQUIP_ITAM_DEX_STRG_01" ||
                     fn.name()=="EQUIP_ITRI_HP_MANA_01" || fn.name()=="UNEQUIP_ITRI_HP_MANA_01";
     });
   require(hero.addItem(belt,1) && hero.addItem(armor,1),"armor sets: add the actual stock equipment");
+  const auto beforeSet=std::to_array(hero.handle().protection);
   hero.useItem(belt);
   require(beltFlag.get_int()==1 && hero.getItem(belt)->isEquipped(),"armor sets: the matching belt must be worn through inventory");
   const auto beltOnly=std::to_array(hero.handle().protection);
@@ -771,6 +773,15 @@ auto stockArmorSetEffects(World& world, bool native) {
     require(withSet[i]==beltOnly[i]+worn->handle().protection[i]+(affected ? bonus : 0),
             "armor sets: add base armor and the five matching belt bonuses in the original fields");
     }
+  hero.unequipItem(belt);
+  const auto armorOnly=std::to_array(hero.handle().protection);
+  require(beltFlag.get_int()==0,"armor sets: removing the belt clears its saved flag");
+  for(size_t i=0;i<armorOnly.size();++i)
+    require(armorOnly[i]==beforeSet[i]+worn->handle().protection[i],
+            "armor sets: removing the belt removes its base protection and set bonus");
+  hero.useItem(belt);
+  require(beltFlag.get_int()==1 && std::to_array(hero.handle().protection)==withSet,
+          "armor sets: re-equipping the belt restores the combined protection");
   hero.unequipItem(armor);
   require(!hero.currentArmor() && armorFlag.get_int()==0 && std::to_array(hero.handle().protection)==beltOnly,
           "armor sets: removing the armor subtracts both contributions and clears the flag");
@@ -826,7 +837,7 @@ auto stockArmorSetEffects(World& world, bool native) {
   std::copy(beforePools.begin(),beforePools.end(),heroAttributes);
   hero.delItem(pools,1);
   vm.remove_call_observer(observer);
-  require(armorCalls==(native ? 0u : 5u) && accessoryCalls==(native ? 0u : 6u),
+  require(armorCalls==(native ? 0u : 5u) && beltCalls==(native ? 0u : 3u) && accessoryCalls==(native ? 0u : 6u),
           "armor sets and equipment stats: Mika and the hero must use the selected callback executor");
   return std::pair{withSet,beltOnly};
   }
