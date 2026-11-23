@@ -1,6 +1,12 @@
 # Планировщик решений NPC
 
-Статус: шаги 1–3 плана сделаны 2026-10-11 и работают в обычной игре: сервис [decider-service](../decider-service/README.md) на GPU-сервере, планировщик [`brain/`](../server/src/gothic_ai/brain/) в ИИ-сервере (`NpcPlanner`, выключает `gothic-ai serve --no-brain`), мост [`npcobserver.cpp`](../OpenGothic/ai_bridge/npcobserver.cpp). Дальше планировщик рос по этапам агента NPC ([npc-agent.md](npc-agent.md#свободные-npc-m5c)): план дня с `set_routine` (`brain/day.py`, выключает `--no-apply-day`), реакции на угрозы (`brain/reflex.py`), первые слова NPC после `approach_talk` (`initiative.py`). Шаги 4–5 — нагрузочный тест в игре вместе с распознаванием речи и пункты 4–6 ускорения — не сделаны.
+## Как работает сейчас
+
+Решения для свободных NPC выбирает [decider-service](../decider-service/README.md), заявки собирает [`NpcPlanner`](../server/src/gothic_ai/brain/planner.py), телом управляет мост [`npcobserver.cpp`](../OpenGothic/ai_bridge/npcobserver.cpp). Планировщик выключает `gothic-ai serve --no-brain`. Реакции на угрозы идут через `brain/reflex.py`, первые слова после `approach_talk` — через `initiative.py`.
+
+В обоих меню часа (`plan` и `do`) свои занятия и привычки сверяются с `routine.event_activities` из игры. Выбранный вариант идёт в `start_activity` с `catalog_only`. Движок проверяет запись перед изменением состояния NPC, ведёт к месту, разбирает занятость и по окончании возвращает к распорядку. `OPENGOTHIC_ACTIVITY_EVENTS=0` или `OPENGOTHIC_ACTIVITY_RECORDS=0` дают планировщику пустой каталог. Старые мосты без этого поля используют прежнее меню. `--no-apply-day` оставляет `do` в тени и применяет `plan`. `m5c` проверяет выбор и отказ на запрос VM-занятия. [Протокол](protocol.md#планировщик-npc-v5) · [Э4](../reports/engine/2026-11-14-npc-data/d4-event-executor.md#э4-выбор-занятия-ии)
+
+## План и журнал
 
 Ниже — проект от 2026-10-11. Числа уровней и порогов в нём могли уйти от кода: действующие значения — `TierConfig` в `brain/tiers.py` и `PlannerConfig` в `brain/planner.py`.
 

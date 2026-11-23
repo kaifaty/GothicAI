@@ -1307,13 +1307,20 @@ async def m5c_free_npc(
     from ..brain.planner import PlannerConfig
 
     await link.wait_world()
-    current = (await link.routine(npc)).current
+    info = await link.routine(npc)
+    current = info.current
     # The native starting pose already is Xardas's only usual habit. The day menu correctly excludes
     # it, so give this fixed-decider fixture one distinct, executable option for its h1 choice.
     habit = Habit(
         "stand quietly and think", "ZS_STAND_WP" if current != "ZS_STAND_WP" else "ZS_STAND_ARMSCROSSED"
     )
+    scripted = Habit("sit on a bench", "ZS_SIT_BENCH")
     results: dict[str, str] = {}
+    catalog = info.event_activities or []
+    results["event_catalog"] = (
+        f"{'done' if habit.state in catalog and scripted.state not in catalog else 'failed'} "
+        f"({len(catalog)} event states, planned {habit.state})"
+    )
     started_lines: list[LineStarted] = []
     link.listeners.append(lambda m: started_lines.append(m) if isinstance(m, LineStarted) else None)
     held: list[PerceptionHeld] = []
@@ -1332,7 +1339,7 @@ async def m5c_free_npc(
         applier,
         config=PlannerConfig(ask_attitude=False, plan_period_s=3.0),
         routine_of=link.routine,
-        habits_of=lambda who: [habit] if who == npc else habits_of(who),
+        habits_of=lambda who: [scripted, habit] if who == npc else habits_of(who),
     )
     link.listeners.append(planner.on_message)
     runner = asyncio.create_task(planner.run())
@@ -1355,9 +1362,25 @@ async def m5c_free_npc(
             await asyncio.sleep(0.1)
         await asyncio.sleep(1.0)
         now = (await link.routine(npc)).current
+        chosen = plan is not None and plan.args is not None and plan.args.get("catalog_only") is True
         results["day_plan"] = (
-            f"{'done' if plan and plan.args and now == plan.args['state'] else 'failed'} "
+            f"{'done' if chosen and now == habit.state else 'failed'} "
             f"({plan.choice + ' ' + str(plan.args) if plan else 'no plan'}; now {now})"
+        )
+        receipt = asyncio.create_task(wait_message(
+            link, NpcActResult, lambda m: m.npc == npc and m.action == "start_activity", timeout=5
+        ))
+        await asyncio.sleep(0)  # arm the result listener before sending the command
+        requested = await link.npc_act(
+            npc, "start_activity", state=scripted.state, waypoint=info.entries[0].waypoint, catalog_only=True
+        )
+        rejected = await receipt
+        after = (await link.routine(npc)).current
+        blocked = rejected.id == requested and rejected.status == "rejected" and rejected.detail == (
+            f"activity is not in the event catalog: {scripted.state}"
+        )
+        results["scripted_activity_rejected"] = (
+            f"{'done' if blocked and after == habit.state else 'failed'} ({rejected.detail}; now {after})"
         )
         await link.npc_act(npc, "set_routine", name="START")
 

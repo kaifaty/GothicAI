@@ -49,6 +49,7 @@ from gothic_ai.protocol import (
     PerceptionHeld,
     PttAudioCmd,
     RoutineEntry,
+    RoutineInfo,
     SayAudioCmd,
     SayCmd,
     SayFaceCmd,
@@ -142,7 +143,6 @@ def test_v51_combat_hit_reports_actual_health_loss(kind):
 
 
 def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
-    assert PROTOCOL_VERSION == 64
     msg = parse_game_message(_json({
         "type": "svm_line", "id": "svm-1", "npc": "X", "svm": "$KILLENEMY",
         "text": "Ещё одним монстром меньше.", "target": "WOLF", "overlay": True,
@@ -155,12 +155,23 @@ def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
 
 
 def test_v64_player_audio_is_a_silent_pcm_stream_with_delivery_timing():
-    assert PROTOCOL_VERSION == 64
+    assert PROTOCOL_VERSION >= 64
     chunk = PttAudioCmd(data="AAE=", rate=16000, sequence=0, received_at_us=1794567890123456)
     assert json.loads(chunk.to_json()) == {
         "type": "ptt_audio", "data": "AAE=", "rate": 16000,
         "sequence": 0, "received_at_us": 1794567890123456,
     }
+
+
+def test_v65_routine_distinguishes_unavailable_catalog_from_legacy_bridge():
+    assert PROTOCOL_VERSION == 65
+    payload = {"type": "routine", "npc": "X"}
+    legacy = parse_game_message(_json(payload))
+    assert isinstance(legacy, RoutineInfo) and legacy.event_activities is None
+
+    for catalog in ([], ["ZS_SIT_CAMPFIRE", "ZS_STAND_WP"]):
+        routine = parse_game_message(_json({**payload, "event_activities": catalog}))
+        assert isinstance(routine, RoutineInfo) and routine.event_activities == catalog
 
 
 def test_word_timings_are_optional_for_streamed_and_whole_audio():

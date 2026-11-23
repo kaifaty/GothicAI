@@ -65,7 +65,7 @@ from .gossip import WORDS_CM, GossipDesk
 from .journal import Journal
 from .people_knowledge import rumor_subject
 from .places import PlaceBook
-from .protocol import GameMessage, Loading, NpcView, RoutineEntry, Session
+from .protocol import GameMessage, Loading, NpcView, RoutineEntry, RoutineInfo, Session
 from .social import DAY, OUTLAWS, Rumor, Rumors, Social, Spot
 from .storyguard import StoryGuard, asleep
 
@@ -169,6 +169,7 @@ def day_menu(
     where: Where,
     *,
     trips: bool = True,
+    catalog: Collection[str] | None = None,
 ) -> DayMenu:
     """Both menus of the npc's next hour: nothing to ask while it is on duty or asleep, a plot npc only stays
     where it stands; else the old menu and the do menu (keep, its trips, its own options, at most
@@ -183,8 +184,8 @@ def day_menu(
         return DayMenu(stay="спит")
     plot = guard.plot(npc)
     free = (lambda wp: world.free(wp, npc)) if world is not None else (lambda wp: True)
-    plan = plan_options(entries, habits, hour, minute, state, free, plot)
-    keep, *own = own_options(entries, habits, hour, minute, state, where, free, plot)
+    plan = plan_options(entries, habits, hour, minute, state, free, plot, catalog=catalog)
+    keep, *own = own_options(entries, habits, hour, minute, state, where, free, plot, catalog=catalog)
     found: list[DayOption] = []
     if trips and world is not None and not plot:
         try:
@@ -399,7 +400,9 @@ class DayDesk:
 
     # --- the menus --------------------------------------------------------------------------------
 
-    def menu(self, rec: NpcRecord, routine: Any, hour: int, minute: int, habits: list[Habit]) -> DayMenu:
+    def menu(
+        self, rec: NpcRecord, routine: RoutineInfo, hour: int, minute: int, habits: list[Habit]
+    ) -> DayMenu:
         """Both menus of the npc's next hour (planner.menu_of, `day_menu`), kept as the ones its flight
         asks. Trips need the rumors' clock and a bridge that tells an arrival."""
         npc, entries = rec.id, routine.entries
@@ -410,7 +413,8 @@ class DayDesk:
         trips = self.rumors.clock is not None and hello is not None and hello.protocol >= PROTOCOL
         guard, where = self.guard, self._where
         menu = day_menu(
-            npc, rec.guild, rec.state, entries, habits, hour, minute, guard, world, where, trips=trips
+            npc, rec.guild, rec.state, entries, habits, hour, minute, guard, world, where,
+            trips=trips, catalog=routine.event_activities,
         )
         self.menus[npc] = menu
         return menu
