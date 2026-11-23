@@ -352,6 +352,7 @@ void GameScript::loadNativeHumanPerceptions() {
   theftCallback = findFunction("B_ASSESSTHEFT");
   useMobCallback = findFunction("B_ASSESSUSEMOB");
   stopShortZapCallback = findFunction("B_STOPSHORTZAPPED");
+  restartTentacleCallback = findFunction("B_RESTARTGREENTENTACLE");
   const auto enabled = [this] { return nativeHumanPerceptionsEnabled(); };
   vm.override_function("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }},enabled);
   vm.override_function("B_ASSESSDAMAGE",std::function<void()>{[this] { runDamageReaction(); }},enabled);
@@ -369,9 +370,10 @@ void GameScript::loadNativeHumanPerceptions() {
 
 bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase) {
   const bool stopShortZap = fn==stopShortZapCallback;
+  const bool restartTentacle = fn==restartTentacleCallback;
   const bool propertyCrime = fn==theftCallback || fn==useMobCallback;
   if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=warnCallback && fn!=fightSoundCallback &&
-      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !propertyCrime && !stopShortZap) ||
+      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !propertyCrime && !stopShortZap && !restartTentacle) ||
      !nativeHumanPerceptionsEnabled())
     return false;
   phase.fromRecord();
@@ -391,6 +393,11 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
     runFightSoundReaction();
   else if(stopShortZap)
     stopControlSpell(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()),true);
+  else if(restartTentacle) {
+    const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+    if(npc_getlasthitspellid(self)==findSymbol("SPL_GREENTENTACLE")->get_int())
+      npc_setstatetime(self,0);
+    }
   else
     runDamageReaction();
   return true;
@@ -952,7 +959,7 @@ bool GameScript::runControlSpell(Npc& npc, const daedalus::DaedalusSymbol& symbo
   const std::string_view name = symbol.name();
   result = 0;
   if(name=="ZS_GREENTENTACLE") {
-    npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction("B_RESTARTGREENTENTACLE").ptr));
+    npc_percenable(self,PERC_ASSESSMAGIC,int(restartTentacleCallback.ptr));
     npc_percenable(self,PERC_ASSESSDAMAGE,int(damageCallback.ptr));
     npc_stopani(self,"s_GreententacleA_Victim");
     npc_stopani(self,"s_GreententacleB_Victim");
