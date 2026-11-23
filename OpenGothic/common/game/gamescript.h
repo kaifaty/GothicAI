@@ -269,6 +269,7 @@ class GameScript final : public GameRules {
       RoutineWake wake = RoutineWake::Timer;
       bool enters = false;
       };
+    void refreshNpcAtInsert(Npc& npc);
     void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
     bool startHotkeyPotion(Npc& pl, bool mana);

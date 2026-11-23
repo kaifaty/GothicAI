@@ -11,3 +11,31 @@ void GameScript::initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& 
   const NpcDefinitionRuntime::Definitions empty;
   NpcDefinitionRuntime::initialize(vm,npc,symbol,useRecords ? npcDefinitions : empty,like);
   }
+
+void GameScript::refreshNpcAtInsert(Npc& npc) {
+  auto& record = npc.handle();
+  if(record.attribute[ATR_HITPOINTS]<=0)
+    return;
+
+  // Retain the saved local and compare instance identities, as the stock script
+  // does even when the currently controlled character is not PC_HERO.
+  const auto hero = hlp_getnpc(int(findSymbolIndex("PC_HERO")));
+  findSymbol("B_REFRESHATINSERT.HER")->set_instance(hero);
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  if(hlp_getinstanceid(self)==hlp_getinstanceid(hero) || record.guild>=int32_t(GIL_SEPERATOR_HUM))
+    return;
+
+  record.attribute[ATR_HITPOINTS] = record.attribute[ATR_HITPOINTSMAX];
+  if(npc_hasequippedweapon(self))
+    return;
+
+  switch(record.guild) {
+    case GIL_MIL:
+    case GIL_PAL:
+    case GIL_SLD:
+    case GIL_BAU:
+    case GIL_NOV:
+      createinvitems(self,int(findSymbolIndex("ITMW_1H_BAU_MACE")),1);
+      break;
+    }
+  }

@@ -1222,6 +1222,8 @@ void GameScript::invokeRefreshAtInsert(Npc& npc) {
   if(B_RefreshAtInsert==nullptr)
     return;
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && NpcDefinitionRuntime::enabled())
+    return refreshNpcAtInsert(npc);
   vm.call_function<void>(B_RefreshAtInsert);
   }
 
