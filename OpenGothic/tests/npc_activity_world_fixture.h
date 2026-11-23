@@ -1390,6 +1390,77 @@ void loadCampfireGroup(Gothic& gothic,const CampfireSave& save) {
               save.edge.c_str(),double(std::hypot(step.x,step.z)));
   }
 
+void observePlayerPhases(World& world,Npc& npc,Npc& hero,bool seated) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  const auto phases=activityPhases(script,"ZS_OBSERVEPLAYER");
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto beforeTime=npc.stateTime();
+  const auto beforeState=Contract::previousState(npc);
+  const auto beforeRoom=npc.handle().aivar[21];
+  const auto beforeDelay=npc.handle().aivar[68];
+  require(ActivityDefinitions::bodyStateContains(int32_t(npc.bodyState()),BS_SIT)==seated &&
+          npc.qDistTo(hero)<1000.f*1000.f,"observation: the fixture holds the intended nearby pose");
+  std::vector<std::string> original;
+  for(bool native:{false,true}) {
+    enabled=native;
+    npc.clearAiQueue();
+    npc.aiPush(AiQueue::aiStopLookAt());
+    Contract::nextAiAction(npc);
+    Contract::previousState(npc)=ScriptFn();
+    npc.handle().aivar[21]=0;
+    npc.setStateTime(0);
+    script.setSeed(73106);
+    auto expected=Contract::random(script);
+    ActivityStream stream(world,npc);
+    const auto invoke=[&](size_t phase) { return script.invokeState(&npc,&hero,nullptr,uint32_t(phase)); };
+    invoke(phases.init);
+    const auto delay=1+int32_t(expected()%2);
+    auto queue=Contract::queue(npc);
+    require(queue.size()==(seated ? 1u : 3u),"observation: only a standing listener gets stand-up and turn commands");
+    if(!seated) require(queue.pop().act==AI_StandUp,"observation: stand-up precedes the look");
+    const auto look=queue.pop();
+    require(look.act==AI_LookAtNpc && look.target==&hero,"observation: both poses look at the same guest");
+    if(!seated) require(queue.pop().act==AI_TurnToNpc,"observation: standing Init turns after looking");
+    require(npc.handle().aivar[68]==delay && Contract::random(script)==expected,
+            "observation: Init draws one original delay");
+
+    npc.clearAiQueue();
+    const auto boundary=(delay+1)*1000;
+    npc.setStateTime(boundary-1);
+    require(invoke(phases.loop)==LOOP_CONTINUE && npc.isAiQueueEmpty() && npc.stateTime()==uint64_t(boundary-1) &&
+            Contract::random(script)==expected,"observation: Loop leaves the timer alone until the whole second");
+    npc.setStateTime(boundary);
+    const auto nextDelay=1+int32_t(expected()%2);
+    require(invoke(phases.loop)==LOOP_CONTINUE && npc.handle().aivar[68]==nextDelay && npc.stateTime()==0 &&
+            Contract::random(script)==expected,"observation: Loop draws once and resets the timer at the boundary");
+    const auto* turn=npc.aiQueueFront();
+    require(seated ? turn==nullptr : turn && turn->act==AI_TurnToNpc && turn->target==&hero,
+            "observation: only the standing listener repeats the turn");
+
+    npc.clearAiQueue();
+    npc.aiPush(AiQueue::aiLookAtNpc(&hero));
+    Contract::nextAiAction(npc);
+    invoke(phases.end);
+    require(npc.aiQueueFront() && npc.aiQueueFront()->act==AI_StopLookAt && stream.records==(native ? 4u : 0u),
+            "observation: End stops the existing look and all phases use the selected executor");
+    Contract::nextAiAction(npc);
+    std::erase_if(stream.events,[](const auto& event) {
+      return !(event.starts_with("phase ") || event.starts_with("result ") ||
+               event.starts_with("queue ") || event.starts_with("random "));
+      });
+    if(!native) original=std::move(stream.events);
+    else require(original==stream.events,"observation: phase results, queue and random draws match the VM");
+    }
+  enabled=wasEnabled;
+  npc.handle().aivar[21]=beforeRoom;
+  npc.handle().aivar[68]=beforeDelay;
+  Contract::previousState(npc)=beforeState;
+  npc.setStateTime(int64_t(beforeTime));
+  std::printf("D5.2 %s observation: Init, timed Loop, End and random stream match the VM\n",seated ? "seated" : "standing");
+  }
+
 void quietSoundRooms(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -1516,6 +1587,20 @@ void quietSoundRooms(Gothic& gothic) {
     }
 
   prepare(true);
+  observePlayerPhases(world,*npc,hero,false);
+  prepare(true);
+  const auto enterRoom=script.findFunction("B_ASSESSENTERROOM");
+  npc->setPerceptionEnable(PERC_ASSESSENTERROOM,enterRoom.ptr);
+  require(npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSENTERROOM) &&
+          npc->aiQueueFront() && npc->aiQueueFront()->act==AI_StartState && npc->aiQueueFront()->func==observe &&
+          npc->aiQueueFront()->target==&hero,"observation: entering the room directly queues the reaction");
+  Contract::nextAiAction(*npc);
+  Contract::tickRoutine(*npc);
+  require(npc->isInState(observe) && Contract::aiState(*npc).started && npc->hasPerc(PERC_ASSESSTHEFT),
+          "observation: the room reaction starts and restores perceptions");
+  std::puts("D5.2 direct room entrance: observation started with the original target and perceptions");
+
+  prepare(true);
   PhysicsNoise impact;
   impact.culprit=&hero;
   impact.position=hero.position();
@@ -1525,10 +1610,55 @@ void quietSoundRooms(Gothic& gothic) {
           npc->hasPerc(PERC_ASSESSTHEFT) && quietCalls==0,
           "quiet sound: native impact starts observation immediately and restores perceptions");
   vm.remove_call_observer(observer);
-  test.moveHero(beyond->groundPos,hero.rotation());
-  test.stepUntil(240,[&] { return npc->isInState(stand) && Contract::aiState(*npc).started; },
-                 "quiet sound: the listener resumes its original routine when the source leaves");
-  std::puts("D5.1 physical sound: ordinary load, immediate observation and return to the standing routine");
+  npc->setStateTime(750);
+  const auto pending=activityQueue(*npc);
+  const auto delay=npc->handle().aivar[68];
+  const auto exit=beyond->groundPos;
+  std::vector<uint8_t> save;
+  {
+    Tempest::MemWriter writer(save);
+    Serialize out(writer);
+    Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+    std::memset(preview.data(),0,4);
+    gothic.gameSession()->save(out,"quiet sound during observation",preview);
+  }
+  gothic.clearGame().reset();
+  {
+    Tempest::MemReader reader(save);
+    Serialize in(reader);
+    gothic.setGame(std::make_unique<GameSession>(in));
+  }
+  ActivityEventsWorld loaded(gothic);
+  auto& restored=loaded.world();
+  auto* listener=activityNpc(restored,"BAU_951_HILDA");
+  auto& guest=*restored.player();
+  require(listener && listener->isInState(observe) && Contract::aiState(*listener).started &&
+          listener->stateOther()==&guest && listener->stateTime()==750 && listener->handle().aivar[68]==delay &&
+          activityQueue(*listener)==pending,"observation: ordinary load restores the target, elapsed time, draw and queue");
+  loaded.only({listener,&guest});
+  {
+    ActivityStream stream(restored,*listener);
+    auto& restoredVm=restored.script().getVm();
+    size_t observationVmCalls=0;
+    const auto countVm=restoredVm.add_call_observer([&](const auto& symbol) {
+      observationVmCalls+=symbol.name().starts_with("ZS_OBSERVEPLAYER");
+      });
+    loaded.moveHero(exit,guest.rotation());
+    loaded.stepUntil(240,[&] { return listener->isInState(stand) && Contract::aiState(*listener).started; },
+                     "observation: the loaded listener returns to its original routine when the source leaves");
+    restoredVm.remove_call_observer(countVm);
+    require(observationVmCalls==0 && activityCount(stream.events,"phase ZS_OBSERVEPLAYER")==0 &&
+            activityCount(stream.events,"phase ZS_OBSERVEPLAYER_LOOP")>0 &&
+            activityCount(stream.events,"phase ZS_OBSERVEPLAYER_END")==1,
+            "observation: the loaded episode continues through Loop and End without repeating Init");
+  }
+  std::puts("D5.2 physical sound: ordinary load resumed observation and returned to the standing routine");
+  loaded.moveHero(*inside,guest.rotation());
+  loaded.only({&guest});
+  require(listener->playAnimByName("T_STAND_2_SIT",BS_SIT,true)!=nullptr,
+          "observation: the seated witness can enter the stock sitting pose");
+  loaded.stepUntil(120,[&] { return listener->animProgress("S_SIT")>=0; },"observation: the seated witness settles");
+  observePlayerPhases(restored,*listener,guest,true);
   }
 
 void quietSoundAtPost(Gothic& gothic) {

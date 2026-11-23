@@ -66,6 +66,84 @@ void GameScript::runQuietSoundReaction(Npc& listener) {
   ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),1,"");
   }
 
+bool GameScript::runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  constexpr size_t seenLeftRoom = 21; // AIV_SEENLEFTROOM in the verified program
+  constexpr size_t turnInterval = 68; // AIV_STATETIME in the verified program
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  // Read OTHER from the live script context after each shared helper.
+  const auto other = [&] { return vm.global_other()->get_instance(); };
+  const auto otherNpc = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(other()); };
+  const auto hasBodyState = [&](const std::shared_ptr<daedalus::INpc>& actor, int32_t state) {
+    return ActivityDefinitions::bodyStateContains(npc_getbodystate(actor),state);
+    };
+  const auto say = [&](std::string_view line) {
+    vm.call_function<void>("B_SAY",self,other(),line);
+    };
+  const auto turnToOther = [&] {
+    vm.call_function<void>("B_TURNTONPC",self,other());
+    };
+
+  const std::string_view name = symbol.name();
+  if(name=="ZS_OBSERVEPLAYER") {
+    vm.call_function<void>("PERCEPTION_SET_NORMAL");
+    const bool seated = hasBodyState(self,BS_SIT);
+    if(!seated)
+      ai_standup(self);
+    vm.call_function<void>("B_LOOKATNPC",self,other());
+    if(!seated)
+      turnToOther();
+    if(npc_wasinstate(self,int(findFunction("ZS_SLEEP").ptr)))
+      say("$YOUDISTURBEDMYSLUMBER");
+    const bool watchingPlayer = npc_isplayer(otherNpc());
+    const bool sawExit = self->aivar[seenLeftRoom]==1;
+    if(watchingPlayer && sawExit) {
+      self->aivar[seenLeftRoom] = 0;
+      auto& comment = *findSymbol("PLAYER_LEFTROOMCOMMENT");
+      if(comment.get_int()==0) {
+        say("$WHATDIDYOUDOINTHERE");
+        comment.set_int(1);
+        }
+      }
+    self->aivar[turnInterval] = 1+hlp_random(2);
+    result = 0;
+    return true;
+    }
+
+  if(name=="ZS_OBSERVEPLAYER_LOOP") {
+    auto& comment = *findSymbol("PLAYER_SNEAKERCOMMENT");
+    const bool commentPending = comment.get_int()==0;
+    const bool sneaking = hasBodyState(otherNpc(),BS_SNEAK);
+    if(commentPending && sneaking) {
+      comment.set_int(1);
+      ai_pointatnpc(self,otherNpc());
+      say("$WHATSTHISSUPPOSEDTOBE");
+      ai_stoppointat(self);
+      npc_sendpassiveperc(self,PERC_ASSESSWARN,self,otherNpc());
+      }
+    if(npc_getstatetime(self)>self->aivar[turnInterval]) {
+      if(!hasBodyState(self,BS_SIT))
+        turnToOther();
+      self->aivar[turnInterval] = 1+hlp_random(2);
+      npc_setstatetime(self,0);
+      }
+    const auto distance = npc_getdisttonpc(self,otherNpc());
+    if(distance>findSymbol("PERC_DIST_INTERMEDIAT")->get_int()) {
+      npc_clearaiqueue(self);
+      result = LOOP_END;
+      } else {
+      result = LOOP_CONTINUE;
+      }
+    return true;
+    }
+
+  if(name=="ZS_OBSERVEPLAYER_END") {
+    vm.call_function<void>("B_STOPLOOKAT",self);
+    result = 0;
+    return true;
+    }
+  return false;
+  }
+
 int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {
   auto* symbol = findSymbol(name);
   if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT)
