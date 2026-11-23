@@ -1,5 +1,8 @@
 #include "gamescript.h"
 
+#include <algorithm>
+#include <array>
+
 #include <Tempest/Log>
 
 #include "game/serialize.h"
@@ -21,8 +24,17 @@ auto GameScript::createNpc(Npc& owner, size_t instance, std::string_view waypoin
 
 uint32_t GameScript::initializeInstanceNpc(const std::shared_ptr<NpcRecord>& record, size_t instance) {
   auto npc = std::static_pointer_cast<daedalus::INpc>(record);
-  // Transformations reuse every field of the existing instance.
-  initializeInstanceNpc(npc,instance,false);
+  // These stock spell forms and the necromancy skeleton can overlay a live
+  // record. Their constructors and helpers do not read the existing fields.
+  static constexpr std::array<std::string_view,13> forms={
+    "SHEEP", "SCAVENGER", "GIANT_RAT", "GIANT_BUG", "WOLF", "WARAN", "SNAPPER",
+    "WARG", "FIREWARAN", "LURKER", "SHADOWBEAST", "DRAGONSNAPPER", "SKELETON"
+    };
+  bool useRecords=false;
+  if(nativeRoutineProgram && NpcDefinitionRuntime::enabled())
+    if(const auto* symbol=vm.find_symbol_by_index(uint32_t(instance)))
+      useRecords=std::ranges::find(forms,symbol->name())!=forms.end();
+  initializeInstanceNpc(npc,instance,useRecords);
   return npc->symbol_index();
   }
 

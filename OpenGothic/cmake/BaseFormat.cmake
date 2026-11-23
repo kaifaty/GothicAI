@@ -16,6 +16,7 @@ set(BASE_SOURCES
   common/musicdata.cpp common/dmusic/musicrecord.cpp common/musicnative.c common/musicnativeimport.c
   common/import/itemdefinitions.cpp common/itemdefinitions.cpp common/import/routinedefinitions.cpp common/routinedefinitions.cpp common/npcdefinitions.cpp common/placementdefinitions.cpp common/activitydefinitions.cpp
   common/npchelperdefinitions.cpp common/asset/npchelperdefinitions.cpp
+  common/game/definitions/fightdefinitiondata.cpp common/import/fightdefinitions.cpp
   common/dmusic/directmusicimport.cpp common/dmusic/dlsruntime.cpp common/dmusic/styleruntime.cpp common/dmusic/waveruntime.cpp)
 set(BASE_NATIVE_IO
   lib/Tempest/Engine/io/rfile.cpp lib/Tempest/Engine/io/idevice.cpp lib/Tempest/Engine/utility/dir.cpp
@@ -50,7 +51,8 @@ list(APPEND BASE_FORMAT_INPUTS ${BASE_SOURCES} ${BASE_NATIVE_IO}
   lib/Tempest/Engine/include/Tempest/TextCodec lib/Tempest/Engine/include/Tempest/Except lib/Tempest/Engine/include/Tempest/IDevice
   lib/Tempest/Engine/include/Tempest/Platform lib/cgltf/cgltf.h lib/miniz/miniz.h lib/miniz/miniz.c
   common/itemdefinitions.h common/routinedefinitions.h common/npcdefinitions.h common/asset/npcdefinitions.h common/import/npcdefinitions.cpp common/placementdefinitions.h common/import/placementdefinitions.cpp common/activitydefinitions.h common/import/activitydefinitions.cpp cmake/NpcSnapshot.cmake cmake/BaseImport.cmake cmake/BaseFormat.cmake)
-list(APPEND BASE_FORMAT_INPUTS common/npchelperdefinitions.h common/import/npchelperdefinitions.cpp common/definitionjson.h)
+list(APPEND BASE_FORMAT_INPUTS common/npchelperdefinitions.h common/import/npchelperdefinitions.cpp common/definitionjson.h
+  common/game/definitions/fightdefinitiondata.h common/game/definitions/fightdefinitioncapture.h common/game/fighttactic.h common/records/definitions.h)
 list(REMOVE_DUPLICATES BASE_FORMAT_INPUTS)
 list(SORT BASE_FORMAT_INPUTS)
 set(BASE_FORMAT_SUMS "")
