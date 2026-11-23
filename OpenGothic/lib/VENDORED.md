@@ -118,7 +118,9 @@ Keep these when updating a library from upstream.
   [the accepted physics summary](../../reports/physics/2026-10-14-jolt-stage1/validation-notes.md).
 - `common/daedalus/` `DaedalusVm::unsafe_call_bl` (`vm.h`, `vm.cpp`): calls a script function the way
   the `BL` instruction does, so an override (`override_function`) runs instead of its code. The story
-  graph's Interpreter calls script functions from a dialog's program through it.
+  graph's Interpreter calls script functions from a dialog's program through it. A typed override can
+  supply a predicate. Both call paths check it before notifying observers or pushing a frame, so a
+  false predicate runs the original bytecode with its usual call and trace behavior.
 - `common/daedalus/` `DaedalusScript::add_int_symbol` (`script.h`, `script.cpp`): adds a global integer
   variable that is not in the compiled scripts; `from_program` keeps room for `MAX_ADDED_SYMBOLS` of them, so no
   symbol moves. The AI director's story state (`DIR_*`, graph_patch `vars`) lives in such variables and is

@@ -28,6 +28,80 @@ bool GameScript::usesNativeQuietSound(ScriptFn callback) const {
          ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
   }
 
+void GameScript::loadNativeRoomReaction() {
+  if(!nativeRoutineProgram)
+    return;
+  vm.override_function("B_ASSESSENTERROOM",std::function<int32_t()>{[this] { return runEnterRoomReaction(); }},[this] {
+    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+    });
+  }
+
+int32_t GameScript::runEnterRoomReaction() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto inState = [&](std::string_view state) { return npc_isinstate(self,int(findFunction(state).ptr)); };
+  const auto hasBodyState = [&](const std::shared_ptr<daedalus::INpc>& actor, int32_t state) {
+    return ActivityDefinitions::bodyStateContains(npc_getbodystate(actor),state);
+    };
+
+  auto& portalGuild = *findSymbol("B_ASSESSENTERROOM.PORTALGUILD");
+  const auto guild = wld_getplayerportalguild();
+  portalGuild.set_int(guild);
+  auto& comment = *findSymbol("PLAYER_LEFTROOMCOMMENT");
+  if(guild!=int32_t(GIL_PUBLIC) && guild>int32_t(GIL_NONE) && comment.get_int()==1 && npc_isplayer(other()))
+    comment.set_int(0);
+
+  if(npc_getdisttonpc(self,other())>1000)
+    return 0;
+  const bool listenerInRoom = npc_getportalguild(self)>=int32_t(GIL_NONE);
+  if(listenerInRoom && !npc_isinplayersroom(self))
+    return 0;
+  if(npc_isinstate(self,int(ZS_Attack)) || vm.call_function<int32_t>("C_NPCISGATEGUARD",self)!=0 || !npc_isplayer(other()))
+    return 0;
+  if(int32_t(self->type)==findSymbol("NPCTYPE_FRIEND")->get_int() || npc_getattitude(self,other())==ATT_FRIENDLY)
+    return 0;
+
+  const auto source = other();
+  if(hasBodyState(source,BS_STAND) || hasBodyState(source,BS_SNEAK)) {
+    const bool observing = inState("ZS_OBSERVEPLAYER");
+    const bool canSee = npc_canseenpc(self,other());
+    if(!observing && !canSee)
+      return 0;
+    }
+  if(self->guild==GIL_NONE)
+    return 0;
+  const bool sleeping = inState("ZS_SLEEP");
+  const bool sameRoom = npc_isinplayersroom(self);
+  if(sleeping && !sameRoom)
+    return 0;
+
+  const bool publicRoom = sameRoom && portalGuild.get_int()==int32_t(GIL_PUBLIC);
+  if(publicRoom) {
+    if(inState("ZS_OBSERVEPLAYER"))
+      return 0;
+    if(hasBodyState(self,BS_LIE))
+      vm.call_function<void>("B_MM_DESYNCHRONIZE");
+    static constexpr std::string_view interruptible[] = {
+      "ZS_STAND_WP", "ZS_STAND_GUARDING", "ZS_STAND_EATING", "ZS_STAND_DRINKING", "ZS_STAND_ARMSCROSSED",
+      "ZS_SMOKE_JOINT", "ZS_SMALLTALK", "ZS_SLEEP", "ZS_SIT_THRONE", "ZS_SIT_CHAIR", "ZS_SIT_CAMPFIRE",
+      "ZS_SIT_BENCH", "ZS_READ_BOOKSTAND", "ZS_POTION_ALCHEMY",
+      };
+    if(!std::ranges::any_of(interruptible,inState))
+      return 0;
+    }
+  else if(vm.call_function<int32_t>("C_NPCISBOTHEREDBYPLAYERROOMGUILD",self)==0) {
+    return 0;
+    }
+
+  npc_clearaiqueue(self);
+  vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+  if(publicRoom)
+    ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),hasBodyState(self,BS_SIT) ? 0 : 1,"");
+  else
+    ai_startstate(self,int(findFunction("ZS_CLEARROOM").ptr),1,"");
+  return 1;
+  }
+
 void GameScript::runQuietSoundReaction(Npc& listener) {
   const auto* source = findNpc(vm.global_other());
   if(source==nullptr)
@@ -37,8 +111,7 @@ void GameScript::runQuietSoundReaction(Npc& listener) {
      (height>quietSound.indoorHeightLimit && wld_getplayerportalguild()>=int32_t(GIL_NONE)))
     return;
 
-  // The room helper also handles trespass and is shared with the other perceptions.
-  if(vm.call_function<int32_t>("B_ASSESSENTERROOM")!=0 || listener.isInState(findFunction("ZS_GUARD_PASSAGE")))
+  if(runEnterRoomReaction()!=0 || listener.isInState(findFunction("ZS_GUARD_PASSAGE")))
     return;
 
   const auto self = std::static_pointer_cast<daedalus::INpc>(listener.handlePtr());

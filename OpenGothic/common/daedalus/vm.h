@@ -498,10 +498,12 @@ namespace daedalus {
 		/// \tparam P The parameters types of the external.
 		/// \param name The name of the function to override.
 		/// \param callback The C++ function to register as the external.
+		/// \param enabled An optional predicate evaluated before dispatch. False executes the script body.
 		/// \see #register_external(std::string_view, std::function)
 		/// \todo Deduplicate source code!
 		template <typename R, typename... P>
-		void override_function(std::string_view name, std::function<R(P...)> const& callback) {
+		void override_function(std::string_view name, std::function<R(P...)> const& callback,
+		                       std::function<bool()> enabled = {}) {
 			auto* sym = find_symbol_by_name(name);
 			if (sym == nullptr) throw DaedalusSymbolNotFound {std::string {name}};
 			if (sym->is_external()) throw DaedalusVmException {"symbol is already an external"};
@@ -543,7 +545,7 @@ namespace daedalus {
 			}
 
 			// *evil template hacking ensues*
-			_m_function_overrides[sym->address()] = [callback, sym](DaedalusVm& machine) {
+			auto call = [callback, sym](DaedalusVm& machine) {
 				machine.push_call(sym);
 				if constexpr (std::same_as<void, R>) {
 					if constexpr (sizeof...(P) > 0) {
@@ -561,6 +563,7 @@ namespace daedalus {
 				}
 				machine.pop_call();
 			};
+			_m_function_overrides[sym->address()] = {std::move(call), std::move(enabled)};
 		}
 
 		/// \brief Overrides a function in Daedalus code with an external naked call.
@@ -575,7 +578,7 @@ namespace daedalus {
 			if (sym == nullptr) throw DaedalusSymbolNotFound {std::string {name}};
 			if (sym->is_external()) throw DaedalusVmException {"symbol " + sym->name() + " is already an external"};
 
-			_m_function_overrides[sym->address()] = [callback](DaedalusVm& machine) { callback(machine); };
+			_m_function_overrides[sym->address()] = {[callback](DaedalusVm& machine) { callback(machine); }, {}};
 		}
 
 		/// \brief Overrides a function in Daedalus code with an external definition.
@@ -639,7 +642,7 @@ namespace daedalus {
 		[[nodiscard]] DaedalusStackFrame const& stack_frame(uint16_t depth) const;
 		// Like override_function, with a signature read from program records by the caller.
 		void override_function_custom(DaedalusSymbol const& sym, std::function<void(DaedalusVm&)> callback) {
-			_m_function_overrides[sym.address()] = std::move(callback);
+			_m_function_overrides[sym.address()] = {std::move(callback), {}};
 		}
 
 		/// \brief Registers a function to be called when script execution fails.
@@ -1040,7 +1043,11 @@ namespace daedalus {
 
 		std::vector<DaedalusCallStackFrame> _m_call_stack;
 		std::unordered_map<DaedalusSymbol*, std::function<void(DaedalusVm&)>> _m_externals;
-		std::unordered_map<uint32_t, std::function<void(DaedalusVm&)>> _m_function_overrides;
+		struct FunctionOverride {
+			std::function<void(DaedalusVm&)> call;
+			std::function<bool()> enabled;
+		};
+		std::unordered_map<uint32_t, FunctionOverride> _m_function_overrides;
 		std::optional<std::function<void(DaedalusVm&, DaedalusSymbol&)>> _m_default_external {std::nullopt};
 		std::function<void(DaedalusSymbol&)> _m_access_trap;
 		std::function<void(DaedalusSymbol const&)> _m_read_observer;
