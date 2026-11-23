@@ -103,6 +103,7 @@ class GameScript final : public GameRules {
     void         loadPerc(Serialize& fin);
 
     inline auto& getVm() { return vm; }
+    bool         usesVerifiedNpcProgram() const { return nativeRoutineProgram; }
     // symbols of ours: the AI director's story variables and npc's
     inline auto& ownSymbols() { return own; }
     auto         questLog() const -> const QuestLog&;

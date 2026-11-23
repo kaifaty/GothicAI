@@ -236,12 +236,13 @@ auto storyJournalBeforeSave(GameScript& script) {
     require(result.ok,result.error.c_str());
     require(journalCalls==0,"live StoryGraph journal effects must bypass VM externals");
   }
+  stockQuestJournalEntry(script,note);
   const auto requireJournal=[journalStart,note,mission](const QuestLog& journal) {
     require(journal.questCount()==journalStart+2,"StoryGraph journal must ignore absent and invalid effects");
     const auto& first=journal.quest(journalStart);
     const auto& second=journal.quest(journalStart+1);
     require(first.name==note && first.section==QuestLog::Note && first.status==QuestLog::Status::Success &&
-            first.entry==std::vector<std::string>{"first","second"},
+            first.entry==std::vector<std::string>{"first","second","stock journal helper","stock journal helper"},
             "StoryGraph journal must preserve note section, valid status and entry order");
     require(second.name==mission && second.section==QuestLog::Mission && second.status==QuestLog::Status::Failed &&
             second.entry.empty(),"a status before creation must create an ordered Mission");
