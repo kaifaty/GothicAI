@@ -3,6 +3,7 @@
 #include <array>
 #include <initializer_list>
 #include <stdexcept>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -267,7 +268,18 @@ void GameScript::loadNativeWorldEntry() {
     Symbol* label;
     Symbol* guild;
     };
+  struct RoomChoice {
+    Symbol* expected;
+    Symbol* flag;
+    Room equal, otherwise;
+    };
+  struct MobRoutine {
+    int32_t hour, minute;
+    Symbol* name;
+    int32_t state;
+    };
   const auto* assign = findSymbol("WLD_ASSIGNROOMTOGUILD");
+  const auto* setMobRoutine = findSymbol("WLD_SETMOBROUTINE");
   const auto assignRoom = [this,assign](const Room& room) {
     vm.push_reference(room.label);
     if(room.guild)
@@ -276,28 +288,34 @@ void GameScript::loadNativeWorldEntry() {
       vm.push_int(-1);
     vm.unsafe_call_external(assign);
     };
-  static constexpr std::pair<const char*,size_t> roomSections[] = {
+  static constexpr struct Region {
+    const char* name;
+    size_t roomCount, choiceCount = 0, mobCount = 0;
+    } roomSections[] = {
     {"INIT_SUB_ADDON_PART_BANDITSCAMP_01",6}, {"INIT_SUB_NEWWORLD_PART_MONASTERY_01",13}, {"INIT_SUB_OLDCAMP",25},
+    {"INIT_SUB_NEWWORLD_PART_CITY_01",44,4,3}, {"INIT_SUB_NEWWORLD_PART_GREATPEASANT_01",13,2},
     };
-  for(const auto& [section,count] : roomSections) {
-    auto pc = findSymbol(section)->address();
-    const auto malformed = [&] { throw std::runtime_error("Unexpected room initializer in "+std::string(section)); };
+  for(const auto& region : roomSections) {
+    auto pc = findSymbol(region.name)->address();
+    const auto malformed = [&] { throw std::runtime_error("Unexpected room initializer in "+std::string(region.name)); };
     const auto take = [&] {
       const auto op = vm.instruction_at(pc);
       pc += op.size;
       return op;
       };
-    std::vector<Room> rooms;
-    rooms.reserve(count);
-    for(size_t i=0;i<count;++i) {
-      const auto label = take();
+    const auto reference = [&](const daedalus::DaedalusInstruction& op) {
+      return op.op==Op::PUSHV ? findSymbol(op.symbol) : nullptr;
+      };
+    const auto constant = [](const Symbol* symbol,Type type) {
+      return symbol && symbol->type()==type && symbol->is_const() && !symbol->is_member() && symbol->count()==1;
+      };
+    const auto readRoom = [&](Symbol* room) {
       const auto owner = take();
-      auto* room = label.op==Op::PUSHV ? findSymbol(label.symbol) : nullptr;
-      auto* guild = owner.op==Op::PUSHV ? findSymbol(owner.symbol) : nullptr;
-      if(!room || room->type()!=Type::STRING || !room->is_const() || room->count()!=1)
+      auto* guild = reference(owner);
+      if(!constant(room,Type::STRING))
         malformed();
       if(guild) {
-        if(guild->type()!=Type::INT || !guild->is_const() || guild->count()!=1)
+        if(!constant(guild,Type::INT))
           malformed();
         } else if(owner.op!=Op::PUSHI || owner.immediate!=1 || take().op!=Op::NEGATE) {
         malformed();
@@ -305,13 +323,64 @@ void GameScript::loadNativeWorldEntry() {
       const auto call = take();
       if(call.op!=Op::BE || call.symbol!=assign->index())
         malformed();
-      rooms.push_back({room,guild});
+      return Room{room,guild};
+      };
+
+    std::vector<MobRoutine> mobs;
+    for(size_t i=0;i<region.mobCount;++i) {
+      const auto hour = take();
+      const auto minute = take();
+      auto* name = reference(take());
+      const auto state = take();
+      const auto call = take();
+      if(hour.op!=Op::PUSHI || minute.op!=Op::PUSHI || !constant(name,Type::STRING) ||
+         state.op!=Op::PUSHI || call.op!=Op::BE || call.symbol!=setMobRoutine->index())
+        malformed();
+      mobs.push_back({hour.immediate,minute.immediate,name,state.immediate});
       }
-    if(take().op!=Op::RSR)
+    std::vector<std::variant<Room,RoomChoice>> rooms;
+    rooms.reserve(region.roomCount);
+    size_t choices = 0;
+    for(size_t i=0;i<region.roomCount;++i) {
+      auto* first = reference(take());
+      if(constant(first,Type::STRING)) {
+        rooms.emplace_back(readRoom(first));
+        continue;
+        }
+
+      auto* flag = reference(take());
+      if(!constant(first,Type::INT) || !flag || flag->type()!=Type::INT || flag->is_member() ||
+         flag->is_const() || flag->count()!=1 || take().op!=Op::EQ)
+        malformed();
+      const auto branch = take();
+      const auto equal = readRoom(reference(take()));
+      const auto skip = take();
+      if(branch.op!=Op::BZ || skip.op!=Op::B || pc!=branch.address)
+        malformed();
+      const auto otherwise = readRoom(reference(take()));
+      if(pc!=skip.address)
+        malformed();
+      rooms.emplace_back(RoomChoice{first,flag,equal,otherwise});
+      ++choices;
+      }
+    if(choices!=region.choiceCount || take().op!=Op::RSR)
       malformed();
-    vm.override_function(section,std::function<void()>{[assignRoom,rooms=std::move(rooms)] {
-      for(const auto& room : rooms)
-        assignRoom(room);
+    vm.override_function(region.name,std::function<void()>{[this,assignRoom,setMobRoutine,mobs=std::move(mobs),rooms=std::move(rooms)] {
+      for(const auto& mob : mobs) {
+        vm.push_int(mob.hour);
+        vm.push_int(mob.minute);
+        vm.push_reference(mob.name);
+        vm.push_int(mob.state);
+        vm.unsafe_call_external(setMobRoutine);
+        }
+      for(const auto& room : rooms) {
+        if(const auto* fixed = std::get_if<Room>(&room)) {
+          assignRoom(*fixed);
+          } else {
+          const auto& choice = std::get<RoomChoice>(room);
+          assignRoom(choice.flag->get_int()==choice.expected->get_int() ? choice.equal : choice.otherwise);
+          }
+        }
       }},PlacementDefinitionRuntime::enabled);
     }
   vm.override_function("INIT_SUB_NEWWORLD_PART_FARM_01",std::function<void()>{[this,assignRoom] {
