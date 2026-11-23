@@ -969,6 +969,7 @@ void playerAssessmentRoutes(World& world,Npc& npc,Npc& hero) {
   const auto follow=script.findFunction("B_ASSESSFOLLOWPLAYER");
   const auto observe=script.findFunction("ZS_OBSERVEPLAYER");
   const auto assessPc=vm.find_symbol_by_name("B_ASSESSPLAYER")->address();
+  const auto followPc=vm.find_symbol_by_name("B_ASSESSFOLLOWPLAYER")->address();
   auto& comment=*vm.find_symbol_by_name("PLAYER_DRAWWEAPONCOMMENT");
   const auto savedComment=comment.get_int();
   const auto savedFlag=npc.handle().aivar[19];
@@ -988,13 +989,14 @@ void playerAssessmentRoutes(World& world,Npc& npc,Npc& hero) {
       npc.clearAiQueue();
       npc.aiPush(AiQueue::aiWait(173));
       npc.setPerceptionEnable(PERC_ASSESSPLAYER,route.ptr);
-      size_t bytecode=0,followCalls=0;
-      vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==assessPc; });
-      const auto count=vm.add_call_observer([&](const auto& sym) { followCalls+=sym.name()=="B_ASSESSFOLLOWPLAYER"; });
+      size_t assessEntries=0,followEntries=0;
+      vm.observe_instructions([&](const auto&) {
+        assessEntries+=vm.pc()==assessPc;
+        followEntries+=vm.pc()==followPc;
+        });
       const bool delivered=npc.perceptionProcess(hero,nullptr,npc.qDistTo(hero),PERC_ASSESSPLAYER);
-      vm.remove_call_observer(count);
       vm.observe_instructions({});
-      require(delivered && bytecode==(native ? 0u : 1u) && followCalls==(route==follow ? 1u : 0u),
+      require(delivered && assessEntries==(native ? 0u : 1u) && followEntries==(route==follow && !native ? 1u : 0u),
               "player assessment: direct and follower perceptions use the chosen executor");
       const auto* next=npc.aiQueueFront();
       require(next && next->act==AI_StartState && next->func==observe && next->target==&hero && next->i0==1 &&
