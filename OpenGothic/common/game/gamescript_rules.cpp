@@ -1983,7 +1983,12 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
   if(symbol.name()=="ZS_UNCONSCIOUS") {
     npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction("B_ASSESSMAGIC").ptr));
     const auto body = npc_getbodystate(self);
-    if(ActivityDefinitions::bodyStateContains(body,BS_DIVE) || ActivityDefinitions::bodyStateContains(body,BS_SWIM)) {
+    const bool diving = ActivityDefinitions::bodyStateContains(body,BS_DIVE);
+    const bool swimming = ActivityDefinitions::bodyStateContains(body,BS_SWIM);
+    // The second stock check leaves its arguments in the saved VM symbols.
+    findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(BS_SWIM);
+    findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self);
+    if(diving || swimming) {
       npc_clearaiqueue(self);
       vm.call_function<void>("B_CLEARPERCEPTIONS",self);
       startState("ZS_DEAD");
