@@ -143,16 +143,19 @@ bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& s
   return true;
   }
 
-bool GameScript::invokeNativeRoutinePerception(Npc& npc, const daedalus::DaedalusSymbol& symbol,
+bool GameScript::invokeNativeRoutineReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol,
                                                NpcActivityProbe::Phase& phase) {
   const std::string_view name = symbol.name();
-  if((name!="B_GOLEMRISE" && name!="B_ASSESSSLEEPTALK") || !nativeRoomReactionsEnabled())
+  if((name!="B_GOLEMRISE" && name!="B_ASSESSSLEEPTALK" && name!="B_EVENT_PORTAL_EARTHQUAKE") ||
+     !nativeRoomReactionsEnabled())
     return false;
   phase.fromRecord();
   if(name=="B_GOLEMRISE")
     wakeDormantGolem(npc);
-  else
+  else if(name=="B_ASSESSSLEEPTALK")
     assessSleepTalk(npc);
+  else
+    runPortalEarthquake(npc);
   return true;
   }
 

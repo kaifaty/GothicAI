@@ -972,14 +972,14 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
     if(fp) test.freePoint(fp);
     const auto loop=a.state+"_LOOP";
     const auto loopPc=symbol(loop).address();
-    size_t vmLoops=0,quakes=0;
+    size_t vmLoops=0,quakeVmEntries=0,quakes=0;
     struct Unobserve {
       daedalus::DaedalusVm& vm;
       ~Unobserve() { vm.observe_instructions({}); }
       } unobserve{vm};
     vm.observe_instructions([&](const auto&) {
       if(vm.pc()==loopPc && vm.global_self()->get_instance()==std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())) ++vmLoops;
-      if(vm.pc()==quakePc) ++quakes;
+      if(vm.pc()==quakePc) ++quakeVmEntries;
       });
     auto drain=[&] { test.stepUntil(900,[&]{ return npc.isAiQueueEmpty(); },a.state+" finishes its commands"); };
     auto awaitPerception=[&] {
@@ -1088,11 +1088,13 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
       const auto early=Contract::random(script);
       gesture.set_int(-1);
       event.set_int(-1);
+      sound.set_int(-1);
       awaitPerception();
       npc.setStateTime(5999);
       Contract::tickScheduledRoutine(npc);
       check(Contract::random(script)==early && npc.stateTime()==5999 && gesture.get_int()==-1 &&
-            event.get_int()==-1 && quakes==0,"no gesture or story draw before the sixth whole second");
+            event.get_int()==-1 && sound.get_int()==-1 && quakeVmEntries==0,
+            "no gesture or story draw before the sixth whole second");
       checkPointClip(npc,"");
       drain();
       const auto due=Contract::aiState(npc).loopNextTime;
@@ -1112,7 +1114,7 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
       test.stepUntil(600,[&]{ return world.tickCount()>=due; },a.state+" reaches perception in the normal NPC tick");
       test.only({});
       check(Contract::aiState(npc).loopNextTime>world.tickCount() && npc.stateTime()==0 &&
-            gesture.get_int()==nativeRoll && event.get_int()==nativeStory && quakes==0 &&
+            gesture.get_int()==nativeRoll && event.get_int()==nativeStory && sound.get_int()==-1 && quakeVmEntries==0 &&
             Contract::random(script)==expected && vmLoops==nativeLoops+size_t(!events),
             "the first real perception tick performs one gesture decision in either mode");
       auto draw=[&](uint32_t seed,int map,int dead,int faction,bool quake,bool hasPortal=true) {
@@ -1122,7 +1124,7 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
         gesture.set_int(-1);
         event.set_int(-1);
         sound.set_int(-1);
-        const auto before=quakes;
+        const auto before=quakeVmEntries;
         script.setSeed(seed);
         auto expected=Contract::random(script);
         const auto roll=int(expected()%(folded ? 7u : 10u));
@@ -1131,9 +1133,10 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
         awaitPerception();
         npc.setStateTime(6000);
         Contract::tickScheduledRoutine(npc);
-        check(gesture.get_int()==roll && event.get_int()==eventRoll && quakes==before+quake &&
+        check(gesture.get_int()==roll && event.get_int()==eventRoll && quakeVmEntries==before+size_t(quake && !events) &&
               sound.get_int()==soundRoll && Contract::random(script)==expected && npc.stateTime()==0,
-              "the due gesture, story draw and earthquake's own sound draw must follow the script order");
+              "the original earthquake draws come in order and the native reaction runs no bytecode");
+        quakes+=sound.get_int()>=0;
         const char* clips[]={"T_LGUARD_SCRATCH","T_LGUARD_STRETCH","T_LGUARD_CHANGELEG"};
         checkPointClip(npc,roll<3 ? clips[roll] : "");
         drain();

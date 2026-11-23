@@ -251,7 +251,7 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
           const auto level = findSymbol("CURRENTLEVEL")->get_int();
           if(findSymbol("RAVENISDEAD")->get_int()==0 && npc.handle().guild==GIL_KDW &&
              ((level==4 && eventRoll==1) || (level==1 && eventRoll<5)))
-            vm.call_function<void>(findSymbol("B_EVENT_PORTAL_EARTHQUAKE"));
+            runPortalEarthquake(npc);
           }
         }
       if(stage==NeedsPose) {
@@ -319,4 +319,21 @@ bool GameScript::runBanditCamp(Npc& npc, const daedalus::DaedalusSymbol& symbol,
     npc_setstatetime(self,0);
     }
   return true;
+  }
+
+void GameScript::runPortalEarthquake(Npc& npc) {
+  const auto hero = vm.global_hero()->get_instance();
+  wld_playeffect("FX_EarthQuake",hero,hero,0,0,0,0);
+  const auto roll = rollRandom(4,&npc,true);
+  findSymbol("B_EVENT_PORTAL_EARTHQUAKE.RANDY")->set_int(int32_t(roll));
+  static constexpr std::string_view cues[4][2] = {
+    {"Ravens_Earthquake4", {}},
+    {"Ravens_Earthquake4", "Ravens_Earthquake2"},
+    {"Ravens_Earthquake3", "Ravens_Earthquake1"},
+    {"Ravens_Earthquake3", {}},
+    };
+  for(const auto cue : cues[roll]) {
+    if(!cue.empty())
+      snd_play(cue);
+    }
   }
