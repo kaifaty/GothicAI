@@ -861,6 +861,166 @@ void damagePerceptions(World& world,Npc& npc,Npc& hero) {
   std::puts("Damage perception: stock damage and spell end routes preserve warnings, attack reasons, crime and retargeting");
   }
 
+void humanAttackAnnouncements(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  auto& perceptions=Contract::passivePerceptions(world);
+  const auto perceptionCount=perceptions.size();
+  const auto priorEvents=events;
+  const auto priorRandom=Contract::random(script);
+  const auto order=Contract::outputOrder(script);
+  const auto priorAttitude=npc.attitude();
+  const auto self=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  const auto priorSelf=vm.global_self()->get_instance();
+  const auto priorOther=vm.global_other()->get_instance();
+  const auto priorAivar=std::to_array(self->aivar);
+  const auto priorHeroGuild=other->guild;
+  const auto priorKilled=other->aivar[67];
+  const auto priorVoice=self->voice;
+  const auto priorArmor=hero.currentArmor() ? hero.currentArmor()->clsId() : size_t(-1);
+  const auto pirateArmor=script.findSymbolIndex("ITAR_PIR_M_ADDON");
+  const bool temporaryArmor=hero.itemCount(pirateArmor)==0;
+  auto& gorn=*vm.find_symbol_by_name("GORN_DI");
+  const auto priorGorn=gorn.get_instance();
+  auto& disguiseSelf=*vm.find_symbol_by_name("C_PLAYERISFAKEPIRATE.SLF");
+  auto& disguiseOther=*vm.find_symbol_by_name("C_PLAYERISFAKEPIRATE.OTH");
+  auto& disguiseItem=*vm.find_symbol_by_name("C_PLAYERISFAKEPIRATE.ITM");
+  const auto priorDisguiseSelf=disguiseSelf.get_instance();
+  const auto priorDisguiseOther=disguiseOther.get_instance();
+  const auto priorDisguiseItem=disguiseItem.get_instance();
+  auto* begin=vm.find_symbol_by_name("B_SAY_ATTACKREASON");
+  auto* end=vm.find_symbol_by_name("B_SAY_ATTACKEND");
+  const auto piratePc=vm.find_symbol_by_name("C_PLAYERISFAKEPIRATE")->address();
+  static constexpr std::array randomSymbols={"B_SAY_ATTACKREASON.RND","B_SAY_ATTACKREASON.RANDOM","B_SAY_ATTACKEND.RND",
+                                             "B_SAY_ATTACKEND.RANDOM","B_SAY_ATTACKEND.RANDY"};
+  std::array<int32_t,randomSymbols.size()> priorScratch{};
+  for(size_t i=0;i<randomSymbols.size();++i)
+    priorScratch[i]=vm.find_symbol_by_name(randomSymbols[i])->get_int();
+  vm.global_self()->set_instance(self);
+  vm.global_other()->set_instance(other);
+  if(priorArmor!=size_t(-1)) hero.unequipItem(priorArmor);
+
+  struct Site {
+    bool ending;
+    std::string_view reason;
+    int32_t guild;
+    std::string_view line;
+    bool sound=false;
+    bool party=false;
+    int32_t voice=0;
+    uint32_t seed=73106;
+    std::array<int,randomSymbols.size()> bounds={};
+    bool isGorn=false;
+    bool disguise=false;
+    bool byPlayer=false;
+    };
+  for(const Site site:{
+      Site{false,"AR_THEFT",GIL_VLK,"$DIRTYTHIEF"},
+      Site{false,"AR_HUMANMURDEREDHUMAN",GIL_VLK,"$YOUMURDERER",true},
+      Site{false,"AR_REACTTODAMAGE",GIL_SEPERATOR_HUM,"$YOUDAREHITME"},
+      Site{false,"AR_GUILDENEMY",GIL_WOLF,"$ADDON_DIEMONSTER",true,false,9,73106,{0,3}},
+      Site{false,"AR_GUILDENEMY",GIL_WOLF,"",false,true,9,1,{100}},
+      Site{false,"AR_GUILDENEMY",GIL_VLK,"$ADDON_DIRTYPIRATE",true,false,0,73106,{},false,true},
+      Site{true,"AR_GUILDENEMY",GIL_VLK,"$KILLENEMY"},
+      Site{true,"AR_GUILDENEMY",GIL_WOLF,"",false,true,9,1,{0,0,100}},
+      Site{true,"AR_GUILDENEMY",GIL_DRAGON,"$ADDON_MONSTERKILLED2",false,true,9,1,{0,0,100,2}},
+      Site{true,"AR_MONSTERMURDEREDHUMAN",GIL_WOLF,"$MONSTERKILLED",false,false,12,73106,{0,0,0,0,2},true},
+      Site{true,"AR_MONSTERMURDEREDHUMAN",GIL_WOLF,"$GOODMONSTERKILL",false,false,12,73106,{},true,false,true},
+      Site{true,"AR_GUARDSTOPSFIGHT",GIL_DJG,""}}) {
+    other->guild=site.guild;
+    other->aivar[67]=int32_t(site.byPlayer);
+    self->aivar[7]=int32_t(hero.instanceSymbol());
+    self->aivar[9]=script.intSymbol(site.reason,-1);
+    self->aivar[15]=int32_t(site.party);
+    self->aivar[70]=0;
+    self->aivar[73]=0;
+    self->voice=site.voice;
+    npc.setAttitude(ATT_NEUTRAL);
+    gorn.set_instance(site.isGorn ? self : nullptr);
+    if(site.disguise) {
+      if(temporaryArmor) hero.addItem(pirateArmor,1);
+      hero.useItem(pirateArmor,Item::NSLOT,true);
+      require(hero.currentArmor() && hero.currentArmor()->clsId()==pirateArmor,"attack announcements: pirate armor is equipped");
+      }
+    auto* callback=site.ending ? end : begin;
+    for(bool native:{false,true}) {
+      events=native;
+      npc.clearAiQueue();
+      npc.aiPush(AiQueue::aiWait(173));
+      Contract::outputOrder(script)=order;
+      script.setSeed(site.seed);
+      auto expectedRandom=Contract::random(script);
+      disguiseSelf.set_instance(nullptr);
+      disguiseOther.set_instance(nullptr);
+      disguiseItem.set_instance(nullptr);
+      for(const auto symbol:randomSymbols) vm.find_symbol_by_name(symbol)->set_int(-1);
+      size_t body=0,pirate=0;
+      vm.observe_instructions([&](const auto&) {
+        body+=vm.pc()==callback->address();
+        pirate+=vm.pc()==piratePc;
+        });
+      vm.unsafe_call_bl(callback);
+      vm.observe_instructions({});
+      require(body==size_t(!native) && pirate==size_t(!native && site.disguise),
+              "attack announcements: the chosen path has the original or native body");
+      for(size_t i=0;i<randomSymbols.size();++i) {
+        const int bound=site.bounds[i];
+        const int roll=bound==0 ? -1 : int(expectedRandom()%uint32_t(bound));
+        require(vm.find_symbol_by_name(randomSymbols[i])->get_int()==roll,"attack announcements: exact saved random draw");
+        }
+      require(Contract::random(script)==expectedRandom,"attack announcements: RNG state is identical");
+      auto queue=Contract::queue(npc);
+      const auto& overlay=Contract::overlayQueue(npc);
+      const bool said=!site.line.empty();
+      require(queue.size()==1u+size_t(said && site.ending) && queue.pop().act==AI_Wait &&
+              overlay.size()==size_t(said && !site.ending) && Contract::outputOrder(script)==order+int(said),
+              "attack announcements: command order and output queue are preserved");
+      const auto* speech=site.ending ? queue.front() : overlay.front();
+      if(said)
+        require(speech && speech->act==(site.ending ? AI_OutputSvm : AI_OutputSvmOverlay) &&
+                speech->target==&hero && speech->s0==site.line && speech->i0==order,
+                "attack announcements: exact original line and interlocutor");
+      require(perceptions.size()==perceptionCount+size_t(site.sound),"attack announcements: exact fight-sound count");
+      if(site.sound) {
+        const auto& sound=perceptions.back();
+        require(sound.what==PERC_ASSESSFIGHTSOUND && sound.self==&npc && sound.other==&hero && sound.victim==&npc,
+                "attack announcements: a witness hears the original combat pair");
+        perceptions.pop_back();
+        }
+      if(site.disguise)
+        require(disguiseSelf.get_instance()==self && disguiseOther.get_instance()==other &&
+                disguiseItem.get_instance()==std::static_pointer_cast<daedalus::IItem>(hero.currentArmor()->handlePtr()),
+                "attack announcements: pirate disguise preserves the original formals and armor");
+      }
+    if(site.disguise) {
+      hero.unequipItem(pirateArmor);
+      if(temporaryArmor) hero.delItem(pirateArmor,1);
+      }
+    }
+  if(priorArmor!=size_t(-1)) hero.useItem(priorArmor,Item::NSLOT,true);
+  npc.clearAiQueue();
+  npc.setAttitude(priorAttitude);
+  std::copy(priorAivar.begin(),priorAivar.end(),self->aivar);
+  self->voice=priorVoice;
+  other->guild=priorHeroGuild;
+  other->aivar[67]=priorKilled;
+  vm.global_self()->set_instance(priorSelf);
+  vm.global_other()->set_instance(priorOther);
+  gorn.set_instance(priorGorn);
+  disguiseSelf.set_instance(priorDisguiseSelf);
+  disguiseOther.set_instance(priorDisguiseOther);
+  disguiseItem.set_instance(priorDisguiseItem);
+  for(size_t i=0;i<randomSymbols.size();++i)
+    vm.find_symbol_by_name(randomSymbols[i])->set_int(priorScratch[i]);
+  Contract::random(script)=priorRandom;
+  Contract::outputOrder(script)=order;
+  events=priorEvents;
+  std::puts("Attack announcements: actual speech queues, fight sounds and saved draws match the VM");
+  }
+
 void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -962,6 +1122,7 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
   npc.setOther(savedOther);
   npc.setTempAttitude(savedAttitude);
   std::puts("Human attack: Init, ordinary Loop, distance abort and End match the VM");
+  humanAttackAnnouncements(world,npc,hero);
   }
 
 void fleeAndWatchPhases(World& world,Npc& npc,Npc& hero) {

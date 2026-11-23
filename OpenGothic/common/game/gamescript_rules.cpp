@@ -18,6 +18,27 @@
 namespace {
 constexpr std::string_view bartokOrcGreeting = "DIA_Bartok_Angekommen_04_02";
 constexpr std::string_view cookCleaverGreeting = "Hackebeil_01_00";
+
+// AR_* values used by the announcement helpers in the verified stock program.
+enum class AttackAnnouncementReason : int32_t {
+  LeftPortalRoom = 1,
+  ClearRoom = 2,
+  GuardCalledToRoom = 3,
+  MonsterVsHuman = 4,
+  MonsterMurderedHuman = 5,
+  SheepKiller = 6,
+  Theft = 7,
+  UseMob = 8,
+  GuardCalledToThief = 9,
+  ReactToWeapon = 10,
+  ReactToDamage = 11,
+  GuardStopsFight = 12,
+  GuildEnemy = 14,
+  HumanMurderedHuman = 15,
+  MonsterCloseToGate = 16,
+  GuardStopsIntruder = 17,
+  Kill = 19,
+  };
 }
 
 std::string_view GameScript::symbolName(size_t id) {
@@ -151,6 +172,23 @@ bool GameScript::isPlayerFakeBandit(const std::shared_ptr<daedalus::INpc>& self,
 
   return findSymbol("PLAYER_HASTALKEDTOBANDITCAMP")->get_int()==1 &&
          findSymbol("CURRENTLEVEL")->get_int()==findSymbol("ADDONWORLD_ZEN")->get_int() && guild==GIL_BDT;
+  }
+
+bool GameScript::isPlayerFakePirate(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  constexpr size_t ignoresArmor = 73; // AIV_IGNORESARMOR
+  constexpr size_t ignoresFakeGuild = 70; // AIV_IGNORESFAKEGUILD
+  findSymbol("C_PLAYERISFAKEPIRATE.OTH")->set_instance(other);
+  findSymbol("C_PLAYERISFAKEPIRATE.SLF")->set_instance(self);
+  if(self && (self->aivar[ignoresArmor]==1 || self->aivar[ignoresFakeGuild]==1))
+    return false;
+  const auto currentOther = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  if(!npc_hasequippedarmor(currentOther))
+    return false;
+  const auto armor = npc_getequippedarmor(other);
+  findSymbol("C_PLAYERISFAKEPIRATE.ITM")->set_instance(armor);
+  return hlp_isitem(armor,int(findSymbolIndex("ITAR_PIR_H_ADDON"))) ||
+         hlp_isitem(armor,int(findSymbolIndex("ITAR_PIR_M_ADDON"))) ||
+         hlp_isitem(armor,int(findSymbolIndex("ITAR_PIR_L_ADDON")));
   }
 
 bool GameScript::hasFakeGuild(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
@@ -474,6 +512,11 @@ void GameScript::loadNativeHumanPerceptions() {
     }},enabled);
   vm.override_function("B_BARTOK_SHITANORC",std::function<void()>{[this] { sayAmbientGreeting(bartokOrcGreeting); }},enabled);
   vm.override_function("B_KOCH_HACKEBEIL",std::function<void()>{[this] { sayAmbientGreeting(cookCleaverGreeting); }},enabled);
+  vm.override_function("B_SAY_ATTACKREASON",std::function<void()>{[this] { sayAttackReason(); }},enabled);
+  vm.override_function("B_SAY_ATTACKEND",std::function<void()>{[this] { sayAttackEnd(); }},enabled);
+  vm.override_function("C_PLAYERISFAKEPIRATE",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    return isPlayerFakePirate(self,other);
+    }},enabled);
   vm.override_function("B_ADDPETZCRIME",std::function<void(Actor,int32_t)>{[this](const Actor& witness, int32_t crime) {
     adjustPetzCrime(witness,crime);
     }},enabled);
@@ -1604,6 +1647,143 @@ bool GameScript::runHumanPlunder(Npc& npc, const daedalus::DaedalusSymbol& symbo
   return true;
   }
 
+void GameScript::sayAttackReason() {
+  constexpr size_t attackReason = 9; // AIV_ATTACKREASON
+  constexpr size_t partyMember = 15; // AIV_PARTYMEMBER
+  using Reason = AttackAnnouncementReason;
+
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  if(self==nullptr)
+    return;
+  const auto reason = Reason(self->aivar[attackReason]);
+  const auto guild = other ? int32_t(other->guild) : int32_t(GIL_NONE);
+  const auto say = [&](std::string_view line) { sayToNpc(self,other,line,true); };
+  const auto fightSound = [&] { npc_sendpassiveperc(self,PERC_ASSESSFIGHTSOUND,self,other); };
+
+  const bool personalHostility = npc_getattitude(self,other)==ATT_HOSTILE;
+  const bool guildHostility = wld_getguildattitude(int32_t(self->guild),guild)==ATT_HOSTILE;
+  if(personalHostility && !guildHostility) {
+    if(reason!=Reason::Kill)
+      say("$IGETYOUSTILL");
+    return;
+    }
+  if(reason==Reason::GuildEnemy) {
+    if(self->aivar[partyMember]==1) {
+      const auto roll = hlp_random(100);
+      findSymbol("B_SAY_ATTACKREASON.RND")->set_int(roll);
+      if(roll>15)
+        return;
+      }
+    if(guild<int32_t(GIL_SEPERATOR_HUM)) {
+      if(isPlayerFakeBandit(self,other))
+        say("$ADDON_DIEBANDIT");
+      else if(isPlayerFakePirate(self,other))
+        say("$ADDON_DIRTYPIRATE");
+      else
+        say("$DIEENEMY");
+      } else if(self->voice==9) {
+      const auto roll = hlp_random(3);
+      findSymbol("B_SAY_ATTACKREASON.RANDOM")->set_int(roll);
+      static constexpr std::string_view lines[] = {"$DIEMONSTER","$ADDON_DIEMONSTER","$ADDON_DIEMONSTER2"};
+      say(lines[size_t(roll)]);
+      } else {
+      say("$DIEMONSTER");
+      }
+    fightSound();
+    return;
+    }
+
+  switch(reason) {
+    case Reason::Theft:                 say("$DIRTYTHIEF"); break;
+    case Reason::UseMob:                say("$HANDSOFF"); break;
+    case Reason::SheepKiller:           say(guild<int32_t(GIL_SEPERATOR_HUM) ? "$SHEEPKILLER" : "$SHEEPKILLERMONSTER"); break;
+    case Reason::HumanMurderedHuman:    say("$YOUMURDERER"); fightSound(); break;
+    case Reason::MonsterVsHuman:        say("$DIEMONSTER"); fightSound(); break;
+    case Reason::MonsterCloseToGate:    say("$DIESTUPIDBEAST"); break;
+    case Reason::ReactToDamage:         say(guild>int32_t(GIL_SEPERATOR_HUM) ? "$YOUASKEDFORIT" : "$YOUDAREHITME"); break;
+    case Reason::ReactToWeapon:         say("$YOUASKEDFORIT"); break;
+    case Reason::ClearRoom:             say("$THENIBEATYOUOUTOFHERE"); break;
+    case Reason::LeftPortalRoom:        say("$WHATDIDYOUDOINTHERE"); break;
+    case Reason::GuardStopsFight:       say("$WILLYOUSTOPFIGHTING"); break;
+    default: break;
+    }
+  }
+
+void GameScript::sayAttackEnd() {
+  constexpr size_t lastTarget = 7; // AIV_LASTTARGET
+  constexpr size_t attackReason = 9; // AIV_ATTACKREASON
+  constexpr size_t partyMember = 15; // AIV_PARTYMEMBER
+  constexpr size_t killedByPlayer = 67; // AIV_KILLEDBYPLAYER
+  using Reason = AttackAnnouncementReason;
+
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  if(self==nullptr)
+    return;
+  const auto reason = Reason(self->aivar[attackReason]);
+  const auto guild = other ? int32_t(other->guild) : int32_t(GIL_NONE);
+  const auto say = [&](std::string_view line) { sayToNpc(self,other,line); };
+  const auto sayHumanEnd = [&](std::string_view ownTarget) {
+    if(npc_isdead(other))
+      say("$ENEMYKILLED");
+    else if(self->aivar[lastTarget]==hlp_getinstanceid(other))
+      say(ownTarget);
+    else
+      say("$GOODKILL");
+    };
+  if(reason==Reason::GuildEnemy || reason==Reason::MonsterMurderedHuman) {
+    if(guild<int32_t(GIL_SEPERATOR_HUM)) {
+      sayHumanEnd("$KILLENEMY");
+      return;
+      }
+    if(self->aivar[partyMember]==1) {
+      const auto roll = hlp_random(100);
+      findSymbol("B_SAY_ATTACKEND.RND")->set_int(roll);
+      if(guild!=GIL_DRAGON && roll>15)
+        return;
+      }
+    if(other && other->aivar[killedByPlayer]!=0) {
+      say("$GOODMONSTERKILL");
+      } else if(self->voice==9) {
+      const auto roll = hlp_random(2);
+      findSymbol("B_SAY_ATTACKEND.RANDOM")->set_int(roll);
+      say(roll==0 ? "$ADDON_MONSTERKILLED" : "$ADDON_MONSTERKILLED2");
+      } else if(self->voice==12) {
+      static constexpr std::string_view gorn[] = {"GORN_DI","GORNNW_NACH_DJG","GORNNW_VOR_DJG","GORNDJG","GORNOW"};
+      const auto selfId = hlp_getinstanceid(self);
+      if(std::ranges::any_of(gorn,[&](std::string_view name) { return selfId==hlp_getinstanceid(findSymbol(name)->get_instance()); })) {
+        const auto roll = hlp_random(2);
+        findSymbol("B_SAY_ATTACKEND.RANDY")->set_int(roll);
+        say(roll==0 ? "$ADDON_MONSTERKILLED" : "$MONSTERKILLED");
+        } else {
+        say("$ADDON_MONSTERKILLED");
+        }
+      } else {
+      say("$MONSTERKILLED");
+      }
+    return;
+    }
+
+  switch(reason) {
+    case Reason::Theft:                 say("$THIEFDOWN"); break;
+    case Reason::UseMob:
+    case Reason::GuardCalledToThief:    say("$RUMFUMMLERDOWN"); break;
+    case Reason::SheepKiller:           say(guild<int32_t(GIL_SEPERATOR_HUM) ? "$SHEEPATTACKERDOWN" : "$MONSTERKILLED"); break;
+    case Reason::HumanMurderedHuman:    sayHumanEnd("$KILLMURDERER"); break;
+    case Reason::MonsterVsHuman:        say(self->voice==12 || self->voice==9 ? "$ADDON_MONSTERKILLED" : "$MONSTERKILLED"); break;
+    case Reason::MonsterCloseToGate:    say("$STUPIDBEASTKILLED"); break;
+    case Reason::ReactToDamage:         say("$NEVERHITMEAGAIN"); break;
+    case Reason::ReactToWeapon:         say("$YOUBETTERSHOULDHAVELISTENED"); break;
+    case Reason::GuardCalledToRoom:
+    case Reason::ClearRoom:             say(isBotheredByPlayerRoomGuild(self) ? "$GETUPANDBEGONE" : "$NEVERENTERROOMAGAIN"); break;
+    case Reason::LeftPortalRoom:        say("$NEVERENTERROOMAGAIN"); break;
+    case Reason::GuardStopsIntruder:    say("$KILLENEMY"); break;
+    case Reason::GuardStopsFight:       if(guild!=GIL_DJG && guild!=GIL_SLD) say("$THEREISNOFIGHTINGHERE"); break;
+    default: break;
+    }
+  }
+
 bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   constexpr size_t lastFightAgainstPlayer = 0; // AIV_LASTFIGHTAGAINSTPLAYER
   constexpr size_t invincible = 4; // AIV_INVINCIBLE
@@ -1662,7 +1842,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
       return true;
       }
     if(aivar[loadedGame]==0)
-      vm.call_function<void>("B_SAY_ATTACKREASON");
+      sayAttackReason();
     if(npc_isinfightmode(self,int(FightMode::FMODE_NONE))) {
       ai_equipbestrangedweapon(self);
       ai_equipbestmeleeweapon(self);
@@ -1812,7 +1992,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
     if(absolution()>aivar[lastAbsolution])
       say("$WISEMOVE");
     else
-      vm.call_function<void>("B_SAY_ATTACKEND");
+      sayAttackEnd();
     }
   if(wld_getguildattitude(int(self->guild),guild(hero()))!=ATT_HOSTILE && targetValue(killedByPlayer)==1)
     vm.call_function<void>("B_SETATTITUDE",self,int(ATT_FRIENDLY));

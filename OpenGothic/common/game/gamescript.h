@@ -278,6 +278,8 @@ class GameScript final : public GameRules {
     bool runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    void sayAttackReason();
+    void sayAttackEnd();
     bool runHumanFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runFakeGuildComment(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -498,6 +500,7 @@ class GameScript final : public GameRules {
     bool isGateGuard(const std::shared_ptr<daedalus::INpc>& self);
     bool isBotheredByPlayerRoomGuild(const std::shared_ptr<daedalus::INpc>& self);
     bool isPlayerFakeBandit(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool isPlayerFakePirate(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     bool hasFakeGuild(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void desynchronizeNpc();
     void sayToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
