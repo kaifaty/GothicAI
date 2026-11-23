@@ -272,6 +272,7 @@ class GameScript final : public GameRules {
       };
     void refreshNpcAtInsert(Npc& npc);
     void loadNativeKillNpc();
+    void loadNativeNpcGlobals();
     void invokeKillNpc(int32_t symbol);
     void killNpc(int32_t symbol);
     void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);

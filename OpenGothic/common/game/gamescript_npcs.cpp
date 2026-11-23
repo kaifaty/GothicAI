@@ -1,5 +1,9 @@
 #include "gamescript.h"
 
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
 #include "world/objects/npc.h"
 
 void GameScript::initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc,
@@ -124,4 +128,54 @@ void GameScript::killNpc(int32_t symbol) {
   vm.push_int(ATR_HITPOINTS);
   vm.push_int(target ? -target->attribute[ATR_HITPOINTS] : 0);
   vm.unsafe_call_external(findSymbol("NPC_CHANGEATTRIBUTE"));
+  }
+
+void GameScript::loadNativeNpcGlobals() {
+  if(!nativeRoutineProgram)
+    return;
+
+  // Capture a typed chapter default and ordered alias table once. World entry
+  // resolves the source NPCs anew against the current world.
+  using Op=daedalus::DaedalusOpcode;
+  auto pc=findSymbol("B_INITNPCGLOBALS")->address();
+  const auto take=[&](Op expected) {
+    const auto instruction=vm.instruction_at(pc);
+    if(instruction.op!=expected)
+      throw std::runtime_error("Invalid stock NPC global binding at "+std::to_string(pc));
+    pc+=instruction.size;
+    return instruction;
+    };
+  const auto unsetChapter=take(Op::PUSHI).immediate;
+  const auto chapter=take(Op::PUSHV).symbol;
+  take(Op::EQ);
+  const auto bindStart=take(Op::BZ).address;
+  const auto defaultChapter=take(Op::PUSHI).immediate;
+  const auto destination=take(Op::PUSHV).symbol;
+  take(Op::MOVI);
+  if(pc!=bindStart || chapter!=destination || chapter!=findSymbolIndex("KAPITEL"))
+    throw std::runtime_error("Invalid stock NPC global chapter default");
+
+  const auto lookup=findSymbol("HLP_GETNPC")->index();
+  std::vector<std::pair<int32_t,uint32_t>> bindings;
+  while(vm.instruction_at(pc).op!=Op::RSR) {
+    const auto source=take(Op::PUSHI).immediate;
+    const auto external=take(Op::BE).symbol;
+    const auto target=take(Op::PUSHVI).symbol;
+    take(Op::MOVVI);
+    if(external!=lookup)
+      throw std::runtime_error("Invalid stock NPC global lookup");
+    bindings.emplace_back(source,target);
+    }
+
+  vm.override_function("B_INITNPCGLOBALS",std::function<void()>{[this, chapter, unsetChapter, defaultChapter,
+                                                                lookup, bindings=std::move(bindings)] {
+    auto* chapterState=findSymbol(chapter);
+    if(chapterState->get_int()==unsetChapter)
+      chapterState->set_int(defaultChapter);
+    for(const auto& [source,target]:bindings) {
+      vm.push_int(source);
+      vm.unsafe_call_external(findSymbol(lookup));
+      findSymbol(target)->set_instance(vm.pop_instance());
+      }
+    }},NpcDefinitionRuntime::enabled);
   }

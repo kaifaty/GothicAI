@@ -2630,6 +2630,67 @@ void initializePerceptionRanges(World& world) {
   std::puts("NPC perceptions: startup defaults, matching saves and old save fallback match stock");
   }
 
+void bindNpcGlobals(World& world) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto* function=script.findSymbol("B_INITNPCGLOBALS");
+  auto* chapter=script.findSymbol("KAPITEL");
+  require(function && chapter && world.player(),"the alias fixture needs the stock helper and the player");
+  const auto previousChapter=chapter->get_int();
+  const auto previousContext=vm.unsafe_get_gi();
+  const auto previousSelf=vm.global_self()->get_instance();
+  const auto* configured=std::getenv("OPENGOTHIC_NPC_RECORDS");
+  const auto oldRecords=configured ? std::optional<std::string>(configured) : std::nullopt;
+  std::map<uint32_t,std::shared_ptr<daedalus::DaedalusInstance>> previousBindings;
+  const auto restore=[&] {
+    vm.observe_writes({});
+    vm.observe_instructions({});
+    chapter->set_int(previousChapter);
+    for(const auto& [symbol,instance]:previousBindings)
+      vm.find_symbol_by_index(symbol)->set_instance(instance);
+    if(oldRecords) setenv("OPENGOTHIC_NPC_RECORDS",oldRecords->c_str(),1);
+    else unsetenv("OPENGOTHIC_NPC_RECORDS");
+    };
+  try {
+    setenv("OPENGOTHIC_NPC_RECORDS","0",1);
+    chapter->set_int(0);
+    size_t instructions=0;
+    vm.observe_instructions([&](const auto&) { ++instructions; });
+    vm.observe_writes([&](const auto& symbol) {
+      if(symbol.type()==daedalus::DaedalusDataType::INSTANCE)
+        previousBindings.try_emplace(symbol.index(),vm.find_symbol_by_index(symbol.index())->get_instance());
+      });
+    vm.unsafe_call_bl(function);
+    vm.observe_writes({});
+    require(chapter->get_int()==1 && instructions>0 && previousBindings.size()==310,
+            "the VM must fill all stock aliases and default the chapter");
+
+    const auto marker=std::static_pointer_cast<daedalus::INpc>(world.player()->handlePtr());
+    std::map<uint32_t,std::shared_ptr<daedalus::DaedalusInstance>> expected;
+    for(const auto& saved:previousBindings) {
+      auto* binding=vm.find_symbol_by_index(saved.first);
+      expected.emplace(saved.first,binding->get_instance());
+      binding->set_instance(marker);
+      }
+    unsetenv("OPENGOTHIC_NPC_RECORDS");
+    instructions=0;
+    chapter->set_int(0);
+    vm.unsafe_call_bl(function);
+    require(instructions==0 && chapter->get_int()==1 && vm.unsafe_get_gi()==previousContext &&
+            vm.global_self()->get_instance()==previousSelf,
+            "native binding must match the chapter and context with zero script instructions");
+    for(const auto& [symbol,instance]:expected)
+      require(vm.find_symbol_by_index(symbol)->get_instance()==instance,
+              "every NPC alias must resolve to the same live handle or null");
+    chapter->set_int(3);
+    vm.unsafe_call_bl(function);
+    require(instructions==0 && chapter->get_int()==3,"native binding must preserve an established chapter");
+    restore();
+    }
+  catch(...) { restore(); throw; }
+  std::puts("NPC global bindings: all 310 aliases and chapter semantics match with zero script instructions");
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
@@ -2642,6 +2703,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
       if(NpcDefinitionRuntime::enabled())
         transformNpcRecords(*gothic.world());
       initializePerceptionRanges(*gothic.world());
+      bindNpcGlobals(*gothic.world());
       }
     const auto save=pointActivitiesWorld(gothic,events);
     itemRoutinePhasesWorld(gothic,events);

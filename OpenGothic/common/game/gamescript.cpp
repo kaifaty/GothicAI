@@ -96,6 +96,7 @@ GameScript::GameScript(GameSession &owner)
   aiDefaultPipe.reset(new GlobalOutput(*this));
   initCommon();
   loadNativeKillNpc();
+  loadNativeNpcGlobals();
   loadNativeRoutines();
   loadNativeRoomReaction();
   initSettings();
