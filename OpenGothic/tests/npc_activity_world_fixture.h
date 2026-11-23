@@ -1625,6 +1625,7 @@ void workMobActivitiesWorld(ActivityEventsWorld& test,bool events) {
     if(site.seconds>0) {
       const auto boundary=uint64_t(site.seconds+1)*1000;
       npc.setStateTime(boundary-1);
+      Contract::aiState(npc).loopNextTime=world.tickCount();
       Contract::tickRoutine(npc);
       require(npc.stateTime()==boundary-1 && npc.isAiQueueEmpty(),"work MOB: the timer waits for the whole second");
       auto* repair=script.getVm().find_symbol_by_name(loop+".ZUFALL");
@@ -1634,6 +1635,7 @@ void workMobActivitiesWorld(ActivityEventsWorld& test,bool events) {
       for(size_t i=0;i<(repair ? 32u : 1u);++i) {
         const int32_t roll=repair ? int32_t(expected()%100) : -1;
         npc.setStateTime(boundary);
+        Contract::aiState(npc).loopNextTime=world.tickCount();
         Contract::tickRoutine(npc);
         require(npc.stateTime()==0 && Contract::random(script)==expected,"work MOB: reset and expected random stream");
         if(repair)
