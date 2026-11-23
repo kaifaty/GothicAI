@@ -1873,6 +1873,109 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
   std::puts("Human attack: Init, ordinary Loop, distance abort and End match the VM");
   }
 
+void fleeAndWatchPhases(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto flee=activityPhases(script,"ZS_FLEE");
+  const auto watch=activityPhases(script,"ZS_WATCHFIGHT");
+  const auto heal=script.findFunction("ZS_HEALSELF");
+  const auto attack=script.findFunction("ZS_ATTACK");
+  const auto unconscious=script.findFunction("ZS_UNCONSCIOUS");
+  auto* lobart=activityNpc(world,"BAU_950_LOBART");
+  require(lobart && !hero.isDown() && npc.qDistTo(hero)<300.f*300.f,"flee and watch: a live opponent and a nearby spectator");
+  auto& aivar=npc.handle().aivar;
+  const auto savedAivar=std::to_array(aivar);
+  const auto previousTime=npc.stateTime();
+  auto* savedTarget=npc.target();
+  const auto lobartPos=lobart->position();
+  auto& lobartState=Contract::aiState(*lobart).funcIni;
+  const auto savedLobartState=lobartState;
+  const auto order=Contract::outputOrder(script);
+  constexpr auto overlay="HUMANS_FLEE.MDS";
+  lobart->setPosition(npc.position()+Tempest::Vec3(450,0,0));
+  lobart->updateTransform();
+  std::vector<std::string> original;
+  for(bool native:{false,true}) {
+    enabled=native;
+    Contract::outputOrder(script)=order;
+    std::copy(savedAivar.begin(),savedAivar.end(),aivar);
+    npc.setTarget(&hero);
+    npc.clearAiQueue();
+    npc.setStateTime(0);
+    ActivityStream stream(world,npc);
+    size_t vmCalls=0,validateCalls=0,invocations=0;
+    const auto count=vm.add_call_observer([&](const auto& sym) {
+      vmCalls+=sym.name()=="ZS_FLEE" || sym.name()=="ZS_FLEE_LOOP" || sym.name()=="ZS_FLEE_END" ||
+               sym.name().starts_with("ZS_WATCHFIGHT");
+      validateCalls+=sym.name()=="B_VALIDATEOTHER";
+      });
+    const auto invoke=[&](size_t phase,Npc* other,Npc* victim=nullptr) {
+      ++invocations;
+      return script.invokeState(&npc,other,victim,ScriptFn(phase));
+      };
+    invoke(flee.init,&hero);
+    const auto* first=npc.aiQueueFront();
+    require(npc.hasPerc(PERC_ASSESSMAGIC) && npc.hasOverlay(overlay) && aivar[65]==0 &&
+            first && first->act==AI_OutputSvmOverlay && first->s0=="$RUNAWAY" && first->target==&hero,
+            "flee: fresh Init applies the overlay, warns and keeps the active target");
+    npc.clearAiQueue();
+    require(invoke(flee.loop,&hero)==LOOP_CONTINUE && npc.aiQueueFront() && npc.aiQueueFront()->act==AI_Flee,
+            "flee: a nearby standing target keeps the old flee action");
+    npc.setTarget(nullptr);
+    require(invoke(flee.loop,&hero)==LOOP_END && npc.isAiQueueEmpty(),"flee: losing the target clears the queue and ends");
+    invoke(flee.end,&hero);
+    auto queue=Contract::queue(npc);
+    require(!npc.hasOverlay(overlay) && queue.size()==2 && queue.pop().act==AI_StandUp,
+            "flee: End drops the overlay before standing and healing");
+    const auto treatment=queue.pop();
+    require(treatment.act==AI_StartState && treatment.func==heal && treatment.i0==1,
+            "flee: post-flight healing uses the original transition mode");
+    npc.clearAiQueue();
+    aivar[7]=int32_t(hero.instanceSymbol());
+    invoke(flee.init,nullptr);
+    require(aivar[65]==1 && npc.target()==&hero && npc.hasOverlay(overlay) &&
+            npc.aiQueueFront() && npc.aiQueueFront()->act==AI_RemoveWeapon,
+            "flee: re-entry with a saved target restores the chase context and skips the warning");
+    invoke(flee.end,&hero);
+    npc.clearAiQueue();
+
+    lobartState=attack;
+    invoke(watch.init,lobart,&hero);
+    require(npc.hasPerc(PERC_ASSESSDEFEAT) && npc.hasPerc(PERC_ASSESSOTHERSDAMAGE) && aivar[19]==1 && aivar[68]==0,
+            "watch fight: Init listens for defeat and blows and sets the position flag");
+    require(invoke(watch.loop,lobart,&hero)==LOOP_CONTINUE,"watch fight: a close fight remains under observation");
+    queue=Contract::queue(npc);
+    require(queue.size()==2 && queue.front()->act==AI_TurnToNpc && queue.pop().target==lobart && queue.pop().act==AI_Dodge,
+            "watch fight: at close range the old turn goes to the farther combatant before dodging");
+    lobartState=unconscious;
+    npc.setStateTime(1000);
+    require(invoke(watch.loop,lobart,&hero)==LOOP_CONTINUE && aivar[19]==0 &&
+            invoke(watch.loop,lobart,&hero)==LOOP_END && npc.isAiQueueEmpty(),
+            "watch fight: a fallen opponent gives the spectator exactly one more Loop");
+    invoke(watch.end,lobart,&hero);
+    vm.remove_call_observer(count);
+    require(vmCalls==(native ? 0u : invocations) && validateCalls==(native ? 0u : 2u) &&
+            stream.records==(native ? invocations : 0u) && npc.isAiQueueEmpty(),
+            "flee and watch: every phase uses the selected executor and watch End is empty");
+    std::erase_if(stream.events,[](const auto& event) {
+      return !(event.starts_with("phase ") || event.starts_with("result ") || event.starts_with("queue "));
+      });
+    if(native) require(original==stream.events,"flee and watch: both phase results and action queues match the VM");
+    else original=std::move(stream.events);
+    }
+  enabled=wasEnabled;
+  std::copy(savedAivar.begin(),savedAivar.end(),aivar);
+  npc.setStateTime(int64_t(previousTime));
+  npc.setTarget(savedTarget);
+  lobartState=savedLobartState;
+  lobart->setPosition(lobartPos);
+  lobart->updateTransform();
+  std::puts("Flee and watch: target restoration, overlays, dodge and grace match the VM");
+  }
+
 void quietSoundRooms(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -2050,6 +2153,7 @@ void quietSoundRooms(Gothic& gothic) {
   drawWeaponPerceptions(world,*npc,hero);
   damagePerceptions(world,*npc,hero);
   humanAttackPhases(world,*npc,hero);
+  fleeAndWatchPhases(world,*npc,hero);
   for(bool privateRoom:{false,true}) {
     std::vector<std::string> original;
     for(bool native:{false,true}) {

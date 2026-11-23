@@ -47,6 +47,8 @@ void GameScript::loadNativeRoutines() {
     {"ZS_REACTTODAMAGE",       &GameScript::runHumanReaction},
     {"ZS_REACTTOWEAPON",       &GameScript::runHumanReaction},
     {"ZS_ATTACK",              &GameScript::runHumanAttack},
+    {"ZS_FLEE",                &GameScript::runHumanFlee},
+    {"ZS_WATCHFIGHT",          &GameScript::runWatchFight},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
     {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_REST",        &GameScript::runMonsterRoutine},

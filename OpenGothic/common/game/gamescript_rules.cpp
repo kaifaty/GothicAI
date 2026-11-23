@@ -348,6 +348,9 @@ void GameScript::loadNativeHumanPerceptions() {
   const auto enabled = [this] { return nativeHumanPerceptionsEnabled(); };
   vm.override_function("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }},enabled);
   vm.override_function("B_ASSESSDAMAGE",std::function<void()>{[this] { runDamageReaction(); }},enabled);
+  vm.override_function("B_VALIDATEOTHER",std::function<void()>{[this] {
+    validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
+    }},enabled);
   using Actor = std::shared_ptr<daedalus::INpc>;
   vm.override_function("C_NPCISBOTHEREDBYWEAPON",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     return botheredByWeapon(self,other);
@@ -493,6 +496,145 @@ void GameScript::runDamageReaction() {
   startNpcAttack(self,attacker,findSymbol("AR_REACTTODAMAGE")->get_int(),0);
   }
 
+void GameScript::validateCombatTarget(const std::shared_ptr<daedalus::INpc>& self) {
+  constexpr size_t lastTarget = 7; // AIV_LASTTARGET
+  constexpr size_t loadedGame = 65; // AIV_LOADGAME
+  if(self==nullptr)
+    return;
+  auto& other = *vm.global_other();
+  if(!hlp_isvalidnpc(std::dynamic_pointer_cast<daedalus::INpc>(other.get_instance()))) {
+    const auto savedTarget = hlp_getnpc(self->aivar[lastTarget]);
+    other.set_instance(savedTarget);
+    npc_settarget(self,savedTarget);
+    self->aivar[loadedGame] = 1;
+    } else {
+    npc_gettarget(self);
+    self->aivar[lastTarget] = hlp_getinstanceid(other.get_instance());
+    self->aivar[loadedGame] = 0;
+    }
+  }
+
+bool GameScript::runHumanFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  constexpr size_t loadedGame = 65; // AIV_LOADGAME
+  constexpr std::string_view fleeOverlay = "HUMANS_FLEE.MDS";
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const std::string_view name = symbol.name();
+  if(name=="ZS_FLEE") {
+    npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction("B_ASSESSMAGIC").ptr));
+    validateCombatTarget(self);
+    if(self->aivar[loadedGame]==0)
+      vm.call_function<void>("B_SAY_OVERLAY",self,vm.global_other()->get_instance(),std::string_view("$RUNAWAY"));
+    ai_removeweapon(self);
+    ai_setwalkmode(self,findSymbol("NPC_RUN")->get_int());
+    mdl_applyoverlaymds(self,fleeOverlay);
+    result = 0;
+    return true;
+    }
+  if(name=="ZS_FLEE_LOOP") {
+    npc_gettarget(self);
+    const auto target = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+    if(npc_getdisttonpc(self,target)>findSymbol("FIGHT_DIST_CANCEL")->get_int() ||
+       vm.call_function<int32_t>("C_NPCISDOWN",target)!=0) {
+      npc_clearaiqueue(self);
+      result = LOOP_END;
+      } else {
+      ai_flee(self);
+      result = LOOP_CONTINUE;
+      }
+    return true;
+    }
+  if(name=="ZS_FLEE_END") {
+    mdl_removeoverlaymds(self,fleeOverlay);
+    ai_standup(self);
+    ai_startstate(self,int(findFunction("ZS_HEALSELF").ptr),1,"");
+    result = 0;
+    return true;
+    }
+  return false;
+  }
+
+bool GameScript::runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  constexpr size_t inPosition = 19; // AIV_TAPOSITION
+  constexpr size_t lastTurn = 68; // AIV_STATETIME
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto victim = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_victim()->get_instance()); };
+  const auto constant = [&](std::string_view name) { return findSymbol(name)->get_int(); };
+  const auto guild = [](const std::shared_ptr<daedalus::INpc>& actor) { return actor ? int32_t(actor->guild) : 0; };
+  const auto turn = [&](const std::shared_ptr<daedalus::INpc>& actor) {
+    vm.call_function<void>("B_TURNTONPC",self,actor);
+    };
+  auto& aivar = self->aivar;
+  const std::string_view name = symbol.name();
+  if(name=="ZS_WATCHFIGHT") {
+    npc_percenable(self,PERC_ASSESSDEFEAT,int(findFunction("B_ASSESSDEFEAT").ptr));
+    npc_percenable(self,PERC_ASSESSOTHERSDAMAGE,int(findFunction("B_CHEERFIGHT").ptr));
+    vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+    ai_standup(self);
+    turn(victim());
+    ai_removeweapon(self);
+    const auto separator = constant("GIL_SEPERATOR_HUM");
+    const auto distance = constant("PERC_DIST_INTERMEDIAT");
+    if(guild(victim())<separator && guild(other())<separator &&
+       !npc_isinstate(victim(),int(ZS_Unconscious)) && !npc_isinstate(other(),int(ZS_Unconscious)) &&
+       (npc_getdisttonpc(self,victim())<distance || npc_getdisttonpc(self,other())<distance)) {
+      const bool tough = vm.call_function<int32_t>("C_NPCISTOUGHGUY",self)!=0;
+      const std::string_view line = tough ? "$THERESAFIGHT" : "$OHMYGODITSAFIGHT";
+      vm.call_function<void>("B_SAY",self,other(),line);
+      }
+    aivar[inPosition] = constant("NOTINPOS");
+    aivar[lastTurn] = 0;
+    result = 0;
+    return true;
+    }
+  if(name=="ZS_WATCHFIGHT_LOOP") {
+    const auto outerRange = constant("WATCHFIGHT_DIST_MAX");
+    if(npc_getdisttonpc(self,victim())>outerRange && npc_getdisttonpc(self,other())>outerRange) {
+      npc_clearaiqueue(self);
+      result = LOOP_END;
+      return true;
+      }
+    const auto react = int(findFunction("ZS_REACTTODAMAGE").ptr);
+    const auto stillFighting = [&](const std::shared_ptr<daedalus::INpc>& actor) {
+      return npc_isinstate(actor,react) || npc_isinstate(actor,int(ZS_Attack));
+      };
+    if(npc_getstatetime(self)>0 && !stillFighting(victim()) && !stillFighting(other())) {
+      const auto down = [&](const std::shared_ptr<daedalus::INpc>& actor) {
+        return npc_isinstate(actor,int(ZS_Dead)) || npc_isinstate(actor,int(ZS_Unconscious));
+        };
+      if((down(victim()) || down(other())) && aivar[inPosition]==constant("NOTINPOS")) {
+        aivar[inPosition] = constant("ISINPOS");
+        result = LOOP_CONTINUE;
+        } else {
+        npc_clearaiqueue(self);
+        result = LOOP_END;
+        }
+      return true;
+      }
+    // The stock loop still evaluates this policy on the continuing path.
+    vm.call_function<int32_t>("C_NPCISTOUGHGUY",self);
+    const auto innerRange = constant("WATCHFIGHT_DIST_MIN");
+    if(npc_getdisttonpc(self,victim())<=innerRange || npc_getdisttonpc(self,other())<=innerRange) {
+      npc_clearaiqueue(self);
+      const bool otherIsCloser = npc_getdisttonpc(self,other())<=npc_getdisttonpc(self,victim());
+      turn(otherIsCloser ? victim() : other());
+      ai_dodge(self);
+      }
+    else if(npc_getstatetime(self)!=aivar[lastTurn]) {
+      const bool otherIsCloser = npc_getdisttonpc(self,other())<=npc_getdisttonpc(self,victim());
+      turn(otherIsCloser ? other() : victim());
+      aivar[lastTurn] = npc_getstatetime(self);
+      }
+    result = LOOP_CONTINUE;
+    return true;
+    }
+  if(name=="ZS_WATCHFIGHT_END") {
+    result = 0;
+    return true;
+    }
+  return false;
+  }
+
 bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   constexpr size_t lastFightAgainstPlayer = 0; // AIV_LASTFIGHTAGAINSTPLAYER
   constexpr size_t invincible = 4; // AIV_INVINCIBLE
@@ -541,7 +683,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
     result = 0;
     setPerceptionPreset(false);
     npc_percenable(self,PERC_ASSESSSURPRISE,int(findFunction("B_ASSESSSURPRISE").ptr));
-    vm.call_function<void>("B_VALIDATEOTHER");
+    validateCombatTarget(self);
     aivar[lastTarget] = hlp_getinstanceid(other());
     if(vm.call_function<int32_t>("C_WANTTOFLEE",self,other())!=0) {
       npc_clearaiqueue(self);
