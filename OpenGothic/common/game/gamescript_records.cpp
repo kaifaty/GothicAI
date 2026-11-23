@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <optional>
 #include <span>
 
 #include <Tempest/Log>
@@ -96,12 +97,17 @@ auto GameScript::readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_pt
   if(parent==nullptr || parent->type()!=Type::CLASS)
     return nullptr;
 
-  // A plain C_INFO constructor only assigns its scalar members from literals or constants.
-  // Read the whole constructor before binding the instance so computed descriptions can use the VM.
+  // Read the whole constructor before binding the instance or updating helper locals.
+  struct Lesson {
+    int32_t talent;
+    int32_t skill;
+    int32_t cost;
+    };
   struct Field {
     daedalus::DaedalusSymbol* member = nullptr;
     int32_t value = 0;
     const std::string* text = nullptr;
+    std::optional<Lesson> lesson;
     };
   std::array<Field,8> fields;
   size_t count = 0;
@@ -111,27 +117,63 @@ auto GameScript::readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_pt
     pc += instruction.size;
     return instruction;
     };
+  const auto scalar = [&](const daedalus::DaedalusInstruction& operand) -> const daedalus::DaedalusSymbol* {
+    const auto* symbol = operand.op==Op::PUSHV ? vm.find_symbol_by_index(operand.symbol) : nullptr;
+    return symbol && symbol->is_const() && !symbol->is_member() && symbol->count()==1 ? symbol : nullptr;
+    };
+  const auto integer = [&](const daedalus::DaedalusInstruction& operand) -> std::optional<int32_t> {
+    if(operand.op==Op::PUSHI)
+      return operand.immediate;
+    const auto* symbol = scalar(operand);
+    if(symbol && symbol->type()==Type::INT)
+      return symbol->get_int();
+    return std::nullopt;
+    };
   for(;;) {
     const auto source = next();
     if(source.op==Op::RSR)
       break;
     if(count==fields.size() || (source.op!=Op::PUSHI && source.op!=Op::PUSHV))
       return nullptr;
-    const auto target = next();
+    auto target = next();
+    auto& field = fields[count++];
+    const auto* constant = scalar(source);
+    if(target.op==Op::PUSHVI && target.symbol==vm.global_other()->index() &&
+       constant && constant->type()==Type::STRING) {
+      // Only these stock topics use fixed prices in the constructor's learn-string expression.
+      struct Teacher {
+        std::string_view topic;
+        int32_t          cost;
+        };
+      static constexpr Teacher teachers[] = {
+        {"DIA_BENNET_TEACHCOMMON", 2}, {"DIA_WOLF_TEACHCRAWLERPLATES", 3}, {"DIA_DOBAR_TEACH", 4},
+        {"DIA_BARTOK_TEACHSNEAK", 5}, {"DIA_THORBEN_TEACH", 10},
+        };
+      const auto teacher = std::ranges::find(teachers,sym.name(),&Teacher::topic);
+      const auto talent = integer(next());
+      const auto skill = integer(next());
+      const auto costCall = next();
+      const auto textCall = next();
+      if(teacher==std::end(teachers) || !talent || !skill ||
+         costCall.op!=Op::BL || costCall.address!=vm.find_symbol_by_name("B_GETLEARNCOSTTALENT")->address() ||
+         textCall.op!=Op::BL || textCall.address!=vm.find_symbol_by_name("B_BUILDLEARNSTRING")->address())
+        return nullptr;
+      field.lesson = Lesson{*talent,*skill,teacher->cost};
+      target = next();
+      }
     const auto store = next().op;
     auto* member = target.op==Op::PUSHV ? vm.find_symbol_by_index(target.symbol) : nullptr;
     if(member==nullptr || member->parent()!=parent->index() || !member->is_member() ||
        member->is_const() || member->count()!=1)
       return nullptr;
-    const auto* constant = source.op==Op::PUSHV ? vm.find_symbol_by_index(source.symbol) : nullptr;
-    if(source.op==Op::PUSHV && (constant==nullptr || !constant->is_const() ||
-                              constant->is_member() || constant->count()!=1))
+    if(source.op==Op::PUSHV && constant==nullptr)
       return nullptr;
 
-    auto& field = fields[count++];
     field.member = member;
     if(member->type()==Type::STRING && store==Op::MOVS && constant && constant->type()==Type::STRING)
       field.text = &constant->get_string();
+    else if(field.lesson)
+      return nullptr;
     else if(member->type()==Type::INT && store==Op::MOVI && (!constant || constant->type()==Type::INT))
       field.value = constant ? constant->get_int() : source.immediate;
     else if(member->type()==Type::FUNCTION && store==Op::MOVVF && source.op==Op::PUSHI)
@@ -142,7 +184,22 @@ auto GameScript::readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_pt
 
   auto info = vm.allocate_instance<daedalus::IInfo>(&sym);
   for(const auto& field : std::span(fields).first(count)) {
-    if(field.text!=nullptr)
+    if(field.lesson) {
+      const auto& lesson = *field.lesson;
+      vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.SKILL")->set_int(lesson.skill);
+      vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.TALENT")->set_int(lesson.talent);
+      vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.OTH")->set_instance(vm.global_other()->get_instance());
+      vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.KOSTEN")->set_int(lesson.cost);
+      vm.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->set_int(lesson.cost);
+      vm.find_symbol_by_name("B_BUILDLEARNSTRING.TEXT")->set_string(*field.text);
+      const auto text = *field.text + vm.find_symbol_by_name("PRINT_KOSTEN")->get_string() +
+                        std::to_string(lesson.cost) + vm.find_symbol_by_name("PRINT_LP")->get_string();
+      // The legacy save also contains the VM's last string temporary.
+      vm.push_string(text);
+      vm.find_symbol_by_name("B_BUILDLEARNSTRING.CONCATTEXT")->set_string(vm.pop_string());
+      field.member->set_string(text,0,info.get());
+      }
+    else if(field.text!=nullptr)
       field.member->set_string(*field.text,0,info.get());
     else
       field.member->set_int(field.value,0,info.get());
