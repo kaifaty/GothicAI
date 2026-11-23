@@ -166,6 +166,7 @@ inline std::vector<std::string> activityQueue(const Npc& npc) {
 
 void oldWorldNpcCases(World& world,Npc& context);
 void dragonIslandChapterWorld(World& world);
+void prepareRoutineWitnessWorld(World& world, bool events);
 void companionPlayerPerceptions(World& world,Npc& npc,Npc& hero);
 void fightSoundPerceptions(World& world,Npc& npc,Npc& hero);
 

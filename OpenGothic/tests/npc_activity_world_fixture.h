@@ -3335,7 +3335,7 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
     auto& script=world.script();
     auto& vm=script.getVm();
     test.only({});
-    ActivityEvents::reset();
+    NpcWorldFixture::prepareRoutineWitnessWorld(world,events);
     std::map<std::string,size_t> vmCalls;
     const auto observer=vm.add_call_observer([&](const auto& function) { ++vmCalls[function.name()]; });
     for(size_t i=0;i<sites.size();++i) {

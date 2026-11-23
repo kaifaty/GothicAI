@@ -348,7 +348,8 @@ class GameScript final : public GameRules {
     void loadNativeNpcGlobals();
     void loadNativeMonsterAttitudes();
     void loadNativeWorldEntry();
-    void enterChapterWorld(bool oldWorld);
+    enum class ChapterWorld : uint8_t { New, Old, Addon };
+    void enterChapterWorld(ChapterWorld world);
     void changeChapter(int32_t chapter, int32_t level);
     void invokeKillNpc(int32_t symbol);
     void killNpc(int32_t symbol);

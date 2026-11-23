@@ -13,6 +13,7 @@
 #include "gamemusic.h"
 #include "programdata.h"
 #include "resources.h"
+#include "world/activityevents.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "worldchunks.h"
@@ -1025,6 +1026,101 @@ void dragonIslandChapterWorld(World& world) {
   if(previous) setenv("OPENGOTHIC_PLACEMENT_RECORDS",previous->c_str(),1);
   else unsetenv("OPENGOTHIC_PLACEMENT_RECORDS");
   std::puts("Chapter switch: chapter branches, UI, NPC flags, journal order and nested world dispatch match stock");
+  }
+
+void prepareRoutineWitnessWorld(World& world, bool events) {
+  ActivityEvents::reset();
+  if(!events || world.name()!="ADDONWORLD.ZEN" ||
+     NpcSnapshot::load(baseProgramIndex().dir.parent_path()).sha256!=
+     "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
+    return;
+
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  const auto* init=script.findSymbol("INIT_ADDONWORLD");
+  const auto* entry=script.findSymbol("B_ENTER_ADDONWORLD");
+  auto* level=script.findSymbol("CURRENTLEVEL");
+  auto* chapter=script.findSymbol("KAPITEL");
+  auto* jack=script.findSymbol("ALLIGATORJACK");
+  const auto boundJack=jack->get_instance();
+  const auto addon=script.intSymbol("ADDONWORLD_ZEN",0), khorinis=script.intSymbol("NEWWORLD_ZEN",0);
+  require(level->get_int()==addon && boundJack,"first Addon World entry must bind its actors and update the level");
+  const auto truth=script.intSymbol("TRUE",1), falsity=script.intSymbol("FALSE",0);
+  std::map<std::string_view,int32_t> before;
+  for(const auto* name:{"CURRENTLEVEL","KAPITEL","RAVENISDEAD","SKLAVEN_WEG","ENTERADW_KAPITEL2","ENTERADW_KAPITEL3",
+                        "ENTERNW_KAPITEL6","ENTEROW_KAPITEL1","ENTEROW_KAPITEL2","ENTEROW_KAPITEL6"})
+    before.emplace(name,script.findSymbol(name)->get_int());
+  Environment placement;
+  placement.set("OPENGOTHIC_PLACEMENT_RECORDS",std::string("0"));
+
+  using Call=std::pair<std::string,int32_t>;
+  const std::vector<Call> expected={
+    {"INIT_SUB_ADDON_PART_BANDITSCAMP_01",khorinis},{"INIT_SUB_ADDON_PART_PIRATESCAMP_01",khorinis},
+    {"INIT_SUB_ADDON_PART_ENTRANCE_01",khorinis},{"INIT_SUB_ADDON_PART_GOLDMINE_01",khorinis},
+    {"INIT_SUB_ADDON_PART_CANYON_01",khorinis},{"INIT_SUB_ADDON_PART_VALLEY_01",khorinis},
+    {"INIT_SUB_ADDON_PART_ADANOSTEMPLE_01",khorinis},{"B_INITMONSTERATTITUDES",khorinis},
+    {"B_INITGUILDATTITUDES",khorinis},{"B_INITNPCGLOBALS",khorinis},{"B_ENTER_ADDONWORLD",khorinis},
+    {"B_INITNPCGLOBALS",khorinis},{"B_ENTER_ADDONWORLD_KAPITEL_1",khorinis},
+    {"B_ENTER_ADDONWORLD_KAPITEL_2",khorinis},{"B_ENTER_ADDONWORLD_KAPITEL_3",khorinis},{"B_INITNPCGLOBALS",addon},
+    };
+  for(bool native:{false,true}) {
+    setenv("OPENGOTHIC_PLACEMENT_RECORDS",native ? "1" : "0",1);
+    level->set_int(khorinis);
+    chapter->set_int(1);
+    jack->set_instance(nullptr);
+    for(const auto* name:{"RAVENISDEAD","SKLAVEN_WEG","ENTERADW_KAPITEL2","ENTERADW_KAPITEL3"})
+      script.findSymbol(name)->set_int(falsity);
+
+    std::vector<Call> calls;
+    const auto observer=vm.add_call_observer([&](const auto& symbol) {
+      const auto& name=symbol.name();
+      if(name.starts_with("INIT_SUB_ADDON_PART_") || name.starts_with("B_ENTER_ADDONWORLD") ||
+         name=="B_INITMONSTERATTITUDES" || name=="B_INITGUILDATTITUDES" || name=="B_INITNPCGLOBALS")
+        calls.emplace_back(name,level->get_int());
+      if(name=="B_ENTER_ADDONWORLD_KAPITEL_1")
+        chapter->set_int(3);
+      });
+    size_t roots=0, rooms=0;
+    vm.observe_instructions([&](const auto&) { if(vm.pc()==init->address() || vm.pc()==entry->address()) ++roots; });
+    vm.observe_externals([&](const auto& symbol) { if(symbol.name()=="WLD_ASSIGNROOMTOGUILD") ++rooms; });
+    const auto pc=vm.pc();
+    const auto context=vm.unsafe_get_gi();
+    vm.push_int(0x12345678);
+    script.runWorldInit("INIT_ADDONWORLD");
+    const auto sentinel=vm.pop_int();
+    vm.observe_instructions({});
+    vm.observe_externals({});
+    vm.remove_call_observer(observer);
+    require(roots==(native ? 0u : 2u) && rooms==6 && sentinel==0x12345678 &&
+            vm.pc()==pc && vm.unsafe_get_gi()==context && calls==expected,
+            "Addon World Init must preserve the ordered calls, live chapter and VM context");
+    require(chapter->get_int()==3 && level->get_int()==addon && jack->get_instance()==boundJack &&
+            script.intSymbol("ENTERADW_KAPITEL2",0)==truth && script.intSymbol("ENTERADW_KAPITEL3",0)==truth,
+            "Addon World must apply the live chapter latches and final NPC aliases");
+
+    static constexpr std::pair<const char*,const char*> latches[]={
+      {"B_ENTER_NEWWORLD_KAPITEL_6","ENTERNW_KAPITEL6"},
+      {"B_ENTER_OLDWORLD_KAPITEL_1","ENTEROW_KAPITEL1"},
+      {"B_ENTER_OLDWORLD_KAPITEL_2","ENTEROW_KAPITEL2"},
+      {"B_ENTER_OLDWORLD_KAPITEL_6","ENTEROW_KAPITEL6"},
+      };
+    for(const auto& [name,flag]:latches) {
+      auto* latch=script.findSymbol(flag);
+      const auto* function=script.findSymbol(name);
+      for(int32_t value:{falsity,truth,2}) {
+        latch->set_int(value);
+        size_t instructions=0;
+        vm.observe_instructions([&](const auto&) { if(vm.pc()==function->address()) ++instructions; });
+        vm.unsafe_call_bl(function);
+        vm.observe_instructions({});
+        require(latch->get_int()==(value==falsity ? truth : value) && instructions==(native ? 0u : 1u),
+                "chapter latch must change only the original false value");
+        }
+      }
+    }
+  for(const auto& [name,value]:before)
+    script.findSymbol(name)->set_int(value);
+  std::puts("Addon World entry: Init order, live chapter, room assignments, NPC aliases and four chapter latches match stock");
   }
 
 } // namespace NpcWorldFixture
