@@ -4,6 +4,88 @@
 
 #include <algorithm>
 
+void GameScript::loadNativeRoutines() {
+  if(!nativeRoutineProgram || !activityEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
+    return;
+
+  static constexpr NativeRoutinePhase routines[] = {
+    {"ZS_GOTOBED",            &GameScript::runMovementRoutine},
+    {"ZS_SLEEP",              &GameScript::runMovementRoutine, 0, RoutineWake::Sleep},
+    {"ZS_FLEETOWP",           &GameScript::runMovementRoutine, 6000},
+    {"ZS_RUNTOWP",            &GameScript::runMovementRoutine, 6000},
+    {"ZS_FOLLOW_PLAYER",      &GameScript::runMovementRoutine},
+    {"ZS_GUIDE_PLAYER",       &GameScript::runMovementRoutine},
+    {"ZS_PLAY_LUTE",          &GameScript::runItemRoutine},
+    {"ZS_RAKE_FP",            &GameScript::runItemRoutine},
+    {"ZS_SMOKE_JOINT",        &GameScript::runItemRoutine},
+    {"ZS_SPIT_FIRE",          &GameScript::runItemRoutine},
+    {"ZS_STAND_DRINKING",     &GameScript::runItemRoutine},
+    {"ZS_STAND_EATING",       &GameScript::runItemRoutine},
+    {"ZS_STAND_SWEEPING",     &GameScript::runItemRoutine},
+    {"ZS_SWEEP_FP",           &GameScript::runItemRoutine},
+    {"ZS_WASH_FP",            &GameScript::runItemRoutine},
+    {"ZS_GUARD_HAMMER",       &GameScript::runItemRoutine},
+    {"ZS_GUARD_PASSAGE",      &GameScript::runPointRoutine, 3000},
+    {"ZS_PICK_FP",            &GameScript::runPointRoutine},
+    {"ZS_PRACTICE_MAGIC",     &GameScript::runPointRoutine},
+    {"ZS_PRACTICE_SWORD",     &GameScript::runPointRoutine},
+    {"ZS_PRAY_INNOS_FP",      &GameScript::runPointRoutine},
+    {"ZS_STUDY_WP",           &GameScript::runPointRoutine},
+    {"ZS_ANNOUNCE_HEROLD",    &GameScript::runSocialRoutine, 70000, RoutineWake::Herald},
+    {"ZS_CIRCLE",             &GameScript::runSocialRoutine},
+    {"ZS_CONCERT",            &GameScript::runSocialRoutine},
+    {"ZS_DANCE",              &GameScript::runSocialRoutine},
+    {"ZS_GHOST",              &GameScript::runSocialRoutine},
+    {"ZS_GHOSTWUSEL",         &GameScript::runSocialRoutine},
+    {"ZS_PREACH_VATRAS",      &GameScript::runSocialRoutine, 13000},
+    {"ZS_SMALLTALK",          &GameScript::runSocialRoutine, 8000, RoutineWake::Smalltalk},
+    {"ZS_STAND_DEMENTOR",     &GameScript::runSocialRoutine},
+    {"ZS_STAND_RANGERMEETING",&GameScript::runSocialRoutine},
+    };
+  for(const auto& routine : routines) {
+    for(const std::string_view suffix : {"", "_LOOP", "_END"}) {
+      const auto* symbol = vm.find_symbol_by_name(std::string(routine.state).append(suffix));
+      if(symbol==nullptr)
+        continue; // Some stock states have only Init or Init and Loop.
+      auto phase = routine;
+      phase.enters = suffix.empty();
+      nativeRoutinePhases.emplace(symbol->index(),phase);
+      }
+    }
+  }
+
+bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe) {
+  if(floorDefer.active())
+    return false;
+  const auto it = nativeRoutinePhases.find(symbol.index());
+  if(it==nativeRoutinePhases.end() || !(this->*it->second.callback)(npc,symbol,probe.result))
+    return false;
+  const auto& phase = it->second;
+  probe.fromRecord();
+  ActivityEvents::countWakes(phase.state,phase.enters ? ActivityEvents::Entered : 0,true);
+  return true;
+  }
+
+bool GameScript::routineTimerDue(const Npc& npc, ScriptFn loop) const {
+  if(nativeRoutinePhases.empty() || floorDefer.active())
+    return true;
+  const auto it = nativeRoutinePhases.find(uint32_t(loop.ptr));
+  if(it==nativeRoutinePhases.end())
+    return true;
+  const auto& phase = it->second;
+  switch(phase.wake) {
+    case RoutineWake::Sleep:
+      return !ActivityDefinitions::bodyStateContains(int32_t(npc.bodyState()),BS_LIE);
+    case RoutineWake::Smalltalk:
+      return npc.stateTime()>=phase.minStateTime || !npc.isOnFreePoint("SMALLTALK");
+    case RoutineWake::Herald:
+      return npc.stateTime()>=phase.minStateTime || npc.handle().aivar[19]==1;
+    case RoutineWake::Timer:
+      return npc.stateTime()>=phase.minStateTime;
+    }
+  return true;
+  }
+
 void GameScript::runActivityGesture(Npc& npc, const ActivityEvents::Record& activity) {
   const auto& loop=findSymbol(npc.aiState.funcLoop.ptr)->name();
   auto draw=[&](int32_t range,const char* variable) {

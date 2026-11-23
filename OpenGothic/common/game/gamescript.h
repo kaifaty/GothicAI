@@ -219,10 +219,27 @@ class GameScript final : public GameRules {
     const ActivityEvents::Record* eventActivity(ScriptFn init) override;
     std::vector<std::string_view> eventActivityNames();
     void         runActivityGesture(Npc& npc, const ActivityEvents::Record& activity) override;
+    bool         routineTimerDue(const Npc& npc, ScriptFn loop) const override;
 
   private:
     friend struct NpcDefinitionContract;
     bool invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe);
+    bool invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);
+    bool runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    void loadNativeRoutines();
+
+    using NativeRoutineCallback = bool (GameScript::*)(Npc&, const daedalus::DaedalusSymbol&, int&);
+    enum class RoutineWake : uint8_t { Timer, Sleep, Smalltalk, Herald };
+    struct NativeRoutinePhase {
+      std::string_view state;
+      NativeRoutineCallback callback;
+      uint32_t minStateTime = 0;
+      RoutineWake wake = RoutineWake::Timer;
+      bool enters = false;
+      };
     void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
     bool startHotkeyPotion(Npc& pl, bool mana);
@@ -303,7 +320,8 @@ class GameScript final : public GameRules {
     static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                        RoutineDefinitionRuntime::Definitions& routines,
                                        NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,
-                                       ActivityDefinitionRuntime::Definitions& activities, QuietSoundHeight& quietSound);
+                                       ActivityDefinitionRuntime::Definitions& activities, QuietSoundHeight& quietSound,
+                                       bool& nativeRoutineProgram);
     int initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* function);
     bool game_initgerman     ();
     bool game_initenglish    ();
@@ -539,6 +557,8 @@ class GameScript final : public GameRules {
     ActivityDefinitionRuntime::Definitions                      activityDefinitions;
     bool                                                        activityEvents = ActivityDefinitionRuntime::events();
     QuietSoundHeight                                            quietSoundHeight;
+    bool                                                        nativeRoutineProgram = false;
+    std::unordered_map<uint32_t,NativeRoutinePhase>              nativeRoutinePhases;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};
