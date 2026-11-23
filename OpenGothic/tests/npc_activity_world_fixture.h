@@ -2849,33 +2849,72 @@ void ravenStoneGuardianRoutines(World& world) {
   const auto enabled=events;
   const auto* point=world.findWayPoint("NW_FARM4_BALTHASAR");
   require(point!=nullptr,"the Raven fixture needs a position for the disposable guardian");
+  const auto program=NpcSnapshot::load(baseProgramIndex().dir.parent_path());
+  const bool stock=program.sha256=="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c";
+  const auto* configured=std::getenv("OPENGOTHIC_NPC_RECORDS");
+  const auto oldRecords=configured ? std::optional<std::string>(configured) : std::nullopt;
+  auto* target=script.findSymbol("B_KILLNPC.NPC");
+  auto* argument=script.findSymbol("B_KILLNPC.NPCINSTANCE");
+  auto* coin=script.findSymbol("ITMI_OLDCOIN");
+  auto* kill=script.findSymbol("B_KILLNPC");
+  require(target && argument && coin && kill,"the Raven fixture needs the kill binding and old coin");
+  const auto oldTarget=target->get_instance(), oldCoin=coin->get_instance(), oldItem=vm.global_item()->get_instance();
+  const auto oldArgument=argument->get_int();
   size_t kills=0;
   const auto observer=vm.add_call_observer([&](const auto& function) {
     if(function.name()=="B_KILLNPC") ++kills;
     });
-  raven->set_int(1);
-  for(const auto* state:{MonsterScheduler,"ZS_MM_RTN_REST_LOOP"}) {
-    const auto id=ScriptFn(script.findSymbolIndex(state));
-    require(id.isValid(),"the Raven fixture needs both guardian routine phases");
-    for(bool native:{false,true}) {
-      events=native;
-      auto* npc=world.addNpc(guardian,point->position());
-      require(npc && npc->handle().guild==GIL_Stoneguardian && npc->attribute(ATR_HITPOINTS)>0,
-              "the Raven fixture guardian must start alive");
-      npc->handle().flags=NpcFlag::IMMORTAL;
-      npc->handle().aivar[19]=1;
-      npc->handle().aivar[32]=-1;
-      const auto before=kills;
-      script.invokeState(npc,nullptr,nullptr,id);
-      require(kills==before+1 && npc->attribute(ATR_HITPOINTS)==0 && npc->handle().flags==NpcFlag::NONE,
-              "Raven's death must invoke the original helper on the guardian and clear its HP and flags");
-      world.removeNpc(*npc);
+  const auto restore=[&] {
+    vm.remove_call_observer(observer);
+    vm.observe_instructions({});
+    raven->set_int(prior);
+    events=enabled;
+    target->set_instance(oldTarget);
+    argument->set_int(oldArgument);
+    coin->set_instance(oldCoin);
+    vm.global_item()->set_instance(oldItem);
+    if(oldRecords) setenv("OPENGOTHIC_NPC_RECORDS",oldRecords->c_str(),1);
+    else unsetenv("OPENGOTHIC_NPC_RECORDS");
+    };
+  try {
+    raven->set_int(1);
+    for(const auto* state:{MonsterScheduler,"ZS_MM_RTN_REST_LOOP"}) {
+      const auto id=ScriptFn(script.findSymbolIndex(state));
+      require(id.isValid(),"the Raven fixture needs both guardian routine phases");
+      for(const auto [nativeActivity,nativeKill]:{std::pair(false,false),std::pair(false,true),std::pair(true,true)}) {
+        events=nativeActivity;
+        if(nativeKill) unsetenv("OPENGOTHIC_NPC_RECORDS");
+        else setenv("OPENGOTHIC_NPC_RECORDS","0",1);
+        auto* npc=world.addNpc(guardian,point->position());
+        require(npc && npc->handle().guild==GIL_Stoneguardian && npc->attribute(ATR_HITPOINTS)>0,
+                "the Raven fixture guardian must start alive");
+        npc->handle().flags=NpcFlag::IMMORTAL;
+        npc->handle().aivar[19]=1;
+        npc->handle().aivar[32]=-1;
+        const auto before=kills;
+        const auto coins=npc->itemCount(coin->index());
+        const auto self=vm.global_self()->get_instance(), gi=vm.unsafe_get_gi();
+        bool ranKillBody=false;
+        vm.observe_instructions([&](const auto&) { ranKillBody |= vm.pc()==kill->address(); });
+        script.invokeState(npc,nullptr,nullptr,id);
+        vm.observe_instructions({});
+        require(kills==before+1 && npc->attribute(ATR_HITPOINTS)==0 && npc->handle().flags==NpcFlag::NONE,
+                "Raven's death must kill the resolved guardian and clear its flags");
+        if(stock) {
+          const auto record=std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
+          require(npc->itemCount(coin->index())==coins+1 && target->get_instance()==record &&
+                  argument->get_int()==int32_t(vm.global_self()->index()) && ranKillBody!=nativeKill,
+                  "the kill rule must select the expected executor, persist its alias and add one coin");
+          require(vm.global_self()->get_instance()==self && vm.unsafe_get_gi()==gi,
+                  "the kill call must restore the calling context");
+          }
+        world.removeNpc(*npc);
+        }
       }
+    restore();
     }
-  vm.remove_call_observer(observer);
-  raven->set_int(prior);
-  events=enabled;
-  std::puts("Monster dispatcher and REST Loop: both executors remove stone guardians after Raven's death");
+  catch(...) { restore(); throw; }
+  std::puts("Raven's stone guardians: script, nested native dispatch and native routines match");
   }
 
 std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* worldName,

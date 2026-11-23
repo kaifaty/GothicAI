@@ -95,6 +95,7 @@ GameScript::GameScript(GameSession &owner)
   Gothic::inst().setupVmCommonApi(vm);
   aiDefaultPipe.reset(new GlobalOutput(*this));
   initCommon();
+  loadNativeKillNpc();
   loadNativeRoutines();
   loadNativeRoomReaction();
   initSettings();

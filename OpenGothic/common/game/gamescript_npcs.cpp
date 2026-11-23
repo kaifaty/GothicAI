@@ -74,3 +74,54 @@ void GameScript::initPerceptions() {
   perc_setrange(PERC_NPCCOMMAND,          100);
   perc_setrange(PERC_OBSERVESUSPECT,      100);
   }
+
+void GameScript::loadNativeKillNpc() {
+  if(!nativeRoutineProgram)
+    return;
+  vm.override_function("B_KILLNPC",std::function<void(int32_t)>{[this](int32_t symbol) { killNpc(symbol); }},
+                       NpcDefinitionRuntime::enabled);
+  }
+
+void GameScript::invokeKillNpc(int32_t symbol) {
+  if(!nativeRoutineProgram) {
+    vm.call_function<void>("B_KILLNPC",symbol);
+    return;
+    }
+  // Use the same call frame and gated dispatch as a script BL instruction.
+  vm.push_int(symbol);
+  vm.unsafe_call_bl(findSymbol("B_KILLNPC"));
+  }
+
+void GameScript::killNpc(int32_t symbol) {
+  findSymbol("B_KILLNPC.NPCINSTANCE")->set_int(symbol);
+  auto* local=findSymbol("B_KILLNPC.NPC");
+  // Use the registered engine calls so a death during world init still runs
+  // the startup floor barrier for the affected NPC and its neighbours.
+  vm.push_int(symbol);
+  vm.unsafe_call_external(findSymbol("HLP_GETNPC"));
+  const auto npc=std::static_pointer_cast<daedalus::INpc>(vm.pop_instance());
+  local->set_instance(npc);
+  vm.push_instance(npc);
+  vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
+  const bool dead=vm.pop_int()!=0;
+  vm.push_instance(npc);
+  vm.unsafe_call_external(findSymbol("HLP_ISVALIDNPC"));
+  const bool valid=vm.pop_int()!=0;
+  if(dead || !valid)
+    return;
+
+  // The dispatch frame restores the member context on return.
+  vm.unsafe_set_gi(npc);
+  npc->flags=NpcFlag::NONE;
+  vm.push_instance(npc);
+  vm.push_int(int32_t(findSymbolIndex("ITMI_OLDCOIN")));
+  vm.unsafe_call_external(findSymbol("CREATEINVITEM"));
+
+  // The script reads its instance local and current HP after creating the item.
+  const auto target=std::static_pointer_cast<daedalus::INpc>(local->get_instance());
+  vm.unsafe_set_gi(target);
+  vm.push_instance(target);
+  vm.push_int(ATR_HITPOINTS);
+  vm.push_int(target ? -target->attribute[ATR_HITPOINTS] : 0);
+  vm.unsafe_call_external(findSymbol("NPC_CHANGEATTRIBUTE"));
+  }
