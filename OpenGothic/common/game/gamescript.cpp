@@ -7,6 +7,7 @@
 #include <cctype>
 #include <optional>
 #include <sstream>
+#include <utility>
 
 #include "game/definitions/basescripts.h"
 #include "game/definitions/spelldefinitions.h"
@@ -1150,6 +1151,20 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
     return;
 
   ScopeVar self(*vm.global_self(), npc->handlePtr());
+  if(nativeRoutineProgram && activityEvents && !floorDefer.active() &&
+     ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off) {
+    static constexpr std::pair<std::string_view,std::string_view> healthPotions[] = {
+      {"USEITPO_HEALTH_01","HP_ESSENZ"},
+      {"USEITPO_HEALTH_02","HP_EXTRAKT"},
+      {"USEITPO_HEALTH_03","HP_ELIXIER"},
+      };
+    for(const auto& [callback,amount] : healthPotions) {
+      if(functionSymbol->name()!=callback)
+        continue;
+      npc_changeattribute(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()),ATR_HITPOINTS,findSymbol(amount)->get_int());
+      return;
+      }
+    }
   vm.call_function<void>(functionSymbol);
   }
 

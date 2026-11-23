@@ -2055,7 +2055,7 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
             "healing: enqueue the strongest available potion through the item-use pipeline");
     };
   std::vector<std::string> originalInit,originalEnd;
-  std::vector<uint8_t> knockedOut,healing;
+  std::vector<uint8_t> knockedOut,healing,pendingPotion;
   int32_t originalXp=0;
   for(bool native:{false,true}) {
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
@@ -2077,12 +2077,47 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     const auto beforeXp=hero.experience();
     const auto wakeAt=int64_t(script.findSymbol("HAI_TIME_UNCONSCIOUS")->get_int())*1000;
     auto& vm=script.getVm();
-    size_t phaseCalls=0,rewards=0,minimalCalls=0;
+    size_t phaseCalls=0,rewards=0,minimalCalls=0,potionCalls=0;
     const auto observer=vm.add_call_observer([&](const auto& symbol) {
       phaseCalls+=symbol.name().starts_with("ZS_UNCONSCIOUS");
       rewards+=symbol.name()=="B_GIVEPLAYERXP";
       minimalCalls+=symbol.name()=="PERCEPTION_SET_MINIMAL";
+      potionCalls+=symbol.name().starts_with("USEITPO_HEALTH_");
       });
+
+    require(Settings::physicsFlags().meleeHealInterrupt,"health potions: the fixture uses deferred potion effects");
+    const auto health=std::array{npc->attribute(ATR_HITPOINTS),npc->attribute(ATR_HITPOINTSMAX)};
+    const auto heroHealth=hero.attribute(ATR_HITPOINTS);
+    const auto previousSelf=vm.global_self()->get_instance();
+    vm.global_self()->set_instance(std::static_pointer_cast<daedalus::INpc>(hero.handlePtr()));
+    const auto self=vm.global_self()->get_instance(),other=vm.global_other()->get_instance(),
+               victim=vm.global_victim()->get_instance(),itemGlobal=vm.global_item()->get_instance();
+    const std::array potionUse={std::tuple{"ITPO_HEALTH_01",20,70},std::tuple{"ITPO_HEALTH_02",20,90},
+                                std::tuple{"ITPO_HEALTH_03",20,120},std::tuple{"ITPO_HEALTH_03",125,200}};
+    npc->handle().attribute[ATR_HITPOINTSMAX]=200;
+    for(const auto& [item,startHp,endHp]:potionUse) {
+      npc->handle().attribute[ATR_HITPOINTS]=startHp;
+      const auto id=script.findSymbolIndex(item);
+      const auto initialItems=npc->itemCount(id);
+      require(npc->addItem(id,1)!=nullptr,"health potions: add a real stock item to the NPC");
+      npc->setAnim(Npc::Anim::Idle);
+      npc->aiPush(AiQueue::aiUseItem(int32_t(id)));
+      Contract::nextAiAction(*npc);
+      require(npc->isAiQueueEmpty() && Contract::pendingItemUse(*npc)==id &&
+              npc->attribute(ATR_HITPOINTS)==startHp && npc->itemCount(id)==initialItems+1,
+              "health potions: the queue starts drinking and waits for the animation event");
+      if(!native && endHp==200) save(pendingPotion,"VM-era save with a potion in use");
+      Contract::finishPotionAnimation(*npc);
+      require(Contract::pendingItemUse(*npc)==0 && npc->attribute(ATR_HITPOINTS)==endHp &&
+              npc->itemCount(id)==initialItems && hero.attribute(ATR_HITPOINTS)==heroHealth &&
+              vm.global_self()->get_instance()==self && vm.global_other()->get_instance()==other &&
+              vm.global_victim()->get_instance()==victim && vm.global_item()->get_instance()==itemGlobal,
+              "health potions: the tag heals only the drinker once, consumes one item and restores the VM context");
+      }
+    require(potionCalls==(native ? 0u : potionUse.size()),"health potions: only fallback executes the three callback bodies");
+    vm.global_self()->set_instance(previousSelf);
+    npc->handle().attribute[ATR_HITPOINTSMAX]=health[1];
+    npc->handle().attribute[ATR_HITPOINTS]=health[0];
     npc->changeAttribute(ATR_HITPOINTS,-npc->attribute(ATR_HITPOINTS),true);
     npc->setOther(&hero);
     require(npc->isUnconscious() && !npc->isDead() && npc->attribute(ATR_HITPOINTS)==1,
@@ -2206,6 +2241,30 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   }
   gothic.clearGame().reset();
   std::puts("Healing lifecycle: native preferences, exits and ordinary load match Daedalus");
+
+  Tempest::MemReader potionReader(pendingPotion);
+  Serialize potionIn(potionReader);
+  gothic.setGame(std::make_unique<GameSession>(potionIn));
+  auto& potionWorld=*gothic.world();
+  auto& potionScript=potionWorld.script();
+  auto* drinker=activityNpc(potionWorld,actor);
+  const auto potion=potionScript.findSymbolIndex("ITPO_HEALTH_03");
+  require(drinker && Contract::pendingItemUse(*drinker)==potion && drinker->attribute(ATR_HITPOINTS)==125 &&
+          drinker->itemCount(potion)>0,"health potions: load restores a pending VM-era drink without healing");
+  const auto before=potionWorld.player()->attribute(ATR_HITPOINTS);
+  const auto count=drinker->itemCount(potion);
+  auto& potionVm=potionScript.getVm();
+  size_t loadedPotionCalls=0;
+  const auto potionObserver=potionVm.add_call_observer([&](const auto& symbol) {
+    loadedPotionCalls+=symbol.name()=="USEITPO_HEALTH_03";
+    });
+  Contract::finishPotionAnimation(*drinker);
+  potionVm.remove_call_observer(potionObserver);
+  require(Contract::pendingItemUse(*drinker)==0 && drinker->attribute(ATR_HITPOINTS)==200 &&
+          drinker->itemCount(potion)==count-1 && potionWorld.player()->attribute(ATR_HITPOINTS)==before && loadedPotionCalls==0,
+          "health potions: the saved drink finishes with the same capped effect and one consumption");
+  gothic.clearGame().reset();
+  std::puts("Health potions: queued doses, animation delivery and VM-era save match both executors");
   }
 
 void seatedGestureAtObject(Npc& npc,uint32_t range) {
