@@ -36,12 +36,10 @@ bool GameScript::runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& sy
   if(name=="ZS_GOTOBED") {
     standardInit();
     npc.aiPush(AiQueue::aiSetWalkMode(WalkBit::WM_Walk));
-    if(NpcEngineCalls::nearestWaypoint(world(),npc)!=properties.wp) {
+    if(NpcEngineCalls::nearestWaypoint(world(),npc)!=properties.wp)
       goToWaypoint();
-      // The queued transition keeps the current routine row's end time.
-      npc.aiPush(AiQueue::aiStartState(findFunction("ZS_SLEEP"),0,
-                                     findNpc(vm.global_other()),findNpc(vm.global_victim()),""));
-      }
+    // The transition also starts at an already reached bed and keeps the row's end time.
+    ai_startstate(self,int(findFunction("ZS_SLEEP").ptr),0,"");
     result = 0;
     return true;
     }

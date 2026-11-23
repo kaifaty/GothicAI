@@ -1824,6 +1824,16 @@ void sleepRoutineWorld(Gothic& gothic,bool events) {
   const auto* approach=test.awayFrom(*bedtime.point,200.f);
   test.only({matteo});
   test.moveHero(bedtime.point->position()+Tempest::Vec3(150,0,0),0);
+  test.start(bedtime,bedtime.point->position(),matteo,false);
+  Contract::tickRoutine(*matteo);
+  auto samePoint=Contract::queue(*matteo);
+  bool startsSleep=false;
+  while(samePoint.size()>0) {
+    const auto action=samePoint.pop();
+    require(action.act!=AI_GoToPoint,"a sleeper already at the waypoint skips the approach");
+    startsSleep |= action.act==AI_StartState && action.func==ScriptFn(sleep.init);
+    }
+  require(startsSleep,"the bedtime state queues sleep when the NPC is already at the waypoint");
   test.start(bedtime,approach->position(),matteo,false);
   const auto deadline=Contract::aiState(*matteo).eTime;
   Contract::tickRoutine(*matteo);
