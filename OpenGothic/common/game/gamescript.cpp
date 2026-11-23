@@ -96,6 +96,7 @@ GameScript::GameScript(GameSession &owner)
   aiDefaultPipe.reset(new GlobalOutput(*this));
   initCommon();
   loadNativeRoutines();
+  loadNativeRoomReaction();
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
   }

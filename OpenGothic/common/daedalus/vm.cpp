@@ -138,10 +138,11 @@ namespace daedalus {
 
 	void DaedalusVm::unsafe_call_bl(DaedalusSymbol const* sym) {
 		// the same as the BL instruction
-		if (auto cb = _m_function_overrides.find(sym->address()); cb != _m_function_overrides.end()) {
+		if (auto cb = _m_function_overrides.find(sym->address());
+		    cb != _m_function_overrides.end() && (!cb->second.enabled || cb->second.enabled())) {
 			notify_call(sym);
 			StackGuard guard {this, sym->rtype()};
-			cb->second(*this);
+			cb->second.call(*this);
 			guard.inhibit();
 			return;
 		}
@@ -296,24 +297,11 @@ namespace daedalus {
 			case DaedalusOpcode::RSR:
 				return false;
 			case DaedalusOpcode::BL: {
-				// Check if the function is overridden and if it is, call the resulting external.
 				sym = find_symbol_by_address(instr.address);
-				if (auto cb = _m_function_overrides.find(instr.address); cb != _m_function_overrides.end()) {
-					notify_call(sym);
-					// Guard against exceptions during external invocation.
-					StackGuard guard {this, sym->rtype()};
-					// Call maybe naked.
-					cb->second(*this);
-					// The stack is left intact.
-					guard.inhibit();
-				} else {
-					if (sym == nullptr) {
-						throw DaedalusVmException {"bl: no symbol found for address " + std::to_string(instr.address)};
-					}
-
-					unsafe_call(sym);
+				if (sym == nullptr) {
+					throw DaedalusVmException {"bl: no symbol found for address " + std::to_string(instr.address)};
 				}
-
+				unsafe_call_bl(sym);
 				break;
 			}
 			case DaedalusOpcode::BE: {
