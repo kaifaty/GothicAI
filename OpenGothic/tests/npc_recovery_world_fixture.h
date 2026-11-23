@@ -553,3 +553,8 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   gothic.clearGame().reset();
   std::puts("Health potions: queued doses, animation delivery and VM-era save match both executors");
   }
+
+void npcRecoveryAfterActivityChecks(Gothic& gothic) {
+  npcDeathLifecycle(gothic);
+  npcUnconsciousLifecycle(gothic);
+  }
