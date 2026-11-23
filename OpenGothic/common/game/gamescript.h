@@ -448,6 +448,10 @@ class GameScript final : public GameRules {
     void runFightDefeat();
     void runCheerFight();
     bool hasAttackReasonToKill(const std::shared_ptr<daedalus::INpc>& npc);
+    void rememberFleeCheck(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool alwaysRansacks(const std::shared_ptr<daedalus::INpc>& self);
+    bool wantsToRansack(const std::shared_ptr<daedalus::INpc>& self);
+    void queueFinishingMove(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     bool wantsToAttackSheepKiller(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     bool wantsToAttackThief(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     bool wantsToAttackMurderer(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);

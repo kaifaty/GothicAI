@@ -822,6 +822,9 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
   auto& script=world.script();
   auto& vm=script.getVm();
   const auto phases=activityPhases(script,"ZS_ATTACK");
+  const auto fleeCheck=vm.find_symbol_by_name("C_WANTTOFLEE")->address();
+  const auto forcedRansack=vm.find_symbol_by_name("C_NPCRANSACKSALWAYS")->address();
+  const auto ransack=vm.find_symbol_by_name("C_WANTTORANSACK")->address();
   auto& enabled=Contract::activityEventsOn(script);
   const bool wasEnabled=enabled;
   auto& aivar=npc.handle().aivar;
@@ -860,7 +863,10 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
     Contract::outputOrder(script)=outputOrder;
     script.setSeed(73106);
     ActivityStream stream(world,npc);
-    size_t bytecode=0;
+    size_t bytecode=0,outcomeChecks=0;
+    vm.observe_instructions([&](const auto&) {
+      outcomeChecks+=vm.pc()==fleeCheck || vm.pc()==forcedRansack || vm.pc()==ransack;
+      });
     const auto count=vm.add_call_observer([&](const auto& symbol) {
       bytecode+=symbol.name()=="ZS_ATTACK" || symbol.name()=="ZS_ATTACK_LOOP" || symbol.name()=="ZS_ATTACK_END";
       });
@@ -889,6 +895,7 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
     aivar[45]=arenaRunning;
     script.invokeState(&npc,&npc,nullptr,ScriptFn(phases.end));
     vm.remove_call_observer(count);
+    vm.observe_instructions({});
     queue=Contract::queue(npc);
     require(aivar[45]==arenaAfter && npc.stateOther()==&hero && queue.size()==2 &&
             queue.pop().act==AI_RemoveWeapon,"human attack: End restores the last target, closes the arena fight and sheathes");
@@ -896,6 +903,7 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
     require(next.act==AI_StartState && next.func==heal && next.target==&hero && next.i0==0 &&
             bytecode==(native ? 0u : 4u) && stream.records==(native ? 4u : 0u),
             "human attack: End queues healing and all four calls use the selected executor");
+    require(outcomeChecks==(native ? 0u : 3u),"human attack: Init and End use the selected combat outcome rules");
     std::erase_if(stream.events,[](const auto& event) {
       return !(event.starts_with("phase ") || event.starts_with("result ") ||
                event.starts_with("queue ") || event.starts_with("random "));
@@ -918,6 +926,109 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
   npc.setOther(savedOther);
   npc.setTempAttitude(savedAttitude);
   std::puts("Human attack: Init, ordinary Loop, distance abort and End match the VM");
+  }
+
+void humanAttackOutcomeHelpers(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto self=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  const auto savedOther=vm.global_other()->get_instance();
+  const auto savedGuild=self->guild;
+  const auto savedType=self->type;
+  const auto symbol=[&](std::string_view name) -> daedalus::DaedalusSymbol& { return *vm.find_symbol_by_name(name); };
+  const auto& flee=symbol("C_WANTTOFLEE");
+  const auto& always=symbol("C_NPCRANSACKSALWAYS");
+  const auto& ransack=symbol("C_WANTTORANSACK");
+  const auto& finish=symbol("B_FINISHINGMOVE");
+  auto& garwig=symbol("GARWIG");
+  auto& rod=symbol("ROD");
+  auto& raven=symbol("RAVEN");
+  const auto savedGarwig=garwig.get_instance(), savedRod=rod.get_instance(), savedRaven=raven.get_instance();
+  const auto hammer=script.findSymbolIndex("HOLY_HAMMER_MIS");
+  const auto rodSword=script.findSymbolIndex("ITMW_2H_ROD");
+  const auto sword=script.findSymbolIndex("ITMW_1H_MISC_SWORD");
+  const auto dagger=script.findSymbolIndex("ITMW_1H_VLK_DAGGER");
+  const auto originalSwords=npc.itemCount(sword);
+  const auto predicate=[&](const auto& fn) {
+    vm.push_instance(self);
+    vm.unsafe_call_bl(&fn);
+    return vm.pop_int();
+    };
+  const auto finishTarget=[&] {
+    npc.clearAiQueue();
+    vm.push_instance(self);
+    vm.push_instance(other);
+    vm.unsafe_call_bl(&finish);
+    const auto* action=npc.aiQueueFront();
+    require(action && action->act==AI_FinishingMove && action->target==&hero && Contract::queue(npc).size()==1 &&
+            symbol("B_FINISHINGMOVE.SLF").get_instance()==self && symbol("B_FINISHINGMOVE.OTH").get_instance()==other,
+            "human attack outcome: finishing binds both actors and queues the same target");
+    };
+  hero.addItem(hammer,1);
+  hero.addItem(rodSword,1);
+  vm.global_other()->set_instance(other);
+  for(bool native:{false,true}) {
+    enabled=native;
+    size_t entries=0;
+    vm.observe_instructions([&](const auto&) {
+      entries+=vm.pc()==flee.address() || vm.pc()==always.address() || vm.pc()==ransack.address() || vm.pc()==finish.address();
+      });
+    vm.push_instance(self);
+    vm.push_instance(other);
+    vm.unsafe_call_bl(&flee);
+    require(vm.pop_int()==0 && symbol("C_WANTTOFLEE.SLF").get_instance()==self && symbol("C_WANTTOFLEE.OTH").get_instance()==other,
+            "human attack outcome: stock fleeing returns FALSE and saves both parameters");
+    garwig.set_instance(other);
+    rod.set_instance(other);
+    require(predicate(always)==0,"human attack outcome: an unrelated actor cannot reclaim the quest items");
+    garwig.set_instance(self);
+    require(predicate(always)==1,"human attack outcome: the monastery guard takes back the hammer");
+    garwig.set_instance(other);
+    rod.set_instance(self);
+    require(predicate(always)==1 && symbol("C_NPCRANSACKSALWAYS.SLF").get_instance()==self,
+            "human attack outcome: Rod reclaims his sword and the check saves its actor");
+    self->type=NpcType::G2_AMBIENT;
+    self->guild=GIL_BAU;
+    raven.set_instance(other);
+    require(predicate(ransack)==1 && symbol("C_WANTTORANSACK.SLF").get_instance()==self,
+            "human attack outcome: an ordinary guild permits searching the opponent");
+    self->guild=GIL_PAL;
+    require(predicate(ransack)==0,"human attack outcome: paladins are excluded");
+    self->guild=GIL_BAU;
+    self->type=NpcType::G2_FRIEND;
+    require(predicate(ransack)==0,"human attack outcome: a friend does not search the hero");
+    self->type=NpcType::G2_AMBIENT;
+    raven.set_instance(self);
+    require(predicate(ransack)==0,"human attack outcome: Raven does not search the opponent");
+    self->type=savedType;
+    self->guild=savedGuild;
+    require(npc.closeWeapon(true),"human attack outcome: the fixture starts unarmed");
+    finishTarget();
+    require(npc.weaponState()==WeaponState::W1H && npc.currentMeleeWeapon() && npc.currentMeleeWeapon()->clsId()==sword &&
+            npc.itemCount(sword)==std::max(originalSwords,size_t(1)),
+            "human attack outcome: an unarmed finisher adds the stock sword exactly once");
+    npc.setToFightMode(dagger);
+    finishTarget();
+    require(npc.currentMeleeWeapon() && npc.currentMeleeWeapon()->clsId()==dagger,
+            "human attack outcome: an armed finisher leaves the melee weapon in place");
+    require(npc.closeWeapon(true),"human attack outcome: the fixture can sheathe after finishing");
+    if(originalSwords==0)
+      npc.delItem(sword,1);
+    vm.observe_instructions({});
+    require(entries==(native ? 0u : 10u),"human attack outcome: BL takes the selected executor for all four helpers");
+    }
+  garwig.set_instance(savedGarwig);
+  rod.set_instance(savedRod);
+  raven.set_instance(savedRaven);
+  vm.global_other()->set_instance(savedOther);
+  hero.delItem(hammer,1);
+  hero.delItem(rodSword,1);
+  enabled=wasEnabled;
+  std::puts("Human attack outcomes: fleeing parameters, quest items, plunder and finishing match the VM");
   }
 
 void fleeAndWatchPhases(World& world,Npc& npc,Npc& hero) {
@@ -2162,6 +2273,7 @@ void quietSoundRooms(Gothic& gothic) {
   loaded.stepUntil(120,[&] { return listener->animProgress("S_SIT")>=0; },"observation: the seated witness settles");
   observePlayerPhases(restored,*listener,guest,true);
   humanReactionPhases(restored,*listener,guest);
+  humanAttackOutcomeHelpers(restored,*listener,guest);
 
   gothic.clearGame().reset();
   {
