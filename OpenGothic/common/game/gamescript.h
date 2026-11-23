@@ -304,6 +304,9 @@ class GameScript final : public GameRules {
     bool runMonsterDragonRest(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterSheepFollow(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterSummoned(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    int32_t detectWisp();
+    int32_t detectWispItem();
+    void approachWispItem();
     bool nativeMonsterPerceptionsEnabled();
     bool invokeNativeMonsterPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);
     void runMonsterAssessBody();

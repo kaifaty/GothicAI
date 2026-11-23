@@ -2922,6 +2922,120 @@ void specialMonsterRoutines(GameSession& session, World& world, Npc& wolf, Npc& 
   std::puts("Special monster routines: original and native dragon rest, both sheep followers and summoned creature agree");
   }
 
+void monsterWispSearch(World& world, Npc& actor, Npc& hero) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  auto& random=NpcDefinitionContract::random(script);
+  const auto previousEvents=events;
+  const auto previousRandom=random;
+  const auto previousActor=actor.position(), previousHero=hero.position();
+  const auto previousTimer=actor.stateTime();
+  const auto previousRange=actor.handle().senses_range;
+  const auto previousWaypoint=actor.handle().wp;
+  auto& position=actor.handle().aivar[19];
+  auto& summonTime=actor.handle().aivar[62];
+  const auto previousPosition=position, previousSummonTime=summonTime;
+  auto* wisp=script.findSymbol("WISP_DETECTOR");
+  auto* mode=script.findSymbol("WISPSEARCHING");
+  auto* talents=script.findSymbol("PLAYER_TALENT_WISPDETECTOR");
+  auto* flags=script.findSymbol("B_WISPDETECTEDITEM.WISPSEARCHFLAGS");
+  auto* roll=script.findSymbol("B_GETWISPDETECTEDITEM.RANDY");
+  const auto previousWisp=wisp->get_instance(), previousSelf=vm.global_self()->get_instance(), previousItem=vm.global_item()->get_instance();
+  const auto previousMode=mode->get_int(), previousFlags=flags->get_int(), previousRoll=roll->get_int();
+  std::array<int32_t,7> previousTalents{};
+  for(uint16_t i=0;i<previousTalents.size();++i) {
+    previousTalents[i]=talents->get_int(i);
+    talents->set_int(1,i);
+    }
+  const auto actorHandle=std::static_pointer_cast<daedalus::INpc>(actor.handlePtr());
+  wisp->set_instance(actorHandle);
+  vm.global_self()->set_instance(actorHandle);
+  actor.setStateTime(0);
+  actor.handle().senses_range=3000;
+  const auto origin=actor.position()+Tempest::Vec3(0,4000,0);
+  auto* apple=world.addItem(script.findSymbolIndex("ITFO_APPLE"),origin+Tempest::Vec3(100,0,0));
+  require(apple,"Wisp search: the item fixture needs a placed apple");
+  const auto itemHandle=std::static_pointer_cast<daedalus::IItem>(apple->handlePtr());
+  const auto summoned=activityPhases(script,"ZS_MM_RTN_SUMMONED");
+  auto* detect=script.findSymbol("B_MM_WISPDETECT");
+  auto* search=script.findSymbol("B_WISPDETECTEDITEM");
+  auto* approach=script.findSymbol("B_GETWISPDETECTEDITEM");
+  const auto place=[](Npc& npc,Tempest::Vec3 destination) {
+    npc.setPosition(destination);
+    npc.updateTransform();
+    };
+
+  for(bool native:{false,true}) {
+    events=native;
+    random.seed();
+    flags->set_int(-7);
+    roll->set_int(-1);
+    vm.global_item()->set_instance(nullptr);
+    place(actor,origin+Tempest::Vec3(0,501,0));
+    mode->set_int(script.findSymbol("WISPSEARCH_ALL")->get_int());
+    actor.clearAiQueue();
+    vm.unsafe_call_bl(search);
+    auto peek=random;
+    require(vm.pop_int()==int32_t(0x800003ffu) && flags->get_int()==int32_t(0x800003ffu) &&
+            vm.global_item()->get_instance()==itemHandle && !actor.aiQueueFront() && roll->get_int()==-1,
+            "Wisp search: all trained categories match, and an item too far above or below is not approached");
+    mode->set_int(script.findSymbol("WISPSEARCH_FOLLOW")->get_int());
+    vm.unsafe_call_bl(search);
+    require(vm.pop_int()==0 && flags->get_int()==int32_t(0x800003ffu),"Wisp search: follow mode leaves the saved mask alone");
+
+    place(actor,origin+Tempest::Vec3(0,500,0));
+    place(hero,actor.position()+Tempest::Vec3(1999,0,0));
+    mode->set_int(script.findSymbol("WISPSEARCH_FOOD")->get_int());
+    position=0;
+    summonTime=19;
+    std::array<size_t,3> entries{};
+    vm.observe_instructions([&](const auto&) {
+      entries[0]+=vm.pc()==detect->address();
+      entries[1]+=vm.pc()==search->address();
+      entries[2]+=vm.pc()==approach->address();
+      });
+    const auto result=script.invokeState(&actor,nullptr,nullptr,ScriptFn(summoned.loop));
+    vm.observe_instructions({});
+    const auto* first=actor.aiQueueFront();
+    const auto queue=activityQueue(actor);
+    require(result==LOOP_CONTINUE && entries==(native ? std::array<size_t,3>{} : std::array<size_t,3>{1,1,1}) &&
+            summonTime==0 && flags->get_int()==ITM_CAT_FOOD && roll->get_int()==int32_t(peek()%100) && random==peek &&
+            first && first->act==AI_GotoItem && first->item==apple && queue.size()==2,
+            "Wisp search: the wisp approaches the item and the common loop still follows the hero");
+
+    actor.clearAiQueue();
+    actor.aiPush(AiQueue::aiWait(50));
+    place(hero,actor.position()+Tempest::Vec3(2000,0,0));
+    summonTime=19;
+    vm.unsafe_call_bl(detect);
+    require(vm.pop_int()==LOOP_END && position==1 && summonTime==19 && actor.aiQueueFront() &&
+            actor.aiQueueFront()->target==&hero && activityQueue(actor).size()==1,
+            "Wisp search: at the search limit the wisp clears the old queue and approaches the hero");
+    }
+
+  actor.clearAiQueue();
+  world.removeItem(*apple);
+  place(actor,previousActor);
+  place(hero,previousHero);
+  position=previousPosition;
+  summonTime=previousSummonTime;
+  actor.setStateTime(previousTimer);
+  actor.handle().senses_range=previousRange;
+  actor.handle().wp=previousWaypoint;
+  for(uint16_t i=0;i<previousTalents.size();++i)
+    talents->set_int(previousTalents[i],i);
+  wisp->set_instance(previousWisp);
+  vm.global_self()->set_instance(previousSelf);
+  vm.global_item()->set_instance(previousItem);
+  mode->set_int(previousMode);
+  flags->set_int(previousFlags);
+  roll->set_int(previousRoll);
+  random=previousRandom;
+  events=previousEvents;
+  std::puts("Wisp search: original and native category selection, item approach, and recall agree");
+  }
+
 void monsterDamagePerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
   auto& script=world.script();
   auto& vm=script.getVm();
@@ -3294,6 +3408,7 @@ std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   monsterHuntAndEatBodyPhases(world,*wolf,sheep);
   monsterBodyPerception(world,*wolf,sheep);
   specialMonsterRoutines(session,world,*wolf,sheep,hero);
+  monsterWispSearch(world,*wolf,hero);
   monsterDamagePerception(world,*wolf,sheep,hero);
   monsterPlayerWarnAndSurprise(world,*wolf,sheep,hero);
   const auto attack=script.findFunction("ZS_MM_ATTACK");

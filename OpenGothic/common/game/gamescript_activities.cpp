@@ -120,6 +120,9 @@ void GameScript::loadNativeRoutines() {
   const auto enabled=[this] {
     return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
     };
+  vm.override_function("B_MM_WISPDETECT",std::function<int32_t()>{[this] { return detectWisp(); }},enabled);
+  vm.override_function("B_WISPDETECTEDITEM",std::function<int32_t()>{[this] { return detectWispItem(); }},enabled);
+  vm.override_function("B_GETWISPDETECTEDITEM",std::function<void()>{[this] { approachWispItem(); }},enabled);
   vm.override_function("C_NPCISMONSTERMAGE",std::function<int32_t(NpcHandle)>{
     [this](NpcHandle npc) { return int32_t(isMonsterMage(npc)); }},enabled);
   vm.override_function("PERCEPTION_SET_MONSTER_RTN",std::function<void()>{[this] {

@@ -596,8 +596,8 @@ bool GameScript::runMonsterSheepFollow(Npc& npc, const daedalus::DaedalusSymbol&
 bool GameScript::runMonsterSummoned(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   const auto phase = symbol.name();
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
-  const bool wisp = hlp_getinstanceid(self)==hlp_getinstanceid(findSymbol("WISP_DETECTOR")->get_instance());
   if(phase=="ZS_MM_RTN_SUMMONED") {
+    const bool wisp = hlp_getinstanceid(self)==hlp_getinstanceid(findSymbol("WISP_DETECTOR")->get_instance());
     npc.setPerceptionTime(1000);
     npc.setPerceptionEnable(PERC_ASSESSPLAYER,findFunction("B_MM_ASSESSPLAYER").ptr);
     npc.setPerceptionEnable(PERC_ASSESSENEMY,findFunction("B_MM_ASSESSENEMY").ptr);
@@ -619,9 +619,7 @@ bool GameScript::runMonsterSummoned(Npc& npc, const daedalus::DaedalusSymbol& sy
   if(phase!="ZS_MM_RTN_SUMMONED_LOOP")
     return false;
 
-  // The summoned Wisp still uses its item detector and quest logic.
-  if(wisp)
-    vm.call_function("B_MM_WISPDETECT");
+  detectWisp(); // Stock discards the detector's result before the common summoned loop.
   const auto actor = std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
   if(npc_getdisttonpc(actor,hero)>500) {
@@ -639,6 +637,90 @@ bool GameScript::runMonsterSummoned(Npc& npc, const daedalus::DaedalusSymbol& sy
   actor->wp = npc_getnearestwp(actor);
   result = LOOP_CONTINUE;
   return true;
+  }
+
+int32_t GameScript::detectWisp() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  auto* detector = findSymbol("WISP_DETECTOR");
+  if(!self || hlp_getinstanceid(self)!=hlp_getinstanceid(detector->get_instance()))
+    return 0;
+
+  npc_perceiveall(self);
+  if(wld_detectnpc(self,int32_t(detector->index()),-1,-1)) {
+    // Use the SELF symbol, which resolves to this Wisp, rather than the detected duplicate.
+    const auto context = vm.unsafe_get_gi();
+    vm.push_int(int32_t(vm.global_self()->index()));
+    vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
+    vm.unsafe_set_gi(context);
+    }
+
+  const auto actor = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+  const auto inPosition = findSymbol("ISINPOS")->get_int();
+  const auto distance = npc_getdisttonpc(actor,hero);
+  auto* aivar = findSymbol("C_NPC.AIVAR");
+  if(vm.get_int(actor,aivar,routinePosition)==inPosition && distance<2000) {
+    vm.set_int(actor,aivar,summonTime,0);
+    detectWispItem();
+    }
+  else if(distance<500) {
+    vm.set_int(actor,aivar,routinePosition,inPosition);
+    }
+  else {
+    vm.set_int(actor,aivar,routinePosition,findSymbol("NOTINPOS")->get_int());
+    npc_clearaiqueue(actor);
+    ai_gotonpc(actor,hero);
+    }
+  return LOOP_END;
+  }
+
+int32_t GameScript::detectWispItem() {
+  const auto mode = findSymbol("WISPSEARCHING")->get_int();
+  if(mode==findSymbol("WISPSEARCH_FOLLOW")->get_int())
+    return 0;
+
+  auto* flags = findSymbol("B_WISPDETECTEDITEM.WISPSEARCHFLAGS");
+  const auto* talents = findSymbol("PLAYER_TALENT_WISPDETECTOR");
+  const auto all = findSymbol("WISPSEARCH_ALL")->get_int();
+  static constexpr std::pair<std::string_view,uint32_t> categories[] = {
+    {"WISPSEARCH_NF",      ITM_CAT_NF},
+    {"WISPSEARCH_FF",      ITM_CAT_FF | ITM_CAT_MUN},
+    {"WISPSEARCH_NONE",    ITM_CAT_NONE | ITM_CAT_LIGHT | ITM_CAT_ARMOR},
+    {"WISPSEARCH_RUNE",    ITM_CAT_RUNE | ITM_CAT_DOCS},
+    {"WISPSEARCH_MAGIC",   ITM_CAT_MAGIC},
+    {"WISPSEARCH_FOOD",    ITM_CAT_FOOD},
+    {"WISPSEARCH_POTIONS", ITM_CAT_POTION},
+    };
+  int32_t mask = 0;
+  vm.set_int(nullptr,flags,0,mask);
+  for(uint16_t i = 0; i < std::size(categories); ++i) {
+    const auto& [search,bits] = categories[i];
+    if((mode==all || mode==findSymbol(search)->get_int()) && talents->get_int(i)==1) {
+      mask |= std::bit_cast<int32_t>(bits);
+      vm.set_int(nullptr,flags,0,mask);
+      }
+    }
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  if(mask!=0 && wld_detectitem(self,mask))
+    approachWispItem();
+  return mask;
+  }
+
+void GameScript::approachWispItem() {
+  const auto item = std::dynamic_pointer_cast<daedalus::IItem>(vm.global_item()->get_instance());
+  if(!hlp_isvaliditem(item))
+    return;
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  if(npc_getheighttoitem(self,item)>500)
+    return;
+
+  auto* randy = findSymbol("B_GETWISPDETECTEDITEM.RANDY");
+  const auto roll = hlp_random(100);
+  vm.set_int(nullptr,randy,0,roll);
+  ai_gotoitem(self,item);
+  const auto distance = npc_getdisttoitem(self,item);
+  if(roll<=1 && distance<1000)
+    wld_playeffect(findSymbol("$16727")->get_string(),item,item,0,0,0,0);
   }
 
 bool GameScript::nativeMonsterPerceptionsEnabled() {
