@@ -2422,12 +2422,93 @@ void itemRoutinePhasesWorld(Gothic& gothic,bool events) {
     }
   }
 
+void refreshAtInsert(World& world) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  const auto program=NpcSnapshot::load(baseProgramIndex().dir.parent_path());
+  if(program.sha256!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
+    return;
+
+  auto* hero=world.player();
+  auto* local=vm.find_symbol_by_name("B_REFRESHATINSERT.HER");
+  auto* mace=vm.find_symbol_by_name("ITMW_1H_BAU_MACE");
+  Npc* actor=nullptr;
+  for(uint32_t index=0;index<world.npcCount() && actor==nullptr;++index) {
+    auto* candidate=world.npcById(index);
+    if(candidate && candidate!=hero && candidate->handle().attribute[ATR_HITPOINTS]>0 &&
+       !candidate->currentMeleeWeapon() && !candidate->currentRangedWeapon())
+      actor=candidate;
+    }
+  require(hero && local && mace && actor,"refresh fixture needs the hero and a live NPC without an equipped weapon");
+
+  const auto heroHandle=std::static_pointer_cast<daedalus::INpc>(hero->handlePtr());
+  const auto oldLocal=local->get_instance();
+  const auto oldItem=vm.global_item()->get_instance();
+  const auto oldMace=mace->get_instance();
+  const auto oldSelf=vm.global_self()->get_instance();
+  const auto oldGi=vm.unsafe_get_gi();
+  const auto* configured=std::getenv("OPENGOTHIC_NPC_RECORDS");
+  const auto oldRecords=configured ? std::optional<std::string>(configured) : std::nullopt;
+  auto run=[&](Npc& npc,int32_t guild,int32_t hp,bool native) {
+    auto& record=npc.handle();
+    const auto oldHp=record.attribute[ATR_HITPOINTS], oldGuild=record.guild;
+    const auto before=npc.itemCount(mace->index());
+    const auto restore=[&] {
+      vm.observe_instructions({});
+      if(const auto count=npc.itemCount(mace->index()); count>before)
+        npc.delItem(mace->index(),uint32_t(count-before));
+      local->set_instance(oldLocal);
+      vm.global_item()->set_instance(oldItem);
+      mace->set_instance(oldMace);
+      record.attribute[ATR_HITPOINTS]=oldHp;
+      record.guild=oldGuild;
+      if(oldRecords) setenv("OPENGOTHIC_NPC_RECORDS",oldRecords->c_str(),1);
+      else unsetenv("OPENGOTHIC_NPC_RECORDS");
+      };
+    try {
+      record.guild=guild;
+      record.attribute[ATR_HITPOINTS]=hp;
+      local->set_instance(nullptr);
+      if(native) unsetenv("OPENGOTHIC_NPC_RECORDS");
+      else setenv("OPENGOTHIC_NPC_RECORDS","0",1);
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { ++instructions; });
+      script.invokeRefreshAtInsert(npc);
+      vm.observe_instructions({});
+      const auto added=npc.itemCount(mace->index())-before;
+      const auto expectedItem=added ? std::static_pointer_cast<daedalus::IItem>(npc.getItem(mace->index())->handlePtr()) : oldItem;
+      require((instructions==0)==native && vm.global_self()->get_instance()==oldSelf && vm.unsafe_get_gi()==oldGi,
+              "refresh must use the selected executor and restore the calling context");
+      require(vm.global_item()->get_instance()==expectedItem &&
+              local->get_instance()==(hp>0 ? heroHandle : nullptr),
+              "refresh must retain the saved hero lookup and publish the received item");
+      const auto result=std::pair(record.attribute[ATR_HITPOINTS],added);
+      restore();
+      return result;
+      }
+    catch(...) { restore(); throw; }
+    };
+
+  const auto compare=[&](Npc& npc,int32_t guild,int32_t hp,int32_t expectedHp,size_t expectedMaces) {
+    const auto stock=run(npc,guild,hp,false);
+    const auto native=run(npc,guild,hp,true);
+    require(native==stock && native==std::pair(expectedHp,expectedMaces),"NPC refresh must match stock health and inventory");
+    };
+  compare(*actor,GIL_BAU,1,actor->handle().attribute[ATR_HITPOINTSMAX],1);
+  compare(*actor,GIL_VLK,1,actor->handle().attribute[ATR_HITPOINTSMAX],0);
+  compare(*actor,GIL_WOLF,1,1,0);
+  compare(*actor,GIL_BAU,0,0,0);
+  compare(*hero,GIL_BAU,1,1,0);
+  std::puts("NPC refresh at insert: stock health, weapon, hero/death exclusions and VM context match");
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
   for(bool events:{false,true}) {
     setenv("OPENGOTHIC_ACTIVITY_EVENTS",events ? "1" : "0",1);
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+    if(events) refreshAtInsert(*gothic.world());
     const auto save=pointActivitiesWorld(gothic,events);
     itemRoutinePhasesWorld(gothic,events);
     ActivityEventsWorld paired(gothic);
