@@ -67,9 +67,10 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
       npc.aiPush(AiQueue::aiStandup());
       }
     NpcEngineCalls::setWalkMode(npc,1);
-    if(kind==PointRoutine::GuardPassage || kind==PointRoutine::Study || awayFromWaypoint())
+    const bool walk = kind==PointRoutine::GuardPassage || kind==PointRoutine::Study || awayFromWaypoint();
+    if(walk)
       gotoWaypoint();
-    if(kind==PointRoutine::Study || kind==PointRoutine::PracticeSword ||
+    if(kind==PointRoutine::Study || (kind==PointRoutine::PracticeSword && walk) ||
        (kind==PointRoutine::GuardPassage && awayFromHero()))
       npc.aiPush(AiQueue::aiAlignToWp());
     if(kind==PointRoutine::PracticeSword)
@@ -170,9 +171,10 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
       }
     case PointRoutine::PracticeSword:
       if(stage==NeedsPose) {
-        if(npc.currentMeleeWeapon()==nullptr)
+        if(npc.currentMeleeWeapon()==nullptr) {
           storeItem(npc.addItem(findSymbol("ITMW_1H_BAU_MACE")->index(),1));
-        npc.aiPush(AiQueue::aiEquipBestMeleeWeapon());
+          npc.aiPush(AiQueue::aiEquipBestMeleeWeapon());
+          }
         npc.aiPush(AiQueue::aiReadyMeleeWeapon());
         stage = InPose;
         }
