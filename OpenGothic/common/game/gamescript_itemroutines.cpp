@@ -36,6 +36,43 @@ constexpr std::array<std::string_view,4> eatingGesture={
   };
 }
 
+int32_t GameScript::giveInventoryItems(const std::shared_ptr<daedalus::INpc>& giver,
+                                       const std::shared_ptr<daedalus::INpc>& taker, int32_t item, int32_t amount) {
+  findSymbol("B_GIVEINVITEMS.AMOUNT")->set_int(amount);
+  findSymbol("B_GIVEINVITEMS.ITEMINSTANCE")->set_int(item);
+  findSymbol("B_GIVEINVITEMS.TAKER")->set_instance(taker);
+  findSymbol("B_GIVEINVITEMS.GIVER")->set_instance(giver);
+  const bool giving = npc_isplayer(giver);
+  if(giving && amount>npc_hasitems(giver,item))
+    return 0;
+  if(amount==0)
+    return 1;
+
+  // Stock scripts may grant the full amount even if an NPC giver has fewer items.
+  npc_removeinvitems(giver,item,amount);
+  createinvitems(taker,item,amount);
+  const auto held = std::dynamic_pointer_cast<daedalus::IItem>(vm.global_item()->get_instance());
+  const auto name = held ? held->name : std::string{};
+  findSymbol("B_GIVEINVITEMS.ITEMNAME")->set_string(name);
+
+  if(giving || npc_isplayer(taker)) {
+    const auto string = [this](const char* symbol) -> const std::string& { return findSymbol(symbol)->get_string(); };
+    const bool gold = uint32_t(item)==findSymbolIndex("ITMI_GOLD");
+    std::string message;
+    if(gold)
+      message = std::to_string(amount)+string(giving ? "PRINT_GOLDGEGEBEN" : "PRINT_GOLDERHALTEN");
+    else if(amount==1)
+      message = name+string(giving ? "PRINT_ADDON_GEGEBEN" : "PRINT_ADDON_ERHALTEN");
+    else
+      message = std::to_string(amount)+string(giving ? "PRINT_ITEMSGEGEBEN" : "PRINT_ITEMSERHALTEN")+" ("+name+")";
+    const auto position = gold ? (giving ? "YPOS_GOLDGIVEN" : "YPOS_GOLDTAKEN")
+                               : (giving ? "YPOS_ITEMGIVEN" : "YPOS_ITEMTAKEN");
+    findSymbol("B_GIVEINVITEMS.CONCATTEXT")->set_string(message);
+    ai_printscreen(message,-1,findSymbol(position)->get_int(),string("FONT_SCREENSMALL"),2);
+    }
+  return 1;
+  }
+
 bool GameScript::runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   using Phase=ActivityDefinitions::Phase;
   auto phase=Phase::Init;

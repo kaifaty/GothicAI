@@ -360,7 +360,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     int32_t    talentValue(Talent t) const;
     int32_t    hitChance(Talent t) const;
 
-    void       setRefuseTalk(uint64_t milis);
+    void       setRefuseTalkSeconds(int32_t seconds);
     bool       isRefuseTalk() const;
 
     int32_t    mageCycle() const;

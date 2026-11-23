@@ -49,6 +49,8 @@
 #include "graphics/pfx/particlefx.h"
 #include "world/bullet.h"
 #include "game/physicssave.h"
+#include "storyruntime.h"
+#include "storygraph/exec.h"
 
 #include <rapidjson/document.h>
 #include <Tempest/MemReader>
@@ -1871,19 +1873,9 @@ struct WorldActivity {
 
 std::string npcName(World& world,const Npc& npc) { return std::string(world.script().symbolName(npc.instanceSymbol())); }
 
-const WayPoint* activityRow(Npc& npc,size_t init,std::string& name,gtime* start=nullptr) {
-  const WayPoint* point=nullptr;
-  npc.forEachRoutine([&](const Npc::RoutineInfo& row) {
-    if(point==nullptr && row.state.ptr==init && row.waypoint!=nullptr) {
-      point=row.waypoint; name=std::string(row.point);
-      if(start) *start=row.start;
-      }
-    });
-  return point;
-  }
-
 #include "npc_activity_world_fixture.h"
 #include "npc_placement_world_fixture.h"
+#include "npc_story_effects_world_fixture.h"
 
 // Every position of one activity at its real object: at the object, far from the point, the object
 // taken by other NPCs, already at the object, both sides of a distance approach, and the engine's
@@ -3760,6 +3752,7 @@ void moverChildSave() {
   }
   else std::puts("SKIP item query probes: OPENGOTHIC_LOADPROBE=1 is not enabled");
   benchHelpers(*gothic.player());
+  talkPhases(gothic);
   const auto findChild=[](World& world) -> const WorldObjects::PlacedItem& {
     const auto& catalogue=world.placedItemCensus();
     const auto child=std::find_if(catalogue.begin(),catalogue.end(),[](const auto& row) { return row.zenId==2839; });
@@ -3787,6 +3780,8 @@ void moverChildSave() {
   auto savedPose=child.origin;
   savedPose.translate(25,0,0);
   child.item->setObjMatrix(savedPose);
+
+  const auto requireStory=storyBeforeSave(*gothic.world());
   std::vector<uint8_t> bytes;
   {
     Tempest::MemWriter writer(bytes);
@@ -3806,6 +3801,7 @@ void moverChildSave() {
     Serialize in(reader);
     gothic.setGame(std::make_unique<GameSession>(in));
   }
+  requireStory(*gothic.world());
   const auto& restored=findChild(*gothic.world());
   require(gothic.world()->script().getVm().global_item()->get_instance()==
           std::static_pointer_cast<daedalus::IItem>(restored.item->handlePtr()),

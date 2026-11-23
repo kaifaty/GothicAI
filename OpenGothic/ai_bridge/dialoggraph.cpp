@@ -681,15 +681,11 @@ bool DialogGraph::evaluate(World& world, Npc* npc, const rapidjson::Value& expr,
     self->set_instance(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()));
   if(world.player()!=nullptr)
     other->set_instance(std::static_pointer_cast<daedalus::INpc>(world.player()->handlePtr()));
-  storygraph::VmExternals engine(*v);
-  storygraph::Evaluator   ev(*v,rt.predicates().helpers(),engine);
-  auto r = ev.eval(e);
+  auto r = rt.evaluate(e,error);
   self->set_instance(prevSelf);
   other->set_instance(prevOther);
-  if(!r) {
-    error = ev.why();
+  if(!r)
     return false;
-    }
   rapidjson::StringBuffer                    buf;
   rapidjson::Writer<rapidjson::StringBuffer> w(buf);
   switch(r->type) {
