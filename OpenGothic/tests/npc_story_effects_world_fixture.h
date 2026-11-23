@@ -97,6 +97,29 @@ void assessTalkEntry(World& world,Npc& npc,Npc& player) {
   restore();
   }
 
+void nestedStockDialogue(World& world, Npc& npc, Npc& player) {
+  auto& gothic=Gothic::inst();
+  auto& vm=world.script().getVm();
+  auto* condition=vm.find_symbol_by_name("DIA_ADDON_CAVALORN_LETSKILLBANDITS_CONDITION");
+  auto* helper=vm.find_symbol_by_name("C_BRAGOBANDITSDEAD");
+  require(condition && helper,"nested dialogue needs the stock Cavalorn condition and bandit check");
+  StoryRuntime runtime(nullptr);
+  std::optional<DialogGraph> bridge;
+  if(!gothic.dialogScriptFn)
+    bridge.emplace([](std::string&&) {},nullptr,runtime);
+  StoryRuntime::Bind context(vm,&npc,&player);
+  size_t entries=0;
+  vm.observe_instructions([&](const auto&) { entries+=vm.pc()==helper->address(); });
+  const auto original=vm.call_function<int32_t>(condition);
+  const auto originalEntries=entries;
+  entries=0;
+  int32_t lifted=0;
+  const auto handled=gothic.dialogScriptFn(*condition,lifted);
+  vm.observe_instructions({});
+  require(originalEntries==1 && handled && lifted==original && entries==0,
+          "the live StoryGraph must evaluate the stock nested bandit check without executing its bytecode");
+  }
+
 void talkPhases(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   auto& world=*gothic.world();
@@ -106,6 +129,7 @@ void talkPhases(Gothic& gothic) {
   require(actor!=nullptr && world.player()!=nullptr,"talk needs Xardas and the player");
   auto& npc=*actor;
   auto& player=*world.player();
+  nestedStockDialogue(world,npc,player);
   stockDialogMetadata(world,npc,player);
   productionDialogEnd(world,npc,player);
   auto& effects=Contract::activityEventsOn(script);

@@ -1,6 +1,7 @@
 // Live world fixture and point activity cases for placed_items_contract.cpp.
 
 #include "storyruntime.h"
+#include "dialoggraph.h"
 #include "storygraph/exec.h"
 
 namespace {
