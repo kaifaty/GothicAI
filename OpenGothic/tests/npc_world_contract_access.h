@@ -1,5 +1,7 @@
 #pragma once
 
+void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled);
+
 // Test-only access keeps the production creation entry point unchanged.
 struct NpcDefinitionContract {
   static auto& definitions(GameScript& script) { return script.npcDefinitions; }

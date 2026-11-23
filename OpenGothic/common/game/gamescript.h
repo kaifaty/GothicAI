@@ -4,6 +4,7 @@
 #include "daedalus/classes.h"
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <random>
 #include <unordered_map>
@@ -399,6 +400,7 @@ class GameScript final : public GameRules {
     int32_t playerCrime(const std::shared_ptr<daedalus::INpc>& self);
     void memorizePlayerCrime(const std::shared_ptr<daedalus::INpc>& witness, const std::shared_ptr<daedalus::INpc>& offender, int32_t crime);
     int32_t currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>& self);
+    void adjustPetzCrime(const std::shared_ptr<daedalus::INpc>& witness, std::optional<int32_t> newCrime);
     bool isToughGuy(const std::shared_ptr<daedalus::INpc>& self);
     void startNpcAttack(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
                         int32_t reason, int32_t wait);

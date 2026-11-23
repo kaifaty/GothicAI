@@ -18,6 +18,8 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -297,6 +299,117 @@ void helperMutations(const fs::path& file,Gothic& gothic,void (*compare)(World&)
   }
 
 }
+
+void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
+  auto& vm=world.script().getVm();
+  auto& record=witness.handle();
+  const auto witnessHandle=std::static_pointer_cast<daedalus::INpc>(witness.handlePtr());
+  const auto heroHandle=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  const auto symbol=[&](std::string_view name) -> daedalus::DaedalusSymbol& {
+    auto* result=vm.find_symbol_by_name(name);
+    if(result==nullptr) throw std::runtime_error("Missing crime fixture symbol: "+std::string(name));
+    return *result;
+    };
+  const auto date=int32_t(world.time().day());
+  const auto murder=symbol("CRIME_MURDER").get_int(),theft=symbol("CRIME_THEFT").get_int();
+  const auto attack=symbol("CRIME_ATTACK").get_int(),sheep=symbol("CRIME_SHEEPKILLER").get_int();
+  const auto none=symbol("CRIME_NONE").get_int();
+  const auto addPc=symbol("B_ADDPETZCRIME").address(),removePc=symbol("B_DELETEPETZCRIME").address();
+  auto& input=symbol("B_ADDPETZCRIME.CRIME");
+  const auto savedInput=input.get_int();
+  const auto savedGuild=record.guild;
+  const auto savedType=record.type;
+  const auto savedAivar=std::to_array(record.aivar);
+  const bool wasEnabled=enabled;
+  std::vector<std::pair<daedalus::DaedalusSymbol*,int32_t>> globals;
+  for(std::string_view area : {"OLDCAMP","CITY","MONASTERY","FARM","BL"}) {
+    auto& level=symbol("ABSOLUTIONLEVEL_"+std::string(area));
+    globals.emplace_back(&level,level.get_int());
+    for(std::string_view crime : {"MURDER","THEFT","ATTACK","SHEEPKILLER"}) {
+      if(area=="BL" && crime=="SHEEPKILLER") continue;
+      auto& counter=symbol("PETZCOUNTER_"+std::string(area)+"_"+std::string(crime));
+      globals.emplace_back(&counter,counter.get_int());
+      }
+    }
+  std::vector<std::pair<daedalus::DaedalusSymbol*,std::shared_ptr<daedalus::DaedalusInstance>>> references;
+  for(const char* name : {"B_ADDPETZCRIME.SLF","B_DELETEPETZCRIME.SLF","B_GETPLAYERCRIME.SLF",
+                          "B_GETCURRENTABSOLUTIONLEVEL.SLF","B_MEMORIZEPLAYERCRIME.SLF","B_MEMORIZEPLAYERCRIME.TAETER",
+                          "C_NPCBELONGSTOOLDCAMP.SLF","C_NPCBELONGSTOCITY.SLF","C_NPCBELONGSTOMONASTERY.SLF",
+                          "C_NPCBELONGSTOFARM.SLF","C_NPCBELONGSTOBL.SLF"}) {
+    auto& ref=symbol(name);
+    references.emplace_back(&ref,ref.get_instance());
+    }
+  auto& reported=symbol("B_MEMORIZEPLAYERCRIME.CRIME");
+  const auto savedReported=reported.get_int();
+  struct Case {
+    Guild guild;
+    NpcType type;
+    int32_t previous,age,level,crime;
+    const char* added;
+    const char* removed;
+    const char* additionallyAdded=nullptr;
+    const char* additionallyRemoved=nullptr;
+    };
+  const Case cases[] = {
+    {GIL_VLK,NpcType::G2_AMBIENT,attack,2,3,theft,"PETZCOUNTER_CITY_THEFT","PETZCOUNTER_CITY_ATTACK"},
+    {GIL_VLK,NpcType::G2_BL_AMBIENT,theft,7,3,murder,"PETZCOUNTER_CITY_MURDER","PETZCOUNTER_CITY_THEFT","PETZCOUNTER_BL_MURDER","PETZCOUNTER_BL_THEFT"},
+    {GIL_MIL,NpcType::G2_OC_MAIN,attack,3,3,murder,"PETZCOUNTER_OLDCAMP_MURDER",nullptr},
+    {GIL_NOV,NpcType::G2_AMBIENT,murder,0,2,theft,"PETZCOUNTER_MONASTERY_THEFT",nullptr},
+    {GIL_BAU,NpcType::G2_AMBIENT,theft,7,3,murder,"PETZCOUNTER_FARM_MURDER","PETZCOUNTER_FARM_THEFT"},
+    {GIL_BDT,NpcType::G2_BL_MAIN,none,0,7,sheep,nullptr,nullptr},
+    {GIL_NONE,NpcType::G2_AMBIENT,none,0,0,murder,nullptr,nullptr},
+    {GIL_VLK,NpcType::G2_AMBIENT,attack,2,3,attack,nullptr,nullptr},
+    };
+  for(const auto& c : cases) {
+    std::vector<std::shared_ptr<daedalus::DaedalusInstance>> original;
+    for(const bool native : {false,true}) {
+      enabled=native;
+      record.guild=c.guild;
+      record.type=c.type;
+      record.aivar[1]=c.previous;
+      record.aivar[2]=date-c.age;
+      record.aivar[46]=c.level;
+      input.set_int(-1);
+      for(const auto& [global,saved] : globals) {
+        const std::string_view name=global->name();
+        global->set_int(name=="ABSOLUTIONLEVEL_BL" ? 7 : (name.starts_with("ABSOLUTIONLEVEL_") ? 3 : 0));
+        }
+      for(const auto& [ref,saved] : references) ref->set_instance(heroHandle);
+      size_t bytecode=0;
+      vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==addPc || vm.pc()==removePc; });
+      vm.call_function<void>("B_MEMORIZEPLAYERCRIME",witnessHandle,heroHandle,c.crime);
+      vm.observe_instructions({});
+      const bool equal=c.previous==c.crime;
+      const int32_t level=c.guild==GIL_NONE ? 0 : (c.guild==GIL_BDT ? 7 : 3);
+      if(bytecode!=(native || equal ? 0u : 2u) || record.aivar[1]!=c.crime || record.aivar[2]!=date ||
+         record.aivar[46]!=level || input.get_int()!=(equal ? -1 : c.crime))
+        throw std::runtime_error("Crime memory: callbacks, same-crime refresh and recorded witness details match stock");
+      for(const auto& [global,saved] : globals) {
+        const std::string_view name=global->name();
+        if(!name.starts_with("PETZCOUNTER_")) continue;
+        const auto matches=[&](const char* expected) { return expected!=nullptr && name==expected; };
+        const int32_t expected=matches(c.added) || matches(c.additionallyAdded) ? 1 :
+                               (matches(c.removed) || matches(c.additionallyRemoved) ? -1 : 0);
+        if(global->get_int()!=expected)
+          throw std::runtime_error("Crime memory: unexpected counter "+std::string(name));
+        }
+      for(size_t i=0; i<references.size(); ++i) {
+        const auto value=references[i].first->get_instance();
+        if(!native) original.push_back(value);
+        else if(original[i]!=value) throw std::runtime_error("Crime memory: saved witness references differ from stock");
+        }
+      }
+    }
+  enabled=wasEnabled;
+  record.guild=savedGuild;
+  record.type=savedType;
+  std::copy(savedAivar.begin(),savedAivar.end(),record.aivar);
+  input.set_int(savedInput);
+  reported.set_int(savedReported);
+  for(const auto& [global,saved] : globals) global->set_int(saved);
+  for(const auto& [ref,saved] : references) ref->set_instance(saved);
+  std::puts("Crime memory: regional counters, absolution, expiry and witness references match the VM");
+  }
 
 // The same live comparator as the installed-game corpus runs on a complete, tiny own-format
 // base. The fixture needs neither Gothic archives nor a graphics or sound device.
