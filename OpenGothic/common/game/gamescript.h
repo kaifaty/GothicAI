@@ -357,6 +357,8 @@ class GameScript final : public GameRules {
     void loadNativeEquipment();
     void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
     void selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    void readySpell(const std::shared_ptr<daedalus::INpc>& self, int32_t spell, int32_t mana);
+    bool hasLethalAttackReason(const std::shared_ptr<daedalus::INpc>& self);
     int32_t runEnterRoomReaction();
     int32_t runExitIfRoomLeft();
     void runPortalCollisionReaction();
