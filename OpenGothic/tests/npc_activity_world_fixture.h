@@ -3153,6 +3153,100 @@ void dragonIslandPlacement(Gothic& gothic) {
   std::puts("Dragon Island placement: four captain and crew combinations match the original calls and world state");
   }
 
+void routineSwitchWorld(World& world) {
+  const auto program=NpcSnapshot::load(baseProgramIndex().dir.parent_path());
+  if(program.sha256!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
+    return;
+
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto* xardas=script.findSymbol("NONE_100_XARDAS");
+  auto* helper=script.findSymbol("B_STARTOTHERROUTINE");
+  auto* actorLocal=script.findSymbol("B_STARTOTHERROUTINE.SLF");
+  auto* routineLocal=script.findSymbol("B_STARTOTHERROUTINE.NEWROUTINE");
+  auto* hero=world.player();
+  const auto dead=script.findFunction("ZS_DEAD");
+  const auto ordinary=script.findFunction("ZS_STAND_WP");
+  require(xardas && helper && actorLocal && routineLocal && hero && dead.isValid() && ordinary.isValid(),
+          "the routine switch fixture needs the stock actors, old schedule and saved locals");
+  const auto oldXardas=xardas->get_instance(), oldActor=actorLocal->get_instance();
+  const auto oldSelf=vm.global_self()->get_instance(), oldGi=vm.unsafe_get_gi();
+  const std::string oldRoutine=routineLocal->get_string();
+  const auto* configured=std::getenv("OPENGOTHIC_ROUTINE_RECORDS");
+  const auto oldSwitch=configured ? std::optional<std::string>(configured) : std::nullopt;
+
+  constexpr std::string_view waypoint="NW_CITY_PATH_HABOUR_03";
+  Npc target(world,xardas->index(),waypoint);
+  Npc sameKind(world,xardas->index(),waypoint);
+  const auto handle=[](Npc* npc) {
+    return npc ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr;
+    };
+  const struct Case {
+    Npc* self;
+    Npc* target;
+    bool dead, exchanged, continued;
+    } cases[]={
+    {&target,&target,false,true,false},
+    {&sameKind,&target,false,true,false},
+    {hero,&target,false,true,true},
+    {hero,&target,true,false,false},
+    {&target,&target,true,true,false},
+    {hero,nullptr,false,false,false}
+    };
+  for(const auto& c:cases) {
+    const auto run=[&](bool native) {
+      if(native) unsetenv("OPENGOTHIC_ROUTINE_RECORDS");
+      else setenv("OPENGOTHIC_ROUTINE_RECORDS","0",1);
+      target.clearState(true);
+      if(c.dead) require(target.startState(dead,""),"the test NPC must enter the dead state");
+      target.clearAiQueue();
+      target.clearRoutine();
+      target.addRoutine(gtime(0,0),gtime(23,59),uint32_t(ordinary.ptr),waypoint);
+      vm.global_self()->set_instance(handle(c.self));
+
+      size_t instructions=0;
+      std::vector<std::string> calls;
+      vm.observe_instructions([&](const auto&) {
+        if(vm.pc()==helper->address()) ++instructions;
+        });
+      vm.observe_externals([&](const auto& fn) {
+        if(fn.name()=="AI_STANDUP" || fn.name()=="HLP_GETINSTANCEID" || fn.name()=="NPC_ISDEAD" ||
+           fn.name()=="HLP_ISVALIDNPC" || fn.name()=="NPC_EXCHANGEROUTINE" || fn.name()=="AI_CONTINUEROUTINE")
+          calls.push_back(fn.name());
+        });
+      std::string error;
+      const auto result=storygraph::callFunction(vm,*helper,{storygraph::Value::instance(handle(c.target)),
+                                                          storygraph::Value::str("RITUALINNOSEYE")},error);
+      vm.observe_instructions({});
+      vm.observe_externals({});
+      require(result.has_value(),error.c_str());
+      require((instructions==0)==native && actorLocal->get_instance()==handle(c.target) &&
+              routineLocal->get_string()=="RITUALINNOSEYE" && vm.global_self()->get_instance()==handle(c.self) &&
+              vm.unsafe_get_gi()==oldGi,"routine switches must retain the saved locals and restore the invoking context");
+
+      std::vector<std::tuple<gtime,gtime,ScriptFn,std::string,const WayPoint*>> rows;
+      target.forEachRoutine([&](const Npc::RoutineInfo& row) {
+        rows.emplace_back(row.start,row.end,row.state,std::string(row.point),row.waypoint);
+        });
+      require(rows.size()==(c.exchanged ? 2u : 1u) &&
+              std::ranges::count(calls,"NPC_EXCHANGEROUTINE")==int(c.exchanged) &&
+              std::ranges::count(calls,"AI_CONTINUEROUTINE")==int(c.continued) &&
+              !calls.empty() && calls.front()=="AI_STANDUP",
+              "the stock switch must stand first, observe the instance rules and continue only another live actor");
+      return std::tuple(calls,rows,activityQueue(target));
+      };
+    const auto stock=run(false);
+    require(run(true)==stock,"routine switch must match stock calls, rows and queued actions");
+    }
+  xardas->set_instance(oldXardas);
+  actorLocal->set_instance(oldActor);
+  routineLocal->set_string(oldRoutine);
+  vm.global_self()->set_instance(oldSelf);
+  if(oldSwitch) setenv("OPENGOTHIC_ROUTINE_RECORDS",oldSwitch->c_str(),1);
+  else unsetenv("OPENGOTHIC_ROUTINE_RECORDS");
+  std::puts("Routine switch: saved aliases, same-instance rule, validity, schedule and queue match stock");
+  }
+
 std::vector<std::string> placementFirstWorld(Gothic& gothic) {
   const auto* configured=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
   const bool configuredBefore=configured!=nullptr;
@@ -3205,6 +3299,7 @@ std::vector<std::string> placementFirstWorld(Gothic& gothic) {
     const auto* startup=gothic.world()->script().getVm().find_symbol_by_name("STARTUP_NEWWORLD");
     require(startup && NpcDefinitionContract::placements(gothic.world()->script()).placements.contains(startup->index()),
             "default NEWWORLD startup must replay a captured placement record");
+    routineSwitchWorld(*gothic.world());
     std::printf("First-world NEWWORLD placement: %s NPCs, %s items; %zu saved/global state entries, %zu differences; STARTUP_NEWWORLD=%s\n",
                 actual.at("NPC count").c_str(),actual.at("item count").c_str(),expected.size(),differences.size(),
                 startup && NpcDefinitionContract::placements(gothic.world()->script()).placements.contains(startup->index()) ? "record" : "VM");
