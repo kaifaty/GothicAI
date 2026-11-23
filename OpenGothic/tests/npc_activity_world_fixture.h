@@ -1397,10 +1397,14 @@ void quietSoundRooms(Gothic& gothic) {
   auto& script=world.script();
   auto* npc=activityNpc(world,"BAU_951_HILDA");
   const auto* post=world.findWayPoint("NW_FARM1_INHOUSE_02");
-  const auto* inside=world.findWayPoint("NW_FARM1_INHOUSE_01");
-  const auto* outside=world.findWayPoint("NW_FARM1_ENTRANCE_02");
+  const auto* otherRoom=world.findWayPoint("NW_FARM1_INHOUSE_01");
   const auto* beyond=world.findWayPoint("NW_FARM1_ENTRANCE_01");
-  require(npc && post && inside && outside && beyond,"quiet sound: Lobart's house needs an indoor and outdoor listener fixture");
+  require(npc && post && otherRoom && beyond,"quiet sound: Lobart's house needs two rooms and an exit fixture");
+  // This offset from INHOUSE_02 stays in FARM01. INHOUSE_01 lies on the FARM03 portal floor.
+  auto inside=post->groundPos+Tempest::Vec3(0,0,-180);
+  const auto floor=world.physic()->landRay(inside+Tempest::Vec3(0,100,0),250);
+  require(floor.hasCol,"quiet sound: the same-room position must have a floor");
+  inside.y=floor.v.y;
   auto& hero=*world.player();
   auto& events=Contract::activityEventsOn(script);
   const bool enabled=events;
@@ -1414,33 +1418,52 @@ void quietSoundRooms(Gothic& gothic) {
   const auto stand=ScriptFn(activity.phases.init);
   npc->clearRoutine();
   npc->addRoutine(gtime(0,0),gtime(23,59),uint32_t(activity.phases.init),activity.pointName);
-  const auto prepare=[&](const WayPoint& source,bool sameRoom) {
+  const auto prepare=[&](bool sameRoom) {
     test.only({});
     test.stop(*npc);
-    test.moveHero(source.position(),0);
-    test.start(activity,post->position(),npc,false);
+    npc->clearGoTo();
+    test.moveHero(sameRoom ? inside : otherRoom->groundPos,0);
+    test.start(activity,post->groundPos,npc,false);
     npc->setAttitude(ATT_NEUTRAL);
     Contract::tickRoutine(*npc);
     for(size_t i=0;i<PERC_Count;++i)
       if(i!=PERC_ASSESSQUIETSOUND) npc->setPerceptionDisable(PercType(i));
     test.only({npc});
-    test.stepUntil(120,[&] {
-      return world.guildOfRoom(npc->portalName())==int32_t(GIL_PUBLIC) &&
-             ((npc->portalName()==hero.portalName())==sameRoom) &&
-             (sameRoom || world.guildOfRoom(hero.portalName())<int32_t(GIL_NONE)) && npc->isAiQueueEmpty();
-      },"quiet sound: the listener and source settle in the requested rooms");
+    try {
+      test.stepUntil(120,[&] {
+        return world.guildOfRoom(npc->portalName())==int32_t(GIL_PUBLIC) &&
+               ((npc->portalName()==hero.portalName())==sameRoom) && npc->isAiQueueEmpty();
+        },"quiet sound: the listener and source settle in the requested rooms");
+      }
+    catch(const std::runtime_error& error) {
+      const auto where=[&](Npc& actor) {
+        const auto p=actor.position();
+        return std::string("portal='")+std::string(actor.portalName())+"' room='"+std::string(world.roomAt(p))+"' guild="+
+               std::to_string(world.guildOfRoom(actor.portalName()))+" body="+std::to_string(actor.bodyStateMasked())+
+               " xyz="+std::to_string(p.x)+","+std::to_string(p.y)+","+std::to_string(p.z);
+        };
+      const auto* action=npc->aiQueueFront();
+      throw std::runtime_error(std::string(error.what())+" at "+(sameRoom ? "the interior offset" : otherRoom->name)+": listener "+where(*npc)+" state="+
+                               std::string(script.symbolName(Contract::aiState(*npc).funcIni.ptr))+" queue="+
+                               (action ? std::string(AiQueue::actionName(action->act)) : "empty")+"; hero "+where(hero)+
+                               " distance="+std::to_string(std::sqrt(npc->qDistTo(hero))));
+      }
     npc->setDirection(hero.position()-npc->position());
     npc->updateTransform();
     npc->setStateTime(0);
     require(npc->isInState(stand) && npc->hasPerc(PERC_ASSESSQUIETSOUND) && npc->qDistTo(hero)<1000.f*1000.f,
             "quiet sound: the standing listener is close enough to check the room");
-    if(sameRoom) require(npc->canSeeNpc(hero,false),"quiet sound: the listener sees the hero in the same room");
+    if(sameRoom) {
+      const auto room=world.roomAt(npc->position());
+      require(!room.empty() && room==world.roomAt(hero.position()) && npc->canSeeNpc(hero,false),
+              "quiet sound: the listener sees the hero in the same geometric room");
+      }
     };
-  struct Site { const WayPoint* source; bool sameRoom; int height; const char* label; };
-  for(const Site site : {Site{inside,true,0,"same room"},Site{outside,false,0,"separate room"},Site{inside,true,251,"indoor height"}}) {
+  struct Site { bool sameRoom; int height; const char* label; };
+  for(const Site site : {Site{true,0,"same room"},Site{false,0,"separate room"},Site{true,251,"indoor height"}}) {
     std::vector<std::string> original;
     for(bool native:{false,true}) {
-      prepare(*site.source,site.sameRoom);
+      prepare(site.sameRoom);
       if(site.height!=0) {
         auto position=hero.position();
         position.y=std::nextafter(npc->position().y+float(site.height),std::numeric_limits<float>::infinity());
@@ -1485,7 +1508,7 @@ void quietSoundRooms(Gothic& gothic) {
                 site.label,original.size());
     }
 
-  prepare(*inside,true);
+  prepare(true);
   PhysicsNoise impact;
   impact.culprit=&hero;
   impact.position=hero.position();
@@ -1495,7 +1518,7 @@ void quietSoundRooms(Gothic& gothic) {
           npc->hasPerc(PERC_ASSESSTHEFT) && quietCalls==0,
           "quiet sound: native impact starts observation immediately and restores perceptions");
   vm.remove_call_observer(observer);
-  test.moveHero(beyond->position(),hero.rotation());
+  test.moveHero(beyond->groundPos,hero.rotation());
   test.stepUntil(240,[&] { return npc->isInState(stand) && Contract::aiState(*npc).started; },
                  "quiet sound: the listener resumes its original routine when the source leaves");
   std::puts("D5.1 physical sound: ordinary load, immediate observation and return to the standing routine");
