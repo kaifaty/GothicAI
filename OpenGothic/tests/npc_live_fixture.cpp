@@ -14,6 +14,7 @@
 #include "gamemusic.h"
 #include "programdata.h"
 #include "resources.h"
+#include "settings.h"
 #include "world/activityevents.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
@@ -944,9 +945,128 @@ void fightSoundPerceptions(World& world,Npc& npc,Npc& hero) {
   std::puts("Fight sound: direct, guide and follower perception preserve source, victim, party filters and action");
   }
 
+static void heroControls(World& world) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  if(!script.usesVerifiedNpcProgram())
+    return;
+  auto& vm=script.getVm();
+  auto& hero=*world.player();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto saved=savedNpc(hero);
+  const auto randomBefore=Contract::random(script);
+  const auto orderBefore=Contract::outputOrder(script);
+  auto* level=script.findSymbol("CURRENTLEVEL");
+  auto* map=script.findSymbol("PLAYERMAPINSTANCE");
+  auto* lastMap=script.findSymbol("B_SETPLAYERMAP.MAPINSTANCE");
+  auto* clawFailure=script.findSymbol("SC_FAILEDTOEQUIPBELIARSWEAPON");
+  const auto oldLevel=level->get_int(), oldMap=map->get_int(), oldLastMap=lastMap->get_int(),
+             oldClawFailure=clawFailure->get_int();
+  const auto potionKeys=Settings::getI("GAME","usePotionKeys");
+  const auto interrupted=Settings::getI("GAME","melee_heal_interrupt");
+  Settings::setI("GAME","usePotionKeys",1);
+  Settings::setI("GAME","melee_heal_interrupt",0);
+  Settings::inst().refreshPhysicsFlags();
+
+  struct Messages {
+    std::vector<std::string> values;
+    Messages() { Gothic::inst().onPrint.bind(this,&Messages::capture); }
+    ~Messages() { Gothic::inst().onPrint.ubind(this,&Messages::capture); }
+    void capture(std::string_view text) { values.emplace_back(text); }
+    } messages;
+  std::vector<uint32_t> roots;
+  for(const auto* name:{"G_CANNOTUSE","G_CANNOTCAST","B_BLITZINARSCH","PLAYER_TRADE_NOT_ENOUGH_GOLD",
+                        "PLAYER_MOB_MISSING_ITEM","PLAYER_MOB_MISSING_KEY","PLAYER_MOB_ANOTHER_IS_USING",
+                        "PLAYER_MOB_MISSING_KEY_OR_LOCKPICK","PLAYER_MOB_MISSING_LOCKPICK","PLAYER_MOB_TOO_FAR_AWAY",
+                        "PLAYER_PLUNDER_IS_EMPTY","PLAYER_HOTKEY_LAME_HEAL","PLAYER_HOTKEY_LAME_POTION","B_LAMESCHLORK"})
+    roots.push_back(script.findSymbol(name)->address());
+
+  const auto mapRoot=script.findSymbol("PLAYER_HOTKEY_SCREEN_MAP")->address();
+  const auto oldWorldMap=script.findSymbolIndex("ITWR_MAP_OLDWORLD");
+  const auto newWorldMap=script.findSymbolIndex("ITWR_MAP_NEWWORLD");
+  const auto healthPotion=script.findSymbolIndex("ITPO_HEALTH_02");
+  const auto manaPotion=script.findSymbolIndex("ITPO_MANA_01");
+  const auto result=[&](bool native) {
+    enabled=native;
+    loadSavedNpc(hero,saved);
+    hero.clearAiQueue();
+    Contract::random(script)=randomBefore;
+    Contract::outputOrder(script)=orderBefore;
+    messages.values.clear();
+    level->set_int(script.intSymbol("OLDWORLD_ZEN",0));
+    map->set_int(int32_t(newWorldMap));
+    clawFailure->set_int(0);
+    for(const auto* name:{"ITPO_HEALTH_01","ITPO_HEALTH_02","ITPO_HEALTH_03","ITPO_MANA_01","ITPO_MANA_02","ITPO_MANA_03"}) {
+      const auto item=script.findSymbolIndex(name);
+      if(const auto count=hero.itemCount(item); count!=0)
+        hero.delItem(item,uint32_t(count));
+      }
+    for(const auto item:{oldWorldMap,newWorldMap,healthPotion,manaPotion})
+      if(hero.itemCount(item)==0)
+        hero.addItem(item,1);
+    auto& attr=hero.handle().attribute;
+    attr[ATR_HITPOINTS]=50;
+    attr[ATR_HITPOINTSMAX]=200;
+    attr[ATR_MANA]=1;
+    attr[ATR_MANAMAX]=2;
+    hero.setTalentSkill(Talent::TALENT_PICKLOCK,1);
+
+    size_t entries=0;
+    vm.observe_instructions([&](const auto&) {
+      entries+=std::ranges::find(roots,vm.pc())!=roots.end();
+      });
+    script.printCannotUseError(hero,ATR_STRENGTH,hero.attribute(ATR_STRENGTH)+5);
+    script.printCannotCastError(hero,2,4);
+    script.printCannotBuyError(hero);
+    script.printMobMissingItem(hero);
+    script.printMobMissingKey(hero);
+    script.printMobAnotherIsUsing(hero);
+    script.printMobMissingKeyOrLockpick(hero);
+    script.printMobMissingLockpick(hero);
+    script.printMobTooFar(hero);
+    script.printNothingToGet();
+    script.printCannotUseError(hero,ATR_MANAMAX,666666);
+    const auto penaltyHp=attr[ATR_HITPOINTS];
+    script.playerHotLameHeal(hero);
+    script.playerHotLamePotion(hero);
+    require(entries==(native ? 0u : roots.size()+2),"hero feedback and potion keys must select the intended executor");
+    entries=0;
+    vm.observe_instructions([&](const auto&) { entries+=vm.pc()==mapRoot; });
+    const auto selected=script.playerHotKeyScreenMap(hero);
+    vm.observe_instructions({});
+    require(entries==(native ? 0u : 1u),"map selection must select the intended executor");
+    require(penaltyHp==40 && clawFailure->get_int()==1,"the denied Claw spends one fifth of the hero's health");
+    require(hero.itemCount(healthPotion)==0 && hero.itemCount(manaPotion)==0 &&
+            attr[ATR_HITPOINTS]==40+script.intSymbol("HP_EXTRAKT",0) && attr[ATR_MANA]==2,
+            "legacy potion hotkeys apply a dose immediately, capped at the maximum");
+    require(selected==int32_t(oldWorldMap) && map->get_int()==selected && lastMap->get_int()==selected,
+            "the hero map hotkey selects and remembers the current world's map");
+    return std::tuple{messages.values,activityQueue(hero),attr[ATR_HITPOINTS],attr[ATR_MANA],
+                      script.intSymbol("PLAYER_PLUNDER_IS_EMPTY.RND",-1),Contract::random(script),
+                      script.findSymbol("B_BLITZINARSCH.CONCATTEXT2")->get_string()};
+    };
+  const auto raw=result(false);
+  const auto converted=result(true);
+  require(raw==converted,"hero controls preserve text, commands, effects, map, potion and random draws");
+  loadSavedNpc(hero,saved);
+  enabled=wasEnabled;
+  Contract::random(script)=randomBefore;
+  Contract::outputOrder(script)=orderBefore;
+  level->set_int(oldLevel);
+  map->set_int(oldMap);
+  lastMap->set_int(oldLastMap);
+  clawFailure->set_int(oldClawFailure);
+  Settings::setI("GAME","usePotionKeys",potionKeys);
+  Settings::setI("GAME","melee_heal_interrupt",interrupted);
+  Settings::inst().refreshPhysicsFlags();
+  std::puts("Hero controls: stock messages, Claw, RNG, potion keys and map match the engine");
+  }
+
 void oldWorldNpcCases(World& world,Npc& npc) {
   oldWorldEntry(world,npc);
   diegoRouteBoundaries(world,npc);
+  heroControls(world);
   }
 
 void dragonIslandChapterWorld(World& world) {

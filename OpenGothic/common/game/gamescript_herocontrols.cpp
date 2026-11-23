@@ -82,10 +82,10 @@ void GameScript::runStockHeroWeaponPenalty() {
   findSymbol("B_BLITZINARSCH.ABZUG")->set_int(lost);
   if(lost<=0)
     return;
-  const auto prefix = findSymbol("NAME_DAMAGE")->get_string()+" ";
-  findSymbol("B_BLITZINARSCH.CONCATTEXT1")->set_string(prefix);
+  const auto suffix = " "+findSymbol("NAME_DAMAGE")->get_string();
+  findSymbol("B_BLITZINARSCH.CONCATTEXT1")->set_string(suffix);
   auto* message = findSymbol("B_BLITZINARSCH.CONCATTEXT2");
-  message->set_string(prefix+std::to_string(lost));
+  message->set_string(std::to_string(lost)+suffix);
   ai_printscreen(message->get_string(),-1,findSymbol("YPOS_GOLDTAKEN")->get_int(),
                  findSymbol("FONT_SCREENSMALL")->get_string(),2);
   wld_playeffect("spellFX_BELIARSRAGE",hero,hero,0,0,0,findSymbol("FALSE")->get_int());
