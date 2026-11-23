@@ -120,9 +120,14 @@ void GameScript::loadNativeRoutines() {
   const auto enabled=[this] {
     return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
     };
-  using Handle=std::shared_ptr<daedalus::INpc>;
-  vm.override_function("B_MAGICHURTNPC",std::function<void(Handle,Handle,int32_t)>{
-    [this](Handle attacker, Handle target, int32_t damage) { magicHurtNpc(attacker,target,damage); }},enabled);
+  vm.override_function("C_NPCISMONSTERMAGE",std::function<int32_t(NpcHandle)>{
+    [this](NpcHandle npc) { return int32_t(isMonsterMage(npc)); }},enabled);
+  vm.override_function("PERCEPTION_SET_MONSTER_RTN",std::function<void()>{[this] {
+    if(auto* npc = findNpc(vm.global_self()))
+      enableMonsterRoutinePerceptions(*npc);
+    }},enabled);
+  vm.override_function("B_MAGICHURTNPC",std::function<void(NpcHandle,NpcHandle,int32_t)>{
+    [this](NpcHandle attacker, NpcHandle target, int32_t damage) { magicHurtNpc(attacker,target,damage); }},enabled);
   vm.override_function("B_GIVEPLAYERXP",std::function<void(int32_t)>{
     [this](int32_t amount) { givePlayerXp(amount); }},enabled);
   loadNativeQuestLog(enabled);

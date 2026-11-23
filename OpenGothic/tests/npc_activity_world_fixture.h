@@ -2259,6 +2259,77 @@ struct MonsterRoutineSave {
 constexpr const char* MonsterSaveActor = "BALTHASAR_SHEEP1";
 constexpr const char* MonsterScheduler = "ZS_MM_ALLSCHEDULER";
 
+void monsterRoutineHelpers(World& world, Npc& monster, Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  const auto savedEvents=events;
+  auto& self=*vm.global_self();
+  const auto savedSelf=self.get_instance();
+  const auto savedOther=vm.global_other()->get_instance();
+  const auto savedVictim=vm.global_victim()->get_instance();
+  auto& mage=*vm.find_symbol_by_name("C_NPCISMONSTERMAGE");
+  auto& mageParam=*vm.find_symbol_by_name("C_NPCISMONSTERMAGE.SLF");
+  const auto savedMageParam=mageParam.get_instance();
+  auto& preset=*vm.find_symbol_by_name("PERCEPTION_SET_MONSTER_RTN");
+  const auto actor=std::static_pointer_cast<daedalus::INpc>(monster.handlePtr());
+  const auto player=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  const auto savedGuild=actor->guild;
+  const auto savedPerceptions=std::to_array(Contract::perceptions(monster));
+  const auto savedTime=Contract::perceptionTime(monster);
+  const auto talk=script.findFunction("B_ASSESSTALK");
+  const std::pair<PercType,std::string_view> callbacks[] = {
+    {PERC_ASSESSENEMY,"B_MM_ASSESSENEMY"}, {PERC_ASSESSBODY,"B_MM_ASSESSBODY"},
+    {PERC_ASSESSMAGIC,"B_ASSESSMAGIC"}, {PERC_ASSESSDAMAGE,"B_MM_ASSESSDAMAGE"},
+    {PERC_ASSESSOTHERSDAMAGE,"B_MM_ASSESSOTHERSDAMAGE"}, {PERC_ASSESSMURDER,"B_MM_ASSESSOTHERSDAMAGE"},
+    {PERC_ASSESSWARN,"B_MM_ASSESSWARN"},
+    };
+  for(bool native:{false,true}) {
+    events=native;
+    self.set_instance(player);
+    size_t mageEntries=0,presetEntries=0;
+    vm.observe_instructions([&](const auto&) {
+      mageEntries+=vm.pc()==mage.address();
+      presetEntries+=vm.pc()==preset.address();
+      });
+    const std::pair<uint32_t,int32_t> guilds[] = {
+      {GIL_DRAGON,1}, {GIL_ICEGOLEM,1}, {GIL_FIREGOLEM,1}, {GIL_SKELETON_MAGE,1},
+      {GIL_WOLF,0}, {GIL_SKELETON,0}, {GIL_SUMMONED_SKELETON,0}, {GIL_ORC,0},
+      };
+    for(const auto& [guild,expected]:guilds) {
+      actor->guild=guild;
+      mageParam.set_instance(player);
+      vm.push_instance(actor);
+      vm.unsafe_call_bl(&mage);
+      require(vm.pop_int()==expected && mageParam.get_instance()==actor && self.get_instance()==player,
+              "monster mage: BL preserves the exact guild test and saved parameter");
+      }
+    self.set_instance(actor);
+    monster.setPerceptionTime(137);
+    for(const auto& [type,callback]:callbacks)
+      monster.setPerceptionDisable(type);
+    monster.setPerceptionEnable(PERC_ASSESSTALK,talk.ptr);
+    vm.unsafe_call_bl(&preset);
+    vm.observe_instructions({});
+    require(mageEntries==(native ? 0u : std::size(guilds)) && presetEntries==size_t(!native),
+            "monster helpers: disabled events use the original bytecode and enabled events take the BL override");
+    require(self.get_instance()==actor && vm.global_other()->get_instance()==savedOther &&
+            vm.global_victim()->get_instance()==savedVictim && Contract::perceptionTime(monster)==1000 &&
+            Contract::perception(monster,PERC_ASSESSTALK)==talk,
+            "monster routine preset: BL keeps the global actor aliases and unrelated perceptions");
+    for(const auto& [type,callback]:callbacks)
+      require(Contract::perception(monster,type)==script.findFunction(callback),
+              "monster routine preset: all seven original callbacks are registered");
+    }
+  std::copy(savedPerceptions.begin(),savedPerceptions.end(),Contract::perceptions(monster));
+  monster.setPerceptionTime(savedTime);
+  actor->guild=savedGuild;
+  self.set_instance(savedSelf);
+  mageParam.set_instance(savedMageParam);
+  events=savedEvents;
+  }
+
 void monsterAttackPhases(World& world, Npc& monster, Npc& hero) {
   auto& script=world.script();
   auto& vm=script.getVm();
@@ -3215,6 +3286,7 @@ std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   wolf->setProcessPolicy(NpcProcessPolicy::AiNormal);
   wolf->setPosition(site->position());
   test.moveHero(site->position()+Tempest::Vec3(450,0,0),0);
+  monsterRoutineHelpers(world,*wolf,hero);
   monsterAttackPhases(world,*wolf,hero);
   monsterThreatAndFleePhases(world,*wolf,hero);
   monsterEnemyPerception(world,*wolf,sheep,hero);
