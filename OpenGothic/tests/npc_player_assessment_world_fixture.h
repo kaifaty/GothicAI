@@ -683,6 +683,7 @@ void stockPickpocket(World& world,Npc& npc,Npc& hero) {
   const auto savedItem=vm.global_item()->get_instance();
   const auto savedOrder=Contract::outputOrder(script);
   const auto savedNpcVars=std::to_array(npc.handle().aivar);
+  const auto savedPerceptions=std::to_array(Contract::perceptions(npc));
   const auto savedHeroVars=std::to_array(hero.handle().aivar);
   const auto savedQueue=Contract::queue(npc);
   const auto savedTarget=npc.target();
@@ -710,6 +711,7 @@ void stockPickpocket(World& world,Npc& npc,Npc& hero) {
     npc.setTarget(savedTarget);
     Contract::aiState(npc).funcIni=savedState;
     std::copy(savedNpcVars.begin(),savedNpcVars.end(),npc.handle().aivar);
+    std::copy(savedPerceptions.begin(),savedPerceptions.end(),Contract::perceptions(npc));
     std::copy(savedHeroVars.begin(),savedHeroVars.end(),hero.handle().aivar);
     hero.setTalentSkill(TALENT_PICKPOCKET,savedTalent);
     hero.handle().attribute[ATR_DEXTERITY]=savedDexterity;
@@ -791,17 +793,21 @@ void stockPickpocket(World& world,Npc& npc,Npc& hero) {
       hero.handle().exp=100;
       hero.handle().exp_next=500;
       hero.handle().level=1;
+      size_t immediateNotices=0;
+      vm.observe_externals([&](const auto& fn) { immediateNotices+=fn.name()=="PRINTSCREEN"; });
       const auto result=interpreter.run(attempt);
+      vm.observe_externals({});
       vm.observe_instructions({});
       require(result.ok,result.error.c_str());
       require(bytecode==(native ? 0u : 6u) && vm.unsafe_get_gi()==savedContext && possessed.get_int()==0,
               "pickpocket: the selected executor and original story context are retained from condition to choice");
       auto queue=Contract::queue(npc);
-      require(queue.size()==2 && level.get_int()==1,"pickpocket: both outcomes preserve the correct thief level and command count");
+      require(queue.size()==(success ? 1u : 2u) && immediateNotices==size_t(success) && level.get_int()==1,
+              "pickpocket: both outcomes preserve the thief level, queued commands and immediate XP notice");
       if(success) {
         require(npc.itemCount(gold)==15 && hero.itemCount(gold)==savedHeroGold+35 &&
                 npc.handle().aivar[6]==1 && hero.handle().exp==160 && victims.get_int()==2 && nextLevel.get_int()==3 &&
-                queue.pop().act==AI_PrintScreen && queue.pop().act==AI_PrintScreen,
+                queue.pop().act==AI_PrintScreen,
                 "pickpocket: the real successful choice pays gold, marks the victim and awards the promoted experience");
         } else {
         require(npc.itemCount(gold)==50 && hero.itemCount(gold)==savedHeroGold &&
