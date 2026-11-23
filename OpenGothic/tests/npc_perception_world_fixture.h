@@ -2194,8 +2194,15 @@ void moveMobAndSurprisePerceptions(World& world,Npc& npc,Npc& hero) {
                 next && next->act==(openDoor ? AI_UseMob : AI_Wait),
                 "move mob: a closed door replaces the queue and each route records the same scheme");
         auto queue=activityQueue(npc);
-        require(queue.size()==(detectedMob==nullptr || openDoor ? 2u : 1u),
-                "move mob: an open door retains the queue and no door appends continuation");
+        require(queue.size()==(openDoor ? 3u : detectedMob!=nullptr ? 2u : 1u),
+                "move mob: detection of a door appends one command to resume the routine");
+        if(detectedMob!=nullptr) {
+          auto pending=NpcDefinitionContract::queue(npc);
+          pending.pop();
+          if(openDoor)
+            require(pending.pop().act==AI_UseMob,"move mob: leave the door before resuming");
+          require(pending.pop().act==AI_ContinueRoutine,"move mob: routine continuation comes last");
+          }
         if(native) require(original==queue,"move mob: both routes preserve action order and arguments");
         else original=std::move(queue);
         }

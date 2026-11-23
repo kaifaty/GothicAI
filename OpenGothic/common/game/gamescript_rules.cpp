@@ -1113,15 +1113,14 @@ void GameScript::runMoveMobReaction() {
   const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const auto scheme = npc_getdetectedmob(self);
   findSymbol("B_MOVEMOB.DOOR")->set_string(scheme);
-  if(scheme!="DOOR") {
-    ai_continueroutine(self);
+  if(scheme!="DOOR")
     return;
-    }
   if(wld_getmobstate(self,scheme)==0) {
     npc_clearaiqueue(self);
     ai_usemob(self,scheme,1);
     ai_usemob(self,scheme,-1);
     }
+  ai_continueroutine(self);
   }
 
 void GameScript::runSurpriseReaction() {
