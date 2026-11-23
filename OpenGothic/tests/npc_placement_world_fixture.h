@@ -45,18 +45,58 @@ void khorinisCryptTriggers(World& world) {
               "Khorinis crypt: each trigger inserts its wave only once through the selected executor");
       }
     vm.observe_externals({});
-    return std::pair{spawns,archiveEntries(placementSnapshot(world,false))};
+
+    constexpr auto valley = "ENTER_OLDWORLD_FIRSTTIME_TRIGGER";
+    constexpr auto addon = "ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC";
+    const auto truth=script.intSymbol("TRUE",-1), falsity=script.intSymbol("FALSE",-1);
+    auto* valleyOnce=script.findSymbol("ENTER_OLDWORLD_FIRSTTIME_TRIGGER_ONETIME");
+    auto* addonOnce=script.findSymbol("ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_ONETIME");
+    valleyOnce->set_int(truth); // The live Khorinis contract leaves the Valley's introduction played.
+    addonOnce->set_int(falsity);
+    script.findSymbol("TSCHUESSBILGOT")->set_int(truth);
+    const auto* valleyRoot=script.findSymbol(valley);
+    const auto* addonRoot=script.findSymbol(addon);
+    std::vector<std::pair<std::string,int32_t>> lifecycle;
+    const auto observer=vm.add_call_observer([&](const auto& symbol) {
+      if(symbol.name()=="B_KILLNPC" || symbol.name()=="B_REMOVENPC")
+        lifecycle.emplace_back(symbol.name(),std::get<int32_t>(vm.stack_frame(0).value));
+      });
+    size_t entries=0;
+    vm.observe_instructions([&](const auto&) { entries+=vm.pc()==valleyRoot->address() || vm.pc()==addonRoot->address(); });
+    const auto pc=vm.pc();
+    const auto context=vm.unsafe_get_gi();
+    vm.push_int(0x12345678);
+    const auto stopObserving=[&] {
+      vm.observe_instructions({});
+      vm.remove_call_observer(observer);
+      };
+    try {
+      for(auto name:{addon,addon,valley,valley})
+        script.invokeWorldTrigger(name);
+      }
+    catch(...) {
+      stopObserving();
+      throw;
+      }
+    const auto sentinel=vm.pop_int();
+    stopObserving();
+    const auto removal=std::pair{std::string("B_REMOVENPC"),int32_t(script.findSymbolIndex("BILGOT"))};
+    require(entries==(native ? 0u : 4u) && sentinel==0x12345678 && vm.pc()==pc && vm.unsafe_get_gi()==context &&
+            addonOnce->get_int()==truth && lifecycle.size()==21 &&
+            lifecycle[19]==removal && lifecycle[20]==removal,
+            "first-entry triggers must latch Yarkendar and still check Bilgot after the Valley's introduction");
+    return std::tuple{spawns,lifecycle,archiveEntries(placementSnapshot(world,false))};
     };
   try {
     const auto stock=capture(false);
-    require(capture(true)==stock,"Khorinis crypt: ordered spawn calls and world state match Daedalus");
+    require(capture(true)==stock,"world triggers: ordered spawn and lifecycle calls and world state match Daedalus");
     }
   catch(...) {
     restore();
     throw;
     }
   restore();
-  std::puts("Khorinis crypt: four waves, 27 ordered insertions, saved gates and world state match Daedalus");
+  std::puts("World triggers: crypt waves, Yarkendar's first entry and Bilgot's later departure match Daedalus");
   }
 
 void khorinisLateChapters(World& world) {

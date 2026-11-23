@@ -397,6 +397,10 @@ void GameScript::invokeWorldTrigger(std::string_view fn) {
   if(symbol!=nullptr && nativeRoutineProgram && PlacementDefinitionRuntime::enabled()) {
     if(runKhorinisNpcTrigger(vm,*symbol))
       return;
+    if(symbol->name()=="ENTER_OLDWORLD_FIRSTTIME_TRIGGER" || symbol->name()=="ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC") {
+      vm.unsafe_call_bl(symbol);
+      return;
+      }
     struct Room {
       std::string_view trigger;
       uint32_t         spawnCount;
@@ -423,6 +427,38 @@ void GameScript::invokeWorldTrigger(std::string_view fn) {
       }
     }
   vm.call_function(symbol);
+  }
+
+void GameScript::runWorldFirstEntryTrigger(bool oldWorld) {
+  using Op = daedalus::DaedalusOpcode;
+  using Type = daedalus::DaedalusDataType;
+  auto* once = findSymbol(oldWorld ? "ENTER_OLDWORLD_FIRSTTIME_TRIGGER_ONETIME" :
+                                     "ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_ONETIME");
+  const auto* yes = findSymbol("TRUE");
+  if(vm.get_int(nullptr,once,0)==findSymbol("FALSE")->get_int()) {
+    const auto* trigger = findSymbol(oldWorld ? "ENTER_OLDWORLD_FIRSTTIME_TRIGGER" :
+                                               "ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC");
+    const auto kill = findSymbol("B_KILLNPC")->address();
+    auto pc = trigger->address()+16u; // The guard precedes the fixed literal calls.
+    for(uint32_t i=0;i<(oldWorld ? 18u : 19u);++i) {
+      const auto instance = vm.instruction_at(pc);
+      const auto call = vm.instruction_at(pc+instance.size);
+      const auto* actor = instance.op==Op::PUSHI ? findSymbol(uint32_t(instance.immediate)) : nullptr;
+      if(!actor || actor->type()!=Type::INSTANCE || call.op!=Op::BL || call.address!=kill)
+        throw std::runtime_error("Unexpected stock first-entry actor in "+trigger->name());
+      invokeKillNpc(instance.immediate);
+      pc+=instance.size+call.size;
+      }
+    if(oldWorld) {
+      vm.push_reference(findSymbol("$52006")); // DRAGONATTACK.BIK.
+      vm.unsafe_call_external(findSymbol("PLAYVIDEO")); // The void trigger discards the result on return.
+      }
+    vm.set_int(nullptr,once,0,yes->get_int());
+    }
+  if(oldWorld && findSymbol("TSCHUESSBILGOT")->get_int()==yes->get_int()) {
+    vm.push_int(int32_t(findSymbolIndex("BILGOT")));
+    vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
+    }
   }
 
 void GameScript::runStartup(std::string_view fn) {
@@ -636,6 +672,12 @@ void GameScript::loadNativeWorldEntry() {
     return;
 
   findSymbol("CURRENTLEVEL")->bind_global_int(currentStoryWorld);
+  vm.override_function("ENTER_OLDWORLD_FIRSTTIME_TRIGGER",std::function<void()>{[this] {
+    runWorldFirstEntryTrigger(true);
+    }},PlacementDefinitionRuntime::enabled);
+  vm.override_function("ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC",std::function<void()>{[this] {
+    runWorldFirstEntryTrigger(false);
+    }},PlacementDefinitionRuntime::enabled);
   static constexpr std::pair<std::string_view,int32_t GhostProgress::*> ghostFlags[]={
     {"GHOST_SCKNOWSHOW2GETINADANOSTEMPEL",&GhostProgress::knowsTempleEntrance},
     {"SC_SUMMONEDANCIENTGHOST",&GhostProgress::summonedAncientGhost},

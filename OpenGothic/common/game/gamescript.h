@@ -371,6 +371,7 @@ class GameScript final : public GameRules {
     void loadNativeNpcGlobals();
     void loadNativeMonsterAttitudes();
     void loadNativeWorldEntry();
+    void runWorldFirstEntryTrigger(bool oldWorld);
     void loadNewWorldChapterEntries();
     void loadKhorinisChapter3();
     void loadOldWorldChapterEntries();

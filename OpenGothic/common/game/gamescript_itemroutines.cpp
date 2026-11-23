@@ -295,19 +295,7 @@ bool GameScript::applyStockItemUseEffect(std::string_view callback) {
     return true;
     }
   if(callback=="USE_TESTTRIGGER") {
-    const auto ran = read("ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_ONETIME");
-    if(ran==read("FALSE")) {
-      static constexpr std::string_view targets[] = {
-        "PIR_1370_ADDON_ANGUS", "PIR_1371_ADDON_HANK", "VLK_4304_ADDON_WILLIAM", "NONE_ADDON_114_LANCE_ADW",
-        "STRF_1131_ADDON_SKLAVE", "STRF_1132_ADDON_SKLAVE", "STRF_1133_ADDON_SKLAVE", "STRF_1134_ADDON_SKLAVE",
-        "STRF_1135_ADDON_SKLAVE", "STRF_1141_ADDON_SKLAVE", "STRF_1142_ADDON_SKLAVE", "STRF_1143_ADDON_SKLAVE",
-        "STRF_1144_ADDON_SKLAVE", "BDT_10400_ADDON_DEADBANDIT", "BDT_10401_ADDON_DEADBANDIT",
-        "STONEGUARDIAN_MINEDEAD1", "STONEGUARDIAN_MINEDEAD2", "STONEGUARDIAN_MINEDEAD3", "STONEGUARDIAN_MINEDEAD4",
-        };
-      for(const auto target:targets)
-        invokeKillNpc(int32_t(findSymbolIndex(target)));
-      setFlag("ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_ONETIME");
-      }
+    runWorldFirstEntryTrigger(false);
     return true;
     }
 
