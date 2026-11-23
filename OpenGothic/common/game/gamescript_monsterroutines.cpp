@@ -163,12 +163,6 @@ bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
   return true;
   }
 
-bool GameScript::monsterTargetHasBodyState(const std::shared_ptr<daedalus::INpc>& target, int32_t state) {
-  findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(state);
-  findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(target);
-  return ActivityDefinitions::bodyStateContains(npc_getbodystate(target),state);
-  }
-
 bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   auto& ai = self->aivar;
@@ -231,8 +225,8 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
 
   const auto targetIsRunningOrJumping = [&] {
     const auto target = other();
-    const bool jumping = monsterTargetHasBodyState(target,BS_JUMP);
-    const bool running = monsterTargetHasBodyState(target,BS_RUN);
+    const bool jumping = npcBodyStateContains(target,BS_JUMP);
+    const bool running = npcBodyStateContains(target,BS_RUN);
     return running || jumping;
     };
   const auto distanceToTarget = [&] { return npc_getdisttonpc(self,other()); };
@@ -285,8 +279,8 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     return true;
     }
 
-  const bool diving = monsterTargetHasBodyState(other(),BS_DIVE);
-  const bool swimming = monsterTargetHasBodyState(other(),BS_SWIM);
+  const bool diving = npcBodyStateContains(other(),BS_DIVE);
+  const bool swimming = npcBodyStateContains(other(),BS_SWIM);
   if(ai[followInWater]==0 && (diving || swimming)) {
     stop();
     result = LOOP_END;
@@ -582,7 +576,7 @@ bool GameScript::runMonsterSheepFollow(Npc& npc, const daedalus::DaedalusSymbol&
     return false;
     }
   if(npc_getdisttonpc(self,leader)>500) {
-    if(!monsterTargetHasBodyState(self,BS_SWIM))
+    if(!npcBodyStateContains(self,BS_SWIM))
       ai_setwalkmode(self,int(WalkBit::WM_Run));
     ai_gotonpc(self,leader);
     }
@@ -835,9 +829,9 @@ void GameScript::runMonsterAssessPlayer() {
   const bool importantInfo = npc_checkinfo(self,1);
   const auto distance = npc_getdisttonpc(self,other());
   if(importantInfo && distance<=700 && (self->guild==GIL_DRAGON || distance<=findSymbol("PERC_DIST_DIALOG")->get_int())) {
-    const bool diving = monsterTargetHasBodyState(other(),BS_DIVE);
-    const bool swimming = monsterTargetHasBodyState(other(),BS_SWIM);
-    const bool falling = monsterTargetHasBodyState(other(),BS_FALL);
+    const bool diving = npcBodyStateContains(other(),BS_DIVE);
+    const bool swimming = npcBodyStateContains(other(),BS_SWIM);
+    const bool falling = npcBodyStateContains(other(),BS_FALL);
     if(!diving && !swimming && !falling) {
       self->aivar[startedTalk] = 1;
       vm.unsafe_call_bl(findSymbol("B_ASSESSTALK"));
@@ -845,7 +839,7 @@ void GameScript::runMonsterAssessPlayer() {
       }
     }
   if(self->aivar[partyMember]==1) {
-    const bool standing = monsterTargetHasBodyState(self,BS_STAND);
+    const bool standing = npcBodyStateContains(self,BS_STAND);
     const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
     if(!standing && npc_getdisttonpc(self,hero)<500) {
       npc_clearaiqueue(self);
@@ -960,8 +954,8 @@ void GameScript::runMonsterAssessEnemy() {
   if(npc_getdisttowp(self,"OC_RAMP_07")<=500 || other->aivar[invincible]==1)
     return;
 
-  const bool diving = monsterTargetHasBodyState(other,BS_DIVE);
-  const bool swimming = monsterTargetHasBodyState(other,BS_SWIM);
+  const bool diving = npcBodyStateContains(other,BS_DIVE);
+  const bool swimming = npcBodyStateContains(other,BS_SWIM);
   if(self->aivar[followInWater]==0 && (diving || swimming))
     return;
   if(npc_getheighttonpc(self,other)>findSymbol("PERC_DIST_HEIGHT")->get_int())
@@ -974,8 +968,8 @@ void GameScript::runMonsterAssessEnemy() {
   if(self->senses_range>activeRange && distance>activeRange && !npc_canseenpc(self,other))
     return;
   if(self->guild==GIL_ORC || self->guild==GIL_FRIENDLY_ORC) {
-    const bool standing = monsterTargetHasBodyState(other,BS_STAND);
-    const bool sneaking = monsterTargetHasBodyState(other,BS_SNEAK);
+    const bool standing = npcBodyStateContains(other,BS_STAND);
+    const bool sneaking = npcBodyStateContains(other,BS_SNEAK);
     if((standing || sneaking) && !npc_canseenpc(self,other))
       return;
     }

@@ -243,10 +243,10 @@ void GameScript::resetRoutineNpc(const std::shared_ptr<daedalus::INpc>& self) {
   ai_removeweapon(self);
   }
 
-bool GameScript::npcBodyStateContains(const std::shared_ptr<daedalus::INpc>& self, BodyState state) {
-  findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(int32_t(state));
+bool GameScript::npcBodyStateContains(const std::shared_ptr<daedalus::INpc>& self, int32_t state) {
+  findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(state);
   findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self);
-  return ActivityDefinitions::bodyStateContains(npc_getbodystate(self),int32_t(state));
+  return ActivityDefinitions::bodyStateContains(npc_getbodystate(self),state);
   }
 
 int32_t GameScript::runEnterRoomReaction() {
@@ -446,6 +446,12 @@ void GameScript::loadNativeHumanPerceptions() {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
   using Actor = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("C_BODYSTATECONTAINS",std::function<int32_t(Actor,int32_t)>{[this](const Actor& npc, int32_t state) {
+    return npcBodyStateContains(npc,state);
+    }},enabled);
+  vm.override_function("B_CLEARPERCEPTIONS",std::function<void(Actor)>{[this](const Actor& npc) {
+    clearPerceptions(npc);
+    }},enabled);
   vm.override_function("B_SAY",std::function<void(Actor,Actor,std::string_view)>{[this](const Actor& self, const Actor& other, std::string_view line) {
     sayToNpc(self,other,line);
     }},enabled);
@@ -685,15 +691,10 @@ void GameScript::runFightSoundReaction() {
                     (witnessGuild==sourceGuild || witnessGuild==victimGuild)))
     return;
   if(aivar(self,followsInWater)==0) {
-    const auto body = [&](const Actor& actor, BodyState state) {
-      findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(int32_t(state));
-      findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(actor);
-      return ActivityDefinitions::bodyStateContains(npc_getbodystate(actor),int32_t(state));
-      };
-    const bool victimDives = body(victim,BS_DIVE);
-    const bool victimSwims = body(victim,BS_SWIM);
-    const bool sourceDives = body(source,BS_DIVE);
-    const bool sourceSwims = body(source,BS_SWIM);
+    const bool victimDives = npcBodyStateContains(victim,BS_DIVE);
+    const bool victimSwims = npcBodyStateContains(victim,BS_SWIM);
+    const bool sourceDives = npcBodyStateContains(source,BS_DIVE);
+    const bool sourceSwims = npcBodyStateContains(source,BS_SWIM);
     if(victimDives || victimSwims || sourceDives || sourceSwims)
       return;
     }
@@ -909,8 +910,8 @@ int32_t GameScript::runEnemyReaction() {
       otherId!=hlp_getinstanceid(vm.global_hero()->get_instance())))
     return 0;
 
-  const bool diving = vm.call_function<int32_t>("C_BODYSTATECONTAINS",other,int32_t(BS_DIVE))!=0;
-  const bool swimming = vm.call_function<int32_t>("C_BODYSTATECONTAINS",other,int32_t(BS_SWIM))!=0;
+  const bool diving = npcBodyStateContains(other,int32_t(BS_DIVE));
+  const bool swimming = npcBodyStateContains(other,int32_t(BS_SWIM));
   if((self->aivar[followInWater]==0 && (diving || swimming)) ||
      npc_getheighttonpc(self,other)>findSymbol("PERC_DIST_HEIGHT")->get_int())
     return 0;
@@ -1131,7 +1132,7 @@ void GameScript::runPlayerAssessment() {
   const auto constant = [&](std::string_view name) { return findSymbol(name)->get_int(); };
   const auto distance = [&] { return npc_getdisttonpc(self,other()); };
   const auto hasBodyState = [&](const std::shared_ptr<daedalus::INpc>& actor, int32_t state) {
-    return vm.call_function<int32_t>("C_BODYSTATECONTAINS",actor,state)!=0;
+    return npcBodyStateContains(actor,state);
     };
   const auto fakeGuild = [&] { return hasFakeGuild(self,other()); };
   const auto assessTalk = [&] {
@@ -1250,7 +1251,7 @@ bool GameScript::runControlSpell(Npc& npc, const daedalus::DaedalusSymbol& symbo
     npc_stopani(self,"s_GreententacleC_Victim");
     npc_clearaiqueue(self);
     ai_standup(self);
-    if(vm.call_function<int32_t>("C_BODYSTATECONTAINS",self,int32_t(BS_UNCONSCIOUS))!=0)
+    if(npcBodyStateContains(self,int32_t(BS_UNCONSCIOUS)))
       return true;
     if(int32_t(self->guild)<findSymbol("GIL_SEPERATOR_HUM")->get_int()) {
       static constexpr std::string_view humanPoses[] = {
@@ -1435,7 +1436,7 @@ bool GameScript::runFakeGuildComment(Npc& npc, const daedalus::DaedalusSymbol& s
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
   const auto seated = [&](const std::shared_ptr<daedalus::INpc>& actor) {
-    return vm.call_function<int32_t>("C_BODYSTATECONTAINS",actor,int32_t(BS_SIT))!=0;
+    return npcBodyStateContains(actor,int32_t(BS_SIT));
     };
   setPerceptionPreset(false);
   ai_standup(self);
@@ -1582,7 +1583,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
   const auto hero = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance()); };
   const auto constant = [&](std::string_view name) { return findSymbol(name)->get_int(); };
   const auto absolution = [&] { return currentAbsolutionLevel(self); };
-  const auto bodyState = [&](int32_t body) { return vm.call_function<int32_t>("C_BODYSTATECONTAINS",other(),body)!=0; };
+  const auto bodyState = [&](int32_t body) { return npcBodyStateContains(other(),body); };
   const auto targetDown = [&] { return isNpcDownInScript(other()); };
   const auto stopPursuit = [&] {
     npc_clearaiqueue(self);
@@ -2494,7 +2495,7 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
     const auto body = npc_getbodystate(self);
     if(ActivityDefinitions::bodyStateContains(body,BS_DIVE) || ActivityDefinitions::bodyStateContains(body,BS_SWIM)) {
       npc_clearaiqueue(self);
-      vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+      clearPerceptions(self);
       startState("ZS_DEAD");
       return true;
       }
@@ -2712,7 +2713,7 @@ bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& s
     wld_playeffect("spellFX_SuckEnergy_BloodFly",self,vm.global_hero()->get_instance(),0,0,0,0);
     }
   if(!line.empty())
-    sayToNpc(self,other(),line);
+    sayToNpc(self,std::dynamic_pointer_cast<daedalus::INpc>(other()),line);
 
   lastSecond = npc_getstatetime(self);
   const auto hp = self->attribute[NpcAttribute::hitpoints];

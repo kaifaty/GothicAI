@@ -585,7 +585,7 @@ bool GameScript::refusesTalk(const std::shared_ptr<daedalus::INpc>& self, const 
 
   const auto listener = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const bool mortal = (!listener || int32_t(listener->flags)!=findSymbol("NPC_FLAG_IMMORTAL")->get_int());
-  const bool fakeGuild = vm.call_function<int32_t>("C_PLAYERHASFAKEGUILD",self,other)!=0;
+  const bool fakeGuild = hasFakeGuild(self,other);
   return mortal && fakeGuild;
   }
 
@@ -622,7 +622,7 @@ void GameScript::runAssessTalk() {
       return;
       }
     if(refusesTalk(self(),other())) {
-      if(vm.call_function<int32_t>("C_PLAYERHASFAKEGUILD",self(),other())!=0) {
+      if(hasFakeGuild(self(),other())) {
         npc_clearaiqueue(self());
         ai_startstate(self(),int(findFunction("ZS_COMMENTFAKEGUILD").ptr),1,"");
         } else {
@@ -633,8 +633,9 @@ void GameScript::runAssessTalk() {
     }
 
   if(started()==0) {
-    const auto body = npc_getbodystate(self());
-    if(ActivityDefinitions::bodyStateContains(body,BS_RUN) || ActivityDefinitions::bodyStateContains(body,BS_WALK)) {
+    const bool running = npcBodyStateContains(self(),BS_RUN);
+    const bool walking = npcBodyStateContains(self(),BS_WALK);
+    if(running || walking) {
       sayToNpc(other(),self(),"$SC_HEYWAITASECOND");
       } else if(!npc_canseenpc(self(),other())) {
       const auto roll = hlp_random(100);
@@ -650,7 +651,7 @@ void GameScript::runAssessTalk() {
   npc_clearaiqueue(self());
   clearPerceptions(self());
 
-  const bool seated = ActivityDefinitions::bodyStateContains(npc_getbodystate(self()),BS_SIT);
+  const bool seated = npcBodyStateContains(self(),BS_SIT);
   const bool quick = started()==1;
   const auto stand = [&](const std::shared_ptr<daedalus::INpc>& actor) {
     if(quick)

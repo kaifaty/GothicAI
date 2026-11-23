@@ -270,7 +270,7 @@ class GameScript final : public GameRules {
     void assessSleepTalk(Npc& npc);
     void runPortalEarthquake(Npc& npc);
     void resetRoutineNpc(const std::shared_ptr<daedalus::INpc>& self);
-    bool npcBodyStateContains(const std::shared_ptr<daedalus::INpc>& self, BodyState state);
+    bool npcBodyStateContains(const std::shared_ptr<daedalus::INpc>& self, int32_t state);
     bool runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -311,7 +311,6 @@ class GameScript final : public GameRules {
     void runMonsterSummonedAssessTalk();
     bool monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monster, const std::shared_ptr<daedalus::INpc>& body);
     bool monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey);
-    bool monsterTargetHasBodyState(const std::shared_ptr<daedalus::INpc>& target, int32_t state);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runShrinkState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMagicHurtState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
