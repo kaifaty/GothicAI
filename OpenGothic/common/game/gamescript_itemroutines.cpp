@@ -11,6 +11,86 @@
 #include <stdexcept>
 #include <vector>
 
+void GameScript::raisePermanentItemAttribute(const std::shared_ptr<daedalus::INpc>& npc, Attribute attribute, int32_t points) {
+  static constexpr struct Raise {
+    Attribute attribute;
+    const char* caption;
+    std::optional<uint8_t> trainingSlot;
+    } raises[] = {
+    {ATR_STRENGTH,     "PRINT_LEARNSTR",           81},
+    {ATR_DEXTERITY,    "PRINT_LEARNDEX",           82},
+    {ATR_MANAMAX,      "PRINT_LEARNMANA_MAX",      83},
+    {ATR_HITPOINTSMAX, "PRINT_LEARNHITPOINTS_MAX", {}},
+    };
+  const auto row = std::ranges::find(raises,attribute,&Raise::attribute);
+  if(row==std::end(raises))
+    throw std::logic_error("unsupported stock permanent item attribute");
+
+  auto* actor = findSymbol("B_RAISEATTRIBUTE.OTH");
+  auto* savedPoints = findSymbol("B_RAISEATTRIBUTE.POINTS");
+  savedPoints->set_int(points);
+  findSymbol("B_RAISEATTRIBUTE.ATTRIB")->set_int(attribute);
+  actor->set_instance(npc);
+
+  // The script's BL frame restores the caller after evaluating members in the learner's context.
+  struct RestoreContext {
+    daedalus::DaedalusVm& vm;
+    std::shared_ptr<daedalus::DaedalusInstance> caller;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+    } restore{vm,vm.unsafe_get_gi()};
+  vm.unsafe_set_gi(npc);
+  const auto increase = [&](daedalus::DaedalusSymbol* member,uint16_t index) {
+    const auto value = std::bit_cast<int32_t>(uint32_t(vm.get_int(npc,member,index))+uint32_t(points));
+    vm.set_int(npc,member,index,value);
+    };
+  auto* attributes = findSymbol("C_NPC.ATTRIBUTE");
+  increase(attributes,attribute);
+  int32_t printResults = 0;
+  const auto print = [&](daedalus::DaedalusSymbol* text,int32_t y) {
+    vm.push_reference(text);
+    vm.push_int(-1);
+    vm.push_int(y);
+    vm.push_reference(findSymbol("FONT_SCREEN"));
+    vm.push_int(2);
+    printResults += vm.unsafe_call_external(findSymbol("PRINTSCREEN"));
+    };
+
+  if(attribute==ATR_DEXTERITY) {
+    auto* acrobat = findSymbol("NPC_TALENT_ACROBAT");
+    vm.push_reference(actor);
+    vm.push_reference(acrobat);
+    vm.unsafe_call_external(findSymbol("NPC_GETTALENTSKILL"));
+    const auto skill = vm.pop_int();
+    const auto dexterity = vm.get_int(npc,attributes,attribute);
+    if(skill==0 && dexterity>=90) {
+      vm.push_reference(actor);
+      vm.push_reference(acrobat);
+      vm.push_int(1);
+      vm.unsafe_call_external(findSymbol("NPC_SETTALENTSKILL"));
+      print(findSymbol("PRINT_ADDON_ACROBATBONUS"),55);
+      }
+    }
+
+  auto* text = findSymbol("B_RAISEATTRIBUTE.CONCATTEXT");
+  // Keep the same temporary string slots, including when the message is hidden by headless mode.
+  vm.push_reference(findSymbol(row->caption));
+  vm.push_reference(savedPoints);
+  vm.unsafe_call_external(findSymbol("INTTOSTRING"));
+  vm.unsafe_call_external(findSymbol("CONCATSTRINGS"));
+  text->set_string(vm.pop_string());
+  print(text,-1);
+
+  // B_RAISEREALATTRIBUTELEARNCOUNTER saves all parameters, even for maximum health.
+  findSymbol("B_RAISEREALATTRIBUTELEARNCOUNTER.POINTS")->set_int(points);
+  findSymbol("B_RAISEREALATTRIBUTELEARNCOUNTER.ATTRIB")->set_int(attribute);
+  findSymbol("B_RAISEREALATTRIBUTELEARNCOUNTER.OTH")->set_instance(npc);
+  if(row->trainingSlot)
+    increase(findSymbol("C_NPC.AIVAR"),*row->trainingSlot);
+  // The stock void frame discards the screen calls' integer results on return.
+  for(int32_t i=0; i<printResults; ++i)
+    (void)vm.pop_int();
+  }
+
 void GameScript::loadNativeTradeInventory() {
   if(!nativeRoutineProgram)
     return;

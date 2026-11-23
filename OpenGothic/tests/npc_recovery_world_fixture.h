@@ -455,6 +455,7 @@ void stockItemRestoreCoverage(GameScript& script) {
   require(effects.size()==health+mana+paired && health==30 && mana==7 && paired==5 &&
           catalog.fullRestoreEffects.size()==full && full==2,
           "stock restores: cover all 37 single, five paired and two raw full restorations");
+  require(catalog.permanentAttributeEffects.size()==7,"stock effects: cover seven permanent elixirs and plants");
   }
 
 auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& reserved, bool native) {
@@ -878,7 +879,8 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
       minimalCalls+=symbol.name()=="PERCEPTION_SET_MINIMAL";
       restoreCalls+=symbol.name().starts_with("USEITPO_HEALTH_") || symbol.name()=="USEITPO_MANA_01" ||
                     symbol.name()=="USEITPO_MANA_04" || symbol.name()=="USE_MEATBUGFLESH" ||
-                    symbol.name()=="USE_CHEESE" || symbol.name()=="USE_BEER" || symbol.name()=="USE_BLUEPLANT";
+                    symbol.name()=="USE_CHEESE" || symbol.name()=="USE_BEER" || symbol.name()=="USE_BLUEPLANT" ||
+                    symbol.name()=="USEITPO_PERM_DEX" || symbol.name()=="USEITPO_LITTLEMANA";
       });
 
     require(Settings::physicsFlags().meleeHealInterrupt,"health potions: the fixture uses deferred potion effects");
@@ -921,6 +923,30 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
               vm.global_victim()->get_instance()==victim && vm.global_item()->get_instance()==itemGlobal,
               "item restores: the tag restores only the drinker once, consumes one item and restores the VM context");
       }
+    const auto drinker=std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
+    const auto oldAcrobat=npc->talentSkill(TALENT_ACROBAT);
+    const auto dexTraining=npc->handle().aivar[82],manaTraining=npc->handle().aivar[83];
+    npc->setTalentSkill(TALENT_ACROBAT,0);
+    npc->handle().attribute[ATR_DEXTERITY]=87;
+    npc->handle().attribute[ATR_MANA]=199;
+    const auto permanentUse=std::array{std::tuple{"ITPO_PERM_DEX",ATR_DEXTERITY,87},
+                                       std::tuple{"ITPO_PERM_LITTLEMANA",ATR_MANAMAX,200}};
+    for(const auto& [item,attribute,before]:permanentUse) {
+      const auto [id,initialItems]=startUse(item);
+      require(npc->attribute(attribute)==before,"permanent items: the attribute changes at the animation tag");
+      Contract::finishItemUseAnimation(*npc);
+      require(npc->attribute(attribute)==before+3 && npc->itemCount(id)==initialItems &&
+              script.findSymbol("B_RAISEATTRIBUTE.ATTRIB")->get_int()==attribute &&
+              script.findSymbol("B_RAISEREALATTRIBUTELEARNCOUNTER.OTH")->get_instance()==drinker,
+              "permanent items: consume once and store the same arguments as the VM");
+      }
+    require(npc->talentSkill(TALENT_ACROBAT)==1 && npc->attribute(ATR_MANA)==202 &&
+            npc->handle().aivar[82]==dexTraining+3 && npc->handle().aivar[83]==manaTraining+3 &&
+            vm.global_self()->get_instance()==self,
+            "permanent items: unlock acrobatics at 90, raise maximum before refill and count permanent training");
+    npc->setTalentSkill(TALENT_ACROBAT,oldAcrobat);
+    npc->handle().aivar[82]=dexTraining;
+    npc->handle().aivar[83]=manaTraining;
     require(Settings::physicsFlags().foodOverTime,"item restores: the fixture uses gradual food effects");
     npc->handle().attribute[ATR_HITPOINTS]=20;
     npc->handle().attribute[ATR_MANA]=20;
@@ -937,7 +963,7 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
               pool.hp==hp && pool.mana==mana && pool.remaining==Healing::FoodDuration &&
               npc->itemCount(id)==initialItems,"item restores: food adds both ordered doses to the gradual pool and consumes once");
       }
-    require(restoreCalls==(native ? 0u : potionUse.size()+foodUse.size()),
+    require(restoreCalls==(native ? 0u : potionUse.size()+permanentUse.size()+foodUse.size()),
             "item restores: only fallback executes the callback bodies");
     vm.global_self()->set_instance(previousSelf);
     std::copy(attributes.begin(),attributes.end(),npc->handle().attribute);

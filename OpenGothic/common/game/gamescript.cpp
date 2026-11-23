@@ -1173,13 +1173,15 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
   ScopeVar self(*vm.global_self(), npc->handlePtr());
   if(nativeRoutineProgram && activityEvents && !floorDefer.active() &&
      ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off) {
+    const auto amount = [&](const ItemDefinitionRuntime::RestoreChange& change) {
+      const auto* symbol = std::get_if<uint32_t>(&change.amount);
+      return symbol ? vm.find_symbol_by_index(*symbol)->get_int() : std::get<int32_t>(change.amount);
+      };
     const auto it = itemDefinitions.restoreEffects.find(functionSymbol->index());
     if(it!=itemDefinitions.restoreEffects.end()) {
       const auto actor = std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
       const auto apply = [&](const ItemDefinitionRuntime::RestoreChange& change) {
-        const auto* symbol = std::get_if<uint32_t>(&change.amount);
-        const auto amount = symbol ? vm.find_symbol_by_index(*symbol)->get_int() : std::get<int32_t>(change.amount);
-        npc_changeattribute(actor,change.attribute,amount);
+        npc_changeattribute(actor,change.attribute,amount(change));
         };
       apply(it->second.first);
       if(it->second.second)
@@ -1191,6 +1193,15 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
       const auto actor = std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
       auto* attribute = findSymbol("C_NPC.ATTRIBUTE");
       vm.set_int(actor,attribute,full->second.attribute,vm.get_int(actor,attribute,full->second.maximum));
+      return;
+      }
+    const auto permanent = itemDefinitions.permanentAttributeEffects.find(functionSymbol->index());
+    if(permanent!=itemDefinitions.permanentAttributeEffects.end()) {
+      const auto actor = std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
+      const auto& effect = permanent->second;
+      raisePermanentItemAttribute(actor,effect.increase.attribute,amount(effect.increase));
+      if(effect.refill)
+        npc_changeattribute(actor,*effect.refill,amount(effect.increase));
       return;
       }
     if(applyArmorSetEffect(*npc,functionSymbol->index()) || applyFightSkillItemEffect(*npc,functionSymbol->index()))

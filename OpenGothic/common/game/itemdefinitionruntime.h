@@ -21,6 +21,10 @@ struct RestoreEffect {
 struct FullRestoreEffect {
   Attribute attribute, maximum;
   };
+struct PermanentAttributeEffect {
+  RestoreChange increase;
+  std::optional<Attribute> refill;
+  };
 struct ArmorSetEffect {
   uint32_t armorFlag;
   uint32_t beltFlag;
@@ -35,6 +39,7 @@ struct Definitions {
   std::unordered_map<uint32_t,ItemRecord> items;
   std::unordered_map<uint32_t,RestoreEffect> restoreEffects;
   std::unordered_map<uint32_t,FullRestoreEffect> fullRestoreEffects;
+  std::unordered_map<uint32_t,PermanentAttributeEffect> permanentAttributeEffects;
   std::unordered_map<uint32_t,ArmorSetEffect> armorSetEffects;
   std::unordered_map<uint32_t,FightSkillEffect> fightSkillEffects;
   };

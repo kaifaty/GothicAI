@@ -162,6 +162,35 @@ void ItemDefinitionRuntime::registerStockRestoreEffects(Definitions& definitions
     if(function==nullptr || !definitions.fullRestoreEffects.emplace(function->index(),effect).second)
       throw std::runtime_error("stock item full restore: invalid callback "+std::string(callback));
     }
+
+  static constexpr struct StockPermanentAttribute {
+    std::string_view callback;
+    Attribute attribute;
+    std::variant<std::string_view,int32_t> dose;
+    std::optional<Attribute> refill = {};
+    } permanent[] = {
+    {"USEITPO_PERM_STR",     ATR_STRENGTH,     "STR_ELIXIER"},
+    {"USEITPO_PERM_DEX",     ATR_DEXTERITY,    "DEX_ELIXIER"},
+    {"USEITPO_PERM_HEALTH",  ATR_HITPOINTSMAX, "HPMAX_ELIXIER",   ATR_HITPOINTS},
+    {"USEITPO_PERM_MANA",    ATR_MANAMAX,      "MANAMAX_ELIXIER", ATR_MANA},
+    {"USEITPO_LITTLEMANA",   ATR_MANAMAX,      int32_t(3),        ATR_MANA},
+    {"USE_STRENGTH_HERB_01", ATR_STRENGTH,     int32_t(1)},
+    {"USE_DEX_HERB_01",      ATR_DEXTERITY,    int32_t(1)},
+    };
+  for(const auto& [callback,attribute,dose,refill]:permanent) {
+    const auto* function=program.find_symbol_by_name(callback);
+    PermanentAttributeEffect effect{{attribute,int32_t(0)},refill};
+    if(const auto* name=std::get_if<std::string_view>(&dose)) {
+      const auto* symbol=program.find_symbol_by_name(*name);
+      if(symbol==nullptr)
+        throw std::runtime_error("stock permanent item attribute: missing dose "+std::string(callback));
+      effect.increase.amount=symbol->index();
+      } else {
+      effect.increase.amount=std::get<int32_t>(dose);
+      }
+    if(function==nullptr || !definitions.permanentAttributeEffects.emplace(function->index(),effect).second)
+      throw std::runtime_error("stock permanent item attribute: invalid callback "+std::string(callback));
+    }
   }
 
 void ItemDefinitionRuntime::registerStockArmorSetEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
