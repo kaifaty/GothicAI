@@ -462,6 +462,14 @@ class GameScript final : public GameRules {
     void storeItem(Item* it);
     bool invokeNativeMobState(const daedalus::DaedalusSymbol& symbol);
     void runStockPickLock(int32_t success, int32_t brokenOrOpen);
+    void runStockHeroFeedback(std::string_view message, std::string_view line={}, bool gesture=false);
+    void runStockHeroMissingLockpick();
+    void runStockHeroEmptyLoot();
+    void runStockHeroEquipDenial(bool player, int32_t attribute, int32_t required);
+    void runStockHeroCastDenial(bool player, int32_t requiredCircle, int32_t actualCircle);
+    void runStockHeroWeaponPenalty();
+    auto stockHeroMap() -> int32_t;
+    void runStockLegacyPotionKey(bool mana);
 
     bool aiOutput   (Npc &from, std::string_view name, bool overlay);
     bool aiOutputSvm(Npc &from, std::string_view name, std::string_view svm, Npc* target, bool overlay);
