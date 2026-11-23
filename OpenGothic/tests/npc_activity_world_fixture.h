@@ -1621,6 +1621,8 @@ void seatedActivitiesWorld(Gothic& gothic,bool events) {
       test.only({actor});
       test.moveHero(spot+Tempest::Vec3(350,0,0),0);
       test.start(activity,spot,actor,false);
+      Contract::tickRoutine(*actor);
+      actor->setPerceptionDisable(PERC_ASSESSPLAYER); // keep the nearby hero out of the seating comparison
       auto* object=world.availableMob(*actor,site.scheme);
       require(object!=nullptr,"seated activity: the original routine has a free object");
       if(i==0) {
@@ -1682,6 +1684,7 @@ void seatedActivitiesWorld(Gothic& gothic,bool events) {
               "seated activity: the whole-game load restores the exact object, position, facing and pose");
       test.only({npc});
       test.moveHero(npc->position()+Tempest::Vec3(350,0,0),0);
+      npc->setPerceptionDisable(PERC_ASSESSPLAYER);
       Contract::tickRoutine(*npc);
       require(sitting(*npc,*object) && calls.phase(*npc,site.state)==0 && calls.uses(*npc)==0,
               "seated activity: loading does not repeat Init or queue another use");
