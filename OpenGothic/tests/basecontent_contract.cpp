@@ -2352,7 +2352,7 @@ struct BaseContentContract {
   static void musicRuntime(const fs::path& base,const fs::path& temporary,const fs::path& censusPath) {
     const auto fixture=temporary/"music-runtime-base";
     fs::create_directories(fixture);
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","programs","outputunits","audio","sources"})
+    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","programs","outputunits","audio","sources"})
       fs::create_symlink(base/part,fixture/part);
     fs::copy(base/"music",fixture/"music",fs::copy_options::recursive);
     setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
@@ -2691,7 +2691,7 @@ struct BaseContentContract {
     // Start with a valid base before adding the synthetic audio integrity fixtures.
     const auto fixtureBase=temporary/"audio-runtime-base";
     fs::create_directories(fixtureBase/"audio");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","programs","outputunits","music","sources"})
+    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","programs","outputunits","music","sources"})
       fs::create_symlink(base/part,fixtureBase/part);
     fs::copy(base/"audio",fixtureBase/"audio",fs::copy_options::recursive);
     setenv("OPENGOTHIC_BASE",fixtureBase.c_str(),1);
@@ -3210,7 +3210,7 @@ struct BaseContentContract {
     {
     const auto broken=temporary/"broken-program-record";
     fs::create_directories(broken/"programs");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","outputunits","audio","music","sources"})
+    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","outputunits","audio","music","sources"})
       fs::create_symlink(base/part,broken/part);
     for(const auto& file:fs::directory_iterator(base/"programs"))
       fs::create_symlink(file.path(),broken/"programs"/file.path().filename());
@@ -3258,7 +3258,7 @@ struct BaseContentContract {
     {
     const auto broken=temporary/"broken-outputunits-record";
     fs::create_directories(broken/"outputunits");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","programs","audio","music","sources"})
+    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","programs","audio","music","sources"})
       fs::create_symlink(base/part,broken/part);
     for(const auto& file:fs::directory_iterator(base/"outputunits"))
       fs::create_symlink(file.path(),broken/"outputunits"/file.path().filename());
