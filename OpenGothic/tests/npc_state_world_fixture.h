@@ -563,6 +563,65 @@ void stockSpellSummons(World& world) {
   std::puts("Spell summons: hero, NPC, selection and Army of Darkness match the VM");
   }
 
+void stockTransformMana(World& world, const WayPoint& point) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  auto* hero=script.findSymbol("PC_HERO");
+  auto* invested=script.findSymbol("SPELL_PROCESSMANA.MANAINVESTED");
+  auto* active=script.findSymbol("SPELL_PROCESSMANA.ACTIVESPELL");
+  const auto oldHero=hero->get_instance();
+  const auto oldInvested=invested->get_int(), oldActive=active->get_int();
+  const struct Transform { const char* item; const char* local; const char* form; } cases[] = {
+    {"ITSC_TRFSHEEP","SPELL_LOGIC_TRFSHEEP.MANAINVESTED","SHEEP"},
+    {"ITSC_TRFDRAGONSNAPPER","SPELL_LOGIC_TRFDRAGONSNAPPER.MANAINVESTED","DRAGONSNAPPER"},
+    };
+  for(const auto& row:cases) {
+    auto* itemSymbol=script.findSymbol(row.item);
+    auto* local=script.findSymbol(row.local);
+    const auto oldItem=itemSymbol->get_instance();
+    const auto oldLocal=local->get_int();
+    auto* caster=world.addNpc(hero->index(),point.position());
+    require(caster,"transform mana: the test caster must spawn");
+    auto* item=caster->addItem(itemSymbol->index(),1);
+    require(item && caster->drawSpell(item->spellId()) && caster->activeWeapon()==item,
+            "transform mana: the original scroll must be active");
+    const auto itemHandle=std::static_pointer_cast<daedalus::IItem>(item->handlePtr());
+    const auto form=int32_t(script.findSymbolIndex(row.form));
+    for(bool native:{false,true}) {
+      events=native;
+      for(int32_t mana:{4,5,10}) {
+        caster->handle().attribute[ATR_MANA]=mana;
+        caster->setActiveSpellInfo(71);
+        itemSymbol->set_instance(nullptr);
+        invested->set_int(-1);
+        active->set_int(-1);
+        local->set_int(-1);
+        size_t instructions=0;
+        vm.observe_instructions([&](const auto&) { ++instructions; });
+        const auto result=script.invokeMana(*caster,nullptr,17);
+        vm.observe_instructions({});
+        const bool allowed=mana>=5;
+        require(result==(allowed ? SPL_SENDCAST : SPL_SENDSTOP) && (instructions==0)==native &&
+                caster->attribute(ATR_MANA)==(allowed ? mana-10 : mana) &&
+                NpcDefinitionContract::activeSpellInfo(*caster)==(allowed ? form : 71),
+                "transform mana: the scroll threshold, full debit and written form match the VM");
+        require(invested->get_int()==17 && active->get_int()==item->spellId() && local->get_int()==17 &&
+                itemSymbol->get_instance()==itemHandle,"transform mana: active item and old VM slots are published on both paths");
+        }
+      }
+    world.removeNpc(*caster);
+    itemSymbol->set_instance(oldItem);
+    local->set_int(oldLocal);
+    }
+  hero->set_instance(oldHero);
+  invested->set_int(oldInvested);
+  active->set_int(oldActive);
+  events=previousEvents;
+  std::puts("Transform mana: the original scroll threshold, debit and target form match both executors");
+  }
+
 void stockSpellCastAccounting(World& world) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -680,6 +739,7 @@ void stockSpellCastAccounting(World& world) {
   activeSpell.set_int(oldActiveSpell);
   events=previousEvents;
   std::puts("Spell accounting: mana admission, rune, scroll, level and counter-only callbacks match both executors");
+  stockTransformMana(world,*point);
   stockSpellSummons(world);
   }
 
