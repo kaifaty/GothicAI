@@ -717,17 +717,21 @@ static void diegoRouteBoundaries(World& world,Npc& context) {
       else original=region;
       }
     }
-  auto* diego=activityNpc(world,"DIEGOOW");
+  auto* diegoAlias=script.findSymbol("DIEGOOW");
+  auto* diego=activityNpc(world,"PC_THIEFOW");
   const bool added=diego==nullptr;
   if(added)
-    diego=world.addNpc(script.findSymbolIndex("DIEGOOW"),angar->position());
-  require(diego && !diego->isDead(),"Diego's follower fixture needs the original actor");
+    diego=world.addNpc(script.findSymbolIndex("PC_THIEFOW"),angar->position());
+  require(diegoAlias && diego && !diego->isDead(),"Diego's follower fixture needs the original actor and alias");
+  const auto savedAlias=diegoAlias->get_instance();
+  const bool aliasBoundToDiego=savedAlias==std::static_pointer_cast<daedalus::INpc>(diego->handlePtr());
   const auto savedDiego=savedNpc(*diego);
   const auto follow=script.findFunction("B_ASSESSFOLLOWPLAYER");
   const auto followPc=vm.find_symbol_by_name("B_ASSESSFOLLOWPLAYER")->address();
   for(bool native : {false,true}) {
     enabled=native;
     loadSavedNpc(*diego,savedDiego);
+    script.setInstanceNPC("DIEGOOW",*diego);
     hero->setPosition(angar->position());
     diego->setPosition(angar->position()+Tempest::Vec3(600,0,0));
     diego->setProcessPolicy(NpcProcessPolicy::AiNormal);
@@ -759,6 +763,10 @@ static void diegoRouteBoundaries(World& world,Npc& context) {
     world.removeNpc(*diego);
   else
     loadSavedNpc(*diego,savedDiego);
+  if(!added && aliasBoundToDiego)
+    script.setInstanceNPC("DIEGOOW",*diego);
+  else
+    diegoAlias->set_instance(savedAlias);
   hero->setPosition(savedPosition);
   vm.global_self()->set_instance(savedSelf);
   tolerance->set_int(savedTolerance);
