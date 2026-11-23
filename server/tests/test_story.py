@@ -1,7 +1,12 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, call
+
 import pytest
 
-from gothic_ai.game import GameError
+from gothic_ai.game import GameError, GameLink
 from gothic_ai.memory import MemoryStore
+from gothic_ai.protocol import LineStarted
+from gothic_ai.scenarios import story as story_scenarios
 from gothic_ai.story import FREED, QUEST, StoryPatches, freed
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
@@ -96,3 +101,74 @@ async def test_the_freed_npcs_dialogs_are_off_on_every_branch_and_never_recorded
         await _until(lambda: len(fake.graph) == 3)
         assert fake.graph[-1]["replace"] is True and fake.graph[-1]["ops"] == [*static, HIDE]
         assert story.ops() == [HIDE]
+
+async def test_programs_saves_after_the_slow_dialog_window_closes(monkeypatch):
+    link = Mock(spec=GameLink)
+    link.session = object()
+    info, condition = "DIA_TEST_START", "DIA_TEST_OTHER"
+    stock = {
+        "fn": info,
+        "patched": False,
+        "returns": False,
+        "steps": [{"do": "call", "call": ["fn", "B_GIVEPLAYERXP", ["int", 10]]}],
+    }
+    link.offered_dialogs.side_effect = [
+        [info, condition], [info], [info, condition], [info], [info, "DIR_REFUSE_TEST"],
+    ]
+    link.story_program.side_effect = [{}, stock, {**stock, "patched": True}, stock, {"patched": True}]
+    link.evaluate.side_effect = [
+        0, 0, 7, 10, 7, 10, 10, 15, 10, 15, 12, 15, 12, 15, 12, 18,
+    ]
+    link.dialog_choices.side_effect = [
+        [{"id": "DIR_CHOICE_TEST.1", "text": "Золото"}, {"id": "DIR_CHOICE_TEST.2", "text": "Дальше"}],
+        [{"text": "Дальше"}],
+        [{"text": "Опыт"}],
+    ]
+    title, exit_topic = "Проверка вариантов", "Конец"
+    topics = [title, exit_topic]
+    menus = iter([topics, [], [], ["Золото", "Дальше"], ["Опыт"], topics])
+    wall = 0.0
+
+    async def menu():
+        nonlocal wall
+        seen = next(menus)
+        if not seen:
+            wall += 20  # the menu stays empty during the line on the slow window
+        return seen
+
+    link.dialog_menu.side_effect = menu
+    link.story_state.side_effect = [
+        {"dialog": True, "cutscene": False},
+        {"dialog": False, "cutscene": True},
+        {"dialog": False, "cutscene": False},
+    ]
+    link.story_eval.side_effect = [[2, 3, 2], [3], [1, 0, 12], [3], [1, 0, 1], [0, 3], [1, 0, 12], [1, 3]]
+    link.routine.return_value = SimpleNamespace(current="ZS_STAND_WP", entries=[])
+    link.check_conditions.return_value = {"programs": {"replaced": 1, "failed": 0}}
+
+    async def apply(op):
+        steps = op.get("steps") or []
+        if steps == [{"do": "call", "call": ["call", "CREATEINVITEMS", ["inst", "OTHER"]]}]:
+            raise GameError("CREATEINVITEMS takes 3 arguments")
+
+    async def message(_link, kind, *_args, **_kwargs):
+        if kind is LineStarted:
+            return SimpleNamespace(line="AIB_G1")
+        return object()
+
+    async def save(game, slot):
+        assert slot == 8
+        assert game.pick_in_menu.await_args_list == [
+            call(title), call("Дальше"), call("Опыт"), call(exit_topic),
+        ]
+        assert game.story_state.await_count == 3
+
+    saver = AsyncMock(side_effect=save)
+    monkeypatch.setattr(story_scenarios, "time", SimpleNamespace(monotonic=lambda: wall))
+    monkeypatch.setattr(story_scenarios, "wait_message", message)
+    monkeypatch.setattr(story_scenarios, "_save_or_fail", saver)
+    results = await story_scenarios.graph_programs(link, SimpleNamespace(apply=apply))
+    saver.assert_awaited_once_with(link, 8)
+    link.debug.assert_any_await("load", 8)
+    for name in ("window", "after_load", "attitude", "npc_state_conditions", "npc_conditions", "refuse_talk"):
+        assert results[name].startswith("done"), results
