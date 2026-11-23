@@ -199,18 +199,20 @@ void raiseAttribute(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& he
     (void)vm.pop_int();
   }
 
-bool printLessonNotice(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol* text) {
+bool printLessonNotice(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol* text,
+                       std::string_view font = "FONT_SCREEN") {
   vm.push_reference(text);
   vm.push_int(-1);
   vm.push_int(-1);
-  vm.push_reference(vm.find_symbol_by_name("FONT_SCREEN"));
+  vm.push_reference(vm.find_symbol_by_name(font));
   vm.push_int(2);
   return vm.unsafe_call_external(vm.find_symbol_by_name("PRINTSCREEN"));
   }
 
 void refuseLesson(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol* notice, daedalus::DaedalusSymbol* teacher,
-                  daedalus::DaedalusSymbol* learner, std::string_view speech) {
-  const bool printed=printLessonNotice(vm,notice);
+                  daedalus::DaedalusSymbol* learner, std::string_view speech,
+                  std::string_view font = "FONT_SCREEN") {
+  const bool printed=printLessonNotice(vm,notice,font);
   vm.push_reference(teacher);
   vm.push_reference(learner);
   vm.push_reference(vm.find_symbol_by_name(speech));
@@ -387,6 +389,120 @@ void teachFightTalent(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& 
   if(paired)
     raise(pairedLesson);
   if(printLessonNotice(vm,symbol(paired ? lesson.pairedNotice : lesson.singleNotice)))
+    (void)vm.pop_int();
+  vm.push_reference(symbol("TRUE"));
+  }
+
+static constexpr struct RuneLesson {
+  int32_t spell;
+  const char* scroll;
+  const char* recipe;
+  } runeLessons[] = {
+  {18,"ITSC_LIGHT","$27381"},
+  {19,"ITSC_FIREBOLT","$27382"},
+  {20,"ITSC_ICEBOLT","$27383"},
+  {21,"ITSC_LIGHTHEAL","$27384"},
+  {22,"ITSC_SUMGOBSKEL","$27385"},
+  {23,"ITSC_INSTANTFIREBALL","$27386"},
+  {24,"ITSC_ZAP","$27387"},
+  {25,"ITSC_SUMWOLF","$27388"},
+  {26,"ITSC_WINDFIST","$27389"},
+  {27,"ITSC_SLEEP","$27390"},
+  {28,"ITSC_MEDIUMHEAL","$27391"},
+  {29,"ITSC_LIGHTNINGFLASH","$27392"},
+  {30,"ITSC_CHARGEFIREBALL","$27393"},
+  {31,"ITSC_SUMSKEL","$27394"},
+  {32,"ITSC_FEAR","$27395"},
+  {33,"ITSC_ICECUBE","$27396"},
+  {34,"ITSC_THUNDERBALL","$27397"},
+  {35,"ITSC_SUMGOL","$27398"},
+  {36,"ITSC_HARMUNDEAD","$27399"},
+  {37,"ITSC_PYROKINESIS","$27400"},
+  {38,"ITSC_FIRESTORM","$27401"},
+  {39,"ITSC_ICEWAVE","$27402"},
+  {40,"ITSC_SUMDEMON","$27403"},
+  {41,"ITSC_FULLHEAL","$27404"},
+  {42,"ITSC_FIRERAIN","$27405"},
+  {43,"ITSC_BREATHOFDEATH","$27406"},
+  {44,"ITSC_MASSDEATH","$27407"},
+  {45,"ITSC_ARMYOFDARKNESS","$27408"},
+  {46,"ITSC_SHRINK","$27409"},
+  {71,"ITSC_WHIRLWIND","LOG_TEXT_ADDON_TALENTRUNE_WHIRLWIND"},
+  {72,"ITSC_WATERFIST","LOG_TEXT_ADDON_TALENTRUNE_WATERFIST"},
+  {73,"ITSC_ICELANCE","LOG_TEXT_ADDON_TALENTRUNE_ICELANCE"},
+  {75,"ITSC_GEYSER","LOG_TEXT_ADDON_TALENTRUNE_GEYSER"},
+  {70,"ITSC_THUNDERSTORM","LOG_TEXT_ADDON_TALENTRUNE_THUNDERSTORM"},
+  };
+
+void teachRune(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
+  const auto symbol=[&](std::string_view name) { return vm.find_symbol_by_name(name); };
+  auto args=vm.find_parameters_for_function(&helper);
+  auto& teacher=args[0];
+  auto& learner=args[1];
+  auto& spell=args[2];
+  RestoreContext restore{vm,vm.unsafe_get_gi()};
+  vm.set_int(restore.caller,&spell,0,vm.pop_int());
+  learner.set_instance(vm.pop_instance());
+  teacher.set_instance(vm.pop_instance());
+  auto* runes=symbol("NPC_TALENT_RUNES");
+  vm.push_reference(&learner);
+  vm.push_reference(runes);
+  vm.push_reference(&spell);
+  vm.unsafe_call_bl(symbol("B_GETLEARNCOSTTALENT"));
+  const auto cost=vm.pop_int();
+  vm.set_int(restore.caller,symbol("B_TEACHPLAYERTALENTRUNES.KOSTEN"),0,cost);
+
+  const auto student=learner.get_instance();
+  vm.unsafe_set_gi(student);
+  auto* lp=symbol("C_NPC.LP");
+  const auto balance=vm.get_int(student,lp,0);
+  if(balance<cost) {
+    refuseLesson(vm,symbol("PRINT_NOTENOUGHLEARNPOINTS"),&teacher,&learner,"$27379","FONT_SCREENSMALL");
+    return;
+    }
+  vm.set_int(student,lp,0,std::bit_cast<int32_t>(uint32_t(balance)-uint32_t(cost)));
+  auto* topic=symbol("TOPIC_TALENTRUNES");
+  vm.push_reference(topic);
+  vm.push_reference(symbol("LOG_NOTE"));
+  vm.unsafe_call_external(symbol("LOG_CREATETOPIC"));
+  const auto addJournalEntry=[&](const char* entry) {
+    vm.push_reference(topic);
+    vm.push_reference(symbol(entry));
+    vm.unsafe_call_bl(symbol("B_LOGENTRY"));
+    };
+  addJournalEntry("$27380"); // Stock introduction to rune crafting.
+
+  auto* trader=symbol("B_TEACHPLAYERTALENTRUNES.SCROLLTRADER");
+  for(const auto* name:{"GORAX","ISGAROTH","ENGOR","ORLAN","CRONOS_ADW"}) {
+    auto* candidate=symbol(name);
+    vm.push_reference(candidate);
+    vm.unsafe_call_external(symbol("NPC_ISDEAD"));
+    if(vm.pop_int()!=symbol("FALSE")->get_int())
+      continue;
+    vm.push_int(int32_t(candidate->index()));
+    vm.unsafe_call_external(symbol("HLP_GETNPC"));
+    trader->set_instance(vm.pop_instance());
+    break;
+    }
+  // If no merchant is available, the original uses the saved trader slot.
+  const auto id=spell.get_int();
+  const auto recipe=std::ranges::find(runeLessons,id,&RuneLesson::spell);
+  if((0<=id && id<=14) || recipe!=std::end(runeLessons))
+    vm.set_int(student,symbol("PLAYER_TALENT_RUNES"),uint16_t(id),symbol("TRUE")->get_int());
+  if(recipe!=std::end(runeLessons)) {
+    vm.push_reference(trader);
+    vm.push_int(int32_t(symbol(recipe->scroll)->index()));
+    vm.push_int(1);
+    vm.unsafe_call_external(symbol("CREATEINVITEMS"));
+    addJournalEntry(recipe->recipe);
+    }
+
+  const bool printed=printLessonNotice(vm,symbol("PRINT_LEARNRUNES"));
+  vm.push_reference(&learner);
+  vm.push_reference(runes);
+  vm.push_int(1);
+  vm.unsafe_call_external(symbol("NPC_SETTALENTSKILL"));
+  if(printed)
     (void)vm.pop_int();
   vm.push_reference(symbol("TRUE"));
   }
@@ -704,6 +820,13 @@ void GameScript::loadNativeTrainingHelpers() {
   vm.override_function(fightLesson->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
     [fightLesson](auto& machine) -> daedalus::DaedalusNakedCall {
       teachFightTalent(machine,*fightLesson);
+      return {};
+      }
+    },enabled);
+  auto* runeLesson=findSymbol("B_TEACHPLAYERTALENTRUNES");
+  vm.override_function(runeLesson->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [runeLesson](auto& machine) -> daedalus::DaedalusNakedCall {
+      teachRune(machine,*runeLesson);
       return {};
       }
     },enabled);

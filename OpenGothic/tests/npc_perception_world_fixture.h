@@ -351,6 +351,83 @@ void stockTeachFight(GameScript& script, Npc& npc, Npc& player) {
   enabled=saved;
   }
 
+void stockTeachRune(GameScript& script, Npc& npc, Npc& player) {
+  using Contract=NpcDefinitionContract;
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  const bool savedEvents=events;
+  const auto teacher=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto student=std::static_pointer_cast<daedalus::INpc>(player.handlePtr());
+  const auto context=vm.unsafe_get_gi();
+  const auto queue=Contract::queue(npc);
+  const auto awaitQueue=Contract::activityEvents(npc).awaitQueue;
+  const auto order=Contract::outputOrder(script);
+  const auto journal=script.questLog();
+  const auto skill=player.talentSkill(TALENT_RUNES);
+  const auto lp=student->lp;
+  auto* lesson=script.findSymbol("B_TEACHPLAYERTALENTRUNES");
+  auto* flags=script.findSymbol("PLAYER_TALENT_RUNES");
+  const auto known=flags->get_int(0);
+  auto* trader=script.findSymbol("B_TEACHPLAYERTALENTRUNES.SCROLLTRADER");
+  const auto savedTrader=trader->get_instance();
+  const auto topic=script.findSymbol("TOPIC_TALENTRUNES")->get_string();
+  const auto introduction=script.findSymbol("$27380")->get_string();
+  const auto findTopic=[&](const QuestLog& log) -> const QuestLog::Quest* {
+    for(size_t i=0;i<log.questCount();++i)
+      if(log.quest(i).name==topic)
+        return &log.quest(i);
+    return nullptr;
+    };
+  const auto* oldTopic=findTopic(journal);
+  const auto restore=[&] {
+    Contract::questLog(script)=journal;
+    Contract::queue(npc)=queue;
+    Contract::activityEvents(npc).awaitQueue=awaitQueue;
+    Contract::outputOrder(script)=order;
+    player.setTalentSkill(TALENT_RUNES,skill);
+    student->lp=lp;
+    flags->set_int(known,0);
+    trader->set_instance(savedTrader);
+    };
+  for(bool native:{false,true}) {
+    if(native && (!savedEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+      continue;
+    events=native;
+    for(bool allowed:{false,true}) {
+      restore();
+      const int spell=allowed ? 0 : 19; // Spell 0 has no scroll; spell 19 exercises the insufficient-LP path.
+      student->lp=int(allowed);
+      flags->set_int(0,0);
+      size_t instructions=0,screens=0,scrolls=0;
+      vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==lesson->address(); });
+      vm.observe_externals([&](const auto& fn) {
+        screens+=fn.name()=="PRINTSCREEN";
+        scrolls+=fn.name()=="CREATEINVITEMS";
+        });
+      using storygraph::Value;
+      std::string error;
+      const auto result=storygraph::callFunction(vm,*lesson,{Value::instance(teacher),Value::instance(student),
+          Value::integer(spell)},error);
+      vm.observe_instructions({});
+      vm.observe_externals({});
+      require(result && result->i==int(allowed) && instructions==size_t(!native) && vm.unsafe_get_gi()==context &&
+              scrolls==0 && screens==1u+size_t(allowed) && student->lp==0 && flags->get_int(0)==int(allowed),
+              "rune lesson: preserve optional stock fallback, refusal, LP and the learned spell flag");
+      require(Contract::queue(npc).size()==queue.size()+size_t(!allowed) &&
+              player.talentSkill(TALENT_RUNES)==(allowed ? 1 : skill),
+              "rune lesson: queue refusal or learn the rune crafting talent");
+      if(allowed) {
+        const auto* note=findTopic(script.questLog());
+        require(note && note->section==(oldTopic ? oldTopic->section : QuestLog::Note) &&
+                note->entry.size()==(oldTopic ? oldTopic->entry.size() : 0u)+1u && note->entry.back()==introduction,
+                "rune lesson: add the crafting introduction to the rune topic");
+        }
+      }
+    }
+  restore();
+  events=savedEvents;
+  }
+
 void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -359,6 +436,7 @@ void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
   stockLearnCostTalent(script,npc,player);
   stockTeachAttribute(script,npc,player);
   stockTeachFight(script,npc,player);
+  stockTeachRune(script,npc,player);
   auto& vm=script.getVm();
   auto& events=Contract::activityEventsOn(script);
   const bool savedEvents=events;
