@@ -170,7 +170,10 @@ void tradeInventoryAfterDefeat(ActivityEventsWorld& test, bool native) {
   run();
   const bool nativeAmbient=native && NpcHelperRuntime::enabled() &&
                            NpcDefinitionContract::definitions(script).helpers.helpers.contains(ambient->index());
-  require(calls==std::vector<std::string>{"B_CLEARRUNEINV","B_CLEARDEADTRADER","B_CREATEAMBIENTINV"} &&
+  // The defeated merchant has inventory chapter zero. The next visit tries
+  // to restock, then the merchant's chapter flag suppresses the second grant.
+  require(calls==std::vector<std::string>{"B_CLEARRUNEINV","B_CLEARJUNKTRADEINV","B_GIVETRADEINV_MATTEO",
+                                          "B_CLEARDEADTRADER","B_CREATEAMBIENTINV"} &&
           ambientVm!=nativeAmbient && script.findSymbol("B_CREATEAMBIENTINV.SLF")->get_instance()==actor,
           "trade inventory: allow the original ambient inventory record for an unrewarded defeat");
   vm.observe_instructions({});
