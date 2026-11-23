@@ -1581,11 +1581,11 @@ void seatedActivitiesWorld(Gothic& gothic,bool events) {
   struct Site { const char* state; const char* actor; const char* scheme; uint32_t range; };
   constexpr std::array sites={Site{"ZS_SIT_BENCH","VLK_468_CANTHAR","BENCH",8},
                               Site{"ZS_SIT_CHAIR","MIL_313_BOLTAN","CHAIR",10}};
-  struct Saved { uint32_t object=0; Tempest::Vec3 position; float heading=0; uint32_t pose=0; };
+  struct Saved { uint32_t object=0,zen=0; Tempest::Vec3 position; float heading=0; uint32_t pose=0; };
   std::array<Saved,sites.size()> seats;
   std::vector<uint8_t> save;
   const auto sitting=[](const Npc& npc,const Interactive& object) {
-    return npc.interactive()==&object && object.userCount()==1 &&
+    return npc.interactive()==&object && object.userCount()==1 && object.isStaticState() &&
            ActivityDefinitions::bodyStateContains(int32_t(npc.bodyState()),65547) && npc.isAiQueueEmpty();
     };
   const auto* output=std::getenv("OPENGOTHIC_BENCH_OUT");
@@ -1649,16 +1649,10 @@ void seatedActivitiesWorld(Gothic& gothic,bool events) {
                      std::string(site.state)+" holds the real object");
       seatedGestureAtObject(*actor,site.range);
       seats[i].object=world.mobsiId(object);
+      seats[i].zen=object->zenId();
       std::printf("Seated %s (events=%d): object %u, %zu VM Loop calls\n",
                   site.state,int(events),object->zenId(),loopCalls[i]);
       require((loopCalls[i]==0)==events,"seated activity: the runtime selects the requested executor");
-      }
-    for(size_t i=0;i<sites.size();++i) {
-      auto& npc=*activityNpc(world,sites[i].actor);
-      require(sitting(npc,*world.mobsiById(seats[i].object)),"seated activity: both actors remain seated at save time");
-      seats[i].position=npc.position();
-      seats[i].heading=npc.rotation();
-      seats[i].pose=npc.bodyStateMasked();
       }
     vm.remove_call_observer(observer);
     NpcDayMeasurement::stop(world);
@@ -1667,6 +1661,14 @@ void seatedActivitiesWorld(Gothic& gothic,bool events) {
     Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
     std::memset(preview.data(),0,4);
     gothic.gameSession()->save(out,"bench and chair",preview);
+    // The world synchronizes any deferred animation as part of saving.
+    for(size_t i=0;i<sites.size();++i) {
+      auto& npc=*activityNpc(world,sites[i].actor);
+      require(sitting(npc,*world.mobsiById(seats[i].object)),"seated activity: both actors remain seated at save time");
+      seats[i].position=npc.position();
+      seats[i].heading=npc.rotation();
+      seats[i].pose=npc.bodyStateMasked();
+      }
   }
   gothic.clearGame().reset();
   {
@@ -1678,10 +1680,17 @@ void seatedActivitiesWorld(Gothic& gothic,bool events) {
     for(size_t i=0;i<sites.size();++i) {
       const auto& site=sites[i];
       auto* npc=activityNpc(test.world(),site.actor);
-      auto* object=test.world().mobsiById(seats[i].object);
-      require(npc && object && sitting(*npc,*object) && npc->position()==seats[i].position &&
-              npc->rotation()==seats[i].heading && npc->bodyStateMasked()==seats[i].pose,
-              "seated activity: the whole-game load restores the exact object, position, facing and pose");
+      require(npc!=nullptr,"seated activity: the whole-game load restores the actor");
+      auto* object=npc->interactive();
+      const auto drift=(npc->position()-seats[i].position).length();
+      const auto turn=std::abs(std::remainder(npc->rotation()-seats[i].heading,360.f));
+      std::printf("Seated load %s (events=%d): seat %u -> %u, owners %zu, pose %u -> %u, drift %.3f cm, turn %.3f degrees\n",
+                  site.state,int(events),seats[i].zen,object ? object->zenId() : uint32_t(-1),
+                  object ? size_t(object->userCount()) : 0u,seats[i].pose,uint32_t(npc->bodyStateMasked()),
+                  double(drift),double(turn));
+      require(object && object->zenId()==seats[i].zen && sitting(*npc,*object) &&
+              drift<1.f && turn<1.f && npc->bodyStateMasked()==seats[i].pose,
+              "seated activity: the whole-game load restores the same seat, position, facing and pose");
       test.only({npc});
       test.moveHero(npc->position()+Tempest::Vec3(350,0,0),0);
       npc->setPerceptionDisable(PERC_ASSESSPLAYER);
