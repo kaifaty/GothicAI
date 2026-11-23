@@ -71,9 +71,10 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
           ai_aligntofp(self);
           }
         }
-      else if(seconds>=8 && wld_detectnpc(self,-1,id("ZS_SMALLTALK"),-1)) {
+      else if(seconds>=8) {
+        const bool detected = wld_detectnpc(self,-1,id("ZS_SMALLTALK"),-1);
         const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
-        if(npc_getdisttonpc(self,other)<500) {
+        if(detected && npc_getdisttonpc(self,other)<500) {
           npc_setstatetime(other,4);
           ai_turntonpc(self,other);
           const auto roll = draw(120,"B_SAY_SMALLTALK.RANDOM");
@@ -90,8 +91,8 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
               line = roll<110 ? 22 : roll<115 ? 23 : 24;
             }
           ai_outputsvm(self,self,numberedLine("$SMALLTALK",line));
-          npc.setStateTime(0);
           }
+        npc.setStateTime(0);
         }
       }
     }
@@ -129,9 +130,10 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
       if(seconds>=70 && (hero==nullptr || hero->aivar[4]==0)) {
         ai_playani(self,"T_HGUARD_2_STAND");
         position = 1;
-        if(ActivityDefinitions::bodyStateContains(int32_t(npc.bodyState()),BS_SIT))
+        if(ActivityDefinitions::bodyStateContains(int32_t(npc.bodyState()),BS_SIT)) {
           ai_standup(self);
-        ai_turntonpc(self,hero);
+          ai_turntonpc(self,hero);
+          }
         ai_removeweapon(self);
         const auto announcement = id("FAKESCROLL");
         createinvitem(self,announcement);
@@ -229,10 +231,11 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
       ai_gotowp(self,self->wp);
       ai_aligntowp(self);
       }
-    else if(loop && seconds>=5 &&
-            npc_getdisttonpc(self,std::dynamic_pointer_cast<daedalus::INpc>(instance("HERO")))>500) {
-      ai_aligntowp(self);
-      npc.setStateTime(0);
+    else if(loop && seconds>=5) {
+      if(npc_getdisttonpc(self,std::dynamic_pointer_cast<daedalus::INpc>(instance("HERO")))>500) {
+        ai_aligntowp(self);
+        npc.setStateTime(0);
+        }
       // This helper implements the quest's one-shot removal and sound effects.
       vm.call_function<void>("B_REMOVEGHOST");
       }
