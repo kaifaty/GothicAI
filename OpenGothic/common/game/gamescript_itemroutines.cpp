@@ -188,6 +188,99 @@ void GameScript::loadNativeTradeInventory() {
     malformed();
   take(Op::RSR);
 
+  struct StockGrant {
+    int32_t item = 0, amount = 0;
+    Symbol* recipient = nullptr;
+    Symbol* itemSymbol = nullptr;
+    };
+  struct StockBatch {
+    Symbol* granted = nullptr;
+    std::optional<int32_t> minimumChapter;
+    std::vector<StockGrant> grants;
+    };
+  auto* create = findSymbol("CREATEINVITEMS");
+  auto* yes = findSymbol("TRUE");
+  auto* no = findSymbol("FALSE");
+  const auto bindStock = [&](const Symbol& body) {
+    pc = body.address();
+    auto* actor = findSymbol(body.name()+".SLF");
+    saveActor(actor);
+    std::vector<StockBatch> stock;
+    while(vm.instruction_at(pc).op!=Op::RSR) {
+      StockBatch batch;
+      uint32_t end = 0;
+      if(vm.instruction_at(pc).op==Op::PUSHV) {
+        expectSymbol(Op::PUSHV,no);
+        batch.granted = findSymbol(take(Op::PUSHV).symbol);
+        if(batch.granted==nullptr || batch.granted->name().find("_ITEMSGIVEN_CHAPTER_")==std::string::npos)
+          malformed();
+        take(Op::EQ);
+        if(vm.instruction_at(pc).op==Op::PUSHI) {
+          batch.minimumChapter = take(Op::PUSHI).immediate;
+          expectSymbol(Op::PUSHV,chapter);
+          take(Op::GTE);
+          take(Op::AND);
+          }
+        end = take(Op::BZ).address;
+        }
+      while(vm.instruction_at(pc).op==Op::PUSHVI) {
+        StockGrant grant;
+        grant.recipient = findSymbol(take(Op::PUSHVI).symbol);
+        if(grant.recipient!=actor && grant.recipient!=vm.global_self())
+          malformed();
+        if(vm.instruction_at(pc).op==Op::PUSHV) {
+          // Samuel's stock reads the live item index.
+          grant.itemSymbol = findSymbol("RI_PROTFIRE02");
+          expectSymbol(Op::PUSHV,grant.itemSymbol);
+          } else {
+          grant.item = take(Op::PUSHI).immediate;
+          }
+        grant.amount = take(Op::PUSHI).immediate;
+        expectSymbol(Op::BE,create);
+        batch.grants.push_back(grant);
+        }
+      if(batch.granted!=nullptr) {
+        expectSymbol(Op::PUSHV,yes);
+        expectSymbol(Op::PUSHV,batch.granted);
+        take(Op::MOVI);
+        if(pc!=end)
+          malformed();
+        } else if(batch.grants.empty() || !stock.empty() || vm.instruction_at(pc).op!=Op::RSR) {
+        malformed();
+        }
+      stock.push_back(std::move(batch));
+      }
+    take(Op::RSR);
+    vm.override_function(body.name(),std::function<void(NpcRef)>{
+      [this,actor,create,yes,no,stock=std::move(stock)](NpcRef npc) {
+        actor->set_instance(std::move(npc));
+        for(const auto& batch : stock) {
+          const bool pending = batch.granted==nullptr || batch.granted->get_int()==no->get_int();
+          const bool chapterReached = !batch.minimumChapter || storyChapter>=*batch.minimumChapter;
+          if(!pending || !chapterReached)
+            continue;
+          for(const auto& grant : batch.grants) {
+            vm.push_reference(grant.recipient);
+            if(grant.itemSymbol)
+              vm.push_reference(grant.itemSymbol);
+            else
+              vm.push_int(grant.item);
+            vm.push_int(grant.amount);
+            vm.unsafe_call_external(create);
+            }
+          if(batch.granted)
+            batch.granted->set_int(yes->get_int());
+          }
+        }},enabled);
+    };
+  for(const auto& restock : restocks) {
+    const auto& body = *restock.second;
+    // These authored shops have additional guild or quest conditions.
+    if(body.name()=="B_GIVETRADEINV_GORAX" || body.name()=="B_GIVETRADEINV_KARDIF" || body.name()=="B_GIVETRADEINV_KARRAS")
+      continue;
+    bindStock(body);
+    }
+
   const auto getNpc = [this,lookup](int32_t source,Symbol* alias) {
     vm.push_int(source);
     vm.unsafe_call_external(lookup);

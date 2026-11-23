@@ -140,10 +140,12 @@ void tradeInventoryAfterDefeat(ActivityEventsWorld& test, bool native) {
     });
   const auto* trade = script.findSymbol("B_GIVETRADEINV");
   const auto* ambient = script.findSymbol("B_CREATEAMBIENTINV");
-  bool tradeVm=false, ambientVm=false;
+  const auto* restock = script.findSymbol("B_GIVETRADEINV_MATTEO");
+  bool tradeVm=false, ambientVm=false, stockVm=false;
   vm.observe_instructions([&](const auto&) {
     tradeVm |= vm.pc()==trade->address();
     ambientVm |= vm.pc()==ambient->address();
+    stockVm |= vm.pc()==restock->address();
     });
   const auto run = [&] {
     vm.push_int(0x12345678);
@@ -154,7 +156,8 @@ void tradeInventoryAfterDefeat(ActivityEventsWorld& test, bool native) {
   run();
   require(calls==std::vector<std::string>{"B_CLEARRUNEINV","B_CLEARJUNKTRADEINV","B_GIVETRADEINV_MATTEO"} &&
           matteo->itemCount(junk)==0 && matteo->itemCount(gold)==before+100 && actor->aivar[49]==2 && stocked->get_int()==1 &&
-          script.findSymbol("B_GIVETRADEINV.TRD_MATTEO")->get_instance()==actor && tradeVm!=native,
+          script.findSymbol("B_GIVETRADEINV.TRD_MATTEO")->get_instance()==actor &&
+          script.findSymbol("B_GIVETRADEINV_MATTEO.SLF")->get_instance()==actor && tradeVm!=native && stockVm!=native,
           "trade inventory: stock junk cleanup and Matteo's real chapter restock run in order");
   calls.clear();
   require(matteo->startState(script.findFunction("ZS_UNCONSCIOUS"),""),"trade inventory: Matteo enters the knockout state");
