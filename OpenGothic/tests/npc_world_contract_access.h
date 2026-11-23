@@ -32,6 +32,7 @@ struct NpcDefinitionContract {
   static ScriptFn perception(const Npc& npc, PercType type) { return npc.perception[type].func; }
   static auto& activityEvents(Npc& npc) { return npc.activityEvents; }
   static bool& activityEventsOn(GameScript& script) { return script.activityEvents; }
+  static const auto& dialogInfos(const GameScript& script) { return script.dialogsInfo; }
   static auto& previousState(Npc& npc) { return npc.aiPrevState; }
   static void lastHitSpell(Npc& npc, int32_t spell) { npc.lastHitSpell=spell; }
   static ScriptFn perceptionCallback(const Npc& npc, PercType type) { return npc.perception[type].func; }

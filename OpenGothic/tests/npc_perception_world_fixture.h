@@ -94,6 +94,62 @@ void assessTalkEntry(World& world,Npc& npc,Npc& player) {
   restore();
   }
 
+void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  const bool savedEvents=events;
+  const auto infoClass=script.findSymbolIndex("C_INFO");
+  const auto previousSelf=vm.global_self()->get_instance();
+  const auto previousContext=vm.unsafe_get_gi();
+  using Info=std::tuple<uint32_t,int32_t,int32_t,int32_t,int32_t,int32_t,std::string,int32_t,int32_t>;
+  using Choice=std::tuple<uint32_t,uint32_t,int32_t,std::string,bool>;
+  std::vector<Info> original;
+  std::vector<Choice> originalChoices;
+  for(bool native:{false,true}) {
+    if(native && (!savedEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+      continue;
+    events=native;
+    std::vector<std::string> constructors;
+    const auto observer=vm.add_call_observer([&](const auto& function) {
+      if(function.parent()==infoClass && function.type()==daedalus::DaedalusDataType::INSTANCE)
+        constructors.push_back(function.name());
+      });
+    script.initDialogs();
+    vm.remove_call_observer(observer);
+    require(vm.global_self()->get_instance()==previousSelf && vm.unsafe_get_gi()==previousContext,
+            "dialog metadata: initialization must restore the original VM context");
+
+    std::vector<Info> metadata;
+    for(const auto& info:Contract::dialogInfos(script)) {
+      const auto id=info->symbol_index();
+      require(vm.find_symbol_by_index(id)->get_instance().get()==info.get() && info->choices.empty(),
+              "dialog metadata: bind each instance to its original saved symbol and reset its choices");
+      metadata.emplace_back(id,info->npc,info->nr,info->important,info->condition,info->information,
+                            info->description,info->trade,info->permanent);
+      }
+    std::vector<Choice> choices;
+    for(const auto& choice:script.dialogChoices(player.handlePtr(),npc.handlePtr(),{},true))
+      if(choice.handle!=nullptr)
+        choices.emplace_back(choice.handle->symbol_index(),choice.scriptFn,choice.sort,choice.title,choice.isTrade);
+    require(metadata.size()==4139 && !choices.empty(),"dialog metadata: the stock catalogue and an ordinary dialog must be live");
+    if(native) {
+      require(metadata==original && choices==originalChoices,
+              "dialog metadata: preserve all typed fields, localized bytes, catalogue order and live choice filtering");
+      std::sort(constructors.begin(),constructors.end());
+      require(constructors==std::vector<std::string>{"DIA_BARTOK_TEACHSNEAK","DIA_BENNET_TEACHCOMMON","DIA_DOBAR_TEACH",
+                                                    "DIA_THORBEN_TEACH","DIA_WOLF_TEACHCRAWLERPLATES"},
+              "dialog metadata: only the five computed descriptions need their stock constructors");
+      } else {
+      require(constructors.size()==metadata.size(),"dialog metadata: the compatibility mode runs every constructor");
+      original=std::move(metadata);
+      originalChoices=std::move(choices);
+      }
+    }
+  events=savedEvents;
+  }
+
 void talkPhases(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   auto& world=*gothic.world();
@@ -103,6 +159,7 @@ void talkPhases(Gothic& gothic) {
   require(actor!=nullptr && world.player()!=nullptr,"talk needs Xardas and the player");
   auto& npc=*actor;
   auto& player=*world.player();
+  stockDialogMetadata(world,npc,player);
   auto& effects=Contract::activityEventsOn(script);
   const bool savedEffects=effects;
   const auto savedNpcQueue=Contract::queue(npc);
