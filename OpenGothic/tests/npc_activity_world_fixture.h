@@ -3072,10 +3072,12 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
       }
       if(std::string_view(site.state)=="ZS_GOLEMDOWN") {
         actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
-        require(actor->handle().senses==int32_t(SensesBit::SENSE_SMELL) && actor->handle().senses_range==2000 &&
-                Contract::perceptionInterval(*actor)==1000,"load must preserve the dormant golem's senses");
+        require(actor->handle().senses==int32_t(SensesBit::SENSE_SMELL) && actor->handle().senses_range==2000,
+                "load must preserve the dormant golem's senses");
         actor->clearAiQueue();
         Contract::tickRoutine(*actor);
+        require(Contract::aiState(*actor).loopNextTime==world.tickCount()+1000,
+                "the loaded golem must keep its one-second perception interval");
         require(actor->handle().aivar[19]==0 && actor->aiQueueFront() && actor->aiQueueFront()->s0=="T_DEAD",
                 "the loaded golem must settle into its dormant pose once");
         actor->clearAiQueue();
