@@ -617,6 +617,161 @@ void GameScript::loadNativeWorldEntry() {
 
   vm.override_function("B_KAPITELWECHSEL",std::function<void(int32_t,int32_t)>{
     [this](int32_t chapter,int32_t level) { changeChapter(chapter,level); }},PlacementDefinitionRuntime::enabled);
+  loadOldWorldChapterEntries();
+  }
+
+void GameScript::loadOldWorldChapterEntries() {
+  constexpr std::string_view old3 = "B_ENTER_OLDWORLD_KAPITEL_3";
+  constexpr std::string_view old4 = "B_ENTER_OLDWORLD_KAPITEL_4";
+  const auto batch = [this](std::string_view root,uint32_t offset,size_t count) {
+    std::vector<LiteralPlacement> rows;
+    rows.reserve(count);
+    auto pc = findSymbol(root)->address()+offset;
+    for(size_t i=0;i<count;++i)
+      rows.push_back(readLiteralPlacement(vm,pc,root));
+    return rows;
+    };
+  const auto place = [this](const LiteralPlacement& row) {
+    vm.push_int(int32_t(row.instance->index()));
+    vm.push_reference(row.point);
+    vm.unsafe_call_external(row.external);
+    };
+  const auto remove = [this](std::string_view npc) {
+    vm.push_int(int32_t(findSymbolIndex(npc)));
+    vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
+    };
+  const auto isMage = [this] {
+    const auto hero = vm.global_hero()->get_instance();
+    vm.unsafe_set_gi(hero);
+    return vm.get_int(hero,findSymbol("C_NPC.GUILD"),0)==findSymbol("GIL_KDF")->get_int();
+    };
+  const auto push = [this](std::string_view name) { vm.push_reference(findSymbol(name)); };
+  const auto external = [this](std::string_view name) { vm.unsafe_call_external(findSymbol(name)); };
+  const auto number = [this](std::string_view name) { return findSymbol(name)->get_int(); };
+  const auto setFlag = [this,number](std::string_view name,std::string_view value) {
+    vm.set_int(vm.unsafe_get_gi(),findSymbol(name),0,number(value));
+    };
+
+  // Fixed placement ranges in the verified world script, relative to each chapter root.
+  const auto chapter3Placements = batch(old3,46,44);
+  const auto mageItem = batch(old3,727,1).front();
+  const auto otherItem = batch(old3,747,1).front();
+  vm.override_function(old3,std::function<void()>{[place,remove,isMage,number,setFlag,chapter3Placements,mageItem,otherItem] {
+    if(number("ENTEROW_KAPITEL3")!=number("FALSE"))
+      return;
+    for(const auto* companion : {"PC_MAGE_OW","PC_FIGHTER_OW","PC_THIEFOW"})
+      remove(companion);
+    for(const auto& row : chapter3Placements)
+      place(row);
+    place(isMage() ? mageItem : otherItem);
+    setFlag("ENTEROW_KAPITEL3","TRUE");
+    }},PlacementDefinitionRuntime::enabled);
+
+  auto pc = findSymbol(old4)->address()+291;
+  std::array<LiteralPlacement,11> deadHunters{};
+  using Op = daedalus::DaedalusOpcode;
+  for(auto& row : deadHunters) {
+    row = readLiteralPlacement(vm,pc,old4);
+    const auto instance = vm.instruction_at(pc);
+    const auto kill = vm.instruction_at(pc+5);
+    if(instance.op!=Op::PUSHI || instance.immediate!=int32_t(row.instance->index()) ||
+       kill.op!=Op::BL || kill.address!=findSymbol("B_KILLNPC")->address())
+      throw std::runtime_error("Stock placement: unexpected Old World chapter four insert and kill pair");
+    pc+=10;
+    }
+  const auto camp = batch(old4,581,5);
+  const std::array optionalCamp={batch(old4,672,1).front(),batch(old4,703,1).front(),
+                                 batch(old4,734,1).front(),batch(old4,765,1).front()};
+  const auto valley = batch(old4,780,235);
+  const auto talbinSnapper = batch(old4,4417,1).front();
+  vm.override_function(old4,std::function<void()>{[this,place,remove,isMage,push,external,number,setFlag,
+                                                  deadHunters,camp,optionalCamp,valley,talbinSnapper] {
+    const auto alive = [this,push,external,number](std::string_view npc) {
+      push(npc);
+      external("NPC_ISDEAD");
+      return vm.pop_int()==number("FALSE");
+      };
+    const auto routine = [this,push](std::string_view npc,std::string_view name) {
+      push(npc);
+      push(name);
+      vm.unsafe_call_bl(findSymbol("B_STARTOTHERROUTINE"));
+      };
+    const auto giveItem = [this,push,external](std::string_view npc,std::string_view item) {
+      push(npc);
+      vm.push_int(int32_t(findSymbolIndex(item)));
+      vm.push_int(1);
+      external("CREATEINVITEMS");
+      };
+
+    if(number("ENTEROW_KAPITEL4")==number("FALSE")) {
+      if(alive("ENGROM")) {
+        routine("ENGROM","$27796");
+        giveItem("ENGROM","ITAT_TALBINSLURKERSKIN");
+        if(isMage())
+          giveItem("ENGROM","ITWR_DEMENTOROBSESSIONBOOK_MIS");
+        else
+          invokeKillNpc(int32_t(findSymbolIndex("ENGROM")));
+        setFlag("ENGROMISGONE","TRUE");
+        }
+      for(const auto* npc : {"STRF_1115_GEPPERT","STRF_1116_KERVO","VLK_4106_DOBAR","VLK_4107_PARLAF"})
+        remove(npc);
+      if(alive("SENGRATH")) {
+        routine("SENGRATH","$27797");
+        const auto crossbow = int32_t(findSymbolIndex("ITRW_MIL_CROSSBOW"));
+        push("SENGRATH");
+        vm.push_int(crossbow);
+        external("NPC_HASITEMS");
+        if(vm.pop_int()!=0) {
+          push("SENGRATH");
+          vm.push_int(crossbow);
+          external("NPC_REMOVEINVITEM");
+          }
+        giveItem("SENGRATH","ITRW_SENGRATHSARMBRUST_MIS");
+        setFlag("SENGRATH_MISSING","TRUE");
+        invokeKillNpc(int32_t(findSymbolIndex("SENGRATH")));
+        }
+      for(const auto& row : deadHunters) {
+        place(row);
+        invokeKillNpc(int32_t(row.instance->index()));
+        }
+      push("BRUTUS");
+      push("$27809");
+      external("NPC_EXCHANGEROUTINE");
+      for(const auto& row : camp)
+        place(row);
+      constexpr const char* companions[]={"SLD_BULLCO_IS_ALIVE","SLD_ROD_IS_ALIVE","SLD_CIPHER_IS_ALIVE","SLD_GORN_IS_ALIVE"};
+      for(size_t i=0;i<optionalCamp.size();++i)
+        if(number(companions[i])==number("TRUE"))
+          place(optionalCamp[i]);
+      for(const auto& row : valley)
+        place(row);
+
+      push("TOPIC_DRAGONHUNTER");
+      push("LOG_MISSION");
+      external("LOG_CREATETOPIC");
+      push("TOPIC_DRAGONHUNTER");
+      push("LOG_RUNNING");
+      external("LOG_SETTOPICSTATUS");
+      push("TOPIC_DRAGONHUNTER");
+      push("$28054");
+      vm.unsafe_call_bl(findSymbol("B_LOGENTRY"));
+      for(const auto* title : {"KAPWECHSEL_4","KAPWECHSEL_4_TEXT","$28055","$28056"})
+        push(title);
+      vm.push_int(6000);
+      external("INTRODUCECHAPTER");
+      setFlag("ENTEROW_KAPITEL4","TRUE");
+      }
+
+    if(number("TALBIN_FOLLOWSTHROUGHPASS")==number("LOG_OBSOLETE")) {
+      invokeKillNpc(int32_t(findSymbolIndex("VLK_4130_TALBIN")));
+      place(talbinSnapper);
+      setFlag("TALBIN_FOLLOWSTHROUGHPASS","LOG_FAILED");
+      }
+    else if(number("TALBIN_FOLLOWSTHROUGHPASS")==number("LOG_SUCCESS")) {
+      remove("VLK_4130_TALBIN");
+      setFlag("TALBIN_FOLLOWSTHROUGHPASS","LOG_FAILED");
+      }
+    }},PlacementDefinitionRuntime::enabled);
   }
 
 void GameScript::loadKhorinisChapter3() {

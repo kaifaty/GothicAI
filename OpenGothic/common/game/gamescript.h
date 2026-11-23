@@ -371,6 +371,7 @@ class GameScript final : public GameRules {
     void loadNativeWorldEntry();
     void loadNewWorldChapterEntries();
     void loadKhorinisChapter3();
+    void loadOldWorldChapterEntries();
     void removeFinishedGhosts();
     enum class ChapterWorld : uint8_t { New, Old, Addon };
     void enterChapterWorld(ChapterWorld world);
