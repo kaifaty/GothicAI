@@ -345,10 +345,12 @@ void GameScript::loadNativeHumanPerceptions() {
   drawWeaponCallback = findFunction("B_ASSESSDRAWWEAPON");
   threatCallback = findFunction("B_ASSESSTHREAT");
   damageCallback = findFunction("B_ASSESSDAMAGE");
+  enemyCallback = findFunction("B_ASSESSENEMY");
   stopShortZapCallback = findFunction("B_STOPSHORTZAPPED");
   const auto enabled = [this] { return nativeHumanPerceptionsEnabled(); };
   vm.override_function("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }},enabled);
   vm.override_function("B_ASSESSDAMAGE",std::function<void()>{[this] { runDamageReaction(); }},enabled);
+  vm.override_function("B_ASSESSENEMY",std::function<int32_t()>{[this] { return runEnemyReaction(); }},enabled);
   vm.override_function("B_VALIDATEOTHER",std::function<void()>{[this] {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
@@ -360,13 +362,16 @@ void GameScript::loadNativeHumanPerceptions() {
 
 bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase) {
   const bool stopShortZap = fn==stopShortZapCallback;
-  if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=damageCallback && !stopShortZap) || !nativeHumanPerceptionsEnabled())
+  if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=damageCallback && fn!=enemyCallback && !stopShortZap) ||
+     !nativeHumanPerceptionsEnabled())
     return false;
   phase.fromRecord();
   if(fn==drawWeaponCallback)
     phase.result = runDrawWeaponReaction();
   else if(fn==threatCallback)
     runThreatReaction();
+  else if(fn==enemyCallback)
+    phase.result = runEnemyReaction();
   else if(stopShortZap)
     stopControlSpell(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()),true);
   else
@@ -476,7 +481,7 @@ void GameScript::runDamageReaction() {
     return;
     }
 
-  if(vm.call_function<int32_t>("B_ASSESSENEMY")!=0)
+  if(runEnemyReaction()!=0)
     return;
   const auto none = findSymbol("AR_NONE")->get_int();
   const auto attacker = other();
@@ -498,6 +503,67 @@ void GameScript::runDamageReaction() {
       }
     }
   startNpcAttack(self,attacker,findSymbol("AR_REACTTODAMAGE")->get_int(),0);
+  }
+
+int32_t GameScript::runEnemyReaction() {
+  constexpr size_t partyMember = 15; // AIV_PARTYMEMBER
+  constexpr size_t followInWater = 28; // AIV_MM_FOLLOWINWATER
+  constexpr size_t lastPlayerAttackReason = 47; // AIV_LASTPLAYERAR
+  constexpr size_t enemyOverride = 61; // AIV_ENEMYOVERRIDE
+  constexpr size_t noFightParker = 71; // AIV_NOFIGHTPARKER
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto actorId = [&](std::string_view instance, std::string_view scratch) {
+    const auto actor = hlp_getnpc(int(findSymbolIndex(instance)));
+    findSymbol(scratch)->set_instance(actor);
+    return hlp_getinstanceid(actor);
+    };
+  const auto inspector = actorId("PC_LEVELINSPEKTOR","B_ASSESSENEMY.PCL");
+  const auto otherId = hlp_getinstanceid(other);
+  if(otherId==inspector || self==nullptr)
+    return 0;
+  const auto otherGuild = other ? int32_t(other->guild) : 0;
+  const auto humanSeparator = findSymbol("GIL_SEPERATOR_HUM")->get_int();
+  const bool otherParker = other && other->aivar[noFightParker]==1;
+  if((otherParker && otherGuild>humanSeparator) ||
+     ((otherParker || self->aivar[noFightParker]==1) && otherGuild<humanSeparator &&
+      otherId!=hlp_getinstanceid(vm.global_hero()->get_instance())))
+    return 0;
+
+  const bool diving = vm.call_function<int32_t>("C_BODYSTATECONTAINS",other,int32_t(BS_DIVE))!=0;
+  const bool swimming = vm.call_function<int32_t>("C_BODYSTATECONTAINS",other,int32_t(BS_SWIM))!=0;
+  if((self->aivar[followInWater]==0 && (diving || swimming)) ||
+     npc_getheighttonpc(self,other)>findSymbol("PERC_DIST_HEIGHT")->get_int())
+    return 0;
+  if(self->aivar[partyMember]==1 && (npc_getdisttonpc(self,other)>1500 || !npc_canseenpc(self,other)))
+    return 0;
+  const bool fakeBandit = isPlayerFakeBandit(self,other);
+  if(self->guild==GIL_BDT && fakeBandit)
+    return 0;
+
+  const auto golem = actorId("MAGICGOLEM","B_ASSESSENEMY.MGO");
+  const auto lares = actorId("VLK_449_LARES","B_ASSESSENEMY.LAR");
+  if(otherId==golem && hlp_getinstanceid(self)==lares)
+    return 0;
+  const bool otherOverridesEnemy = other && other->aivar[enemyOverride]==1;
+  if(otherGuild<humanSeparator && (otherOverridesEnemy || self->aivar[enemyOverride]==1))
+    return 0;
+  if(npc_getattitude(self,other)!=ATT_HOSTILE || isGateGuard(self) ||
+     (self->type==NpcType::G2_FRIEND && npc_isplayer(other)))
+    return 0;
+
+  if(wld_getguildattitude(int32_t(self->guild),otherGuild)==ATT_HOSTILE) {
+    startNpcAttack(self,other,findSymbol("AR_GUILDENEMY")->get_int(),0);
+    return 1;
+    }
+  const bool near = npc_getdisttonpc(self,other)<=findSymbol("PERC_DIST_INTERMEDIAT")->get_int();
+  const bool observing = npc_isinstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr));
+  const bool waited = npc_getstatetime(self)>2;
+  if(near && (observing || waited) && npc_getattitude(self,other)==ATT_HOSTILE) {
+    startNpcAttack(self,other,self->aivar[lastPlayerAttackReason],0);
+    return 1;
+    }
+  return 0;
   }
 
 void GameScript::stopControlSpell(const std::shared_ptr<daedalus::INpc>& self, bool continueRoutine) {
@@ -1092,7 +1158,7 @@ bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symb
     if(weapon) {
       setPerceptionPreset(false);
       npc_percenable(self,PERC_ASSESSFIGHTSOUND,int(findFunction("B_ASSESSFIGHTSOUND").ptr));
-      if(vm.call_function<int32_t>("B_ASSESSENEMY")!=0)
+      if(runEnemyReaction()!=0)
         return true;
       ai_standup(self);
       } else {
