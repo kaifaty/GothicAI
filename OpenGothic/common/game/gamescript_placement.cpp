@@ -3,6 +3,7 @@
 #include <array>
 #include <initializer_list>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 PlacementDefinitionRuntime::Definitions dragonIslandPlacement(const daedalus::DaedalusScript& vm) {
@@ -113,6 +114,63 @@ void GameScript::runStartup(std::string_view fn) {
 void GameScript::runWorldInit(std::string_view fn) {
   const auto* function = vm.find_symbol_by_name(fn);
   const bool native = nativeRoutineProgram && PlacementDefinitionRuntime::enabled() && function;
+  if(native && (function->name()=="INIT_NEWWORLD" || function->name()=="INIT_OLDWORLD")) {
+    const bool oldWorld = function->name()=="INIT_OLDWORLD";
+    if(oldWorld) {
+      for(auto name : {"INIT_SUB_OLDCAMP","INIT_SUB_DEMONTOWER","INIT_SUB_SURFACE"})
+        vm.unsafe_call_bl(findSymbol(name));
+      }
+    for(auto name : {"B_INITMONSTERATTITUDES","B_INITGUILDATTITUDES","B_INITNPCGLOBALS"})
+      vm.unsafe_call_bl(findSymbol(name));
+    vm.unsafe_call_bl(findSymbol(oldWorld ? "B_ENTER_OLDWORLD" : "B_ENTER_NEWWORLD"));
+
+    auto* yes = findSymbol("TRUE");
+    auto* no = findSymbol("FALSE");
+    auto* world = findSymbol(oldWorld ? "OLDWORLD_ZEN" : "NEWWORLD_ZEN");
+    const auto advance = [&](int32_t chapter,std::string_view latchName,std::string_view readyName) {
+      auto* latch = findSymbol(latchName);
+      const bool pending = latch->get_int()==no->get_int();
+      const bool ready = findSymbol(readyName)->get_int()==yes->get_int();
+      if(pending && ready) {
+        vm.push_int(chapter);
+        vm.push_reference(world);
+        vm.unsafe_call_bl(findSymbol("B_KAPITELWECHSEL"));
+        latch->set_int(yes->get_int());
+        }
+      };
+    if(oldWorld) {
+      advance(4,"B_CHAPTER4_ONETIME","MIS_READYFORCHAPTER4");
+      return;
+      }
+
+    auto* thievesCleared = findSymbol("ANDRE_DIEBESGILDE_AUFGERAEUMT");
+    const bool pending = thievesCleared->get_int()!=yes->get_int();
+    const bool betrayed = findSymbol("DIEBESGILDE_VERRATEN")->get_int()!=0;
+    if(pending && betrayed) {
+      const auto alive = [&](std::string_view alias) {
+        vm.push_reference(findSymbol(alias));
+        vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
+        return vm.pop_int()==0;
+        };
+      // The original checks all three aliases before deciding to clear the guild.
+      const bool ramirez = alive("RAMIREZ");
+      const bool jesper = alive("JESPER");
+      const bool cassia = alive("CASSIA");
+      if(ramirez || jesper || cassia) {
+        for(auto name : {"VLK_447_CASSIA","VLK_446_JESPER","VLK_445_RAMIREZ"})
+          invokeKillNpc(int32_t(findSymbolIndex(name)));
+        thievesCleared->set_int(yes->get_int());
+        }
+      }
+    for(auto name : {"INIT_SUB_NEWWORLD_PART_CITY_01","INIT_SUB_NEWWORLD_PART_FARM_01",
+                     "INIT_SUB_NEWWORLD_PART_XARDAS_01","INIT_SUB_NEWWORLD_PART_MONASTERY_01",
+                     "INIT_SUB_NEWWORLD_PART_GREATPEASANT_01","INIT_SUB_NEWWORLD_PART_TROLLAREA_01",
+                     "INIT_SUB_NEWWORLD_PART_FOREST_01","INIT_SUB_NEWWORLD_PART_PASS_TO_OW_01"})
+      vm.unsafe_call_bl(findSymbol(name));
+    advance(3,"B_CHAPTER3_ONETIME","MIS_READYFORCHAPTER3");
+    advance(5,"B_CHAPTER5_ONETIME","MIS_ALLDRAGONSDEAD");
+    return;
+    }
   if(native && function->name()=="INIT_ADDONWORLD") {
     for(const auto* stage:{"INIT_SUB_ADDON_PART_BANDITSCAMP_01", "INIT_SUB_ADDON_PART_PIRATESCAMP_01",
                            "INIT_SUB_ADDON_PART_ENTRANCE_01", "INIT_SUB_ADDON_PART_GOLDMINE_01",
@@ -194,22 +252,82 @@ void GameScript::loadNativeWorldEntry() {
         worldEntryLatches[i]=findSymbol("TRUE")->get_int();
       }},PlacementDefinitionRuntime::enabled);
     }
-  for(const auto* stage:{"INIT_SUB_ADDON_PART_PIRATESCAMP_01", "INIT_SUB_ADDON_PART_ENTRANCE_01",
+  for(const auto* stage:{"B_INITGUILDATTITUDES","INIT_SUB_DEMONTOWER","INIT_SUB_NEWWORLD_PART_XARDAS_01",
+                         "INIT_SUB_NEWWORLD_PART_TROLLAREA_01","INIT_SUB_NEWWORLD_PART_FOREST_01",
+                         "INIT_SUB_NEWWORLD_PART_PASS_TO_OW_01",
+                         "INIT_SUB_ADDON_PART_PIRATESCAMP_01", "INIT_SUB_ADDON_PART_ENTRANCE_01",
                          "INIT_SUB_ADDON_PART_GOLDMINE_01", "INIT_SUB_ADDON_PART_CANYON_01",
                          "INIT_SUB_ADDON_PART_VALLEY_01", "INIT_SUB_ADDON_PART_ADANOSTEMPLE_01"})
     vm.override_function(stage,std::function<void()>{[] {}},PlacementDefinitionRuntime::enabled);
 
-  vm.override_function("INIT_SUB_ADDON_PART_BANDITSCAMP_01",std::function<void()>{[this] {
-    static constexpr std::pair<const char*,const char*> rooms[]={
-      {"$53469","GIL_NONE"},   {"$53470","GIL_PUBLIC"}, {"$53471","GIL_PUBLIC"},
-      {"$53472","GIL_NONE"},   {"$53473","GIL_NONE"},   {"$53474","GIL_PUBLIC"},
+  using Op = daedalus::DaedalusOpcode;
+  using Type = daedalus::DaedalusDataType;
+  using Symbol = daedalus::DaedalusSymbol;
+  struct Room {
+    Symbol* label;
+    Symbol* guild;
+    };
+  const auto* assign = findSymbol("WLD_ASSIGNROOMTOGUILD");
+  const auto assignRoom = [this,assign](const Room& room) {
+    vm.push_reference(room.label);
+    if(room.guild)
+      vm.push_reference(room.guild);
+    else
+      vm.push_int(-1);
+    vm.unsafe_call_external(assign);
+    };
+  static constexpr std::pair<const char*,size_t> roomSections[] = {
+    {"INIT_SUB_ADDON_PART_BANDITSCAMP_01",6}, {"INIT_SUB_NEWWORLD_PART_MONASTERY_01",13}, {"INIT_SUB_OLDCAMP",25},
+    };
+  for(const auto& [section,count] : roomSections) {
+    auto pc = findSymbol(section)->address();
+    const auto malformed = [&] { throw std::runtime_error("Unexpected room initializer in "+std::string(section)); };
+    const auto take = [&] {
+      const auto op = vm.instruction_at(pc);
+      pc += op.size;
+      return op;
       };
-    const auto* assign=findSymbol("WLD_ASSIGNROOMTOGUILD");
-    for(const auto& [room,guild]:rooms) {
-      vm.push_reference(findSymbol(room));
-      vm.push_reference(findSymbol(guild));
-      vm.unsafe_call_external(assign);
+    std::vector<Room> rooms;
+    rooms.reserve(count);
+    for(size_t i=0;i<count;++i) {
+      const auto label = take();
+      const auto owner = take();
+      auto* room = label.op==Op::PUSHV ? findSymbol(label.symbol) : nullptr;
+      auto* guild = owner.op==Op::PUSHV ? findSymbol(owner.symbol) : nullptr;
+      if(!room || room->type()!=Type::STRING || !room->is_const() || room->count()!=1)
+        malformed();
+      if(guild) {
+        if(guild->type()!=Type::INT || !guild->is_const() || guild->count()!=1)
+          malformed();
+        } else if(owner.op!=Op::PUSHI || owner.immediate!=1 || take().op!=Op::NEGATE) {
+        malformed();
+        }
+      const auto call = take();
+      if(call.op!=Op::BE || call.symbol!=assign->index())
+        malformed();
+      rooms.push_back({room,guild});
       }
+    if(take().op!=Op::RSR)
+      malformed();
+    vm.override_function(section,std::function<void()>{[assignRoom,rooms=std::move(rooms)] {
+      for(const auto& room : rooms)
+        assignRoom(room);
+      }},PlacementDefinitionRuntime::enabled);
+    }
+  vm.override_function("INIT_SUB_NEWWORLD_PART_FARM_01",std::function<void()>{[this,assignRoom] {
+    auto* publicRoom = findSymbol("GIL_PUBLIC");
+    assignRoom({findSymbol("$54786"),publicRoom});
+    assignRoom({findSymbol("$54787"),publicRoom});
+    if(findSymbol("LOBART_KLEIDUNG_VERKAUFT")->get_int()==findSymbol("TRUE")->get_int())
+      assignRoom({findSymbol("$54788"),findSymbol("GIL_NONE")});
+    else
+      assignRoom({findSymbol("$54789"),publicRoom});
+    }},PlacementDefinitionRuntime::enabled);
+  vm.override_function("INIT_SUB_SURFACE",std::function<void()>{[this,assignRoom] {
+    auto* seekers = findSymbol("GIL_DMT");
+    assignRoom({findSymbol("$54426"),seekers});
+    assignRoom({findSymbol("$54427"),seekers});
+    vm.unsafe_call_bl(findSymbol("B_ENTER_OLDWORLD"));
     }},PlacementDefinitionRuntime::enabled);
 
   vm.override_function("B_KAPITELWECHSEL",std::function<void(int32_t,int32_t)>{
