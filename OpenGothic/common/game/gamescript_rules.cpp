@@ -15,6 +15,11 @@
 #include <variant>
 #include <array>
 
+namespace {
+constexpr std::string_view bartokOrcGreeting = "DIA_Bartok_Angekommen_04_02";
+constexpr std::string_view cookCleaverGreeting = "Hackebeil_01_00";
+}
+
 std::string_view GameScript::symbolName(size_t id) {
   if(auto* symbol = findSymbol(id))
     return symbol->name();
@@ -459,6 +464,11 @@ void GameScript::loadNativeHumanPerceptions() {
   vm.override_function("B_SAY_OVERLAY",std::function<void(Actor,Actor,std::string_view)>{[this](const Actor& self, const Actor& other, std::string_view line) {
     sayToNpc(self,other,line,true);
     }},enabled);
+  vm.override_function("B_SAY_GUILDGREETINGS",std::function<void(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    sayGuildGreeting(self,other);
+    }},enabled);
+  vm.override_function("B_BARTOK_SHITANORC",std::function<void()>{[this] { sayAmbientGreeting(bartokOrcGreeting); }},enabled);
+  vm.override_function("B_KOCH_HACKEBEIL",std::function<void()>{[this] { sayAmbientGreeting(cookCleaverGreeting); }},enabled);
   vm.override_function("B_ADDPETZCRIME",std::function<void(Actor,int32_t)>{[this](const Actor& witness, int32_t crime) {
     adjustPetzCrime(witness,crime);
     }},enabled);
@@ -1219,13 +1229,49 @@ void GameScript::runPlayerAssessment() {
   const bool walking = hasBodyState(self,BS_WALK);
   if(!disguise && !gateGuard && !refuse && withinGreetingRange && walking) {
     lookAtNpc(self,other());
-    vm.call_function<void>("B_SAY_GUILDGREETINGS",self,other());
+    sayGuildGreeting(self,other());
     stopLookAtNpc(self);
     npc_setrefusetalk(other(),20);
     }
   const bool outsideTalkRange = distance()>talkDistance;
   if(isGateGuard(self) && outsideTalkRange)
     self->aivar[guardPassageStatus] = constant("GP_NONE");
+  }
+
+void GameScript::sayGuildGreeting(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("B_SAY_GUILDGREETINGS.OTH")->set_instance(other);
+  findSymbol("B_SAY_GUILDGREETINGS.SLF")->set_instance(self);
+  const auto selfGuild = self ? self->guild : int32_t(GIL_NONE);
+  const auto otherGuild = other ? other->guild : int32_t(GIL_NONE);
+  if(selfGuild==GIL_MIL && (otherGuild==GIL_PAL || otherGuild==GIL_MIL)) {
+    sayToNpc(self,other,"$MILGREETINGS",true);
+    return;
+    }
+  if((selfGuild==GIL_PAL && (otherGuild==GIL_PAL || otherGuild==GIL_MIL || otherGuild==GIL_KDF)) ||
+     (selfGuild==GIL_KDF && (otherGuild==GIL_PAL || otherGuild==GIL_NOV || otherGuild==GIL_KDF))) {
+    sayToNpc(self,other,"$PALGREETINGS",true);
+    return;
+    }
+
+  const auto selfId = hlp_getinstanceid(self);
+  if(findSymbol("BARTOK_ORKGESAGT")->get_int()==1 && selfId==hlp_getinstanceid(findSymbol("BARTOK")->get_instance())) {
+    sayAmbientGreeting(bartokOrcGreeting);
+    return;
+    }
+  if(selfId==hlp_getinstanceid(findSymbol("KOCH")->get_instance())) {
+    sayAmbientGreeting(cookCleaverGreeting);
+    return;
+    }
+  const auto roll = hlp_random(100);
+  findSymbol("B_SAY_GUILDGREETINGS.ZUFALL")->set_int(roll);
+  if(wld_israining() && roll<=10)
+    sayToNpc(self,other,"$WEATHER",true);
+  }
+
+void GameScript::sayAmbientGreeting(std::string_view line) {
+  // The story outputs use the current context, independently of the greeting parameters.
+  ai_output(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()),
+            std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()),line);
   }
 
 void GameScript::stopControlSpell(const std::shared_ptr<daedalus::INpc>& self, bool continueRoutine) {
