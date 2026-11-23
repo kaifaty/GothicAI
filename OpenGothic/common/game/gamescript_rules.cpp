@@ -412,6 +412,7 @@ bool GameScript::nativeHumanPerceptionsEnabled() const {
 void GameScript::loadNativeHumanPerceptions() {
   if(!nativeRoutineProgram)
     return;
+  bindCrimeGlobals();
   drawWeaponCallback = findFunction("B_ASSESSDRAWWEAPON");
   threatCallback = findFunction("B_ASSESSTHREAT");
   warnCallback = findFunction("B_ASSESSWARN");
@@ -2133,6 +2134,17 @@ std::array<bool,std::size(crimeJurisdictions)> crimeJurisdictionMembership(const
 
 }
 
+void GameScript::bindCrimeGlobals() {
+  for(size_t i=0; i<std::size(crimeJurisdictions); ++i) {
+    const auto& jurisdiction = crimeJurisdictions[i];
+    findSymbol(jurisdiction.absolution)->bind_global_int(crimeAbsolutionLevels[i]);
+    for(size_t j=0; j<jurisdiction.counters.size(); ++j) {
+      if(!jurisdiction.counters[j].empty())
+        findSymbol(jurisdiction.counters[j])->bind_global_int(petzCrimeCounters[i*jurisdiction.counters.size()+j]);
+      }
+    }
+  }
+
 int32_t GameScript::currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>& witness) {
   findSymbol("B_GETCURRENTABSOLUTIONLEVEL.SLF")->set_instance(witness);
   const auto membership = crimeJurisdictionMembership(witness.get());
@@ -2140,7 +2152,7 @@ int32_t GameScript::currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>
     const auto& jurisdiction = crimeJurisdictions[i];
     findSymbol(jurisdiction.witnessSlot)->set_instance(witness);
     if(membership[i])
-      return findSymbol(jurisdiction.absolution)->get_int();
+      return crimeAbsolutionLevels[i];
     }
   return 0;
   }
@@ -2163,8 +2175,8 @@ void GameScript::adjustPetzCrime(const std::shared_ptr<daedalus::INpc>& witness,
     for(size_t j=0; j<crimes.size(); ++j) {
       if(jurisdiction.counters[j].empty() || crime!=findSymbol(crimes[j])->get_int())
         continue;
-      auto& counter = *findSymbol(jurisdiction.counters[j]);
-      counter.set_int(counter.get_int()+(newCrime ? 1 : -1));
+      auto& counter = petzCrimeCounters[i*jurisdiction.counters.size()+j];
+      counter += newCrime ? 1 : -1;
       }
     }
   }

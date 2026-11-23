@@ -304,7 +304,9 @@ void helperMutations(const fs::path& file,Gothic& gothic,void (*compare)(World&)
 }
 
 void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
-  auto& vm=world.script().getVm();
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
   auto& record=witness.handle();
   const auto witnessHandle=std::static_pointer_cast<daedalus::INpc>(witness.handlePtr());
   const auto heroHandle=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
@@ -324,14 +326,62 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
   const auto savedType=record.type;
   const auto savedAivar=std::to_array(record.aivar);
   const bool wasEnabled=enabled;
-  std::vector<std::pair<daedalus::DaedalusSymbol*,int32_t>> globals;
+  struct Global {
+    daedalus::DaedalusSymbol& symbol;
+    int32_t& owned;
+    int32_t saved;
+    };
+  std::vector<Global> globals;
+  auto& levels=Contract::crimeAbsolutionLevels(script);
+  auto& counters=Contract::crimeCounters(script);
+  size_t levelIndex=0,counterIndex=0;
   for(std::string_view area : {"OLDCAMP","CITY","MONASTERY","FARM","BL"}) {
     auto& level=symbol("ABSOLUTIONLEVEL_"+std::string(area));
-    globals.emplace_back(&level,level.get_int());
+    globals.push_back({level,levels.at(levelIndex++),level.get_int()});
     for(std::string_view crime : {"MURDER","THEFT","ATTACK","SHEEPKILLER"}) {
       if(area=="BL" && crime=="SHEEPKILLER") continue;
       auto& counter=symbol("PETZCOUNTER_"+std::string(area)+"_"+std::string(crime));
-      globals.emplace_back(&counter,counter.get_int());
+      globals.push_back({counter,counters.at(counterIndex++),counter.get_int()});
+      }
+    }
+  const auto savedValue=[](size_t index) { return int32_t(index)-(index<12 ? 12 : 11); };
+  auto& location=symbol("B_GRANTABSOLUTION.LOCATION");
+  const auto savedLocation=location.get_int();
+  for(const bool legacy : {true,false}) {
+    std::vector<uint8_t> bytes;
+    Tempest::MemWriter writer(bytes);
+    {
+      Serialize out(writer);
+      out.setEntry("game/daedalus");
+      out.write(uint32_t(globals.size()));
+      for(size_t i=0; i<globals.size(); ++i) {
+        auto& [global,owned,saved]=globals[i];
+        owned=savedValue(i);
+        if(global.get_int()!=owned)
+          throw std::runtime_error("Crime memory: Daedalus must read the engine-owned value of "+global.name());
+        if(legacy)
+          out.write(uint32_t(daedalus::DaedalusDataType::INT),global.name(),uint32_t(1),savedValue(i));
+        else
+          Contract::saveCrimeGlobal(script,out,global);
+        }
+    }
+    vm.call_function<void>("B_GRANTABSOLUTION",symbol("LOC_ALL").get_int());
+    vm.call_function<void>("B_GRANTABSOLUTION",symbol("LOC_BL").get_int());
+    location.set_int(savedLocation);
+    for(size_t i=0; i<globals.size(); ++i) {
+      const auto& [global,owned,saved]=globals[i];
+      const int32_t expected=global.name().starts_with("ABSOLUTIONLEVEL_") ? savedValue(i)+1 : 0;
+      if(owned!=expected || global.get_int()!=expected)
+        throw std::runtime_error("Crime memory: stock absolution must update "+global.name());
+      }
+    Tempest::MemReader reader(bytes);
+    Serialize in(reader);
+    if(!in.setEntry("game/daedalus")) throw std::runtime_error("Crime memory: save must use the original entry");
+    script.loadVar(in);
+    for(size_t i=0; i<globals.size(); ++i) {
+      const auto& [global,owned,saved]=globals[i];
+      if(owned!=savedValue(i) || global.get_int()!=owned)
+        throw std::runtime_error("Crime memory: save must restore "+global.name());
       }
     }
   std::vector<std::pair<daedalus::DaedalusSymbol*,std::shared_ptr<daedalus::DaedalusInstance>>> references;
@@ -373,9 +423,9 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
       record.aivar[2]=date-c.age;
       record.aivar[46]=c.level;
       input.set_int(-1);
-      for(const auto& [global,saved] : globals) {
-        const std::string_view name=global->name();
-        global->set_int(name=="ABSOLUTIONLEVEL_BL" ? 7 : (name.starts_with("ABSOLUTIONLEVEL_") ? 3 : 0));
+      for(const auto& [global,owned,saved] : globals) {
+        const std::string_view name=global.name();
+        global.set_int(name=="ABSOLUTIONLEVEL_BL" ? 7 : (name.starts_with("ABSOLUTIONLEVEL_") ? 3 : 0));
         }
       for(const auto& [ref,saved] : references) ref->set_instance(heroHandle);
       size_t bytecode=0;
@@ -387,13 +437,13 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
       if(bytecode!=(native || equal ? 0u : 2u) || record.aivar[1]!=c.crime || record.aivar[2]!=date ||
          record.aivar[46]!=level || input.get_int()!=(equal ? -1 : c.crime))
         throw std::runtime_error("Crime memory: callbacks, same-crime refresh and recorded witness details match stock");
-      for(const auto& [global,saved] : globals) {
-        const std::string_view name=global->name();
+      for(const auto& [global,owned,saved] : globals) {
+        const std::string_view name=global.name();
         if(!name.starts_with("PETZCOUNTER_")) continue;
         const auto matches=[&](const char* expected) { return expected!=nullptr && name==expected; };
         const int32_t expected=matches(c.added) || matches(c.additionallyAdded) ? 1 :
                                (matches(c.removed) || matches(c.additionallyRemoved) ? -1 : 0);
-        if(global->get_int()!=expected)
+        if(global.get_int()!=expected || owned!=expected)
           throw std::runtime_error("Crime memory: unexpected counter "+std::string(name));
         }
       for(size_t i=0; i<references.size(); ++i) {
@@ -409,9 +459,9 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
   std::copy(savedAivar.begin(),savedAivar.end(),record.aivar);
   input.set_int(savedInput);
   reported.set_int(savedReported);
-  for(const auto& [global,saved] : globals) global->set_int(saved);
+  for(const auto& [global,owned,saved] : globals) owned=saved;
   for(const auto& [ref,saved] : references) ref->set_instance(saved);
-  std::puts("Crime memory: regional counters, absolution, expiry and witness references match the VM");
+  std::puts("Crime memory: engine-owned counters, absolution, legacy saves, expiry and witness references match the VM");
   }
 
 // The same live comparator as the installed-game corpus runs on a complete, tiny own-format
