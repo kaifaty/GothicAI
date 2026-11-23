@@ -2924,6 +2924,81 @@ void propertyCrimePerceptions(World& world,Npc& npc,Npc& hero) {
   std::puts("Property crime: theft, guard report and chest use match the VM");
   }
 
+void moveMobAndSurprisePerceptions(World& world,Npc& npc,Npc& hero) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=NpcDefinitionContract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto moveMob=script.findFunction("B_MOVEMOB");
+  const auto surprise=script.findFunction("B_ASSESSSURPRISE");
+  auto& scratch=*vm.find_symbol_by_name("B_MOVEMOB.DOOR");
+  const std::string savedScratch(scratch.get_string());
+  const auto savedPos=npc.position();
+  auto* savedMob=npc.detectedMob();
+  auto* savedTarget=npc.target();
+  auto& reason=npc.handle().aivar[9];
+  const auto savedReason=reason;
+  Interactive* door=nullptr;
+  for(uint32_t id=0; auto* candidate=world.mobsiById(id); ++id) {
+    if(candidate->schemeName()!="DOOR" || candidate->stateId()>0 || candidate->stateCount()<1)
+      continue;
+    npc.setPosition(candidate->displayPosition());
+    if(world.availableMob(npc,"DOOR")==candidate) {
+      door=candidate;
+      break;
+      }
+    }
+  require(door!=nullptr,"move mob: a closed door can be found from the NPC position");
+  const int savedDoorState=door->stateId();
+  for(const int state : {savedDoorState,1}) {
+    door->setMobState("DOOR",state);
+    require(door->stateId()==state,"move mob: door state was applied to the world");
+    for(auto* detectedMob : {static_cast<Interactive*>(nullptr),door}) {
+      const bool openDoor=detectedMob!=nullptr && state<=0;
+      std::vector<std::string> original;
+      for(bool native : {false,true}) {
+        enabled=native;
+        npc.setDetectedMob(detectedMob);
+        npc.clearAiQueue();
+        npc.aiPush(AiQueue::aiWait(173));
+        size_t instructions=0;
+        vm.observe_instructions([&](const auto&) { ++instructions; });
+        script.invokeState(&npc,&hero,nullptr,moveMob);
+        vm.observe_instructions({});
+        const auto* next=npc.aiQueueFront();
+        require((instructions==0)==native && scratch.get_string()==(detectedMob ? "DOOR" : "") &&
+                next && next->act==(openDoor ? AI_UseMob : AI_Wait),
+                "move mob: a closed door replaces the queue and each route records the same scheme");
+        auto queue=activityQueue(npc);
+        require(queue.size()==(detectedMob==nullptr || openDoor ? 2u : 1u),
+                "move mob: an open door retains the queue and no door appends continuation");
+        if(native) require(original==queue,"move mob: both routes preserve action order and arguments");
+        else original=std::move(queue);
+        }
+      }
+    }
+  for(bool native : {false,true}) {
+    enabled=native;
+    reason=-1;
+    npc.setTarget(nullptr);
+    size_t instructions=0;
+    vm.observe_instructions([&](const auto&) { ++instructions; });
+    script.invokeState(&npc,&hero,nullptr,surprise);
+    vm.observe_instructions({});
+    require((instructions==0)==native && npc.target()==&hero && reason==script.intSymbol("AR_GUILDENEMY",-1),
+            "surprise: both routes keep the new target and its guild enemy reason");
+    }
+  door->setMobState("DOOR",savedDoorState);
+  npc.setPosition(savedPos);
+  npc.setDetectedMob(savedMob);
+  npc.setTarget(savedTarget);
+  npc.clearAiQueue();
+  reason=savedReason;
+  scratch.set_string(savedScratch);
+  enabled=wasEnabled;
+  std::puts("Human perceptions: door use and combat surprise agree with the VM");
+  }
+
 void quietSoundRooms(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -3109,6 +3184,7 @@ void quietSoundRooms(Gothic& gothic) {
   enemyPerceptions(world,*npc,hero);
   playerAssessmentRoutes(world,*npc,hero);
   propertyCrimePerceptions(world,*npc,hero);
+  moveMobAndSurprisePerceptions(world,*npc,hero);
   for(bool privateRoom:{false,true}) {
     std::vector<std::string> original;
     for(bool native:{false,true}) {
