@@ -216,11 +216,71 @@ void stockLearnCostAttribute(GameScript& script, Npc& npc, Npc& player) {
   enabled=saved;
   }
 
+void stockLearnCostTalent(GameScript& script, Npc& npc, Npc& player) {
+  auto& vm=script.getVm();
+  auto& enabled=NpcDefinitionContract::activityEventsOn(script);
+  const bool saved=enabled;
+  const auto caller=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto learner=std::static_pointer_cast<daedalus::INpc>(player.handlePtr());
+  const auto originalContext=vm.unsafe_get_gi();
+  const auto trainedBow=learner->aivar[86];
+  const auto bowChance=learner->hitchance[TALENT_BOW];
+  learner->aivar[86]=60;
+  learner->hitchance[TALENT_BOW]=120;
+  vm.unsafe_set_gi(caller);
+  auto* helper=vm.find_symbol_by_name("B_GETLEARNCOSTTALENT");
+  auto* result=vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.KOSTEN");
+  static constexpr struct { Talent talent; int32_t skill, price; } cases[] = {
+    {TALENT_MAGE,6,5}, {TALENT_MAGE,7,0}, {TALENT_PICKLOCK,1,10},
+    {TALENT_SMITH,9,4}, {TALENT_ALCHEMY,12,0}, {TALENT_ALCHEMY,14,8},
+    {TALENT_TAKEANIMALTROPHY,9,3}, {TALENT_FOREIGNLANGUAGE,2,15},
+    {TALENT_WISPDETECTOR,4,4}, {TALENT_RUNES,46,20}, {TALENT_RUNES,-1,5},
+    {TALENT_BOW,5,15},
+    };
+  const auto pushCall=[&](Talent talent, int32_t skill) {
+    vm.push_instance(learner);
+    vm.push_int(talent);
+    vm.push_int(skill);
+    vm.unsafe_call_bl(helper);
+    };
+  for(bool native:{false,true}) {
+    if(native && (!saved || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+      continue;
+    enabled=native;
+    size_t instructions=0;
+    vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==helper->address(); });
+    for(const auto& [talent,skill,price]:cases) {
+      pushCall(talent,skill);
+      require(vm.pop_int()==price,"talent training: exact stock price including defaults and weapon bonuses");
+      }
+    pushCall(TALENT_BOW,2);
+    pushCall(TALENT_SMITH,9);
+    for(const auto& context:{caller,learner}) {
+      require(vm.top_is_reference(),"talent training: both delayed results must remain references");
+      const auto [symbol,index,instance]=vm.pop_reference();
+      require(symbol==result && index==0 && instance==context && result->get_int()==4,
+              "talent training: reference context is per call and the saved result is shared");
+      }
+    std::string error;
+    const auto cost=storygraph::callFunction(vm,*helper,{storygraph::Value::instance(learner),
+                                             storygraph::Value::integer(TALENT_BOW),storygraph::Value::integer(2)},error);
+    vm.observe_instructions({});
+    require(cost && cost->i==6 && vm.unsafe_get_gi()==caller &&
+            instructions==(native ? 0u : std::size(cases)+3),
+            "talent training: the StoryGraph preflight must use the selected executor with trained skill");
+    }
+  vm.unsafe_set_gi(originalContext);
+  learner->aivar[86]=trainedBow;
+  learner->hitchance[TALENT_BOW]=bowChance;
+  enabled=saved;
+  }
+
 void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
   stockLearnString(script);
   stockLearnCostAttribute(script,npc,player);
+  stockLearnCostTalent(script,npc,player);
   auto& vm=script.getVm();
   auto& events=Contract::activityEventsOn(script);
   const bool savedEvents=events;

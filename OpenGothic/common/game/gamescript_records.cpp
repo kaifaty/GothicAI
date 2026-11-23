@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <optional>
 #include <span>
 
@@ -10,6 +11,70 @@
 #include "game/serialize.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
+
+namespace {
+
+void pushTieredLearnCost(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& result,
+                        const std::shared_ptr<daedalus::DaedalusInstance>& learner, std::string_view slot,
+                        std::optional<int32_t> points = std::nullopt) {
+  const auto index = uint16_t(vm.find_symbol_by_name(slot)->get_int());
+  auto* aivar = vm.find_symbol_by_name("C_NPC.AIVAR");
+  // The result reference holds the learner's context before BL restores the caller's.
+  struct RestoreContext {
+    daedalus::DaedalusVm& vm;
+    std::shared_ptr<daedalus::DaedalusInstance> caller;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+    } restore{vm,vm.unsafe_get_gi()};
+  vm.unsafe_set_gi(learner);
+  int32_t cost = 5;
+  for(; cost>1; --cost) {
+    // The trained value excludes equipment and temporary bonuses.
+    if(vm.get_int(learner,aivar,index)>=30*(cost-1))
+      break;
+    }
+  result.set_int(cost);
+  if(points)
+    result.set_int(std::bit_cast<int32_t>(uint32_t(cost)*uint32_t(*points)));
+  vm.push_reference(&result);
+  }
+
+int32_t fixedTalentLearnCost(int32_t talent, int32_t skill) {
+  // Tables indexed by the verified NotR skill IDs.
+  static constexpr uint8_t smith[] = {2,4,4,6,6,8,8,10,10,4,6,8,10};
+  static constexpr uint8_t alchemy[] = {1,3,5,1,3,5,5,20,20,10,10,20,0,8,8};
+  static constexpr uint8_t trophies[] = {3,3,5,3,3,1,1,1,1,3,1,3,3,3};
+  static constexpr uint8_t languages[] = {5,10,15};
+  static constexpr uint8_t wisp[] = {0,1,2,3,4,5,5};
+  static constexpr uint8_t runes[] = {
+     1, 3, 3, 5, 5,10,10, 5, 5, 5, //  0–9
+     5, 5, 5, 5, 5, 5, 5, 5, 1, 5, // 10–19
+     5, 3, 3,10, 3, 5, 5, 5, 5, 5, // 20–29
+    10,10, 5,10,10,15,10,10,15,20, // 30–39
+    20,10,20,20,20,20,20, 5, 5, 5, // 40–49
+     5, 5, 5, 5, 5, 5, 5, 5, 5, 5, // 50–59
+    15, 5, 5, 5, 5, 5, 5, 5, 5, 5, // 60–69
+     5, 5,10, 5, 5,10              // 70–75
+    };
+  const auto price = [index=size_t(skill)](std::span<const uint8_t> table, int32_t fallback = 0) {
+    return index<table.size() ? table[index] : fallback;
+    };
+  switch(talent) {
+    case TALENT_MAGE:             return 1<=skill && skill<=6 ? 5 : 0;
+    case TALENT_ACROBAT:
+    case TALENT_SNEAK:            return 5;
+    case TALENT_PICKPOCKET:
+    case TALENT_PICKLOCK:         return 10;
+    case TALENT_SMITH:            return price(smith);
+    case TALENT_ALCHEMY:          return price(alchemy);
+    case TALENT_TAKEANIMALTROPHY: return price(trophies);
+    case TALENT_FOREIGNLANGUAGE:  return price(languages);
+    case TALENT_WISPDETECTOR:     return price(wisp);
+    case TALENT_RUNES:            return price(runes,5);
+    default:                      return 0;
+    }
+  }
+
+} // namespace
 
 auto GameScript::createNpc(Npc& owner, size_t instance, std::string_view waypoint, uint32_t& kind) -> std::shared_ptr<NpcRecord> {
   auto npc = std::make_shared<daedalus::INpc>();
@@ -118,23 +183,29 @@ void GameScript::loadNativeTrainingHelpers() {
         case ATR_MANAMAX:   slot = "REAL_MANA_MAX";  break;
         default: machine.push_reference(result); return {};
         }
-      const auto index = uint16_t(machine.find_symbol_by_name(slot)->get_int());
-      auto* aivar = machine.find_symbol_by_name("C_NPC.AIVAR");
-      // A supported attribute returns the shared result with the learner's context.
-      struct RestoreContext {
-        daedalus::DaedalusVm& vm;
-        std::shared_ptr<daedalus::DaedalusInstance> caller;
-        ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
-        } restore{machine,machine.unsafe_get_gi()};
-      machine.unsafe_set_gi(learner);
-      int32_t cost = 5;
-      for(; cost>1; --cost) {
-        // The trained value excludes temporary attribute bonuses.
-        if(machine.get_int(learner,aivar,index)>=30*(cost-1))
-          break;
+      pushTieredLearnCost(machine,*result,learner,slot);
+      return {};
+      }
+    },enabled);
+  vm.override_function("B_GETLEARNCOSTTALENT",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [](auto& machine) -> daedalus::DaedalusNakedCall {
+      const auto skill = machine.pop_int();
+      machine.find_symbol_by_name("B_GETLEARNCOSTTALENT.SKILL")->set_int(skill);
+      const auto talent = machine.pop_int();
+      machine.find_symbol_by_name("B_GETLEARNCOSTTALENT.TALENT")->set_int(talent);
+      const auto learner = machine.pop_instance();
+      machine.find_symbol_by_name("B_GETLEARNCOSTTALENT.OTH")->set_instance(learner);
+      auto* result = machine.find_symbol_by_name("B_GETLEARNCOSTTALENT.KOSTEN");
+      result->set_int(0);
+      if(TALENT_1H<=talent && talent<=TALENT_CROSSBOW) {
+        static constexpr std::string_view slots[] = {
+          "REAL_TALENT_1H","REAL_TALENT_2H","REAL_TALENT_BOW","REAL_TALENT_CROSSBOW"
+          };
+        pushTieredLearnCost(machine,*result,learner,slots[size_t(talent-TALENT_1H)],skill);
+        } else {
+        result->set_int(fixedTalentLearnCost(talent,skill));
+        machine.push_reference(result);
         }
-      result->set_int(cost);
-      machine.push_reference(result);
       return {};
       }
     },enabled);
@@ -165,7 +236,6 @@ auto GameScript::readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_pt
   struct Lesson {
     int32_t talent;
     int32_t skill;
-    int32_t cost;
     };
   struct Field {
     daedalus::DaedalusSymbol* member = nullptr;
@@ -205,15 +275,11 @@ auto GameScript::readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_pt
     if(target.op==Op::PUSHVI && target.symbol==vm.global_other()->index() &&
        constant && constant->type()==Type::STRING) {
       // Only these stock topics use fixed prices in the constructor's learn-string expression.
-      struct Teacher {
-        std::string_view topic;
-        int32_t          cost;
+      static constexpr std::string_view teachers[] = {
+        "DIA_BENNET_TEACHCOMMON", "DIA_WOLF_TEACHCRAWLERPLATES", "DIA_DOBAR_TEACH",
+        "DIA_BARTOK_TEACHSNEAK", "DIA_THORBEN_TEACH",
         };
-      static constexpr Teacher teachers[] = {
-        {"DIA_BENNET_TEACHCOMMON", 2}, {"DIA_WOLF_TEACHCRAWLERPLATES", 3}, {"DIA_DOBAR_TEACH", 4},
-        {"DIA_BARTOK_TEACHSNEAK", 5}, {"DIA_THORBEN_TEACH", 10},
-        };
-      const auto teacher = std::ranges::find(teachers,sym.name(),&Teacher::topic);
+      const auto teacher = std::ranges::find(teachers,sym.name());
       const auto talent = integer(next());
       const auto skill = integer(next());
       const auto costCall = next();
@@ -222,7 +288,7 @@ auto GameScript::readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_pt
          costCall.op!=Op::BL || costCall.address!=vm.find_symbol_by_name("B_GETLEARNCOSTTALENT")->address() ||
          textCall.op!=Op::BL || textCall.address!=vm.find_symbol_by_name("B_BUILDLEARNSTRING")->address())
         return nullptr;
-      field.lesson = Lesson{*talent,*skill,teacher->cost};
+      field.lesson = Lesson{*talent,*skill};
       target = next();
       }
     const auto store = next().op;
@@ -253,8 +319,9 @@ auto GameScript::readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_pt
       vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.SKILL")->set_int(lesson.skill);
       vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.TALENT")->set_int(lesson.talent);
       vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.OTH")->set_instance(vm.global_other()->get_instance());
-      vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.KOSTEN")->set_int(lesson.cost);
-      vm.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->set_int(lesson.cost);
+      const auto cost = fixedTalentLearnCost(lesson.talent,lesson.skill);
+      vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.KOSTEN")->set_int(cost);
+      vm.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->set_int(cost);
       field.member->set_string(buildLearnString(*field.text).get_string(),0,info.get());
       }
     else if(field.text!=nullptr)
