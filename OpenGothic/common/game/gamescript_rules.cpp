@@ -520,6 +520,11 @@ void GameScript::loadNativeHumanPerceptions() {
   vm.override_function("C_REFUSETALK",std::function<int32_t(Actor,Actor)>{[this](const Actor& npc,const Actor& other) {
     return refusesTalk(npc,other);
     }},enabled);
+  vm.override_function("C_IAMCANYONRAZOR",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    return isCanyonRazor(npc);
+    }},enabled);
+  vm.override_function("C_DROPUNCONSCIOUS",std::function<int32_t()>{[this] { return dropsUnconsciousNpc(); }},enabled);
+  vm.override_function("B_COUNTCANYONRAZOR",std::function<void()>{[this] { showRemainingCanyonRazors(); }},enabled);
   vm.override_function("C_WANTTOCALLGUARDS",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return wantsToCallGuards(npc);
     }},enabled);
@@ -2151,7 +2156,7 @@ bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symb
       setPerceptionPreset(true);
       }
     lookAtNpc(self,otherNpc());
-    selectWeapon(self,other());
+    selectWeapon(self,otherNpc());
     turnToOther();
     if(weapon) {
       auto& comment = *findSymbol("PLAYER_DRAWWEAPONCOMMENT");
@@ -2349,7 +2354,7 @@ bool GameScript::runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
     if(self->aivar[routinePosition]==notInPosition) {
       turnToOther();
       if(wantsAttack()) {
-        selectWeapon(self,other());
+        selectWeapon(self,otherNpc());
         say("$GETOUTOFHERE");
         } else if(npc_getattitude(otherNpc(),self)!=ATT_FRIENDLY) {
         say("$WHYAREYOUINHERE");
@@ -2892,6 +2897,47 @@ void GameScript::readySpell(const std::shared_ptr<daedalus::INpc>& self, int32_t
   ai_readyspell(self,spell,mana);
   }
 
+bool GameScript::isCanyonRazor(const std::shared_ptr<daedalus::INpc>& actor) {
+  findSymbol("C_IAMCANYONRAZOR.SLF")->set_instance(actor);
+  const auto id=hlp_getinstanceid(actor);
+  bool found=false;
+  for(const auto suffix:{"01","02","03","04","05","06","07","08","09","10"}) {
+    const auto razor=hlp_getnpc(int32_t(findSymbolIndex(std::string("CANYONRAZOR")+suffix)));
+    findSymbol(std::string("C_IAMCANYONRAZOR.RAZ")+suffix)->set_instance(razor);
+    found |= hlp_getinstanceid(razor)==id;
+    }
+  return found;
+  }
+
+bool GameScript::dropsUnconsciousNpc() {
+  constexpr size_t dropDeadAndKill=52; // AIV_DROPDEADANDKILL
+  constexpr auto humanSeparator=int32_t(GIL_SEPERATOR_HUM);
+  const auto excluded=[](const auto& actor) {
+    const auto guild=actor ? int32_t(actor->guild) : int32_t(GIL_NONE);
+    return guild==GIL_BDT || guild==GIL_DMT;
+    };
+  const auto other=std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  if(other && (other->aivar[dropDeadAndKill]==1 || int32_t(other->guild)>humanSeparator || excluded(other)))
+    return false;
+  const auto self=std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  return !self || (int32_t(self->guild)<humanSeparator && self->aivar[dropDeadAndKill]==0 && !excluded(self));
+  }
+
+void GameScript::showRemainingCanyonRazors() {
+  auto* left=findSymbol("B_COUNTCANYONRAZOR.CANYONRAZORLEFT");
+  auto* text=findSymbol("B_COUNTCANYONRAZOR.CANYONRAZORTEXT");
+  const auto count=findSymbol("CANYONRAZORBODYCOUNT")->get_int();
+  vm.push_int(std::bit_cast<int32_t>(10u-uint32_t(count)));
+  vm.unsafe_call_external(findSymbol("INTTOSTRING"));
+  left->set_string(vm.pop_string());
+  vm.push_reference(left);
+  vm.push_reference(findSymbol("PRINT_ADDON_CANYONRAZORSLEFT"));
+  vm.unsafe_call_external(findSymbol("CONCATSTRINGS"));
+  text->set_string(vm.pop_string());
+  ai_printscreen(text->get_string(),-1,findSymbol("YPOS_GOLDGIVEN")->get_int(),
+                 findSymbol("FONT_SCREENSMALL")->get_string(),2);
+  }
+
 bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   // These AIVAR slots belong to the verified NotR program.
   constexpr size_t sawCrime = 1;
@@ -2938,10 +2984,10 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
     self->aivar[victoryXpGiven] = 1;
     }
 
-  if(vm.call_function<int32_t>("C_IAMCANYONRAZOR",self)==1) {
+  if(isCanyonRazor(self)) {
     increment("CANYONRAZORBODYCOUNT");
     if(number("MIS_ADDON_GREG_CLEARCANYON")==number("LOG_RUNNING"))
-      vm.call_function<void>("B_COUNTCANYONRAZOR");
+      showRemainingCanyonRazors();
     }
 
   if(self->aivar[monsterId]==number("ID_SWAMPDRONE")) {
@@ -2954,7 +3000,7 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
 
   if(npc_isplayer(other())) {
     self->aivar[killedByPlayer] = 1;
-    if(vm.call_function<int32_t>("C_DROPUNCONSCIOUS")!=0)
+    if(dropsUnconsciousNpc())
       increment("MADKILLERCOUNT");
     const auto running = number("LOG_RUNNING");
     if(number("MIS_FESTER_KILLBUGS")==running && self->guild==number("GIL_GIANT_BUG"))

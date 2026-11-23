@@ -232,7 +232,9 @@ void npcDeathLifecycle(Gothic& gothic) {
     const auto initPc=script.findSymbol("ZS_DEAD")->address();
     const auto loopPc=script.findSymbol("ZS_DEAD_LOOP")->address();
     const auto runePc=script.findSymbol("B_CLEARRUNEINV")->address();
-    size_t initVm=0,loopVm=0,runeVm=0,deathLoot=0,dragonChecks=0;
+    const auto razorPc=script.findSymbol("C_IAMCANYONRAZOR")->address();
+    const auto dropPc=script.findSymbol("C_DROPUNCONSCIOUS")->address();
+    size_t initVm=0,loopVm=0,runeVm=0,conditionalVm=0,deathLoot=0,dragonChecks=0;
     const auto calls=vm.add_call_observer([&](const auto& symbol) {
       deathLoot+=symbol.name()=="B_GIVEDEATHINV";
       dragonChecks+=symbol.name()=="B_DRAGONKILLCOUNTER";
@@ -241,6 +243,7 @@ void npcDeathLifecycle(Gothic& gothic) {
       initVm+=vm.pc()==initPc;
       loopVm+=vm.pc()==loopPc;
       runeVm+=vm.pc()==runePc;
+      conditionalVm+=vm.pc()==razorPc || vm.pc()==dropPc;
       });
     npc->changeAttribute(ATR_HITPOINTS,-npc->attribute(ATR_HITPOINTS),false);
     npc->setOther(&hero);
@@ -259,6 +262,8 @@ void npcDeathLifecycle(Gothic& gothic) {
             "death: the credited player receives experience and remains the state's other");
     require(runeVm==(native ? 0u : 2u) && npc->itemCount(light)==3 && npc->itemCount(paladinLight)==0,
             "death: both cleanup calls preserve the stock cross-count for the two light runes");
+    require(conditionalVm==(native ? 0u : 2u),
+            "death: canyon identity and the rule for lethal damage use the selected executor");
     auto outcome=consequences(*npc,hero);
     if(!native) original=std::move(outcome);
     else {
