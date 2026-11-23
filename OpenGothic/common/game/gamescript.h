@@ -319,6 +319,7 @@ class GameScript final : public GameRules {
     bool usesNativeShrinkSpell(const Item* item) const;
     int runShrinkMana(Npc& caster, int mana, bool release);
     void castShrink(Npc& caster, Npc* target);
+    bool runStockSpellCast(Npc& caster, std::string_view function, int32_t level);
     void assessMagic(Npc& npc);
     void givePlayerXp(int32_t amount);
     void loadNativeQuestLog(const std::function<bool()>& enabled);

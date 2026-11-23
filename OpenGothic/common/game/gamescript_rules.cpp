@@ -2708,6 +2708,64 @@ void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
     }},enabled);
   }
 
+bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32_t level) {
+  if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
+     ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
+    return false;
+
+  struct Cast {
+    std::string_view function, runeCost = {}, levelParameter = {};
+    };
+  // These stock bodies only save an optional argument, debit mana, and advance selection.
+  static constexpr Cast casts[] = {
+    {"SPELL_CAST_BREATHOFDEATH",    "SPL_COST_BREATHOFDEATH", "SPELL_CAST_BREATHOFDEATH.SPELLLEVEL"},
+    {"SPELL_CAST_CHARM",            "SPL_COST_CHARM"},
+    {"SPELL_CAST_CONCUSSIONBOLT",   "SPL_COST_CONCUSSIONBOLT"},
+    {"SPELL_CAST_DEATHBALL",        "SPL_COST_DEATHBALL"},
+    {"SPELL_CAST_DEATHBOLT",        "SPL_COST_DEATHBOLT"},
+    {"SPELL_CAST_DESTROYUNDEAD",    "SPL_COST_DESTROYUNDEAD"},
+    {"SPELL_CAST_ENERGYBALL",       "SPL_COST_ENERGYBALL"},
+    {"SPELL_CAST_FIREBOLT",         "SPL_COST_FIREBOLT"},
+    {"SPELL_CAST_FIRERAIN",         "SPL_COST_FIRERAIN"},
+    {"SPELL_CAST_FIRESTORM",        "SPL_COST_INSTANTFIRESTORM"},
+    {"SPELL_CAST_GEYSER",           "SPL_COST_GEYSER"},
+    {"SPELL_CAST_GREENTENTACLE",    "SPL_COST_GREENTENTACLE"},
+    {"SPELL_CAST_ICEBOLT",          "SPL_COST_ICEBOLT"},
+    {"SPELL_CAST_ICECUBE",          "SPL_COST_ICECUBE"},
+    {"SPELL_CAST_ICELANCE",         "SPL_COST_ICELANCE"},
+    {"SPELL_CAST_ICEWAVE",          "SPL_COST_ICEWAVE"},
+    {"SPELL_CAST_INFLATE"},
+    {"SPELL_CAST_INSTANTFIREBALL",  "SPL_COST_INSTANTFIREBALL"},
+    {"SPELL_CAST_LIGHTNINGFLASH",   "SPL_COST_LIGHTNINGFLASH"},
+    {"SPELL_CAST_PALLIGHT",         "SPL_COST_PALLIGHT"},
+    {"SPELL_CAST_LIGHT",            "SPL_COST_LIGHT"},
+    {"SPELL_CAST_MASSDEATH",        "SPL_COST_MASSDEATH"},
+    {"SPELL_CAST_MASTEROFDISASTER", "SPL_COST_MASTEROFDISASTER"},
+    {"SPELL_CAST_PALDESTROYEVIL",   "SPL_COST_PALDESTROYEVIL"},
+    {"SPELL_CAST_PALHOLYBOLT",      "SPL_COST_PALHOLYBOLT"},
+    {"SPELL_CAST_PALREPELEVIL",     "SPL_COST_PALREPELEVIL"},
+    {"SPELL_CAST_SLEEP"},
+    {"SPELL_CAST_SUCKENERGY",       "SPL_COST_SUCKENERGY"},
+    {"SPELL_CAST_SWARM"},
+    {"SPELL_CAST_THUNDERSTORM",     "SPL_COST_THUNDERSTORM"},
+    {"SPELL_CAST_WATERFIST",        "SPL_COST_WATERFIST"},
+    {"SPELL_CAST_WHIRLWIND",        "SPL_COST_WHIRLWIND"},
+    {"SPELL_CAST_ZAP",              "SPL_COST_ZAP", "SPELL_CAST_ZAP.SPELLLEVEL"},
+    };
+  const auto cast=std::ranges::find(casts,function,&Cast::function);
+  if(cast==std::end(casts))
+    return false;
+  if(!cast->levelParameter.empty())
+    findSymbol(cast->levelParameter)->set_int(level);
+  if(!cast->runeCost.empty()) {
+    const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
+    const auto cost=findSymbol(npc_getactivespellisscroll(self) ? "SPL_COST_SCROLL" : cast->runeCost)->get_int();
+    caster.handle().attribute[ATR_MANA]-=cost;
+    }
+  ++caster.handle().aivar[20]; // AIV_SELECTSPELL
+  return true;
+  }
+
 int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {
   auto* symbol = findSymbol(name);
   if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT)
