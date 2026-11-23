@@ -1384,7 +1384,8 @@ void humanGuardCalls(World& world,Npc& npc,Npc& hero) {
   vm.global_self()->set_instance(self);
   vm.global_other()->set_instance(other);
   other->aivar[4]=0;
-  require(!hero.isDown() && hero.playAnimByName("S_RUNL",BS_RUN,true) && hero.bodyStateMasked()==BS_RUN,
+  require(!hero.isDown() && hero.playAnimByName("S_RUNL",BS_RUN,true) &&
+          ActivityDefinitions::bodyStateContains(int32_t(hero.bodyState()),BS_RUN),
           "guard call: the target must be running to retain the attack state clock");
   struct Site { std::string_view reason, line; uint32_t guild; int32_t party, tough; bool checkedTough, sound; };
   for(bool native:{false,true}) {
