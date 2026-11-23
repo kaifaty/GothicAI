@@ -189,6 +189,7 @@ class GameScript final : public GameRules {
     void playerHotLameHeal(Npc& pl) override;
 
     const PerDist& percRanges() const override { return perceptionRanges; }
+    std::optional<int32_t> quietSoundHeightLimit(ScriptFn callback) const override;
 
     bool isDead       (const Npc &pl) override;
     bool isUnconscious(const Npc &pl) override;
@@ -295,10 +296,14 @@ class GameScript final : public GameRules {
     bool aiOutputSvm(Npc &from, std::string_view name, std::string_view svm, Npc* target, bool overlay);
 
     bool searchScheme(std::string_view sc, std::string_view listName);
+    struct QuietSoundHeight {
+      ScriptFn callback;
+      int32_t limit = 0;
+      };
     static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                        RoutineDefinitionRuntime::Definitions& routines,
                                        NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,
-                                       ActivityDefinitionRuntime::Definitions& activities);
+                                       ActivityDefinitionRuntime::Definitions& activities, QuietSoundHeight& quietSound);
     int initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* function);
     bool game_initgerman     ();
     bool game_initenglish    ();
@@ -533,6 +538,7 @@ class GameScript final : public GameRules {
     PlacementDefinitionRuntime::Definitions                     placementDefinitions;
     ActivityDefinitionRuntime::Definitions                      activityDefinitions;
     bool                                                        activityEvents = ActivityDefinitionRuntime::events();
+    QuietSoundHeight                                            quietSoundHeight;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};

@@ -1929,7 +1929,8 @@ stops, so commands after `npcday` use the shared stream again. Do not combine `n
 in one scenario: the arena isolates its actors and clears all streams on reset. `std::rand` (sound variants, gestures, parry variant) is not reseeded.
 States that start and end within one world tick are not seen by the event poll.
 
-`trace=...` records selected NPCs independently of the Daedalus observer, with RNG sources labeled
+`trace=...` records selected NPCs independently of the Daedalus observer. Its JSONL header carries
+`trace_version: 2`, with RNG sources labeled
 `engine` or `script`. Add `probe` for the VM counters and detailed RNG attribution. Both options
 apply only during the journal interval and are off by default.
 The instruction metric includes helpers and reentrant script work during the engine phase; it is

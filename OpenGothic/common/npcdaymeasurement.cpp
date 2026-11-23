@@ -178,7 +178,7 @@ bool NpcDayMeasurement::start(World& w, const NpcDayJournal::Options& options, s
       const auto routines=RoutineDefinitions::read(baseProgramIndex().dir.parent_path(),sha);
       m->stats=DayScriptStats::attach(w.script().getVm(),routines);
       }
-    if(m->trace) std::fprintf(m->trace,"{\"kind\":\"header\",%s}\n",m->header.c_str());
+    if(m->trace) std::fprintf(m->trace,"{\"kind\":\"header\",\"trace_version\":2,%s}\n",m->header.c_str());
     measurement=std::move(m);
     NpcActivityProbe::instance=measurement.get();
     tick(w);

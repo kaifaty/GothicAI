@@ -83,7 +83,8 @@ bool GameScript::GlobalOutput::isFinished() {
   }
 
 GameScript::GameScript(GameSession &owner)
-    :owner(owner), vm(createVm(Gothic::inst(),itemDefinitions,routineDefinitions,npcDefinitions,placementDefinitions,activityDefinitions)) {
+    :owner(owner), vm(createVm(Gothic::inst(),itemDefinitions,routineDefinitions,npcDefinitions,placementDefinitions,
+                              activityDefinitions,quietSoundHeight)) {
   if (vm.global_self() == nullptr || vm.global_other() == nullptr || vm.global_item() == nullptr ||
       vm.global_victim() == nullptr || vm.global_hero() == nullptr)
     throw std::runtime_error("Cannot find script symbol SELF, OTHER, ITEM, VICTIM, or HERO! Cannot proceed!");

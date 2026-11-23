@@ -10,7 +10,7 @@
 daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                          RoutineDefinitionRuntime::Definitions& routines,
                                          NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,
-                                         ActivityDefinitionRuntime::Definitions& activities) {
+                                         ActivityDefinitionRuntime::Definitions& activities, QuietSoundHeight& quietSound) {
   const auto lang=Settings::getI("GAME", "language");
   std::string sha256;
   auto script=loadBaseProgram(gothic.defaultGameDatFile(),lang,&sha256);
@@ -19,6 +19,13 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
   npcs=NpcDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
   placements=PlacementDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
   activities=ActivityDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
+  // This stock NotR callback returns at the height check, before any room or story effects.
+  static constexpr std::string_view quietSoundProgram="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c";
+  if(sha256==quietSoundProgram) {
+    const auto* callback=script.find_symbol_by_name("B_ASSESSQUIETSOUND");
+    const auto* height=script.find_symbol_by_name("PERC_DIST_HEIGHT");
+    quietSound={ScriptFn(callback->index()),height->get_int(0)};
+    }
   const auto flags=daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
   daedalus::DaedalusVm vm(std::move(script),flags);
   NpcDefinitionRuntime::observeCalls(vm,npcs,baseProgramIndex().dir.parent_path(),sha256);

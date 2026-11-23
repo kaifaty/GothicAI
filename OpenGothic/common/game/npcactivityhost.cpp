@@ -34,6 +34,10 @@ int32_t NpcEngineCalls::distanceToWaypoint(const Npc& npc, const WayPoint* wp) {
   return std::numeric_limits<int32_t>::max();
   }
 
+int32_t NpcEngineCalls::heightDifference(const Npc& npc, const Npc& other) {
+  return int32_t(std::abs(npc.position().y-other.position().y));
+  }
+
 const WayPoint* NpcEngineCalls::resolveWaypoint(World& world, const Npc& npc, std::string_view name) {
   if(const auto* to=world.findWayPoint(npc.position(),name))
     return to;

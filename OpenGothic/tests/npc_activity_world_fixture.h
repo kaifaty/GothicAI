@@ -1387,11 +1387,17 @@ void loadCampfireGroup(Gothic& gothic,const CampfireSave& save) {
               save.edge.c_str(),double(std::hypot(step.x,step.z)));
   }
 
-void quietSoundAtPost(Gothic& gothic, bool nativeExpected) {
+void quietSoundAtPost(Gothic& gothic) {
   constexpr auto* state="ZS_STAND_ARMSCROSSED";
   constexpr auto* actor="VLK_412_HARAD";
   constexpr auto* point="FP_STAND_CITY_20";
   constexpr uint32_t seed=73106;
+  std::string program;
+  loadBaseProgram(gothic.defaultGameDatFile(),Settings::getI("GAME","language"),&program);
+  if(program!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
+    std::puts("SKIP quiet sound: the high-source fixture is for the verified NotR program");
+    return;
+    }
   const auto directory=std::filesystem::temp_directory_path()/("gothic-quiet-sound-"+std::to_string(getpid()));
   std::filesystem::create_directories(directory);
   NpcDayJournal::Options trace;
@@ -1507,7 +1513,7 @@ void quietSoundAtPost(Gothic& gothic, bool nativeExpected) {
     std::memset(preview.data(),0,4);
     gothic.gameSession()->save(out,"quiet sound before impact",preview);
   }
-  run("first",1100.f,!nativeExpected,true);
+  run("first",1100.f,false,true);
   gothic.clearGame().reset();
   {
     Tempest::MemReader reader(save);
@@ -1522,7 +1528,7 @@ void quietSoundAtPost(Gothic& gothic, bool nativeExpected) {
     test.only({npc});
     test.stepUntil(120,[&] { return settled(*npc,*post); },"quiet sound: the loaded listener restores his pose");
   }
-  run("reloaded",1100.f,!nativeExpected,true);
+  run("reloaded",1100.f,false,true);
   // The cooldown is one tick longer than the native turn. Keep the same stance for the boundary check.
   ActivityEventsWorld(gothic).step();
   run("threshold",1000.f,true,false);
@@ -1541,7 +1547,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     if(events) {
       loadCampfireGroup(gothic,save);
       gothic.clearGame().reset();
-      quietSoundAtPost(gothic,false);
+      quietSoundAtPost(gothic);
       }
     }
   if(previousEvents) setenv("OPENGOTHIC_ACTIVITY_EVENTS",previousEvents->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_EVENTS");

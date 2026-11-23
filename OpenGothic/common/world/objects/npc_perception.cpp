@@ -1,5 +1,6 @@
 #include "npc.h"
 
+#include "game/npcactivityhost.h"
 #include "world/npcactivityprobe.h"
 
 #include <algorithm>
@@ -327,12 +328,17 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
     activityEvents.awaitQueue = true;
   // Vanilla B_AssessQuietSound dereferences OTHER. Unknown physical causes
   // still turn the listener natively, without inventing a script actor.
-  const bool callbackDispatched = noise.culprit!=nullptr && hasPerc(PERC_ASSESSQUIETSOUND);
+  const auto callback=perception[PERC_ASSESSQUIETSOUND].func;
+  bool callbackDispatched=noise.culprit!=nullptr && callback.isValid();
+  if(callbackDispatched && point && point->form==Form::ArmsCrossed && activityEvents.stage==ActivityEvents::Stage::Hold) {
+    if(const auto limit=owner.rules().quietSoundHeightLimit(callback))
+      callbackDispatched=NpcEngineCalls::heightDifference(*this,*noise.culprit)<=*limit;
+    }
   if(auto* probe=NpcActivityProbe::instance)
     probe->physicsNoise(*this,noise.culprit,callbackDispatched);
   if(callbackDispatched) {
     physicsNoiseCallback = true;
-    owner.rules().invokeState(this,noise.culprit,nullptr,perception[PERC_ASSESSQUIETSOUND].func);
+    owner.rules().invokeState(this,noise.culprit,nullptr,callback);
     physicsNoiseCallback = false;
     // B_AssessQuietSound clears perceptions before queuing its state. Run only
     // that transition and its initializer now; its queued actions still wait
