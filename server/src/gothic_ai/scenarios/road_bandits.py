@@ -109,7 +109,7 @@ async def road_bandits(
         await _m5b_player_weapon(link, "none")
         # An accepted sheathe command can leave the weapon visible until its animation reaches the switch.
         sheathed = await _until_async(lambda: link.evaluate([
-            "call", "NPC_ISINFIGHTMODE", ["inst", "HERO"], ["sym", "FMODE_NONE"],
+            "call", "NPC_ISINFIGHTMODE", ["inst", "HERO"], ["var", "FMODE_NONE"],
         ]), bool, 5)
         if not check("sheathed", sheathed, "weapon mode before approaching the gang"):
             return _logged(results)
