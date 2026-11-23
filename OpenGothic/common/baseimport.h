@@ -25,6 +25,7 @@ int convertFonts(const std::filesystem::path& gothic, const std::filesystem::pat
 int convertPrograms(const std::filesystem::path& gothic, const std::filesystem::path& out, bool verifyOnly);
 // D2: definitions/<program SHA>/items.json, verified against fresh constructor executions.
 int convertItemDefinitions(const std::filesystem::path& base);
+void convertFightDefinitions(const std::filesystem::path& base);
 // D3a: definitions/<program SHA>/routines.json, verified against fresh function executions.
 int convertRoutineDefinitions(const std::filesystem::path& base);
 // D3b: definitions/<program SHA>/npcs.json, verified against fresh constructor executions.

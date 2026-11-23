@@ -105,7 +105,7 @@ GameSession::GameSession(std::string file) {
   LoadProbe::Requests::begin();
   auto probeT = LoadProbe::now();
   vm.reset(new GameScript(*this));
-  initPerceptions();
+  vm->initPerceptions();
   if(LoadProbe::enabled())
     LoadProbe::mark("scripts_vm",LoadProbe::msSince(probeT));
 
@@ -227,7 +227,7 @@ GameSession::GameSession(Serialize &fin) {
 
   if(fin.setEntry("game/perc"))
     vm->loadPerc(fin); else
-    initPerceptions();
+    vm->initPerceptions();
 
   fin.setEntry("game/quests");
   vm->loadQuests(fin);
@@ -498,7 +498,7 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
     Gothic::inst().setLoadingProgress(v);
     };
 
-  initPerceptions();
+  vm->initPerceptions();
   std::unique_ptr<World> ret = std::unique_ptr<World>(new World(*this,*vm,w,wss.isEmpty(),loadProgress));
   setWorld(std::move(ret));
 
@@ -602,12 +602,6 @@ bool GameSession::isWorldKnown(std::string_view name) const {
     if(i.name==name)
       return true;
   return false;
-  }
-
-void GameSession::initPerceptions() {
-  // NOTE: world is null at this point and most scrip-api will be prone to crash
-  if(vm->hasSymbolName("initPerceptions"))
-    vm->getVm().call_function("initPerceptions");
   }
 
 void GameSession::initScripts(bool firstTime) {

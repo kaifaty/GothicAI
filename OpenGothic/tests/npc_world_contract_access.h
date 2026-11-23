@@ -17,6 +17,7 @@ struct NpcDefinitionContract {
   static void nextAiAction(Npc& npc) { npc.nextAiAction(npc.aiQueue,0); }
   static void tickActivityDeadline(Npc& npc) { npc.tickActivityDeadline(); }
   static const AiQueue& queue(const Npc& npc) { return npc.aiQueue; }
+  static const AiQueue& overlayQueue(const Npc& npc) { return npc.aiQueueOverlay; }
   static bool walking(const Npc& npc) { return !npc.go2.empty(); }
   static const auto& physicsPosition(const Npc& npc) { return npc.physic.position(); }
   // An action at the head of the queue, as an interruption ahead of the queued use.
@@ -24,6 +25,7 @@ struct NpcDefinitionContract {
   static const auto& items(GameScript& script) { return script.itemDefinitions; }
   static const auto& routines(GameScript& script) { return script.routineDefinitions; }
   static auto& random(GameScript& script) { return script.randGen; }
+  static int& outputOrder(GameScript& script) { return script.aiOutOrderId; }
   // the views of items (graphics/itemview): the sword and the bow on a body, a lying item's
   static const ItemView& sword(const Npc& npc) { return npc.visual.sword.view; }
   static const ItemView& bow(const Npc& npc) { return npc.visual.bow.view; }

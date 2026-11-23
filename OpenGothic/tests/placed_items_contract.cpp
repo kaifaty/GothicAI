@@ -1883,6 +1883,7 @@ const WayPoint* activityRow(Npc& npc,size_t init,std::string& name,gtime* start=
   }
 
 #include "npc_activity_world_fixture.h"
+#include "npc_placement_world_fixture.h"
 
 // Every position of one activity at its real object: at the object, far from the point, the object
 // taken by other NPCs, already at the object, both sides of a distance approach, and the engine's

@@ -2,6 +2,7 @@
 #include "asset/fromzenkit.h"
 #include "audiodata.h"
 #include "baseimport.h"
+#include "game/definitions/fightdefinitiondata.h"
 #include "basemesh.h"
 #include "commandline.h"
 #include "contentcensus.h"
@@ -1652,7 +1653,7 @@ struct BaseContentContract {
       }
     }
 
-  static void definitionFights(daedalus::DaedalusVm& source, daedalus::DaedalusVm& native) {
+  static void definitionFights(daedalus::DaedalusVm& source, daedalus::DaedalusVm& native, const std::vector<FightTactic>& imported) {
     const auto names=definitionNames(source,"C_FIGHTAI");
     modelField(names,definitionNames(native,"C_FIGHTAI"),"Fight ordered instances");
     const auto* a=source.find_symbol_by_name("MAX_FIGHTAI");
@@ -1660,11 +1661,7 @@ struct BaseContentContract {
     require((a==nullptr)==(b==nullptr),"Fight MAX_FIGHTAI presence differs");
     const int count=a!=nullptr ? a->get_int() : 0;
     equal(count,b!=nullptr ? b->get_int() : 0,"Fight MAX_FIGHTAI");
-    const std::array<std::string_view,17> prefixes={
-      "FA_ENEMY_PREHIT_","FA_ENEMY_STORMPREHIT_","FA_MY_W_COMBO_","FA_MY_W_RUNTO_","FA_MY_W_STRAFE_",
-      "FA_MY_W_FOCUS_","FA_MY_W_NOFOCUS_","FA_MY_G_COMBO_","FA_MY_G_RUNTO_","FA_MY_G_STRAFE_",
-      "FA_MY_G_FOCUS_","FA_MY_FK_FOCUS_","FA_MY_G_FK_NOFOCUS_","FA_MY_FK_FOCUS_FAR_",
-      "FA_MY_FK_NOFOCUS_FAR_","FA_MY_FK_FOCUS_MAG_","FA_MY_FK_NOFOCUS_MAG_"};
+    equal(imported.size(),size_t(std::max(0,count)),"Fight imported tactic count");
     std::set<uint32_t> checked;
     size_t groups=0;
     const auto compare=[&](daedalus::DaedalusSymbol* a,daedalus::DaedalusSymbol* b,const std::string& name) {
@@ -1678,13 +1675,18 @@ struct BaseContentContract {
       require(old.second==own.second,name+": Fight initializer outcome differs");
       definitionFields(old.first,own.first,name);
       ++groups;
+      return old.first;
       };
     // Runtime's row zero is left value-initialized; rows 1..MAX_FIGHTAI-1 use these exact 17 groups.
     definitionFields(daedalus::IFightAi{},Def::FightAi{},"Fight row zero");
+    if(!imported.empty())
+      for(const auto& [prefix, field] : FightDefinitions::slots)
+        definitionFields(daedalus::IFightAi{},imported.front().*field,std::string(prefix)+"0 imported");
     for(int id=1;id<std::max(0,count);++id)
-      for(const auto prefix:prefixes) {
+      for(const auto& [prefix, field] : FightDefinitions::slots) {
         const auto name=std::string(prefix)+std::to_string(id);
-        compare(source.find_symbol_by_name(name),native.find_symbol_by_name(name),name);
+        const auto old=compare(source.find_symbol_by_name(name),native.find_symbol_by_name(name),name);
+        definitionFields(old,imported[size_t(id)].*field,name+" imported");
         }
     // Also cover declared records outside the runtime's groups, without changing production laziness.
     for(const auto& [index,name]:names)
@@ -1753,7 +1755,11 @@ struct BaseContentContract {
       source->register_external("hlp_random",rejectRandom);
       native->register_external("hlp_random",rejectRandom);
       if(request=="Camera.dat") definitionInstances<daedalus::ICamera,VmDef::Camera>(*source,*native,"CCAMSYS");
-      if(request=="Fight.dat") definitionFights(*source,*native);
+      if(request=="Fight.dat") {
+        const auto* selected=ProgramData::fightProgram(index);
+        require(selected!=nullptr,"imported Fight.dat source is missing");
+        definitionFights(*source,*native,FightDefinitions::read(base,selected->recordSha256));
+        }
       if(request=="Sfx.dat") definitionInstances<daedalus::ISoundEffect,VmDef::SoundEffect>(*source,*native,"C_SFX");
       if(request=="Music.dat") definitionInstances<daedalus::IMusicTheme,VmDef::MusicTheme>(*source,*native,"C_MusicTheme");
       if(request=="ParticleFx.dat") definitionInstances<daedalus::IParticleEffect,VmDef::ParticleEffect>(*source,*native,"C_PARTICLEFX");
@@ -2346,7 +2352,7 @@ struct BaseContentContract {
   static void musicRuntime(const fs::path& base,const fs::path& temporary,const fs::path& censusPath) {
     const auto fixture=temporary/"music-runtime-base";
     fs::create_directories(fixture);
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","programs","outputunits","audio","sources"})
+    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","programs","outputunits","audio","sources"})
       fs::create_symlink(base/part,fixture/part);
     fs::copy(base/"music",fixture/"music",fs::copy_options::recursive);
     setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
@@ -2685,7 +2691,7 @@ struct BaseContentContract {
     // Start with a valid base before adding the synthetic audio integrity fixtures.
     const auto fixtureBase=temporary/"audio-runtime-base";
     fs::create_directories(fixtureBase/"audio");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","programs","outputunits","music","sources"})
+    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","programs","outputunits","music","sources"})
       fs::create_symlink(base/part,fixtureBase/part);
     fs::copy(base/"audio",fixtureBase/"audio",fs::copy_options::recursive);
     setenv("OPENGOTHIC_BASE",fixtureBase.c_str(),1);
@@ -3186,7 +3192,7 @@ struct BaseContentContract {
       const auto incomplete=temporary/("missing-"+kind+"-index");
       fs::create_directories(incomplete/kind);
       fs::copy_file(base/"base.json",incomplete/"base.json");
-      for(const auto* part:{"base-files.json","worlds","textures","meshes","zen","models","fonts","programs","outputunits","audio","music","sources"})
+      for(const auto* part:{"base-files.json","worlds","textures","meshes","zen","models","fonts","programs","definitions","outputunits","audio","music","sources"})
         if(part!=kind) fs::create_symlink(base/part,incomplete/part);
       for(const auto& file:fs::directory_iterator(base/kind))
         if(file.path().filename()!=kind+".json") fs::create_symlink(file.path(),incomplete/kind/file.path().filename());
@@ -3204,7 +3210,7 @@ struct BaseContentContract {
     {
     const auto broken=temporary/"broken-program-record";
     fs::create_directories(broken/"programs");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","outputunits","audio","music","sources"})
+    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","outputunits","audio","music","sources"})
       fs::create_symlink(base/part,broken/part);
     for(const auto& file:fs::directory_iterator(base/"programs"))
       fs::create_symlink(file.path(),broken/"programs"/file.path().filename());
@@ -3252,7 +3258,7 @@ struct BaseContentContract {
     {
     const auto broken=temporary/"broken-outputunits-record";
     fs::create_directories(broken/"outputunits");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","programs","audio","music","sources"})
+    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","programs","audio","music","sources"})
       fs::create_symlink(base/part,broken/part);
     for(const auto& file:fs::directory_iterator(base/"outputunits"))
       fs::create_symlink(file.path(),broken/"outputunits"/file.path().filename());
