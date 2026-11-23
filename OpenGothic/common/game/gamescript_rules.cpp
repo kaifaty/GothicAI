@@ -1914,7 +1914,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
 
   if(name=="ZS_ATTACK_LOOP") {
     result = LOOP_CONTINUE;
-    vm.call_function<void>("B_GREG_COMESTODEXTER");
+    vm.unsafe_call_bl(findSymbol("B_GREG_COMESTODEXTER"));
     npc_gettarget(self);
     if(npc_getdisttonpc(self,other())>aivar[fightDistanceCancel]) {
       stopPursuit();

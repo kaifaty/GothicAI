@@ -4091,7 +4091,7 @@ void routineSwitchWorld(World& world) {
   vm.global_self()->set_instance(oldSelf);
   if(oldSwitch) setenv("OPENGOTHIC_ROUTINE_RECORDS",oldSwitch->c_str(),1);
   else unsetenv("OPENGOTHIC_ROUTINE_RECORDS");
-  std::puts("Routine switch: saved aliases, same-instance rule, validity, schedule and queue match stock");
+  NpcWorldFixture::gregAtDexter(world);
   }
 
 std::vector<std::string> placementFirstWorld(Gothic& gothic) {

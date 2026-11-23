@@ -1155,4 +1155,110 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
   std::puts("Addon World entry: Init order, live chapter, room assignments, NPC aliases and eight chapter latches match stock");
   }
 
+void gregAtDexter(World& world) {
+  std::puts("Routine switch: saved aliases, same-instance rule, validity, schedule and queue match stock");
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto* dexter=script.findSymbol("DEXTER");
+  auto* greg=script.findSymbol("GREG_NW");
+  auto* dexterInstance=script.findSymbol("BDT_1060_DEXTER");
+  auto* gregInstance=script.findSymbol("PIR_1300_ADDON_GREG_NW");
+  auto* helper=script.findSymbol("B_GREG_COMESTODEXTER");
+  auto* complete=script.findSymbol("B_GREG_COMESTODEXTER_ONETIME");
+  auto* location=script.findSymbol("GREGLOCATION");
+  auto* actorLocal=script.findSymbol("B_STARTOTHERROUTINE.SLF");
+  auto* routineLocal=script.findSymbol("B_STARTOTHERROUTINE.NEWROUTINE");
+  const auto previousDexter=dexter->get_instance(), previousGreg=greg->get_instance();
+  const auto previousDexterInstance=dexterInstance->get_instance(), previousGregInstance=gregInstance->get_instance();
+  const auto previousActor=actorLocal->get_instance(), previousSelf=vm.global_self()->get_instance();
+  const auto previousContext=vm.unsafe_get_gi();
+  const auto previousComplete=complete->get_int(), previousLocation=location->get_int();
+  const std::string previousRoutine=routineLocal->get_string();
+  const auto castleLocation=script.intSymbol("GREG_DEXTER",0);
+  const auto flag=size_t(script.intSymbol("AIV_ENEMYOVERRIDE",0));
+  constexpr std::string_view waypoint="NW_CASTLEMINE_TOWER_CAMPFIRE_03";
+  Npc dexterNpc(world,dexterInstance->index(),waypoint);
+  Npc otherDexter(world,dexterInstance->index(),waypoint);
+  Npc gregNpc(world,gregInstance->index(),waypoint);
+  const auto handle=[](Npc* npc) {
+    return npc ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr;
+    };
+  require(world.player() && world.findWayPoint(waypoint) && flag==61,"Greg's visit needs the stock actor, route and enemy flag");
+  greg->set_instance(handle(&gregNpc));
+  Environment records;
+  records.set("OPENGOTHIC_ROUTINE_RECORDS",std::string("0"));
+
+  const struct Case {
+    Npc* invoking;
+    bool bindDexter;
+    int32_t latch;
+    bool fires;
+    } cases[]={
+    {world.player(),true,0,false},
+    {&otherDexter,true,0,true},
+    {&dexterNpc,true,2,false},
+    {nullptr,false,0,true},
+    };
+  for(const auto& c:cases) {
+    const auto run=[&](bool native) {
+      setenv("OPENGOTHIC_ROUTINE_RECORDS",native ? "1" : "0",1);
+      dexter->set_instance(handle(c.bindDexter ? &dexterNpc : nullptr));
+      vm.global_self()->set_instance(handle(c.invoking));
+      dexterNpc.handle().aivar[flag]=9;
+      otherDexter.handle().aivar[flag]=8;
+      gregNpc.clearAiQueue();
+      gregNpc.clearRoutine();
+      complete->set_int(c.latch);
+      location->set_int(-1);
+
+      size_t bytecode=0, nested=0;
+      vm.observe_instructions([&](const auto&) { if(vm.pc()==helper->address()) ++bytecode; });
+      const auto observer=vm.add_call_observer([&](const auto& symbol) {
+        if(symbol.name()=="B_STARTOTHERROUTINE") {
+          ++nested;
+          require(location->get_int()==castleLocation && complete->get_int()==c.latch &&
+                  vm.unsafe_get_gi()==dexter->get_instance() &&
+                  dexterNpc.handle().aivar[flag]==(c.bindDexter ? 0 : 9),
+                  "Greg's schedule must change after Dexter's flags and before the one-time latch");
+          }
+        });
+      const auto pc=vm.pc();
+      vm.push_int(0x12345678);
+      std::string error;
+      const auto result=storygraph::callFunction(vm,*helper,{},error);
+      require(result.has_value(),error.c_str());
+      const auto sentinel=vm.pop_int();
+      vm.observe_instructions({});
+      vm.remove_call_observer(observer);
+
+      require(bytecode==(native ? 0u : 1u) && sentinel==0x12345678 && vm.pc()==pc &&
+              vm.unsafe_get_gi()==previousContext && vm.global_self()->get_instance()==handle(c.invoking),
+              "Greg's visit must preserve the invoking VM state");
+      require(location->get_int()==(c.fires ? castleLocation : -1) && complete->get_int()==(c.fires ? 1 : c.latch) &&
+              dexterNpc.handle().aivar[flag]==(c.fires && c.bindDexter ? 0 : 9) &&
+              otherDexter.handle().aivar[flag]==8 && nested==size_t(c.fires),
+              "Greg's visit must follow the saved latch and Dexter's instance ID, touching only the bound actor");
+      std::vector<std::tuple<gtime,gtime,ScriptFn,std::string>> rows;
+      gregNpc.forEachRoutine([&](const Npc::RoutineInfo& row) { rows.emplace_back(row.start,row.end,row.state,row.point); });
+      require(rows.size()==(c.fires ? 2u : 0u) &&
+              (!c.fires || (routineLocal->get_string()=="Dexter" && actorLocal->get_instance()==handle(&gregNpc))),
+              "Greg must get the castle schedule through the original routine exchange");
+      return std::pair(rows,activityQueue(gregNpc));
+      };
+    const auto stock=run(false);
+    require(run(true)==stock,"Greg's native schedule and queue must match stock");
+    }
+
+  dexterInstance->set_instance(previousDexterInstance);
+  gregInstance->set_instance(previousGregInstance);
+  dexter->set_instance(previousDexter);
+  greg->set_instance(previousGreg);
+  actorLocal->set_instance(previousActor);
+  routineLocal->set_string(previousRoutine);
+  vm.global_self()->set_instance(previousSelf);
+  complete->set_int(previousComplete);
+  location->set_int(previousLocation);
+  std::puts("Greg at Dexter: one-time flags, actor context, schedule and queue match stock");
+  }
+
 } // namespace NpcWorldFixture
