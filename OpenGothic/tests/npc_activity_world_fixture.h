@@ -2425,9 +2425,6 @@ void itemRoutinePhasesWorld(Gothic& gothic,bool events) {
 void refreshAtInsert(World& world) {
   auto& script=world.script();
   auto& vm=script.getVm();
-  const auto program=NpcSnapshot::load(baseProgramIndex().dir.parent_path());
-  if(program.sha256!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
-    return;
 
   auto* hero=world.player();
   auto* local=vm.find_symbol_by_name("B_REFRESHATINSERT.HER");
@@ -2502,13 +2499,91 @@ void refreshAtInsert(World& world) {
   std::puts("NPC refresh at insert: stock health, weapon, hero/death exclusions and VM context match");
   }
 
+void transformNpcRecords(World& world) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto* source=vm.find_symbol_by_name("NONE_100_XARDAS");
+  require(source!=nullptr,"the transformation fixture needs a stock human");
+  const auto originalSource=source->get_instance();
+  const auto oldSelf=vm.global_self()->get_instance();
+  const auto oldItem=vm.global_item()->get_instance();
+  const auto oldGi=vm.unsafe_get_gi();
+  const auto oldRandom=NpcDefinitionContract::random(script);
+  const auto* configured=std::getenv("OPENGOTHIC_NPC_RECORDS");
+  const auto oldRecords=configured ? std::optional<std::string>(configured) : std::nullopt;
+  const auto restoreRecords=[&] {
+    if(oldRecords) setenv("OPENGOTHIC_NPC_RECORDS",oldRecords->c_str(),1);
+    else unsetenv("OPENGOTHIC_NPC_RECORDS");
+    };
+
+  // Cover creation of inventory, an animation overlay and forced equipment.
+  for(const auto name:{"SHEEP","FIREWARAN","SKELETON"}) {
+    auto* target=vm.find_symbol_by_name(name);
+    require(target && NpcDefinitionContract::definitions(script).npcs.contains(target->index()),
+            "each transformation fixture must have a stock record");
+    const auto originalTarget=target->get_instance();
+    const auto restore=[&] {
+      vm.observe_instructions({});
+      vm.observe_externals({});
+      source->set_instance(originalSource);
+      target->set_instance(originalTarget);
+      vm.global_self()->set_instance(oldSelf);
+      vm.global_item()->set_instance(oldItem);
+      vm.unsafe_set_gi(oldGi);
+      NpcDefinitionContract::random(script)=oldRandom;
+      restoreRecords();
+      };
+    const auto run=[&](bool recorded) {
+      try {
+        Npc npc(world,source->index(),"NW_CITY_PATH_HABOUR_03");
+        npc.handle().aivar[99]=789;
+        npc.handle().level=37;
+        const auto record=npc.handlePtr();
+        const auto self=vm.global_self()->get_instance(), gi=vm.unsafe_get_gi();
+        bool constructorRan=false;
+        std::vector<std::string> externals;
+        if(!recorded) setenv("OPENGOTHIC_NPC_RECORDS","0",1);
+        vm.observe_instructions([&](const auto&) { constructorRan |= vm.pc()==target->address(); });
+        vm.observe_externals([&](const auto& fn) { externals.push_back(fn.name()); });
+        require(npc.transformInto(target->index()),"the stock NPC must transform");
+        vm.observe_instructions({});
+        vm.observe_externals({});
+        require(constructorRan!=recorded && npc.handlePtr()==record &&
+                static_cast<const daedalus::INpc&>(npc.handle()).symbol_index()==target->index() &&
+                npc.handle().aivar[99]==789 && npc.handle().level==37,
+                "the chosen executor must transform the existing NPC and retain untouched fields");
+        require(vm.global_self()->get_instance()==self && vm.unsafe_get_gi()==gi,
+                "transformation must restore the calling context");
+        const auto transformed=npcState(npc);
+        const auto item=itemState(script);
+        npc.transformBack();
+        require(static_cast<const daedalus::INpc&>(npc.handle()).symbol_index()==source->index(),
+                "undo must restore the original NPC kind");
+        const auto restored=npcState(npc);
+        restore();
+        return std::tuple(transformed,restored,item,externals);
+        }
+      catch(...) { restore(); throw; }
+      };
+    const auto stock=run(false);
+    const auto recorded=run(true);
+    require(stock==recorded,(std::string(name)+" transformation and undo must match the saved stock NPC and call order").c_str());
+    }
+  std::puts("NPC transformation records: inventory, animation, equipment, untouched fields and undo match stock");
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
   for(bool events:{false,true}) {
     setenv("OPENGOTHIC_ACTIVITY_EVENTS",events ? "1" : "0",1);
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
-    if(events) refreshAtInsert(*gothic.world());
+    if(events && NpcSnapshot::load(baseProgramIndex().dir.parent_path()).sha256==
+                 "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
+      refreshAtInsert(*gothic.world());
+      if(NpcDefinitionRuntime::enabled())
+        transformNpcRecords(*gothic.world());
+      }
     const auto save=pointActivitiesWorld(gothic,events);
     itemRoutinePhasesWorld(gothic,events);
     ActivityEventsWorld paired(gothic);
