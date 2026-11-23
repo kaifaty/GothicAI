@@ -299,6 +299,11 @@ if(WIN32)
 endif()
 target_link_libraries(Gothic2Notr PRIVATE OpenGothic)
 
+# The authored game runs StoryGraph even when the networking bridge is disabled.
+set(STORYGRAPH_TOOL OFF CACHE BOOL "" FORCE)
+add_subdirectory(ai_bridge/storygraph)
+target_link_libraries(${PROJECT_NAME} StoryGraph)
+
 # external AI control bridge (fork-specific, see ai_bridge/)
 add_subdirectory(ai_bridge)
 target_link_libraries(Gothic2Notr PRIVATE AiBridge)

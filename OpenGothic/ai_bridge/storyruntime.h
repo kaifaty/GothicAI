@@ -90,8 +90,6 @@ class StoryRuntime final {
     void                clear();
 
   private:
-    class LiveExternals;
-
     // the director's variables in this VM: made with their first value if missing
     void                ensureVars();
 

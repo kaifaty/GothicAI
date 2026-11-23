@@ -189,6 +189,11 @@ void checkNestedStoryPrograms() {
   check(!result.ok && result.error=="program call depth exceeded" && instructions==0 && externals==4,
         "a resolved call cycle stops without VM fallback after execution starts");
   interpreter.resolveProgram={};
+  interpreter.allowUnresolvedScriptCalls=false;
+  result=interpreter.run(root);
+  check(!result.ok && result.error=="unresolved nested program: REMEMBER" && instructions==0 && externals==4,
+        "a verified stock program rejects a missing nested program before it can enter the VM");
+  interpreter.allowUnresolvedScriptCalls=true;
   result=interpreter.run(root);
   check(result.ok && result.returned.i==4 && externals==6,"the next dialog starts with a clean interpreter frame");
   }

@@ -553,6 +553,16 @@ bool DialogGraph::onScript(daedalus::DaedalusSymbol& fn, int32_t& result) {
     }
   if(!running)
     return false;
+  if(auto* script = rt.script(); script!=nullptr && script->usesVerifiedNpcProgram()) {
+    bool failed = false;
+    if(!script->invokeStockProgram(fn,result,&failed)) {
+      ++notPrograms;
+      return false;
+      }
+    ++ran;
+    runErrors += size_t(failed);
+    return true;
+    }
   const auto lift = [this,v](const daedalus::DaedalusSymbol& symbol) -> const storygraph::Program* {
     auto it = programs.find(symbol.index());
     if(it==programs.end()) {
@@ -567,8 +577,6 @@ bool DialogGraph::onScript(daedalus::DaedalusSymbol& fn, int32_t& result) {
   const auto* program = lift(fn);
   if(program==nullptr)
     return false;
-  if(const auto* script = rt.script(); script!=nullptr && script->usesVerifiedNpcProgram())
-    resolver = lift;
   auto r = interp.run(*program);
   ran++;
   if(!r.ok) {

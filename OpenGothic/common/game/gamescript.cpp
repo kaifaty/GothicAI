@@ -1,5 +1,6 @@
 #include "gamescript.h"
 #include "gamescript_daystats.h"
+#include "gamescript_programs.h"
 #include "world/npcactivityprobe.h"
 
 #include <Tempest/Log>
@@ -995,16 +996,6 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
       pickpocket->witnessed(npc);
     Gothic::inst().onHeroDeed(*pickpocket);
     }
-  }
-
-int32_t GameScript::dialogFunction(daedalus::DaedalusSymbol* fn, bool returns) {
-  int32_t r = 0;
-  if(fn!=nullptr && Gothic::inst().dialogScriptFn && Gothic::inst().dialogScriptFn(*fn,r))
-    return r;
-  if(returns)
-    return vm.call_function<int>(fn);
-  vm.call_function(fn);
-  return 0;
   }
 
 void GameScript::printCannotUseError(Npc& npc, int32_t atr, int32_t nValue) {
