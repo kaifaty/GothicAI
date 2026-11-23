@@ -335,6 +335,7 @@ class GameScript final : public GameRules {
     void castShrink(Npc& caster, Npc* target);
     CollideMask runStockSpellCollision(Npc& target, Npc& caster, int32_t spellId);
     std::optional<int> runStockSpellMana(Npc& caster, int mana);
+    std::optional<int> runSpecialSpellMana(Npc& caster, int spell, int mana);
     bool runStockSpellCast(Npc& caster, std::string_view function, int32_t level);
     bool runStockTeleportCast(const std::shared_ptr<daedalus::INpc>& actor, std::string_view function);
     void assessMagic(Npc& npc);

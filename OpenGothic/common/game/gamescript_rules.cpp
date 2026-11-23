@@ -3822,6 +3822,103 @@ CollideMask GameScript::runStockSpellCollision(Npc& target, Npc& caster, int32_t
     }
   }
 
+std::optional<int> GameScript::runSpecialSpellMana(Npc& caster, int spell, int mana) {
+  enum : int { Sleep=27, Charm=59, Inflate=74, Swarm=81, SuckEnergy=86 };
+  struct Rule {
+    int spell;
+    std::string_view invested, runeCost;
+    };
+  static constexpr Rule rules[] = {
+    {Sleep,     "SPELL_LOGIC_SLEEP.MANAINVESTED",      "SPL_COST_SLEEP"},
+    {Charm,     "SPELL_LOGIC_CHARM.MANAINVESTED",      "SPL_COST_CHARM"},
+    {Inflate,   "SPELL_LOGIC_INFLATE.MANAINVESTED",    "SPL_COST_INFLATE"},
+    {Swarm,     "SPELL_LOGIC_SWARM.MANAINVESTED",      "SPL_COST_SWARM"},
+    {SuckEnergy,"SPELL_LOGIC_SUCKENERGY.MANAINVESTED", "SPL_COST_SUCKENERGY"},
+    };
+  const auto rule=std::ranges::find(rules,spell,&Rule::spell);
+  if(rule==std::end(rules))
+    return {};
+
+  const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
+  findSymbol("SPELL_PROCESSMANA.MANAINVESTED")->set_int(mana);
+  findSymbol("SPELL_PROCESSMANA.ACTIVESPELL")->set_int(npc_getactivespell(self));
+  findSymbol(rule->invested)->set_int(mana);
+  if(spell==SuckEnergy && mana==0)
+    return SPL_RECEIVEINVEST;
+
+  struct RestoreContext {
+    daedalus::DaedalusVm& vm;
+    std::shared_ptr<daedalus::DaedalusInstance> caller;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+    } restore{vm,vm.unsafe_get_gi()};
+  vm.unsafe_set_gi(self);
+  auto* attribute=findSymbol("C_NPC.ATTRIBUTE");
+  const auto available=[&] { return vm.get_int(self,attribute,ATR_MANA); };
+  const auto runeCost=findSymbol(rule->runeCost)->get_int();
+  const auto scrollCost=findSymbol("SPL_COST_SCROLL")->get_int();
+  if(spell==SuckEnergy) {
+    const bool canPayScroll=available()>=scrollCost;
+    if(npc_getactivespellisscroll(self) && canPayScroll)
+      return SPL_SENDCAST;
+    return available()>=runeCost ? SPL_SENDCAST : SPL_SENDSTOP;
+    }
+  const bool canPayRune=available()>=runeCost;
+  const bool canPayScroll=available()>=scrollCost;
+  const bool scroll=npc_getactivespellisscroll(self);
+  if(!canPayRune && !(scroll && canPayScroll))
+    return SPL_SENDSTOP;
+  const auto pay=[&](int32_t cost) {
+    vm.set_int(self,attribute,ATR_MANA,std::bit_cast<int32_t>(uint32_t(available())-uint32_t(cost)));
+    };
+  if(spell==Swarm) {
+    // Even a scroll that passed admission at five mana pays the rune cost.
+    pay(runeCost);
+    return SPL_SENDCAST;
+    }
+
+  const auto target=std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  auto* guild=findSymbol("C_NPC.GUILD");
+  if(spell==Charm) {
+    vm.unsafe_set_gi(target);
+    auto* aivar=findSymbol("C_NPC.AIVAR");
+    const auto crimeNone=findSymbol("CRIME_NONE")->get_int();
+    const bool questRunning=findSymbol("MIS_IGNAZ_CHARM")->get_int()==findSymbol("LOG_RUNNING")->get_int();
+    const auto crime=vm.get_int(target,aivar,1);
+    if(questRunning && crime!=crimeNone)
+      findSymbol("CHARM_TEST")->set_int(findSymbol("TRUE")->get_int());
+    adjustPetzCrime(target,std::nullopt);
+    vm.set_int(target,aivar,1,crimeNone);
+    vm.set_int(target,aivar,0,findSymbol("FIGHT_NONE")->get_int());
+    const auto guildAttitude=[&] {
+      vm.unsafe_set_gi(target);
+      const auto targetGuild=vm.get_int(target,guild,0);
+      vm.unsafe_set_gi(self);
+      return wld_getguildattitude(targetGuild,vm.get_int(self,guild,0));
+      };
+    if(guildAttitude()!=ATT_HOSTILE && npc_getattitude(target,self)==ATT_HOSTILE)
+      npc_settempattitude(target,guildAttitude());
+    return SPL_SENDCAST;
+    }
+
+  // Sleep and Inflate spend mana before testing the target, with a second scroll query.
+  pay(npc_getactivespellisscroll(self) ? scrollCost : runeCost);
+  vm.unsafe_set_gi(target);
+  const auto targetGuild=vm.get_int(target,guild,0);
+  const auto distance=npc_getdisttonpc(self,target);
+  const auto flags=vm.get_int(target,findSymbol("C_NPC.FLAGS"),0);
+  const bool down=isNpcDownInScript(target);
+  const bool diving=npcBodyStateContains(target,BS_DIVE);
+  const bool swimming=npcBodyStateContains(target,BS_SWIM);
+  if(targetGuild!=GIL_PAL && targetGuild!=GIL_DMT && targetGuild!=GIL_KDF &&
+     distance<=1000 && flags!=int32_t(NpcFlag::IMMORTAL) && targetGuild<int32_t(GIL_SEPERATOR_HUM) &&
+     !down && !diving && !swimming) {
+    npc_clearaiqueue(target);
+    clearPerceptions(target);
+    ai_startstate(target,int(findFunction(spell==Sleep ? "ZS_MAGICSLEEP" : "ZS_INFLATE").ptr),0,"");
+    }
+  return SPL_SENDCAST;
+  }
+
 std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
   if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
      ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
@@ -3830,6 +3927,9 @@ std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
   const auto* active=caster.activeWeapon();
   if(active==nullptr || !active->isSpellOrRune())
     return {};
+
+  if(const auto special=runSpecialSpellMana(caster,active->spellId(),mana))
+    return special;
 
   struct Admission {
     int spell;
