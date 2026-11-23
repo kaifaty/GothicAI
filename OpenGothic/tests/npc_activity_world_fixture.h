@@ -2344,11 +2344,20 @@ auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& rese
           "equipment: without a ranged weapon the previous saved weapon stays in place");
   actor.setToBowMode(crossbow);
   actor.addItem(bolts,10);
+  auto* readied=actor.activeWeapon();
+  require(readied && readied->clsId()==crossbow && actor.weaponState()==WeaponState::CBow,
+          "equipment: the threshold check needs a drawn crossbow");
+  const auto crossbowRef=std::static_pointer_cast<daedalus::IItem>(readied->handlePtr());
+  auto& crossbowSymbol=*script.findSymbol(crossbow);
+  const auto previousAmmo=std::static_pointer_cast<daedalus::IItem>(actor.getItem(arrows)->handlePtr());
+  crossbowSymbol.set_instance(nullptr);
+  vm.global_item()->set_instance(previousAmmo);
   refill();
-  const auto crossbowRef=std::static_pointer_cast<daedalus::IItem>(actor.currentRangedWeapon()->handlePtr());
-  require(actor.itemCount(bolts)==10 && locals("B_CREATEAMMO.RANGEDWEAPON")==crossbowRef &&
-          vm.global_item()->get_instance()==crossbowRef && Contract::random(script)==random,
-          "equipment: exactly ten bolts stay unchanged and a readied weapon sets ITEM without RNG");
+  require(actor.itemCount(bolts)==10 && locals("B_CREATEAMMO.RANGEDWEAPON")==crossbowRef,
+          "equipment: exactly ten bolts stay unchanged and the readied weapon is saved");
+  require(crossbowSymbol.get_instance()==crossbowRef && vm.global_item()->get_instance()==previousAmmo,
+          "equipment: reading the crossbow publishes its instance and preserves ITEM");
+  require(Contract::random(script)==random,"equipment: ammo checks do not draw RNG");
   actor.delItem(bolts,1);
   refill();
   require(actor.itemCount(bolts)==19 &&
@@ -2359,7 +2368,9 @@ auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& rese
   actor.setPosition({1000,2000,3000});
   actor.handle().aivar[9]=script.findSymbol("AR_KILL")->get_int();
   auto choose=[&](int distance) {
-    hero.setPosition(hero.position()+actor.centerPosition()-hero.centerPosition()+Tempest::Vec3(float(distance),0,0));
+    const auto heroCenterOffset=hero.centerPosition()-hero.position();
+    hero.setPosition(actor.centerPosition()-heroCenterOffset+Tempest::Vec3(float(distance)+0.25f,0,0));
+    require(int(std::sqrt(actor.qDistTo(hero)))==distance,"equipment: match the script's truncated distance");
     actor.clearAiQueue();
     vm.push_instance(self);
     vm.push_instance(other);
@@ -2462,7 +2473,7 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     Contract::activityEventsOn(script)=native;
     if(native) stockItemRestoreCoverage(script);
     const auto equipment=stockEquipmentHelpers(test,hero,*npc,native);
-    if(native) require(equipment==stockEquipment,"equipment: spell preparation creates items and queues actions in stock order");
+    if(native) require(equipment==stockEquipment,"equipment: spell preparation matches stock inventory contents and queue order");
     else stockEquipment=equipment;
     script.setSeed(73106);
     const auto beforeXp=hero.experience();
