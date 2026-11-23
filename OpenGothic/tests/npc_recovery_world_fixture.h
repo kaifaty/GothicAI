@@ -163,6 +163,62 @@ void tradeInventoryAfterDefeat(ActivityEventsWorld& test, bool native) {
   vm.global_self()->set_instance(oldSelf);
   }
 
+void stockDeathTrophies(ActivityEventsWorld& test, bool native) {
+  auto& world = test.world();
+  auto& script = world.script();
+  auto& vm = script.getVm();
+  auto* wolf = activityNpc(world,"WOLF");
+  require(wolf && wolf->handle().aivar[43]==script.findSymbol("ID_WOLF")->get_int(),
+          "death trophies: need the stock wolf and species ID");
+  const auto actor = std::static_pointer_cast<daedalus::INpc>(wolf->handlePtr());
+  const auto oldSelf = vm.global_self()->get_instance();
+  vm.global_self()->set_instance(actor);
+  auto* learned = script.findSymbol("PLAYER_TALENT_TAKEANIMALTROPHY");
+  for(uint16_t i=0;i<learned->count();++i)
+    learned->set_int(i==0 || i==2 ? 1 : 0,i);
+  actor->aivar[11] = 0;
+  script.setSeed(73106);
+  auto expectedRandom = NpcDefinitionContract::random(script);
+  const auto green = int32_t(uint32_t(expectedRandom())%100u);
+  const auto black = int32_t(uint32_t(expectedRandom())%100u);
+  const auto orc = int32_t(uint32_t(expectedRandom())%10u);
+  const auto teeth = script.findSymbolIndex("ITAT_TEETH");
+  const auto fur = script.findSymbolIndex("ITAT_WOLFFUR");
+  const auto beforeTeeth = wolf->itemCount(teeth), beforeFur = wolf->itemCount(fur);
+  const auto* loot = script.findSymbol("B_GIVEDEATHINV");
+  size_t bodies = 0;
+  std::vector<std::string> calls;
+  vm.observe_instructions([&](const auto&) { bodies+=vm.pc()==loot->address(); });
+  vm.observe_externals([&](const auto& fn) {
+    if(fn.name()=="CREATEINVITEMS" || fn.name()=="HLP_RANDOM")
+      calls.push_back(fn.name());
+    });
+  const auto run = [&] {
+    const auto gi = vm.unsafe_get_gi();
+    vm.push_int(0x12345678);
+    vm.push_reference(vm.global_self());
+    vm.unsafe_call_bl(loot);
+    require(vm.pop_int()==0x12345678 && vm.unsafe_get_gi()==gi,"death trophies: the call restores the stack and member context");
+    };
+  run();
+  const auto lastItem = vm.global_item()->get_instance();
+  require(wolf->itemCount(teeth)==beforeTeeth+2 && wolf->itemCount(fur)==beforeFur+1 && actor->aivar[11]==1 &&
+          script.findSymbol("B_GIVEDEATHINV.SLF")->get_instance()==actor && lastItem && lastItem->symbol_index()==fur,
+          "death trophies: learned teeth and fur use the original grant order, ITEM and saved latch");
+  require(calls==std::vector<std::string>{"CREATEINVITEMS","CREATEINVITEMS","HLP_RANDOM","HLP_RANDOM","HLP_RANDOM"} &&
+          script.findSymbol("GOBLINGREEN_RANDOMIZER")->get_int()==green &&
+          script.findSymbol("GOBLINBLACK_RANDOMIZER")->get_int()==black &&
+          script.findSymbol("ORC_RANDOMIZER")->get_int()==orc && NpcDefinitionContract::random(script)==expectedRandom,
+          "death trophies: all three draws and global results are retained even for wolves");
+  calls.clear();
+  run();
+  require(calls.empty() && bodies==(native ? 0u : 2u) && vm.global_item()->get_instance()==lastItem,
+          "death trophies: the saved latch skips grants and draws on the second call");
+  vm.observe_externals({});
+  vm.observe_instructions({});
+  vm.global_self()->set_instance(oldSelf);
+  }
+
 void npcDeathLifecycle(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   constexpr auto* actor="BAU_951_HILDA";
@@ -273,6 +329,7 @@ void npcDeathLifecycle(Gothic& gothic) {
       }
     tradeInventoryAfterDefeat(test,native);
     dragonDeathBranches(gothic,native);
+    stockDeathTrophies(test,native);
     }
 
   load(corpse);

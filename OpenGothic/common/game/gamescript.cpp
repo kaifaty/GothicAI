@@ -97,6 +97,7 @@ GameScript::GameScript(GameSession &owner)
   initCommon();
   loadNativeNpcDeath();
   loadNativeTradeInventory();
+  loadNativeDeathTrophies();
   loadNativeNpcGlobals();
   loadNativeMonsterAttitudes();
   loadNativeWorldEntry();

@@ -353,6 +353,7 @@ class GameScript final : public GameRules {
     void refreshNpcAtInsert(Npc& npc);
     void loadNativeNpcDeath();
     void loadNativeTradeInventory();
+    void loadNativeDeathTrophies();
     void loadNativeNpcGlobals();
     void loadNativeMonsterAttitudes();
     void loadNativeWorldEntry();
