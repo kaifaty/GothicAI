@@ -2572,6 +2572,102 @@ void propertyCrimePerceptions(World& world,Npc& npc,Npc& hero) {
   std::puts("Property crime: theft, guard report and chest use match the VM");
   }
 
+void fightWatchPerceptions(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto watch=script.findFunction("ZS_WATCHFIGHT");
+  const auto defeatPc=vm.find_symbol_by_name("B_ASSESSDEFEAT")->address();
+  const auto cheerPc=vm.find_symbol_by_name("B_CHEERFIGHT")->address();
+  const auto crime=script.intSymbol("CRIME_ATTACK",-1);
+  auto& variation=*vm.find_symbol_by_name("B_CHEERFIGHT.ZUFALL");
+  auto* lobart=activityNpc(world,"BAU_950_LOBART");
+  require(lobart && script.guildAttitude(npc,*lobart)==ATT_FRIENDLY,
+          "fight witnesses: the spectator and victim belong to allied guilds");
+  const auto originalPosition=lobart->position();
+  lobart->setPosition(npc.position()+Tempest::Vec3(450,0,0));
+  lobart->updateTransform();
+  auto& aivar=npc.handle().aivar;
+  const auto savedAivar=std::to_array(aivar);
+  const auto savedTime=npc.stateTime();
+  const auto savedAttitude=npc.attitude();
+  const auto savedVariation=variation.get_int();
+  const auto savedReason=lobart->handle().aivar[9];
+  const auto outputOrder=Contract::outputOrder(script);
+  const auto originalRandom=Contract::random(script);
+  lobart->handle().aivar[9]=script.intSymbol("AR_REACTTODAMAGE",-1);
+
+  enum class Site { Complaint, Praise, BeforeCheer, QuietWatcher, Concern, Cheer };
+  for(const auto site:{Site::Complaint,Site::Praise,Site::BeforeCheer,Site::QuietWatcher,Site::Concern,Site::Cheer}) {
+    const bool defeat=site==Site::Complaint || site==Site::Praise;
+    const bool reacts=site==Site::Concern || site==Site::Cheer;
+    const bool likesHero=site==Site::Praise || site==Site::Cheer;
+    const bool tough=site!=Site::Complaint && site!=Site::QuietWatcher;
+    const int time=site==Site::BeforeCheer ? 2999 : 3000;
+    const auto pc=defeat ? defeatPc : cheerPc;
+    std::vector<std::string> original;
+    for(bool native:{false,true}) {
+      enabled=native;
+      Contract::outputOrder(script)=outputOrder;
+      std::copy(savedAivar.begin(),savedAivar.end(),aivar);
+      aivar[1]=0;
+      aivar[57]=tough ? 1 : 0;
+      npc.setAttitude(likesHero ? ATT_FRIENDLY : ATT_NEUTRAL);
+      npc.clearAiQueue();
+      script.invokeState(&npc,&hero,lobart,watch);
+      npc.clearAiQueue();
+      npc.aiPush(AiQueue::aiWait(173));
+      npc.setStateTime(time);
+      script.setSeed(73106);
+      auto random=Contract::random(script);
+      const auto expectedRoll=reacts ? int32_t(random()%3) : -1;
+      variation.set_int(-1);
+      size_t bytecode=0;
+      vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==pc; });
+      const bool delivered=npc.perceptionProcess(hero,lobart,npc.qDistTo(*lobart),
+                                                   defeat ? PERC_ASSESSDEFEAT : PERC_ASSESSOTHERSDAMAGE);
+      vm.observe_instructions({});
+      require(delivered && bytecode==(native ? 0u : 1u) && variation.get_int()==expectedRoll &&
+              Contract::random(script)==random,"fight witnesses: exact callback dispatch and random draw");
+      auto queue=Contract::queue(npc);
+      if(defeat) {
+        require(queue.size()==1 && aivar[1]==(likesHero ? 0 : crime),
+                "fight witnesses: defeat replaces the old queue and records the appropriate crime");
+        const auto speech=queue.pop();
+        require(speech.act==AI_OutputSvm && speech.target==&hero && speech.s0==(likesHero ? "$GOODVICTORY" : "$OHMYGODHESDOWN"),
+                "fight witnesses: defeat preserves the original praise or complaint");
+        } else {
+        require(npc.stateTime()==(site==Site::BeforeCheer ? 2999u : 0u) && aivar[1]==0 &&
+                queue.size()==(reacts ? 3u : 1u) && queue.pop().act==AI_Wait,
+                "fight witnesses: the timer resets after the threshold and the original AI wait remains");
+        if(reacts) {
+          const auto speech=queue.pop();
+          const auto animation=queue.pop();
+          const auto expectedLine=std::string(likesHero ? "$CHEERFRIEND0" : "$OOH0")+std::to_string(expectedRoll+1);
+          require(speech.act==AI_OutputSvmOverlay && speech.target==&npc && speech.s0==expectedLine &&
+                  animation.act==AI_PlayAnim && animation.s0==(likesHero ? "T_WATCHFIGHT_YEAH" : "T_WATCHFIGHT_OHNO"),
+                  "fight witnesses: the same roll chooses the response and retains the reaction animation");
+          }
+        }
+      auto actions=activityQueue(npc);
+      if(native) require(original==actions,"fight witnesses: action queues match the VM");
+      else original=std::move(actions);
+      }
+    }
+  enabled=wasEnabled;
+  std::copy(savedAivar.begin(),savedAivar.end(),aivar);
+  npc.setStateTime(int64_t(savedTime));
+  npc.setAttitude(savedAttitude);
+  variation.set_int(savedVariation);
+  lobart->handle().aivar[9]=savedReason;
+  lobart->setPosition(originalPosition);
+  lobart->updateTransform();
+  Contract::random(script)=originalRandom;
+  std::puts("Fight witnesses: defeat and cheering match the VM");
+  }
+
 void quietSoundRooms(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -2757,6 +2853,7 @@ void quietSoundRooms(Gothic& gothic) {
   enemyPerceptions(world,*npc,hero);
   playerAssessmentRoutes(world,*npc,hero);
   propertyCrimePerceptions(world,*npc,hero);
+  fightWatchPerceptions(world,*npc,hero);
   for(bool privateRoom:{false,true}) {
     std::vector<std::string> original;
     for(bool native:{false,true}) {
