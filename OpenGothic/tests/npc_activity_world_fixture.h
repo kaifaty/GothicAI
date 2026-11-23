@@ -1491,6 +1491,18 @@ void quietSoundRooms(Gothic& gothic) {
   const bool enabled=events;
   auto& vm=script.getVm();
   const auto observe=script.findFunction("ZS_OBSERVEPLAYER");
+  const auto clear=script.findFunction("ZS_CLEARROOM");
+  const auto roomPc=vm.find_symbol_by_name("B_ASSESSENTERROOM")->address();
+  const auto portalCollision=script.findFunction("B_ASSESSPORTALCOLLISION");
+  auto& leftRoomComment=*vm.find_symbol_by_name("PLAYER_LEFTROOMCOMMENT");
+  const int32_t savedComment=leftRoomComment.get_int();
+  const auto setPrivateRoom=[&](bool privateRoom) {
+    const auto guild=privateRoom ? int32_t(npc->handle().guild) : int32_t(GIL_PUBLIC);
+    world.assignRoomToGuild("FARM01",guild);
+    require(world.guildOfRoom(npc->portalName())==guild &&
+            (!privateRoom || (guild>GIL_NONE && guild!=GIL_PUBLIC && world.guildOfRoom(hero.portalName())==guild)),
+            "enter room: the fixture changes the guild of the occupied portal");
+    };
   EventActor activity;
   activity.npc=npc;
   activity.state="ZS_STAND_WP";
@@ -1537,11 +1549,24 @@ void quietSoundRooms(Gothic& gothic) {
             "quiet sound: the standing listener is close enough to check the room");
     if(sameRoom) require(npc->canSeeNpc(hero,false),"quiet sound: the listener sees the guest in his portal");
     };
-  struct Site { bool sameRoom; int height; const char* label; };
-  for(const Site site : {Site{true,0,"same room"},Site{false,0,"separate room"},Site{true,251,"indoor height"}}) {
+  struct Site { bool sameRoom; bool privateRoom; bool friendly; int height; const char* label; };
+  for(const Site site : {Site{true,false,false,0,"same room"},Site{false,false,false,0,"separate room"},
+                         Site{true,false,false,251,"indoor height"},Site{true,true,false,0,"private room"},
+                         Site{true,true,true,0,"friendly private room"}}) {
     std::vector<std::string> original;
     for(bool native:{false,true}) {
       prepare(site.sameRoom);
+      if(site.privateRoom) {
+        setPrivateRoom(true);
+        leftRoomComment.set_int(1);
+        }
+      if(site.friendly) {
+        npc->setAttitude(ATT_FRIENDLY);
+        npc->aiPush(AiQueue::aiLookAtNpc(&hero));
+        Contract::nextAiAction(*npc);
+        require(npc->canSeeSource(),"quiet sound: the friendly listener has a visible source");
+        npc->aiPush(AiQueue::aiWait(173));
+        }
       if(site.height!=0) {
         auto position=hero.position();
         position.y=std::nextafter(npc->position().y+float(site.height),std::numeric_limits<float>::infinity());
@@ -1569,36 +1594,78 @@ void quietSoundRooms(Gothic& gothic) {
       const bool heard=npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSQUIETSOUND);
       events=enabled;
       vm.remove_call_observer(observer);
-      require(heard && quietCalls==(native ? 0u : 1u) && roomCalls==(site.height==0 ? 1u : 0u),
+      require(heard && quietCalls==(native ? 0u : 1u) && roomCalls==(!native && site.height==0 ? 1u : 0u),
               "quiet sound: ordinary perception preserves the indoor height gate in both executors");
-      if(site.height==0) {
+      if(site.height==0 && !site.friendly) {
         const auto* queued=npc->aiQueueFront();
-        require(queued && queued->act==AI_StartState && queued->func==observe && queued->target==&hero &&
+        require(queued && queued->act==AI_StartState && queued->func==(site.privateRoom ? clear : observe) &&
+                queued->target==&hero && queued->i0==1 && !npc->hasPerc(PERC_ASSESSQUIETSOUND) &&
                 clearCalls==1 && fakeBanditCalls==(site.sameRoom ? 0u : 1u),
-                "quiet sound: the public room and the unseen source reach their corresponding observation transitions");
+                "quiet sound: the room or unseen source queues its transition and clears perceptions");
+        }
+      if(site.friendly) {
+        const auto* queued=npc->aiQueueFront();
+        require(queued && queued->act==AI_Wait && npc->hasPerc(PERC_ASSESSQUIETSOUND) && clearCalls==0,
+                "quiet sound: the friendly listener keeps the queue and perception");
         }
       if(site.height!=0) require(npc->isAiQueueEmpty(),"quiet sound: the other floor leaves the original activity in place");
       const auto queue=activityQueue(*npc);
       if(native) require(queue==original,"quiet sound: the original and native handlers leave the same room reaction queue");
       else original=queue;
+      if(site.privateRoom) {
+        require(leftRoomComment.get_int()==0,"enter room: the private-room comment resets before rejecting a friendly listener");
+        leftRoomComment.set_int(savedComment);
+        setPrivateRoom(false);
+        }
       }
-    std::printf("D5.1 %s: ordinary quiet perception preserves the stock queue (%zu actions)\n",
-                site.label,original.size());
+    std::printf("%s %s: ordinary quiet perception preserves the stock queue (%zu actions)\n",
+                site.privateRoom ? "D5.3" : "D5.1",site.label,original.size());
     }
 
   prepare(true);
   observePlayerPhases(world,*npc,hero,false);
-  prepare(true);
-  const auto enterRoom=script.findFunction("B_ASSESSENTERROOM");
-  npc->setPerceptionEnable(PERC_ASSESSENTERROOM,enterRoom.ptr);
-  require(npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSENTERROOM) &&
-          npc->aiQueueFront() && npc->aiQueueFront()->act==AI_StartState && npc->aiQueueFront()->func==observe &&
-          npc->aiQueueFront()->target==&hero,"observation: entering the room directly queues the reaction");
-  Contract::nextAiAction(*npc);
-  Contract::tickRoutine(*npc);
-  require(npc->isInState(observe) && Contract::aiState(*npc).started && npc->hasPerc(PERC_ASSESSTHEFT),
-          "observation: the room reaction starts and restores perceptions");
-  std::puts("D5.2 direct room entrance: observation started with the original target and perceptions");
+  for(bool privateRoom:{false,true}) {
+    std::vector<std::string> original;
+    for(bool native:{false,true}) {
+      prepare(true);
+      if(privateRoom) setPrivateRoom(true);
+      leftRoomComment.set_int(1);
+      npc->setPerceptionEnable(PERC_ASSESSENTERROOM,portalCollision.ptr);
+      npc->aiPush(AiQueue::aiWait(173));
+      size_t roomCalls=0,portalCalls=0,roomBytecode=0;
+      const auto count=vm.add_call_observer([&](const auto& symbol) {
+        roomCalls+=symbol.name()=="B_ASSESSENTERROOM";
+        portalCalls+=symbol.name()=="B_ASSESSPORTALCOLLISION";
+        });
+      vm.observe_instructions([&](const auto&) { roomBytecode+=vm.pc()==roomPc; });
+      events=native;
+      const bool delivered=npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSENTERROOM);
+      events=enabled;
+      vm.observe_instructions({});
+      vm.remove_call_observer(count);
+      require(delivered && portalCalls==1 && roomCalls==1 && roomBytecode==(native ? 0u : 1u),
+              "enter room: the stock portal callback dispatches once and the room bytecode runs only in VM mode");
+      const auto* queued=npc->aiQueueFront();
+      require(queued && queued->act==AI_StartState && queued->func==(privateRoom ? clear : observe) &&
+              queued->target==&hero && queued->i0==1 &&
+              !npc->hasPerc(PERC_ASSESSENTERROOM) && !npc->hasPerc(PERC_ASSESSQUIETSOUND),
+              "enter room: the room reaction replaces the old queue and clears perceptions");
+      require(leftRoomComment.get_int()==(privateRoom ? 0 : 1),
+              "enter room: only a private room resets the comment");
+      const auto queue=activityQueue(*npc);
+      if(native) require(queue==original,"enter room: original and native perceptions produce the same queue");
+      else original=queue;
+      if(!privateRoom) {
+        Contract::nextAiAction(*npc);
+        Contract::tickRoutine(*npc);
+        require(npc->isInState(observe) && Contract::aiState(*npc).started && npc->hasPerc(PERC_ASSESSTHEFT),
+                "observation: the room reaction starts and restores perceptions");
+        }
+      if(privateRoom) setPrivateRoom(false);
+      leftRoomComment.set_int(savedComment);
+      }
+    std::printf("D5.3 %s entry: perception, action queue and room comment match the VM\n",privateRoom ? "private" : "public");
+    }
 
   prepare(true);
   PhysicsNoise impact;
@@ -1719,9 +1786,15 @@ void quietSoundAtPost(Gothic& gothic) {
     impact.position=npc->position()+Tempest::Vec3(-post->dir.z,0,post->dir.x)*300.f;
     auto& events=NpcDefinitionContract::activityEventsOn(script);
     const bool enabled=events;
+    auto& portalGuild=*vm.find_symbol_by_name("B_ASSESSENTERROOM.PORTALGUILD");
+    const auto previousGuild=portalGuild.get_int();
+    constexpr auto unvisited=std::numeric_limits<int32_t>::min();
+    portalGuild.set_int(unvisited);
     events=native;
     const bool heard=npc->hearPhysicsNoise(impact);
     events=enabled;
+    const bool checkedRoom=portalGuild.get_int()!=unvisited;
+    portalGuild.set_int(previousGuild);
     require(heard,"quiet sound: the impact from a known source is heard");
     if(checkReturn) {
       const auto until=world.tickCount()+2000;
@@ -1735,7 +1808,8 @@ void quietSoundAtPost(Gothic& gothic) {
       }
     vm.remove_call_observer(observer);
     NpcDayMeasurement::stop(world);
-    require(quietCalls==(native ? 0u : 1u) && roomCalls==(height==1000.f ? 1u : 0u) &&
+    require(quietCalls==(native ? 0u : 1u) && roomCalls==(!native && height==1000.f ? 1u : 0u) &&
+            checkedRoom==(height==1000.f) &&
             (!checkReturn || vmCalls==(native ? 0u : 1u)),
             "quiet sound: the expected executor preserves the early height gate and includes the exact boundary");
     require(!std::filesystem::exists(directory/"npc-day-script.json"),"quiet sound: trace-only writes no VM summary");
