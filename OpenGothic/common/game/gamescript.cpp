@@ -619,8 +619,7 @@ void GameScript::loadPerc(Serialize& fin) {
   uint32_t count = 0;
   fin.read(count);
   if(count!=PERC_Count) {
-    if(hasSymbolName("initPerceptions"))
-      vm.call_function("initPerceptions");
+    initPerceptions();
     return;
     }
   for(size_t i=0; i<PERC_Count; ++i)

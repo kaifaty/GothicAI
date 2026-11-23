@@ -39,3 +39,38 @@ void GameScript::refreshNpcAtInsert(Npc& npc) {
       break;
     }
   }
+
+void GameScript::initPerceptions() {
+  // New sessions can call this before a world is attached.
+  if(!nativeRoutineProgram || !NpcDefinitionRuntime::enabled()) {
+    if(hasSymbolName("initPerceptions"))
+      vm.call_function("initPerceptions");
+    return;
+    }
+
+  perc_setrange(PERC_ASSESSDAMAGE,       9999);
+  perc_setrange(PERC_ASSESSOTHERSDAMAGE, 1000);
+  perc_setrange(PERC_ASSESSDEFEAT,       2000);
+  perc_setrange(PERC_ASSESSMURDER,       2000);
+  perc_setrange(PERC_ASSESSTHREAT,       1000);
+  perc_setrange(PERC_DRAWWEAPON,          500);
+  perc_setrange(PERC_ASSESSFIGHTSOUND,   3000);
+  perc_setrange(PERC_ASSESSQUIETSOUND,   1000);
+  perc_setrange(PERC_ASSESSTHEFT,        1000);
+  perc_setrange(PERC_ASSESSUSEMOB,       1000);
+  perc_setrange(PERC_ASSESSENTERROOM,    1000);
+  perc_setrange(PERC_ASSESSMAGIC,        9999);
+  perc_setrange(PERC_ASSESSSTOPMAGIC,    9999);
+  perc_setrange(PERC_ASSESSTALK,          500);
+  perc_setrange(PERC_ASSESSWARN,         1000);
+  perc_setrange(PERC_MOVEMOB,             500);
+  perc_setrange(PERC_ASSESSSURPRISE,     3500);
+  perc_setrange(PERC_OBSERVEINTRUDER,     100);
+  perc_setrange(PERC_ASSESSREMOVEWEAPON,  100);
+  perc_setrange(PERC_CATCHTHIEF,          100);
+  perc_setrange(PERC_ASSESSCALL,          100);
+  perc_setrange(PERC_MOVENPC,             100);
+  perc_setrange(PERC_ASSESSCASTER,        100);
+  perc_setrange(PERC_NPCCOMMAND,          100);
+  perc_setrange(PERC_OBSERVESUSPECT,      100);
+  }

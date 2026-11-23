@@ -2572,6 +2572,64 @@ void transformNpcRecords(World& world) {
   std::puts("NPC transformation records: inventory, animation, equipment, untouched fields and undo match stock");
   }
 
+void initializePerceptionRanges(World& world) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  const auto previous=script.percRanges();
+  auto custom=previous;
+  custom.range[PERC_ASSESSPLAYER]=725;
+  custom.range[PERC_ASSESSQUIETSOUND]=42;
+  const auto load=[&](uint32_t count,const PerDist& ranges) {
+    std::vector<uint8_t> bytes;
+    {
+      Tempest::MemWriter writer(bytes);
+      Serialize out(writer);
+      out.setEntry("game/perc");
+      out.write(count);
+      for(uint32_t i=0;i<count;++i)
+        out.write(ranges.range[i]);
+      }
+    Tempest::MemReader reader(bytes);
+    Serialize in(reader);
+    require(in.setEntry("game/perc"),"the perception fixture must have a save entry");
+    script.loadPerc(in);
+    };
+  const auto* configured=std::getenv("OPENGOTHIC_NPC_RECORDS");
+  const auto oldRecords=configured ? std::optional<std::string>(configured) : std::nullopt;
+  const auto restore=[&] {
+    vm.observe_instructions({});
+    if(oldRecords) setenv("OPENGOTHIC_NPC_RECORDS",oldRecords->c_str(),1);
+    else unsetenv("OPENGOTHIC_NPC_RECORDS");
+    load(PERC_Count,previous);
+    };
+  const auto run=[&](bool native,bool oldSave) {
+    if(native) unsetenv("OPENGOTHIC_NPC_RECORDS");
+    else setenv("OPENGOTHIC_NPC_RECORDS","0",1);
+    size_t instructions=0;
+    vm.observe_instructions([&](const auto&) { ++instructions; });
+    load(PERC_Count,custom);
+    require(instructions==0 && script.percRanges().range[PERC_ASSESSQUIETSOUND]==42,
+            "a matching save count must restore stored ranges directly");
+    if(oldSave) load(PERC_Count-1,custom);
+    else script.initPerceptions();
+    vm.observe_instructions({});
+    require((instructions==0)==native,"perception setup must use the selected executor");
+    return script.percRanges();
+    };
+  try {
+    for(const bool oldSave:{false,true}) {
+      const auto stock=run(false,oldSave), native=run(true,oldSave);
+      require(stock.range[PERC_ASSESSPLAYER]==725 && stock.range[PERC_ASSESSQUIETSOUND]==1000,
+              "initialization must preserve unlisted ranges and replace a listed one");
+      require(std::equal(std::begin(stock.range),std::end(stock.range),std::begin(native.range)),
+              "native initialization and old save fallback must match all stock ranges");
+      }
+    restore();
+    }
+  catch(...) { restore(); throw; }
+  std::puts("NPC perceptions: startup defaults, matching saves and old save fallback match stock");
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
@@ -2583,6 +2641,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
       refreshAtInsert(*gothic.world());
       if(NpcDefinitionRuntime::enabled())
         transformNpcRecords(*gothic.world());
+      initializePerceptionRanges(*gothic.world());
       }
     const auto save=pointActivitiesWorld(gothic,events);
     itemRoutinePhasesWorld(gothic,events);

@@ -95,6 +95,7 @@ class GameScript final : public GameRules {
     void         loadQuests(Serialize& fin);
     void         saveVar(Serialize& fout);
     void         loadVar(Serialize& fin);
+    void         initPerceptions();
     void         savePerc(Serialize& fout);
     void         loadPerc(Serialize& fin);
 
