@@ -519,6 +519,10 @@ void GameScript::loadNativeHumanPerceptions() {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
   using Actor = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("B_ATTACK",std::function<void(Actor,Actor,int32_t,int32_t)>{
+    [this](const Actor& self,const Actor& other,int32_t reason,int32_t wait) {
+      startNpcAttack(self,other,reason,wait);
+      }},enabled);
   vm.override_function("C_ISUSEDMOBMYPOSSESSION",std::function<int32_t(Actor,Actor)>{
     [this](const Actor& self,const Actor& other) { return usedMobIsPossession(self,other); }},enabled);
   vm.override_function("C_ISTAKENITEMMYPOSSESSION",std::function<int32_t(Actor,Actor,std::shared_ptr<daedalus::IItem>)>{
@@ -2727,6 +2731,11 @@ void GameScript::callGuards() {
 
 void GameScript::startNpcAttack(const std::shared_ptr<daedalus::INpc>& attacker,
                                 const std::shared_ptr<daedalus::INpc>& target, int32_t reason, int32_t wait) {
+  struct RestoreContext {
+    daedalus::DaedalusVm& vm;
+    std::shared_ptr<daedalus::DaedalusInstance> member;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(member)); }
+    } restore{vm,vm.unsafe_get_gi()};
   auto& selfSlot = *findSymbol("B_ATTACK.SLF");
   auto& otherSlot = *findSymbol("B_ATTACK.OTH");
   auto& reasonSlot = *findSymbol("B_ATTACK.ATTACK_REASON");
@@ -2738,43 +2747,52 @@ void GameScript::startNpcAttack(const std::shared_ptr<daedalus::INpc>& attacker,
   const auto self = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(selfSlot.get_instance()); };
   const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(otherSlot.get_instance()); };
   const auto value = [this](std::string_view name) { return findSymbol(name)->get_int(); };
+  auto* aivar = findSymbol("C_NPC.AIVAR");
+  const auto member = [this](const auto& actor) {
+    vm.unsafe_set_gi(actor);
+    return actor;
+    };
+  const auto current = [&](uint16_t index) { return vm.get_int(member(self()),aivar,index); };
+  const auto assign = [&](uint16_t index,int32_t val) { vm.set_int(member(self()),aivar,index,val); };
 
-  constexpr size_t invincible = 4, lastTarget = 7, attackReason = 9, waitBeforeAttack = 23;
-  constexpr size_t lastPlayerReason = 47, enemyOverride = 61, lastFightComment = 64;
-  self()->aivar[waitBeforeAttack] = waitSlot.get_int();
+  constexpr uint16_t invincible = 4, lastTarget = 7, attackReason = 9, waitBeforeAttack = 23;
+  constexpr uint16_t lastPlayerReason = 47, enemyOverride = 61, lastFightComment = 64;
+  const auto no = value("FALSE");
+  assign(waitBeforeAttack,waitSlot.get_int());
   if(reasonSlot.get_int()==value("AR_SUDDENENEMYINFERNO")) {
-    self()->aivar[enemyOverride] = 0;
+    assign(enemyOverride,no);
     npc_sendpassiveperc(self(),PERC_ASSESSFIGHTSOUND,self(),other());
     }
 
   if(npc_isinstate(self(),int(ZS_Talk))) {
-    self()->aivar[invincible] = 0;
-    if(auto actor = other())
-      actor->aivar[invincible] = 0;
+    assign(invincible,no);
+    vm.set_int(member(other()),aivar,invincible,no);
     }
 
-  const bool sameTarget = self()->aivar[lastTarget]==hlp_getinstanceid(other());
+  const auto targetMemory = member(self());
+  const auto targetId = hlp_getinstanceid(other());
+  const bool sameTarget = vm.get_int(targetMemory,aivar,lastTarget)==targetId;
   const bool attacking = npc_isinstate(self(),int(ZS_Attack));
   bool changeReason = true;
   if(sameTarget && attacking) {
-    const auto current = self()->aivar[attackReason];
+    const bool strongerReason = reasonSlot.get_int()>current(attackReason);
     const bool wantsToKill = hasAttackReasonToKill(self());
-    changeReason = reasonSlot.get_int()>current && !wantsToKill;
+    changeReason = strongerReason && !wantsToKill;
     }
   if(changeReason) {
-    self()->aivar[attackReason] = reasonSlot.get_int();
+    assign(attackReason,reasonSlot.get_int());
     if(npc_isplayer(other()))
-      self()->aivar[lastPlayerReason] = reasonSlot.get_int();
+      assign(lastPlayerReason,reasonSlot.get_int());
     }
 
-  const auto hasReason = [&](std::string_view name) { return self()->aivar[attackReason]==value(name); };
+  const auto hasReason = [&](std::string_view name) { return current(attackReason)==value(name); };
   const auto memorize = [&](std::string_view name) {
     memorizePlayerCrime(self(),other(),value(name));
     };
   if(hasReason("AR_SHEEPKILLER"))
     memorize("CRIME_SHEEPKILLER");
   if(hasReason("AR_REACTTOWEAPON") || hasReason("AR_REACTTODAMAGE")) {
-    const bool friendNpc = int32_t(self()->type)==value("NPCTYPE_FRIEND");
+    const bool friendNpc = vm.get_int(member(self()),findSymbol("C_NPC.NPCTYPE"),0)==value("NPCTYPE_FRIEND");
     const bool targetPlayer = npc_isplayer(other());
     const bool toughGuy = isToughGuy(self());
     if(!(friendNpc && targetPlayer) && !toughGuy)
@@ -2789,17 +2807,15 @@ void GameScript::startNpcAttack(const std::shared_ptr<daedalus::INpc>& attacker,
     return;
   if(hasReason("AR_KILL"))
     setCombatAttitude(self(),ATT_HOSTILE);
-  if(npc_isplayer(other()))
-    self()->aivar[0] = value("FIGHT_CANCEL");
-  self()->aivar[lastFightComment] = 0;
-  if(!npc_isinstate(self(),int(ZS_Talk))) {
-    npc_clearaiqueue(self());
-    clearPerceptions(self());
+  if(npc_isplayer(other())) {
+    assign(0,value("FIGHT_CANCEL"));
+    assign(lastFightComment,no);
     }
+  if(!npc_isinstate(self(),int(ZS_Talk)))
+    npc_clearaiqueue(self());
+  clearPerceptions(self());
   npc_settarget(self(),other());
-  findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(int32_t(BS_LIE));
-  findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self());
-  const auto mustStand = ActivityDefinitions::bodyStateContains(npc_getbodystate(self()),BS_LIE);
+  const auto mustStand = npcBodyStateContains(self(),BS_LIE);
   ai_startstate(self(),int(ZS_Attack),mustStand ? 1 : 0,"");
   }
 

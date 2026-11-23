@@ -595,8 +595,59 @@ void humanReactionPhases(World& world,Npc& npc,Npc& hero) {
               "human reactions: original and native queue, phase results and RNG match");
       }
     }
+  const auto* attack=script.findSymbol("B_ATTACK");
+  const auto talk=script.findFunction("ZS_TALK");
+  auto& state=Contract::aiState(npc).funcIni;
+  const auto savedState=state;
+  const auto currentQueue=Contract::queue(npc);
+  const auto currentPerceptions=std::to_array(Contract::perceptions(npc));
+  const auto currentAivar=std::to_array(npc.handle().aivar);
+  const auto heroInvincible=hero.handle().aivar[4];
+  const auto savedOther=vm.global_other()->get_instance();
+  auto* const savedTarget=npc.target();
+  const auto actor=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto player=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  const auto neutralReason=script.findSymbol("AR_NONE")->get_int();
+  for(bool talking:{false,true})
+    for(bool targetsPlayer:{false,true}) {
+      auto& aivar=npc.handle().aivar;
+      state=talking ? talk : ScriptFn();
+      const auto target=targetsPlayer ? player : nullptr;
+      for(bool native:{false,true}) {
+        enabled=native;
+        vm.global_other()->set_instance(target);
+        npc.setPerceptionEnable(PERC_ASSESSTALK,script.findFunction("B_ASSESSTALK").ptr);
+        aivar[4]=hero.handle().aivar[4]=1;
+        aivar[64]=123;
+        npc.clearAiQueue();
+        npc.aiPush(AiQueue::aiWait(173));
+        const auto context=vm.unsafe_get_gi();
+        size_t instructions=0;
+        vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==attack->address(); });
+        using storygraph::Value;
+        std::string error;
+        const auto result=storygraph::callFunction(vm,*attack,{Value::instance(actor),Value::instance(target),
+                                                   Value::integer(neutralReason),Value::integer(17)},error);
+        vm.observe_instructions({});
+        auto queue=Contract::queue(npc);
+        require(result && instructions==(native ? 0u : 1u) && vm.unsafe_get_gi()==context &&
+                aivar[23]==17 && aivar[64]==(targetsPlayer ? 0 : 123) && aivar[4]==int32_t(!talking) &&
+                hero.handle().aivar[4]==int32_t(!talking || !targetsPlayer) &&
+                !npc.hasPerc(PERC_ASSESSTALK) && npc.target()==(targetsPlayer ? &hero : nullptr) &&
+                queue.size()==size_t(talking)+1 && (!talking || queue.pop().act==AI_Wait) &&
+                queue.pop().func==script.findFunction("ZS_ATTACK"),
+                "dialogue attacks must match the stock queue, invincibility, comment and perceptions");
+        }
+      }
+  state=savedState;
+  Contract::queue(npc)=currentQueue;
+  std::copy(currentPerceptions.begin(),currentPerceptions.end(),Contract::perceptions(npc));
+  std::copy(currentAivar.begin(),currentAivar.end(),npc.handle().aivar);
+  hero.handle().aivar[4]=heroInvincible;
+  vm.global_other()->set_instance(savedOther);
+  npc.setTarget(savedTarget);
   enabled=wasEnabled;
-  std::puts("Human reactions: six damage and weapon phases match the VM");
+  std::puts("Human reactions: damage, weapon escalation and dialogue attacks match the VM");
   }
 
 void drawWeaponPerceptions(World& world,Npc& npc,Npc& hero) {
