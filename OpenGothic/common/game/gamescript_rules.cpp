@@ -3899,7 +3899,43 @@ bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32
      ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return false;
 
+  const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
+  auto& mana=self->attribute[ATR_MANA];
+  auto& selection=self->aivar[20]; // AIV_SELECTSPELL
+  struct RestoreContext {
+    daedalus::DaedalusVm& vm;
+    std::shared_ptr<daedalus::DaedalusInstance> caller;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+    };
+
+  if(function=="SPELL_CAST_HEAL" || function=="SPELL_CAST_PALHEAL") {
+    struct Heal { std::string_view spell, cost, amount; };
+    static constexpr Heal mage[] = {
+      {"SPL_LIGHTHEAL", "SPL_COST_LIGHTHEAL", "SPL_HEAL_LIGHTHEAL"},
+      {"SPL_MEDIUMHEAL","SPL_COST_MEDIUMHEAL","SPL_HEAL_MEDIUMHEAL"},
+      {"SPL_FULLHEAL",  "SPL_COST_FULLHEAL",  "SPL_HEAL_FULLHEAL"},
+      };
+    static constexpr Heal paladin[] = {
+      {"SPL_PALLIGHTHEAL", "SPL_COST_PALLIGHTHEAL", "SPL_HEAL_PALLIGHTHEAL"},
+      {"SPL_PALMEDIUMHEAL","SPL_COST_PALMEDIUMHEAL","SPL_HEAL_PALMEDIUMHEAL"},
+      {"SPL_PALFULLHEAL",  "SPL_COST_PALFULLHEAL",  "SPL_HEAL_PALFULLHEAL"},
+      };
+    for(const auto& heal : function=="SPELL_CAST_PALHEAL" ? paladin : mage) {
+      // Each stock test queries the active spell, publishing its item instance.
+      if(npc_getactivespell(self)!=findSymbol(heal.spell)->get_int())
+        continue;
+      mana-=findSymbol(npc_getactivespellisscroll(self) ? "SPL_COST_SCROLL" : heal.cost)->get_int();
+      const RestoreContext restore{vm,vm.unsafe_get_gi()};
+      vm.unsafe_set_gi(self);
+      npc_changeattribute(self,ATR_HITPOINTS,findSymbol(heal.amount)->get_int());
+      return true;
+      }
+    ++selection;
+    return true;
+    }
+
   enum class Selection { After, Before, Both };
+  enum class Payment { ScrollOrRune, ChargeStep, ScrollOrDrain };
   struct Summon {
     std::string_view forHero, forNpc;
     int32_t count = 1;
@@ -3907,20 +3943,24 @@ bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32
     Selection selection = Selection::After;
     };
   struct Cast {
-    std::string_view function, runeCost = {}, levelParameter = {};
+    std::string_view function, cost = {}, levelParameter = {};
     Summon summon = {};
+    Payment payment = Payment::ScrollOrRune;
     };
   // Stock spell accounting and the summoned instances used by the ordinary world spawn call.
   static constexpr Cast casts[] = {
     {"SPELL_CAST_ARMYOFDARKNESS",   "SPL_COST_ARMYOFDARKNESS", "SPELL_CAST_ARMYOFDARKNESS.SPELLLEVEL",
      {"SUMMONED_SKELETON","SKELETON",6,800.f}},
     {"SPELL_CAST_BREATHOFDEATH",    "SPL_COST_BREATHOFDEATH", "SPELL_CAST_BREATHOFDEATH.SPELLLEVEL"},
+    {"SPELL_CAST_CHARGEFIREBALL",   "STEP_CHARGEFIREBALL", "SPELL_CAST_CHARGEFIREBALL.SPELLLEVEL", {}, Payment::ChargeStep},
+    {"SPELL_CAST_CHARGEZAP",        "STEP_CHARGEZAP", "SPELL_CAST_CHARGEZAP.SPELLLEVEL", {}, Payment::ChargeStep},
     {"SPELL_CAST_CHARM",            "SPL_COST_CHARM"},
     {"SPELL_CAST_CONCUSSIONBOLT",   "SPL_COST_CONCUSSIONBOLT"},
     {"SPELL_CAST_DEATHBALL",        "SPL_COST_DEATHBALL"},
     {"SPELL_CAST_DEATHBOLT",        "SPL_COST_DEATHBOLT"},
     {"SPELL_CAST_DESTROYUNDEAD",    "SPL_COST_DESTROYUNDEAD"},
     {"SPELL_CAST_ENERGYBALL",       "SPL_COST_ENERGYBALL"},
+    {"SPELL_CAST_FEAR",             "SPL_COST_FEAR"},
     {"SPELL_CAST_FIREBOLT",         "SPL_COST_FIREBOLT"},
     {"SPELL_CAST_FIRERAIN",         "SPL_COST_FIRERAIN"},
     {"SPELL_CAST_FIRESTORM",        "SPL_COST_INSTANTFIRESTORM"},
@@ -3940,6 +3980,8 @@ bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32
     {"SPELL_CAST_PALDESTROYEVIL",   "SPL_COST_PALDESTROYEVIL"},
     {"SPELL_CAST_PALHOLYBOLT",      "SPL_COST_PALHOLYBOLT"},
     {"SPELL_CAST_PALREPELEVIL",     "SPL_COST_PALREPELEVIL"},
+    {"SPELL_CAST_PYROKINESIS",      "STEP_FIRESTORM", "SPELL_CAST_PYROKINESIS.SPELLLEVEL", {}, Payment::ChargeStep},
+    {"SPELL_CAST_SKULL",            {}, {}, {}, Payment::ScrollOrDrain},
     {"SPELL_CAST_SLEEP"},
     {"SPELL_CAST_SUCKENERGY",       "SPL_COST_SUCKENERGY"},
     {"SPELL_CAST_SUMMONDEMON",      "SPL_COST_SUMMONDEMON", {}, {"SUMMONED_DEMON","DEMON",1,1000.f}},
@@ -3954,27 +3996,31 @@ bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32
     {"SPELL_CAST_THUNDERSTORM",     "SPL_COST_THUNDERSTORM"},
     {"SPELL_CAST_WATERFIST",        "SPL_COST_WATERFIST"},
     {"SPELL_CAST_WHIRLWIND",        "SPL_COST_WHIRLWIND"},
+    {"SPELL_CAST_WINDFIST",         "STEP_WINDFIST", "SPELL_CAST_WINDFIST.SPELLLEVEL", {}, Payment::ChargeStep},
     {"SPELL_CAST_ZAP",              "SPL_COST_ZAP", "SPELL_CAST_ZAP.SPELLLEVEL"},
     };
-  const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
   const auto cast=std::ranges::find(casts,function,&Cast::function);
   if(cast==std::end(casts))
     return runStockTeleportCast(self,function);
   if(!cast->levelParameter.empty())
     findSymbol(cast->levelParameter)->set_int(level);
-  if(!cast->runeCost.empty()) {
-    const auto cost=findSymbol(npc_getactivespellisscroll(self) ? "SPL_COST_SCROLL" : cast->runeCost)->get_int();
-    self->attribute[ATR_MANA]-=cost;
+  if(function=="SPELL_CAST_FEAR")
+    ai_setnpcstostate(self,int(findFunction("ZS_MAGICFLEE").ptr),1000);
+  if(cast->payment==Payment::ChargeStep) {
+    mana-=findSymbol(cast->cost)->get_int();
+    if(mana<0)
+      mana=0;
     }
-  auto& selection = self->aivar[20]; // AIV_SELECTSPELL
+  else if(cast->payment==Payment::ScrollOrDrain) {
+    mana=npc_getactivespellisscroll(self) ? mana-findSymbol("SPL_COST_SCROLL")->get_int() : 0;
+    }
+  else if(!cast->cost.empty()) {
+    mana-=findSymbol(npc_getactivespellisscroll(self) ? "SPL_COST_SCROLL" : cast->cost)->get_int();
+    }
   const auto& summon = cast->summon;
   if(!summon.forHero.empty()) {
     // Instance creation may execute callbacks with the caster as the caller's context.
-    struct RestoreContext {
-      daedalus::DaedalusVm& vm;
-      std::shared_ptr<daedalus::DaedalusInstance> caller;
-      ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
-      } restore{vm,vm.unsafe_get_gi()};
+    const RestoreContext restore{vm,vm.unsafe_get_gi()};
     vm.unsafe_set_gi(self);
     if(summon.selection!=Selection::After)
       ++selection;

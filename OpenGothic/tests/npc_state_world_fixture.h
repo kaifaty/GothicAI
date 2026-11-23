@@ -575,7 +575,6 @@ void stockSpellCastAccounting(World& world) {
   const auto oldItem=vm.global_item()->get_instance();
   const auto targetHp=target.attribute(ATR_HITPOINTS);
   auto& level=*script.findSymbol("SPELL_CAST_ZAP.SPELLLEVEL");
-  const auto oldLevel=level.get_int();
   auto& invested=*script.findSymbol("SPELL_PROCESSMANA.MANAINVESTED");
   auto& activeSpell=*script.findSymbol("SPELL_PROCESSMANA.ACTIVESPELL");
   const auto oldInvested=invested.get_int(),oldActiveSpell=activeSpell.get_int();
@@ -584,18 +583,29 @@ void stockSpellCastAccounting(World& world) {
 
   const struct Cast {
     const char* item;
-    int32_t cost;
+    int32_t debit;
     const char* admission=nullptr;
-    bool leveled=false;
+    const char* levelParameter=nullptr;
+    int32_t mana=3;
+    int32_t healing=0;
+    bool fear=false;
     } cases[] = {
     {"ITSC_ICEBOLT",5,"SPELL_LOGIC_ICEBOLT.MANAINVESTED"},
     {"ITRU_ICEBOLT",10,"SPELL_LOGIC_ICEBOLT.MANAINVESTED"},
-    {"ITSC_ZAP",5,"SPELL_LOGIC_ZAP.MANAINVESTED",true},
+    {"ITSC_ZAP",5,"SPELL_LOGIC_ZAP.MANAINVESTED","SPELL_CAST_ZAP.SPELLLEVEL"},
     {"ITSC_SLEEP",0},
+    {"ITSC_CHARGEFIREBALL",3,nullptr,"SPELL_CAST_CHARGEFIREBALL.SPELLLEVEL"},
+    {"ITRU_WINDFIST",20,nullptr,"SPELL_CAST_WINDFIST.SPELLLEVEL",80},
+    {"ITSC_FEAR",5,nullptr,nullptr,3,0,true},
+    {"ITRU_SKULL",70,nullptr,nullptr,70},
+    {"ITSC_MEDIUMHEAL",5,nullptr,nullptr,3,400},
+    {"ITRU_PALFULLHEAL",50,nullptr,nullptr,3,800},
     };
   for(const auto& row:cases) {
     auto& symbol=*script.findSymbol(row.item);
     const auto savedItem=symbol.get_instance();
+    auto& castLevel=row.levelParameter ? *script.findSymbol(row.levelParameter) : level;
+    const auto oldCastLevel=castLevel.get_int();
     for(bool native:{false,true}) {
       auto* caster=world.addNpc(hero->index(),point->position());
       require(caster!=nullptr,"cast accounting: the stock caster must spawn");
@@ -608,7 +618,7 @@ void stockSpellCastAccounting(World& world) {
         auto& local=*script.findSymbol(row.admission);
         const auto oldLocal=local.get_int();
         for(bool enough:{false,true}) {
-          const auto available=row.cost-int32_t(!enough);
+          const auto available=row.debit-int32_t(!enough);
           caster->handle().attribute[ATR_MANA]=available;
           symbol.set_instance(nullptr);
           invested.set_int(-1);
@@ -626,32 +636,46 @@ void stockSpellCastAccounting(World& world) {
           }
         local.set_int(oldLocal);
         }
-      caster->handle().attribute[ATR_MANA]=3;
+      caster->handle().attribute[ATR_MANA]=row.mana;
+      caster->handle().attribute[ATR_HITPOINTSMAX]=1000;
+      caster->handle().attribute[ATR_HITPOINTS]=100;
       caster->handle().aivar[20]=9;
+      caster->clearAiQueue();
       const auto casterQueue=activityQueue(*caster),targetQueue=activityQueue(target);
       const auto callSelf=vm.global_self()->get_instance(),callOther=vm.global_other()->get_instance();
       const auto callItem=vm.global_item()->get_instance(),callGi=vm.unsafe_get_gi();
-      level.set_int(71);
+      castLevel.set_int(71);
+      if(row.healing!=0)
+        symbol.set_instance(nullptr);
       instructions=0;
       vm.observe_instructions([&](const auto&) { ++instructions; });
       vm.push_int(0x12345678);
       script.invokeSpell(*caster,&target,*item);
       const auto stack=vm.pop_int();
       vm.observe_instructions({});
-      require(stack==0x12345678 && (instructions==0)==native && caster->attribute(ATR_MANA)==3-row.cost &&
-              caster->handle().aivar[20]==10 && level.get_int()==(row.leveled ? 0 : 71),
+      require(stack==0x12345678 && (instructions==0)==native && caster->attribute(ATR_MANA)==row.mana-row.debit &&
+              caster->handle().aivar[20]==(row.healing!=0 ? 9 : 10) && castLevel.get_int()==(row.levelParameter ? 0 : 71),
               "cast accounting: selected executor keeps the raw mana debit, counter and optional level");
+      require(caster->attribute(ATR_HITPOINTS)==100+row.healing &&
+              (row.healing==0 || symbol.get_instance()==std::static_pointer_cast<daedalus::IItem>(item->handlePtr())),
+              "cast accounting: self-healing changes health and publishes the active item");
       require(vm.global_self()->get_instance()==callSelf && vm.global_other()->get_instance()==callOther &&
               vm.global_item()->get_instance()==callItem && vm.unsafe_get_gi()==callGi &&
-              target.attribute(ATR_HITPOINTS)==targetHp && activityQueue(*caster)==casterQueue && activityQueue(target)==targetQueue,
-              "cast accounting: the numeric callback preserves the actor context and queues");
+              target.attribute(ATR_HITPOINTS)==targetHp && activityQueue(target)==targetQueue,
+              "cast accounting: the callback preserves the actor context and the target queue");
+      const auto* action=caster->aiQueueFront();
+      if(row.fear)
+        require(action && action->act==AI_SetNpcsToState && action->func==script.findFunction("ZS_MAGICFLEE") && action->i0==1000 &&
+                activityQueue(*caster).size()==1,"cast accounting: fear queues the original area state and radius");
+      else
+        require(activityQueue(*caster)==casterQueue,"cast accounting: numerical casts leave the caster queue alone");
       world.removeNpc(*caster);
       hero->set_instance(oldHero);
       symbol.set_instance(savedItem);
       vm.global_item()->set_instance(oldItem);
       }
+    castLevel.set_int(oldCastLevel);
     }
-  level.set_int(oldLevel);
   invested.set_int(oldInvested);
   activeSpell.set_int(oldActiveSpell);
   events=previousEvents;
