@@ -215,7 +215,7 @@ bool GameScript::runFearOrSleepSpell(Npc& npc, const daedalus::DaedalusSymbol& s
     if(!fear) {
       npc.aiPush(AiQueue::aiPlayAnimBs("T_STAND_2_VICTIM_SLE",BS_LIE));
       }
-    else if(npc.handle().guild<GIL_SEPERATOR_HUM) {
+    else if(npc.handle().guild<int32_t(GIL_SEPERATOR_HUM)) {
       static constexpr std::string_view gestures[] = {
         "T_STAND_2_FEAR_VICTIM1", "T_STAND_2_FEAR_VICTIM2", "T_STAND_2_FEAR_VICTIM3",
         };
@@ -326,7 +326,7 @@ void GameScript::stopFreezeOrWhirlwindSpell(Npc& npc) {
   npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction("B_ASSESSMAGIC").ptr);
   npc.clearAiQueue();
   npc.aiPush(AiQueue::aiStandup());
-  if(npc.handle().guild<GIL_SEPERATOR_HUM)
+  if(npc.handle().guild<int32_t(GIL_SEPERATOR_HUM))
     vm.call_function<void>("B_ASSESSDAMAGE");
   else
     npc_settempattitude(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),int32_t(ATT_HOSTILE));

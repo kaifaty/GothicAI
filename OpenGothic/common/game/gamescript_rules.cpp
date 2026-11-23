@@ -394,7 +394,7 @@ bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& s
     enableMagic("B_ASSESSMAGIC");
     npc_clearaiqueue(self);
     ai_standup(self);
-    if(self->guild<GIL_SEPERATOR_HUM)
+    if(self->guild<int32_t(GIL_SEPERATOR_HUM))
       vm.call_function<void>("B_ASSESSDAMAGE");
     else
       npc_settempattitude(self,ATT_HOSTILE);
