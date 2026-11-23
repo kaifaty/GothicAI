@@ -84,6 +84,8 @@ struct NpcDefinitionContract {
   static auto& placements(GameScript& script) { return script.placementDefinitions; }
   static auto& activities(GameScript& script) { return script.activityDefinitions; }
   static auto& aiState(Npc& npc) { return npc.aiState; }
+  static int32_t& lastHitSpell(Npc& npc) { return npc.lastHitSpell; }
+  static ScriptFn perception(const Npc& npc, PercType type) { return npc.perception[type].func; }
   static auto& activityEvents(Npc& npc) { return npc.activityEvents; }
   static bool& activityEventsOn(GameScript& script) { return script.activityEvents; }
   static auto& previousState(Npc& npc) { return npc.aiPrevState; }

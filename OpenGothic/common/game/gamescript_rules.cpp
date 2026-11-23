@@ -322,6 +322,124 @@ bool GameScript::runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
   return false;
   }
 
+bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  enum class Kind { Inflate, Drain, Swarm };
+  struct TimedSpell {
+    Kind kind;
+    std::string_view state, restart, spellId, duration, damage, victimLoop, victimTransition;
+    size_t lastSecond;
+    };
+  static constexpr TimedSpell spells[] = {
+    {Kind::Inflate,"ZS_INFLATE","B_RESTARTINFLATE","SPL_INFLATE","SPL_TIME_INFLATE","SPL_INFLATE_DAMAGE",
+     "S_INFLATE_VICTIM","T_STAND_2_INFLATE_VICTIM",77},
+    {Kind::Drain,"ZS_SUCKENERGY","B_RESTARTSUCKENERGY","SPL_SUCKENERGY","SPL_TIME_SUCKENERGY","SPL_SUCKENERGY_DAMAGE",
+     "S_SUCKENERGY_VICTIM","T_STAND_2_SUCKENERGY_VICTIM",79},
+    {Kind::Swarm,"ZS_SWARM","B_RESTARTSWARM","SPL_SWARM","SPL_TIME_SWARM","SPL_SWARM_DAMAGE",
+     "S_SWARM_VICTIM","T_STAND_2_SWARM_VICTIM",78},
+    };
+  const std::string_view name = symbol.name();
+  const auto* spell = std::find_if(std::begin(spells),std::end(spells),[&](const auto& s) {
+    return name.starts_with(s.state) || name==s.restart;
+    });
+  if(spell==std::end(spells))
+    return false;
+
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return vm.global_other()->get_instance(); };
+  const auto number = [&](std::string_view key) { return findSymbol(key)->get_int(); };
+  const auto enableMagic = [&](std::string_view callback) {
+    npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction(callback).ptr));
+    };
+  const auto playTransition = [&] {
+    findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self);
+    findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(BS_UNCONSCIOUS);
+    if(!ActivityDefinitions::bodyStateContains(npc_getbodystate(self),BS_UNCONSCIOUS))
+      ai_playanibs(self,spell->victimTransition,BS_UNCONSCIOUS);
+    };
+  const bool drain = spell->kind==Kind::Drain;
+  result = 0;
+  if(name==spell->restart) {
+    if(npc_getlasthitspellid(self)==number(spell->spellId)) {
+      npc_setstatetime(self,0);
+      if(drain)
+        ai_playani(self,spell->victimTransition);
+      }
+    return true;
+    }
+  auto& lastSecond = self->aivar[spell->lastSecond];
+  const auto phase = name.substr(spell->state.size());
+  if(phase.empty()) {
+    enableMagic(spell->restart);
+    npc_stopani(self,spell->victimLoop);
+    if(spell->kind!=Kind::Inflate) {
+      npc_clearaiqueue(self);
+      ai_standup(self);
+      }
+    if(!drain)
+      playTransition();
+    lastSecond = drain ? 1 : 0;
+    if(drain)
+      findSymbol("TEMP_SUCKENERGY_DISTTOPLAYER")->set_int(npc_getdisttoplayer(self));
+    return true;
+    }
+  if(phase=="_END")
+    return true;
+  if(phase!="_LOOP")
+    return false;
+
+  const auto seconds = npc_getstatetime(self);
+  // Drain remembers the original distance to HERO, shared by victims in the script.
+  const bool approachedHero = drain && number("TEMP_SUCKENERGY_DISTTOPLAYER")>=int32_t(uint32_t(npc_getdisttoplayer(self))+100u);
+  if(approachedHero || seconds>number(spell->duration)) {
+    enableMagic("B_ASSESSMAGIC");
+    npc_clearaiqueue(self);
+    ai_standup(self);
+    if(self->guild<GIL_SEPERATOR_HUM)
+      vm.call_function<void>("B_ASSESSDAMAGE");
+    else
+      npc_settempattitude(self,ATT_HOSTILE);
+    result = LOOP_END;
+    return true;
+    }
+  result = LOOP_CONTINUE;
+  if(seconds==lastSecond)
+    return true;
+
+  std::string_view line;
+  if(spell->kind==Kind::Inflate) {
+    static constexpr float fatness[] = {1,3,8,12,9,15,18,11,15,13,12,10,8,5,6,4,2,1,1};
+    if(seconds>0 && seconds<=int(std::size(fatness)))
+      mdl_setmodelfatness(self,fatness[seconds-1]);
+    switch(seconds) {
+      case 5: line="$Aargh_1"; break;
+      case 8: line="$Aargh_2"; break;
+      case 14: line="$Aargh_3"; break;
+      }
+    }
+  else if(spell->kind==Kind::Swarm) {
+    switch(seconds) {
+      case 2: line="$RunAway"; break;
+      case 6: line="$Aargh_2"; break;
+      case 7: line="$Aargh_3"; break;
+      case 8: line="$Aargh_1"; break;
+      }
+    }
+  else if(seconds==0) {
+    playTransition();
+    wld_playeffect("spellFX_SuckEnergy_BloodFly",self,vm.global_hero()->get_instance(),0,0,0,0);
+    }
+  if(!line.empty())
+    vm.call_function<void>("B_SAY",self,other(),line);
+
+  lastSecond = npc_getstatetime(self);
+  const auto hp = self->attribute[NpcAttribute::hitpoints];
+  const auto fullDamage = number(spell->damage);
+  vm.call_function<void>("B_MAGICHURTNPC",other(),self,hp>fullDamage ? fullDamage : hp-1);
+  if(drain && hp>fullDamage)
+    npc_changeattribute(std::dynamic_pointer_cast<daedalus::INpc>(other()),ATR_HITPOINTS,fullDamage);
+  return true;
+  }
+
 int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {
   auto* symbol = findSymbol(name);
   if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT)

@@ -2888,9 +2888,115 @@ void magicHurtStates(World& world) {
   std::puts("Magic damage states: stock ticks, queue, old save, attribution and one-time XP match");
   }
 
+std::vector<std::vector<std::string>> spellVictimPhasesWorld(Gothic& gothic, bool events) {
+  using Contract=NpcDefinitionContract;
+  std::string program;
+  loadBaseProgram(gothic.defaultGameDatFile(),Settings::getI("GAME","language"),&program);
+  if(program!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
+    return {};
+
+  ActivityEventsWorld test(gothic);
+  auto& world=test.world();
+  auto& script=world.script();
+  auto& victim=*test.extra();
+  auto& caster=*test.extra();
+  auto& hero=*world.player();
+  const auto oldHeroPosition=hero.position();
+  const auto heroHp=hero.attribute(ATR_HITPOINTS);
+  victim.setPosition({1000,2000,3000});
+  caster.setPosition({1000,2000,3500});
+  victim.setTrueGuild(GIL_WOLF); // Exercise Stop's nonhuman branch without starting a new fight.
+  victim.handle().guild=GIL_WOLF;
+  victim.setSimTier(NpcSimTier::Full);
+  victim.setProcessPolicy(NpcProcessPolicy::AiNormal);
+  victim.setAnim(Npc::Anim::Idle);
+
+  static constexpr struct {
+    std::string_view state, restart, spell;
+    int damage, duration, first;
+    size_t marker;
+    } cases[] = {
+    {"ZS_INFLATE","B_RESTARTINFLATE","SPL_INFLATE",5,19,5,77},
+    {"ZS_SUCKENERGY","B_RESTARTSUCKENERGY","SPL_SUCKENERGY",100,9,0,79},
+    {"ZS_SWARM","B_RESTARTSWARM","SPL_SWARM",80,6,2,78},
+    };
+  std::vector<std::vector<std::string>> actions;
+  for(const auto& row:cases) {
+    const auto state=script.findFunction(row.state);
+    const auto restart=script.findFunction(row.restart);
+    const bool drain=row.state=="ZS_SUCKENERGY";
+    test.stop(victim);
+    victim.setFatness(0);
+    victim.setTempAttitude(ATT_NEUTRAL);
+    victim.handle().attribute[ATR_HITPOINTSMAX]=500;
+    victim.handle().attribute[ATR_HITPOINTS]=500;
+    caster.handle().attribute[ATR_HITPOINTSMAX]=500;
+    caster.handle().attribute[ATR_HITPOINTS]=50;
+    hero.setPosition(victim.position()+Tempest::Vec3(400,0,0));
+    require(victim.startState(state,"",gtime::endOfTime(),true),"spell victim: start the actual AI state");
+    victim.setOther(&caster);
+    ActivityStream stream(world,victim);
+    Contract::tickRoutine(victim);
+    require(Contract::perception(victim,PERC_ASSESSMAGIC)==restart && victim.handle().aivar[row.marker]==int(drain),
+            "spell victim: Init binds the matching restart and seeds the tick marker");
+    if(drain)
+      require(script.findSymbol("TEMP_SUCKENERGY_DISTTOPLAYER")->get_int()==400,
+              "spell victim: drain records the shared HERO distance");
+    actions.push_back(activityQueue(victim));
+    victim.clearAiQueue();
+    victim.setStateTime(row.first*1000);
+    Contract::tickRoutine(victim);
+    const auto casterHp=drain ? 150 : 50;
+    require(victim.attribute(ATR_HITPOINTS)==500-row.damage && caster.attribute(ATR_HITPOINTS)==casterHp &&
+            hero.attribute(ATR_HITPOINTS)==heroHp && victim.handle().aivar[row.marker]==row.first &&
+            victim.fatness()==(row.first==5 ? 9.f : 0.f),
+            "spell victim: the first unseen second applies the stock damage, caster transfer and deformation");
+    actions.push_back(activityQueue(victim));
+    const auto prior=actions.back();
+    loadSavedNpc(victim,savedNpc(victim));
+    Contract::tickRoutine(victim);
+    require(victim.attribute(ATR_HITPOINTS)==500-row.damage && caster.attribute(ATR_HITPOINTS)==casterHp &&
+            activityQueue(victim)==prior,"spell victim: a loaded second does not replay damage or animation");
+
+    victim.clearAiQueue();
+    victim.setStateTime(4000);
+    Contract::lastHitSpell(victim)=0;
+    script.invokeState(&victim,&caster,nullptr,restart);
+    require(victim.stateTime()==4000 && victim.isAiQueueEmpty(),"spell victim: an unrelated spell does not reset the state");
+    Contract::lastHitSpell(victim)=script.findSymbol(row.spell)->get_int();
+    script.invokeState(&victim,&caster,nullptr,restart);
+    require(victim.stateTime()==0 && victim.isAiQueueEmpty()!=drain,
+            "spell victim: a matching spell resets the timer and only drain queues a new animation");
+    actions.push_back(activityQueue(victim));
+
+    victim.handle().attribute[ATR_HITPOINTS]=row.damage;
+    if(drain)
+      hero.setPosition(victim.position()+Tempest::Vec3(301,0,0));
+    victim.setStateTime(row.duration*1000);
+    Contract::tickRoutine(victim);
+    require(victim.isInState(state) && victim.attribute(ATR_HITPOINTS)==1 && caster.attribute(ATR_HITPOINTS)==casterHp,
+            "spell victim: the final second applies partial damage without transferring life");
+    if(drain)
+      hero.setPosition(victim.position()+Tempest::Vec3(300,0,0));
+    else
+      victim.setStateTime((row.duration+1)*1000);
+    Contract::tickRoutine(victim);
+    auto queue=Contract::queue(victim);
+    require(!victim.isInState(state) && victim.tempAttitude()==ATT_HOSTILE && queue.size()==1 && queue.pop().act==AI_StandUp &&
+            Contract::perception(victim,PERC_ASSESSMAGIC)==script.findFunction("B_ASSESSMAGIC") &&
+            stream.records==(events ? 8u : 0u),
+            "spell victim: timeout or exact drain distance ends the state through the selected executor");
+    actions.push_back(activityQueue(victim));
+    }
+  hero.setPosition(oldHeroPosition);
+  test.stop(victim);
+  return actions;
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
+  std::vector<std::vector<std::string>> vmSpellActions;
   for(bool events:{false,true}) {
     setenv("OPENGOTHIC_ACTIVITY_EVENTS",events ? "1" : "0",1);
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
@@ -2904,6 +3010,9 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     ActivityEventsWorld paired(gothic);
     pairedSmalltalkWorld(paired,events);
     sleepRoutineWorld(gothic,events);
+    auto spellActions=spellVictimPhasesWorld(gothic,events);
+    if(events) require(spellActions==vmSpellActions,"spell victim: both executors queue the same commands in order");
+    else vmSpellActions=std::move(spellActions);
     gothic.clearGame().reset();
     seatedActivitiesWorld(gothic,events);
     if(events) {
