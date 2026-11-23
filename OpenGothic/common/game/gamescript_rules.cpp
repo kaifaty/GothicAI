@@ -615,6 +615,12 @@ void GameScript::loadNativeHumanPerceptions() {
   vm.override_function("C_WANTTOATTACKMURDER",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     return wantsToAttackMurderer(self,other);
     }},enabled);
+  vm.override_function("C_WANTTOREACTTOSNEAKER",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    return wantsToReactToSneaker(self,other);
+    }},enabled);
+  vm.override_function("B_ASSIGNDEMENTORTALK",std::function<void(Actor)>{[this](const Actor& npc) {
+    assignDementorTalk(npc);
+    }},enabled);
   vm.override_function("C_NPCBELONGSTOBL",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return belongsToBanditCamp(npc);
     }},enabled);
@@ -1305,6 +1311,35 @@ void GameScript::runMurderReaction() {
   attack("AR_HUMANMURDEREDHUMAN");
   }
 
+bool GameScript::wantsToReactToSneaker(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("C_WANTTOREACTTOSNEAKER.OTH")->set_instance(other);
+  findSymbol("C_WANTTOREACTTOSNEAKER.SLF")->set_instance(self);
+  if(npc_getdisttonpc(self,other)>700)
+    return false;
+  const bool inBanditCamp = belongsToBanditCamp(self);
+  const auto guild = self->guild;
+  if((!inBanditCamp && guild==GIL_BDT) || guild==GIL_STRF || guild==GIL_DMT)
+    return false;
+  if(npc_isplayer(other) && self->type==NpcType::G2_FRIEND)
+    return false;
+  if(npc_getattitude(self,other)==ATT_FRIENDLY)
+    return false;
+  // The guard check uses the current script actor even if the caller passed a different NPC.
+  return !isGateGuard(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
+  }
+
+void GameScript::assignDementorTalk(const std::shared_ptr<daedalus::INpc>& npc) {
+  findSymbol("B_ASSIGNDEMENTORTALK.SLF")->set_instance(npc);
+  if(npc==nullptr || npc->type!=NpcType::G2_AMBIENT || npc->guild!=GIL_DMT)
+    return;
+  const auto id = hlp_getinstanceid(npc);
+  auto* member = findSymbol("C_INFO.NPC");
+  for(const auto name : {"DIA_AMBIENTDEMENTOR_EXIT", "DIA_AMBIENTDEMENTOR"}) {
+    if(const auto info = findSymbol(name)->get_instance())
+      vm.set_int(info,member,0,id);
+    }
+  }
+
 void GameScript::runPlayerAssessment() {
   constexpr size_t startedTalk = 3; // AIV_NPCSTARTEDTALK
   constexpr size_t invincible = 4; // AIV_INVINCIBLE
@@ -1361,7 +1396,7 @@ void GameScript::runPlayerAssessment() {
   findSymbol("PLAYER_DRAWWEAPONCOMMENT")->set_int(0);
 
   if(hasBodyState(other(),BS_SNEAK)) {
-    const bool react = vm.call_function<int32_t>("C_WANTTOREACTTOSNEAKER",self,other())!=0;
+    const bool react = wantsToReactToSneaker(self,other());
     const auto observe = findFunction("ZS_OBSERVEPLAYER");
     if(react && !npc_isinstate(self,int(observe.ptr))) {
       npc_clearaiqueue(self);
@@ -1376,7 +1411,7 @@ void GameScript::runPlayerAssessment() {
   if(!hasBodyState(other(),BS_LIE))
     findSymbol("PLAYER_GETOUTOFMYBEDCOMMENT")->set_int(0);
 
-  vm.call_function<void>("B_ASSIGNDEMENTORTALK",self);
+  assignDementorTalk(self);
   const auto talkDistance = constant("PERC_DIST_DIALOG");
   if(npc_checkinfo(self,1) && distance()<=talkDistance) {
     if(isGateGuard(self)) {

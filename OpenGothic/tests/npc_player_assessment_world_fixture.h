@@ -706,6 +706,135 @@ void stockPickpocket(World& world,Npc& npc,Npc& hero) {
   std::puts("Pickpocket: Hilda's original offer, reward and failed theft match both executors");
   }
 
+void playerAssessmentHelpers(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const auto savedEvents=enabled;
+  const auto symbol=[&](std::string_view name) -> daedalus::DaedalusSymbol& { return *script.findSymbol(name); };
+  const auto self=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  const auto savedSelf=vm.global_self()->get_instance(), savedOther=vm.global_other()->get_instance();
+  const auto savedGi=vm.unsafe_get_gi();
+  const auto savedType=self->type;
+  const auto savedGuild=self->guild;
+  const auto savedVoice=self->voice;
+  const auto savedAttitude=npc.attitude();
+  const auto savedNpcPosition=npc.position(), savedHeroPosition=hero.position();
+  const auto guardState=script.findFunction("ZS_GUARD_PASSAGE");
+  auto& globalState=Contract::aiState(hero).funcIni;
+  const auto savedGlobalState=globalState;
+  auto& sneak=symbol("C_WANTTOREACTTOSNEAKER");
+  auto& assign=symbol("B_ASSIGNDEMENTORTALK");
+  auto& ambient=symbol("B_ASSIGNAMBIENTINFOS");
+  auto& sneakSelf=symbol("C_WANTTOREACTTOSNEAKER.SLF");
+  auto& sneakOther=symbol("C_WANTTOREACTTOSNEAKER.OTH");
+  auto& campSlot=symbol("C_NPCBELONGSTOBL.SLF");
+  auto& gateSlot=symbol("C_NPCISGATEGUARD.SLF");
+  auto& assignSlot=symbol("B_ASSIGNDEMENTORTALK.SLF");
+  auto& ambientSlot=symbol("B_ASSIGNAMBIENTINFOS.SLF");
+  const std::array slots{&sneakSelf,&sneakOther,&campSlot,&gateSlot,&assignSlot,&ambientSlot};
+  std::array<std::shared_ptr<daedalus::DaedalusInstance>,slots.size()> savedSlots;
+  for(size_t i=0;i<slots.size();++i)
+    savedSlots[i]=slots[i]->get_instance();
+  const auto exit=std::dynamic_pointer_cast<daedalus::IInfo>(symbol("DIA_AMBIENTDEMENTOR_EXIT").get_instance());
+  const auto dialogue=std::dynamic_pointer_cast<daedalus::IInfo>(symbol("DIA_AMBIENTDEMENTOR").get_instance());
+  require(exit && dialogue,"player assessment: the stock Dementor dialogues are initialized");
+  const auto savedExit=exit->npc, savedDialogue=dialogue->npc;
+  vm.global_self()->set_instance(other);
+  vm.global_other()->set_instance(self);
+  npc.setPosition({0,0,0});
+  const auto contextsPreserved=[&] {
+    return vm.global_self()->get_instance()==other && vm.global_other()->get_instance()==self && vm.unsafe_get_gi()==savedGi;
+    };
+  const struct Sneak {
+    int distance;
+    uint32_t guild;
+    NpcType type;
+    Attitude attitude;
+    bool guard, reacts, reachesGuard;
+    } cases[] = {
+    {700,GIL_BAU,NpcType::G2_AMBIENT,ATT_NEUTRAL,false,true,true},
+    {701,GIL_BAU,NpcType::G2_AMBIENT,ATT_NEUTRAL,false,false,false},
+    {700,GIL_BDT,NpcType::G2_BL_AMBIENT,ATT_NEUTRAL,false,true,true},
+    {700,GIL_BDT,NpcType::G2_AMBIENT,ATT_NEUTRAL,false,false,false},
+    {700,GIL_STRF,NpcType::G2_AMBIENT,ATT_NEUTRAL,false,false,false},
+    {700,GIL_DMT,NpcType::G2_AMBIENT,ATT_NEUTRAL,false,false,false},
+    {700,GIL_BAU,NpcType::G2_FRIEND,ATT_HOSTILE,false,false,false},
+    {700,GIL_BAU,NpcType::G2_AMBIENT,ATT_FRIENDLY,false,false,false},
+    {700,GIL_BAU,NpcType::G2_AMBIENT,ATT_NEUTRAL,true,false,true},
+    };
+  for(bool native:{false,true}) {
+    enabled=native;
+    for(const auto& c:cases) {
+      self->guild=c.guild;
+      self->type=c.type;
+      npc.setAttitude(c.attitude);
+      hero.setPosition({float(c.distance),0,0});
+      globalState=c.guard ? guardState : ScriptFn{};
+      sneakSelf.set_instance(nullptr);
+      sneakOther.set_instance(nullptr);
+      campSlot.set_instance(nullptr);
+      gateSlot.set_instance(nullptr);
+      size_t bytecode=0;
+      vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==sneak.address(); });
+      vm.push_instance(self);
+      vm.push_instance(other);
+      vm.unsafe_call_bl(&sneak);
+      const auto reaction=vm.pop_int();
+      vm.observe_instructions({});
+      require(reaction==int(c.reacts) && bytecode==size_t(!native) && sneakSelf.get_instance()==self && sneakOther.get_instance()==other &&
+              campSlot.get_instance()==(c.distance<=700 ? self : nullptr) && gateSlot.get_instance()==(c.reachesGuard ? other : nullptr) &&
+              contextsPreserved(),"sneaker: stock distance, type, guild, attitude, and global guard check agree in both executors");
+      }
+    self->guild=GIL_DMT;
+    self->voice=19;
+    for(bool eligible:{false,true}) {
+      self->type=eligible ? NpcType::G2_AMBIENT : NpcType::G2_OC_AMBIENT;
+      exit->npc=-21;
+      dialogue->npc=-23;
+      assignSlot.set_instance(nullptr);
+      size_t assignEntries=0,ambientEntries=0;
+      std::vector<const daedalus::DaedalusInstance*> writes;
+      vm.observe_instructions([&](const auto&) {
+        assignEntries+=vm.pc()==assign.address();
+        ambientEntries+=vm.pc()==ambient.address();
+        });
+      vm.observe_member_writes([&](const auto& member,uint16_t,const auto* info) {
+        if(member.name()=="C_INFO.NPC")
+          writes.push_back(info);
+        });
+      vm.call_function<void>(&ambient,self);
+      vm.observe_member_writes({});
+      vm.observe_instructions({});
+      const auto id=int32_t(npc.instanceSymbol());
+      const std::vector<const daedalus::DaedalusInstance*> expected=eligible ?
+           std::vector<const daedalus::DaedalusInstance*>{exit.get(),dialogue.get()} : std::vector<const daedalus::DaedalusInstance*>{};
+      require(assignEntries==size_t(!native) && ambientEntries==1 && assignSlot.get_instance()==self &&
+              exit->npc==(eligible ? id : -21) && dialogue->npc==(eligible ? id : -23) && writes==expected && contextsPreserved(),
+              "Dementor talk: the original ambient wrapper preserves the borrowed two dialogues and their write order");
+      }
+    }
+  for(size_t i=0;i<slots.size();++i)
+    slots[i]->set_instance(savedSlots[i]);
+  vm.global_self()->set_instance(savedSelf);
+  vm.global_other()->set_instance(savedOther);
+  globalState=savedGlobalState;
+  self->type=savedType;
+  self->guild=savedGuild;
+  self->voice=savedVoice;
+  npc.setAttitude(savedAttitude);
+  npc.setPosition(savedNpcPosition);
+  hero.setPosition(savedHeroPosition);
+  npc.updateTransform();
+  hero.updateTransform();
+  exit->npc=savedExit;
+  dialogue->npc=savedDialogue;
+  enabled=savedEvents;
+  std::puts("Player assessment helpers: sneaking gates and ambient Dementor binding match the VM");
+  }
+
 void playerAssessmentRoutes(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -761,4 +890,5 @@ void playerAssessmentRoutes(World& world,Npc& npc,Npc& hero) {
   fakeGuildAssessment(world,npc,hero);
   guildGreetingRoutes(world,npc,hero);
   stockPickpocket(world,npc,hero);
+  playerAssessmentHelpers(world,npc,hero);
   }

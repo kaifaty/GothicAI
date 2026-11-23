@@ -476,6 +476,8 @@ class GameScript final : public GameRules {
     void runDamageReaction();
     int32_t runEnemyReaction();
     void runPlayerAssessment();
+    bool wantsToReactToSneaker(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    void assignDementorTalk(const std::shared_ptr<daedalus::INpc>& npc);
     void setCombatAttitude(const std::shared_ptr<daedalus::INpc>& npc, int32_t attitude);
     void sayGuildGreeting(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void sayAmbientGreeting(std::string_view line);
