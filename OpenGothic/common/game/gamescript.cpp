@@ -1211,7 +1211,7 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
         npc_changeattribute(actor,*effect.refill,amount(effect.increase));
       return;
       }
-    if(applyCumulativeFoodEffect(functionSymbol->name()) ||
+    if(applyCumulativeFoodEffect(functionSymbol->name()) || applyStockItemUseEffect(functionSymbol->name()) ||
        applyArmorSetEffect(*npc,functionSymbol->index()) || applyFightSkillItemEffect(*npc,functionSymbol->index()))
       return;
     }

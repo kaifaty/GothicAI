@@ -930,7 +930,8 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
                     symbol.name()=="USEITPO_MANA_04" || symbol.name()=="USE_MEATBUGFLESH" ||
                     symbol.name()=="USE_CHEESE" || symbol.name()=="USE_BEER" || symbol.name()=="USE_BLUEPLANT" ||
                     symbol.name()=="USEITPO_PERM_DEX" || symbol.name()=="USEITPO_LITTLEMANA" ||
-                    symbol.name()=="USE_APPLE" || symbol.name()=="USE_MUSHROOM_01";
+                    symbol.name()=="USE_APPLE" || symbol.name()=="USE_MUSHROOM_01" ||
+                    symbol.name()=="USE_MEATSOUP" || symbol.name()=="USEITPO_GEIST_01";
       });
 
     require(Settings::physicsFlags().meleeHealInterrupt,"health potions: the fixture uses deferred potion effects");
@@ -1039,7 +1040,19 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     hero.handle().aivar[83]=heroManaTraining;
     apples->set_int(oldApples);
     mushrooms->set_int(oldMushrooms);
-    require(restoreCalls==(native ? 0u : potionUse.size()+permanentUse.size()+foodUse.size()+2),
+    const auto strength=npc->attribute(ATR_STRENGTH);
+    const auto strengthTraining=npc->handle().aivar[81];
+    script.invokeItem(npc,script.findFunction("USE_MEATSOUP"));
+    require(npc->attribute(ATR_STRENGTH)==strength+1 && npc->handle().aivar[81]==strengthTraining+1 &&
+            script.findSymbol("USE_MEATSOUP.CONCATTEXT")->get_string()==
+              script.findSymbol("NAME_BONUS_STR")->get_string()+"1",
+            "special food: meat soup records the localized message and raises the NPC's real strength");
+    npc->handle().aivar[81]=strengthTraining;
+    const auto isStarted=Contract::aiState(*npc).started;
+    script.invokeItem(npc,script.findFunction("USEITPO_GEIST_01"));
+    require(npc->attribute(ATR_HITPOINTS)==-980 && Contract::aiState(*npc).started==isStarted,
+            "special potion: the first spirit potion writes raw negative HP without an immediate health transition");
+    require(restoreCalls==(native ? 0u : potionUse.size()+permanentUse.size()+foodUse.size()+4),
             "item restores: only fallback executes the callback bodies");
     vm.global_self()->set_instance(previousSelf);
     std::copy(attributes.begin(),attributes.end(),npc->handle().attribute);

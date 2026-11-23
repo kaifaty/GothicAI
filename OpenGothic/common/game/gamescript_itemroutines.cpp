@@ -63,6 +63,107 @@ bool GameScript::applyCumulativeFoodEffect(std::string_view callback) {
   return true;
   }
 
+bool GameScript::applyStockItemUseEffect(std::string_view callback) {
+  auto* self = vm.global_self();
+  const auto reference = [&](const char* name) { vm.push_reference(findSymbol(name)); };
+  const auto external = [&](const char* name) { return vm.unsafe_call_external(findSymbol(name)); };
+  const auto attribute = [&](const char* name) {
+    vm.push_reference(self);
+    reference(name);
+    };
+  const auto change = [&](const char* name, const char* dose) {
+    attribute(name);
+    reference(dose);
+    external("NPC_CHANGEATTRIBUTE");
+    };
+  const auto raise = [&](const char* name, const char* dose) {
+    attribute(name);
+    reference(dose);
+    vm.unsafe_call_bl(findSymbol("B_RAISEATTRIBUTE"));
+    };
+  const auto text = [&](const char* caption, const char* dose, const char* scratch) {
+    reference(caption);
+    reference(dose);
+    external("INTTOSTRING");
+    external("CONCATSTRINGS");
+    vm.set_string(vm.unsafe_get_gi(),findSymbol(scratch),0,vm.pop_string());
+    };
+  const auto print = [&](const char* message, int32_t x, int32_t y, const char* font) {
+    reference(message);
+    vm.push_int(x);
+    vm.push_int(y);
+    reference(font);
+    vm.push_int(2);
+    if(external("PRINTSCREEN"))
+      (void)vm.pop_int();
+    };
+
+  if(callback=="USE_MEATSOUP") {
+    text("NAME_BONUS_STR","STR_MEATSOUP","USE_MEATSOUP.CONCATTEXT");
+    raise("ATR_STRENGTH","STR_MEATSOUP");
+    print("USE_MEATSOUP.CONCATTEXT",-1,34,"FONT_SCREENSMALL");
+    return true;
+    }
+  if(callback=="USE_FIRESTEW") {
+    raise("ATR_STRENGTH","STR_FIRESTEW");
+    change("ATR_HITPOINTS_MAX","HP_FIRESTEW");
+    print("$13177",-1,34,"FONT_SCREENSMALL"); // Stock strength and health notice.
+    return true;
+    }
+  if(callback=="USE_XPSTEW") {
+    change("ATR_HITPOINTS","HP_STEW");
+    reference("$14201"); // Stock LevelUp cue for this stew.
+    external("SND_PLAY");
+    attribute("ATR_STRENGTH");
+    vm.push_int(1);
+    vm.unsafe_call_bl(findSymbol("B_RAISEATTRIBUTE"));
+    return true;
+    }
+  if(callback=="USE_CORAGONSBEERBEER") {
+    raise("ATR_MANA_MAX","MANA_BEER");
+    change("ATR_MANA","MANA_BEER");
+    change("ATR_HITPOINTS_MAX","HP_BEER");
+    change("ATR_HITPOINTS","HP_BEER");
+    text("PRINT_LEARNHITPOINTS_MAX","HP_BEER","USE_CORAGONSBEERBEER.CONCATTEXT");
+    print("USE_CORAGONSBEERBEER.CONCATTEXT",55,-1,"FONT_SCREEN");
+    return true;
+    }
+
+  if(callback=="USEITPO_SPEED" || callback=="USE_SPEED_HERB_01") {
+    const bool potion = callback=="USEITPO_SPEED";
+    vm.push_reference(self);
+    reference(potion ? "$14669" : "$14601"); // The stock HUMANS_SPRINT.MDS references.
+    reference(potion ? "TIME_SPEED" : "SPEED_BOOST");
+    external("MDL_APPLYOVERLAYMDSTIMED");
+    return true;
+    }
+  if(callback=="USEITPO_GEIST_01") {
+    const auto actor = self->get_instance();
+    struct RestoreContext {
+      daedalus::DaedalusVm& vm;
+      std::shared_ptr<daedalus::DaedalusInstance> caller;
+      ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+      } restore{vm,vm.unsafe_get_gi()};
+    vm.unsafe_set_gi(actor);
+    auto* attributes = findSymbol("C_NPC.ATTRIBUTE");
+    const auto hp = vm.get_int(actor,attributes,ATR_HITPOINTS);
+    vm.set_int(actor,attributes,ATR_HITPOINTS,std::bit_cast<int32_t>(uint32_t(hp)-1000u));
+    return true;
+    }
+  if(callback=="USEITPO_GEIST_02") {
+    vm.push_reference(self);
+    external("NPC_ISPLAYER");
+    if(vm.pop_int()!=0) {
+      const auto xp = vm.get_int(vm.unsafe_get_gi(),findSymbol("XP_AMBIENT"),0);
+      vm.push_int(std::bit_cast<int32_t>(uint32_t(xp)*5u));
+      vm.unsafe_call_bl(findSymbol("B_GIVEPLAYERXP"));
+      }
+    return true;
+    }
+
+  return false;
+  }
+
 void GameScript::loadNativeTradeInventory() {
   if(!nativeRoutineProgram)
     return;
