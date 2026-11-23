@@ -635,6 +635,128 @@ bool GameScript::runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol,
   return false;
   }
 
+bool GameScript::runFakeGuildComment(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  if(symbol.name()!="ZS_COMMENTFAKEGUILD")
+    return false;
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto seated = [&](const std::shared_ptr<daedalus::INpc>& actor) {
+    return vm.call_function<int32_t>("C_BODYSTATECONTAINS",actor,int32_t(BS_SIT))!=0;
+    };
+  vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+  ai_standup(self);
+  if(!seated(self))
+    vm.call_function<void>("B_TURNTONPC",self,other());
+  if(!seated(other())) {
+    vm.call_function<void>("B_TURNTONPC",other(),self);
+    if(npc_getdisttonpc(other(),self)<80)
+      ai_dodge(other());
+    }
+
+  std::string_view line;
+  if(npc_hasequippedarmor(other())) {
+    findSymbol("ZS_COMMENTFAKEGUILD.ITM")->set_instance(npc_getequippedarmor(other()));
+    switch(self->guild) {
+      case GIL_PAL: case GIL_MIL: line = "$ADDON_WRONGARMOR_MIL"; break;
+      case GIL_KDF: case GIL_NOV: line = "$ADDON_WRONGARMOR_KDF"; break;
+      case GIL_DJG: case GIL_SLD: line = "$ADDON_WRONGARMOR_SLD"; break;
+      default: line = "$ADDON_WRONGARMOR"; break;
+      }
+    } else if(self->guild==GIL_BDT) {
+    line = "$ADDON_NOARMOR_BDT";
+    }
+  if(!line.empty())
+    vm.call_function<void>("B_SAY",self,other(),line);
+  result = 0;
+  return true;
+  }
+
+bool GameScript::runHumanPlunder(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto transfer = [&](int item, int amount) {
+    createinvitems(self,item,amount);
+    npc_removeinvitems(other(),item,amount);
+    };
+  const auto heal = [&] {
+    if(self->attribute[NpcAttribute::HITPOINTS]<self->attribute[NpcAttribute::HITPOINTS_MAX]/2)
+      ai_startstate(self,int(findFunction("ZS_HEALSELF").ptr),0,"");
+    };
+  const std::string_view name = symbol.name();
+  if(name=="ZS_GETMEAT") {
+    vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+    ai_standup(self);
+    ai_gotonpc(self,other());
+    ai_turntonpc(self,other());
+    ai_playani(self,"T_PLUNDER");
+    const auto meat = int(findSymbolIndex("ITFOMUTTONRAW"));
+    const auto amount = npc_hasitems(other(),meat);
+    findSymbol("ZS_GETMEAT.X")->set_int(amount);
+    transfer(meat,amount);
+    heal();
+    result = 0;
+    return true;
+    }
+  if(name=="ZS_RANSACKBODY") {
+    vm.call_function<void>("PERCEPTION_SET_NORMAL");
+    ai_standup(self);
+    ai_gotonpc(self,other());
+    result = 0;
+    return true;
+    }
+  if(name=="ZS_RANSACKBODY_LOOP") {
+    result = LOOP_END;
+    return true;
+    }
+  if(name!="ZS_RANSACKBODY_END")
+    return false;
+
+  vm.call_function<void>("B_TURNTONPC",self,other());
+  ai_playani(self,"T_PLUNDER");
+  const auto questStock = [&](std::string_view owner, int item) {
+    const auto ownerId = hlp_getinstanceid(findSymbol(owner)->get_instance());
+    const auto amount = npc_hasitems(other(),item);
+    return ownerId==hlp_getinstanceid(self) ? amount : 0;
+    };
+  const auto hammer = int(findSymbolIndex("HOLY_HAMMER_MIS"));
+  const auto sword = int(findSymbolIndex("ITMW_2H_ROD"));
+  const auto key = int(findSymbolIndex("ITKE_GREG_ADDON_MIS"));
+  if(questStock("GARWIG",hammer)>0)
+    transfer(hammer,1);
+  if(questStock("ROD",sword)>0) {
+    transfer(sword,1);
+    ai_equipbestmeleeweapon(self);
+    }
+  if(questStock("FRANCIS",key)!=0)
+    transfer(key,1);
+
+  const auto gold = int(findSymbolIndex("ITMI_GOLD"));
+  const auto amount = npc_hasitems(other(),gold);
+  if(amount>0) {
+    findSymbol("ZS_RANSACKBODY_END.X")->set_int(amount);
+    transfer(gold,amount);
+    }
+  const std::string_view line = amount>0 ? "$ITOOKYOURGOLD" : "$SHITNOGOLD";
+  vm.call_function<void>("B_SAY",self,other(),line);
+
+  npc_perceiveall(self);
+  // Both scans can update ITEM. Melee weapons take precedence when both find a candidate.
+  const bool foundRanged = wld_detectitem(self,findSymbol("ITEM_KAT_FF")->get_int());
+  const bool foundMelee = wld_detectitem(self,findSymbol("ITEM_KAT_NF")->get_int());
+  if(foundRanged || foundMelee) {
+    const auto item = std::dynamic_pointer_cast<daedalus::IItem>(vm.global_item()->get_instance());
+    if(hlp_isvaliditem(item) && npc_getdisttoitem(self,item)<500) {
+      ai_takeitem(self,item);
+      vm.call_function<void>("B_SAY",self,self,std::string_view("$ITAKEYOURWEAPON"));
+      ai_equipbestmeleeweapon(self);
+      ai_equipbestrangedweapon(self);
+      }
+    }
+  heal();
+  result = 0;
+  return true;
+  }
+
 bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   constexpr size_t lastFightAgainstPlayer = 0; // AIV_LASTFIGHTAGAINSTPLAYER
   constexpr size_t invincible = 4; // AIV_INVINCIBLE

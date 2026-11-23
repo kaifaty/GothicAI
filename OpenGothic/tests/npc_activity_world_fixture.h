@@ -1976,6 +1976,108 @@ void fleeAndWatchPhases(World& world,Npc& npc,Npc& hero) {
   std::puts("Flee and watch: target restoration, overlays, dodge and grace match the VM");
   }
 
+void humanPlunderAndArmorPhases(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto comments=script.findFunction("ZS_COMMENTFAKEGUILD");
+  const auto meatState=script.findFunction("ZS_GETMEAT");
+  const auto ransack=activityPhases(script,"ZS_RANSACKBODY");
+  const auto meat=script.findSymbolIndex("ITFOMUTTONRAW");
+  const auto gold=script.findSymbolIndex("ITMI_GOLD");
+  const auto hammer=script.findSymbolIndex("HOLY_HAMMER_MIS");
+  const auto goldBefore=hero.itemCount(gold);
+  const auto meatBefore=hero.itemCount(meat);
+  const auto npcGold=npc.itemCount(gold);
+  const auto npcMeat=npc.itemCount(meat);
+  const auto npcHammer=npc.itemCount(hammer);
+  auto& goldScratch=*vm.find_symbol_by_name("ZS_RANSACKBODY_END.X");
+  auto& meatScratch=*vm.find_symbol_by_name("ZS_GETMEAT.X");
+  auto& armorScratch=*vm.find_symbol_by_name("ZS_COMMENTFAKEGUILD.ITM");
+  auto& garwig=*vm.find_symbol_by_name("GARWIG");
+  const auto savedGold=goldScratch.get_int();
+  const auto savedMeat=meatScratch.get_int();
+  const auto savedArmor=armorScratch.get_instance();
+  const auto savedGarwig=garwig.get_instance();
+  const auto savedItem=vm.global_item()->get_instance();
+  auto* lobart=activityNpc(world,"BAU_950_LOBART");
+  require(lobart && lobart->currentArmor(),"armor comment: the fixture needs Lobart's equipped armor");
+  const auto order=Contract::outputOrder(script);
+  const auto said=[&](std::string_view line,const Npc& to) {
+    auto queue=Contract::queue(npc);
+    while(queue.size()>0) {
+      const auto act=queue.pop();
+      if(act.act==AI_OutputSvm && act.s0==line && act.target==&to)
+        return true;
+      }
+    return false;
+    };
+  std::vector<std::string> original;
+  for(bool native:{false,true}) {
+    enabled=native;
+    Contract::outputOrder(script)=order;
+    npc.clearAiQueue();
+    lobart->clearAiQueue();
+    ActivityStream stream(world,npc);
+    size_t vmCalls=0;
+    const auto observer=vm.add_call_observer([&](const auto& sym) {
+      vmCalls+=sym.name()=="ZS_COMMENTFAKEGUILD" || sym.name()=="ZS_GETMEAT" || sym.name().starts_with("ZS_RANSACKBODY");
+      });
+    script.invokeState(&npc,lobart,nullptr,comments);
+    const auto equippedArmor=std::static_pointer_cast<daedalus::IItem>(lobart->currentArmor()->handlePtr());
+    require(said("$ADDON_WRONGARMOR",*lobart) && armorScratch.get_instance()==equippedArmor,
+            "armor comment: the original wrong-armor line refers to the equipped item");
+    for(const auto& action:activityQueue(*lobart)) stream.events.push_back("queue other "+action);
+    npc.clearAiQueue();
+    lobart->clearAiQueue();
+
+    hero.addItem(meat,3);
+    script.invokeState(&npc,&hero,nullptr,meatState);
+    require(meatScratch.get_int()==int32_t(meatBefore+3) && hero.itemCount(meat)==0 &&
+            npc.itemCount(meat)==npcMeat+meatBefore+3,"get meat: all raw meat moves to the collector");
+    npc.delItem(meat,uint32_t(meatBefore+3));
+    if(meatBefore>0) hero.addItem(meat,meatBefore);
+    npc.clearAiQueue();
+
+    hero.addItem(gold,7);
+    script.invokeState(&npc,&hero,nullptr,ScriptFn(ransack.init));
+    require(script.invokeState(&npc,&hero,nullptr,ScriptFn(ransack.loop))==LOOP_END,
+            "ransack: after approach the original Loop exits");
+    hero.addItem(hammer,1);
+    const auto extraHammer=hero.itemCount(hammer);
+    // Bind the monastery guard role to the nearby fixture NPC for the quest-item path.
+    garwig.set_instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
+    script.invokeState(&npc,&hero,nullptr,ScriptFn(ransack.end));
+    garwig.set_instance(savedGarwig);
+    require(goldScratch.get_int()==int32_t(goldBefore+7) && hero.itemCount(gold)==0 &&
+            npc.itemCount(gold)==npcGold+goldBefore+7 && npc.itemCount(hammer)==npcHammer+1 &&
+            hero.itemCount(hammer)==extraHammer-1 && said("$ITOOKYOURGOLD",hero),
+            "ransack: the named guard takes the quest item and all gold");
+    npc.delItem(hammer,1);
+    script.invokeState(&npc,&hero,nullptr,ScriptFn(ransack.end));
+    require(goldScratch.get_int()==int32_t(goldBefore+7) && npc.itemCount(gold)==npcGold+goldBefore+7 &&
+            said("$SHITNOGOLD",hero),"ransack: a second search finds no gold and retains the recorded amount");
+    npc.delItem(gold,uint32_t(goldBefore+7));
+    if(goldBefore>0) hero.addItem(gold,goldBefore);
+    vm.remove_call_observer(observer);
+    require(vmCalls==(native ? 0u : 6u) && stream.records==(native ? 6u : 0u),
+            "armor and plunder: all requested phases use the chosen executor");
+    std::erase_if(stream.events,[](const auto& event) {
+      return !(event.starts_with("phase ") || event.starts_with("result ") || event.starts_with("queue "));
+      });
+    if(native) require(original==stream.events,"armor and plunder: phase results and queued actions match the VM");
+    else original=std::move(stream.events);
+    }
+  enabled=wasEnabled;
+  goldScratch.set_int(savedGold);
+  meatScratch.set_int(savedMeat);
+  armorScratch.set_instance(savedArmor);
+  vm.global_item()->set_instance(savedItem);
+  std::puts("Armor and plunder: comments, meat, quest item and gold match the VM");
+  }
+
 void quietSoundRooms(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -2154,6 +2256,7 @@ void quietSoundRooms(Gothic& gothic) {
   damagePerceptions(world,*npc,hero);
   humanAttackPhases(world,*npc,hero);
   fleeAndWatchPhases(world,*npc,hero);
+  humanPlunderAndArmorPhases(world,*npc,hero);
   for(bool privateRoom:{false,true}) {
     std::vector<std::string> original;
     for(bool native:{false,true}) {

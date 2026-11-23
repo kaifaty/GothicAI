@@ -255,6 +255,8 @@ class GameScript final : public GameRules {
     bool runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runFakeGuildComment(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runHumanPlunder(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     void validateCombatTarget(const std::shared_ptr<daedalus::INpc>& self);
     bool runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
