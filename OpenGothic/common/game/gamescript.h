@@ -261,6 +261,9 @@ class GameScript final : public GameRules {
     bool runControlSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     void stopControlSpell(const std::shared_ptr<daedalus::INpc>& self, bool continueRoutine);
     void validateCombatTarget(const std::shared_ptr<daedalus::INpc>& self);
+    bool runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runHealSelf(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -397,6 +400,9 @@ class GameScript final : public GameRules {
     void runPropertyCrime(bool usingMob);
     void startHumanWarning(const std::shared_ptr<daedalus::INpc>& self, ScriptFn state);
     int32_t botheredByWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    void loadNativeEquipment();
+    void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
+    void selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     int32_t runEnterRoomReaction();
     int32_t runExitIfRoomLeft();
     void runPortalCollisionReaction();

@@ -100,6 +100,7 @@ GameScript::GameScript(GameSession &owner)
   loadNativeRoutines();
   loadNativeRoomReaction();
   loadNativeHumanPerceptions();
+  loadNativeEquipment();
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
   }
@@ -1156,6 +1157,16 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
     return;
 
   ScopeVar self(*vm.global_self(), npc->handlePtr());
+  if(!itemDefinitions.restoreEffects.empty() && activityEvents && !floorDefer.active() &&
+     ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off) {
+    const auto it = itemDefinitions.restoreEffects.find(functionSymbol->index());
+    if(it!=itemDefinitions.restoreEffects.end()) {
+      const auto& effect = it->second;
+      const auto amount = vm.find_symbol_by_index(effect.amountSymbol)->get_int();
+      npc_changeattribute(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()),effect.attribute,amount);
+      return;
+      }
+    }
   vm.call_function<void>(functionSymbol);
   }
 

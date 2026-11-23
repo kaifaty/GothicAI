@@ -13,6 +13,14 @@ struct NpcDefinitionContract {
   static void tickScheduledRoutine(Npc& npc) { npc.tickRoutine(); }
   // The engine's next queued action, as the NPC's tick takes it.
   static void nextAiAction(Npc& npc) { npc.nextAiAction(npc.aiQueue,0); }
+  static size_t pendingItemUse(const Npc& npc) { return npc.itemUse.item; }
+  static void finishItemUseAnimation(Npc& npc) {
+    Animation::EvCount events;
+    events.timed.push_back({asset::MdsEventType::ITEM_DESTROY});
+    npc.tickTimedEvt(events);
+    npc.visual.pose().interruptItemUse(); // Finish the clip before the next fixture case.
+    }
+  static const auto& foodPool(const Npc& npc) { return npc.foodPool; }
   static void tickActivityDeadline(Npc& npc) { npc.tickActivityDeadline(); }
   static const AiQueue& queue(const Npc& npc) { return npc.aiQueue; }
   static bool walking(const Npc& npc) { return !npc.go2.empty(); }
