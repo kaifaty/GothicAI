@@ -245,14 +245,49 @@ void GameScript::loadNativeTradeInventory() {
     Symbol* recipient = nullptr;
     Symbol* itemSymbol = nullptr;
     };
+  struct StockBonus {
+    enum class Condition { HeroGuild, SecretSign } condition;
+    std::vector<StockGrant> grants, following;
+    };
   struct StockBatch {
     Symbol* granted = nullptr;
     std::optional<int32_t> minimumChapter;
+    bool requiresOldWorld = false;
     std::vector<StockGrant> grants;
+    std::optional<StockBonus> bonus;
     };
   auto* create = findSymbol("CREATEINVITEMS");
   auto* yes = findSymbol("TRUE");
   auto* no = findSymbol("FALSE");
+  auto* oldWorldFlag = findSymbol("ENTEROW_KAPITEL2");
+  auto* secretSign = findSymbol("KNOWS_SECRETSIGN");
+  auto* militia = findSymbol("GIL_MIL");
+  auto* paladin = findSymbol("GIL_PAL");
+  auto* guild = findSymbol("C_NPC.GUILD");
+  const auto pushes = [&](const Symbol* symbol) {
+    const auto next = vm.instruction_at(pc);
+    return next.op==Op::PUSHV && next.symbol==symbol->index();
+    };
+  const auto readGrants = [&](Symbol* actor, uint32_t end) {
+    std::vector<StockGrant> grants;
+    while(pc<end && vm.instruction_at(pc).op==Op::PUSHVI) {
+      StockGrant grant;
+      grant.recipient = findSymbol(take(Op::PUSHVI).symbol);
+      if(grant.recipient!=actor && grant.recipient!=vm.global_self())
+        malformed();
+      if(vm.instruction_at(pc).op==Op::PUSHV) {
+        // Samuel's stock reads the live item index.
+        grant.itemSymbol = findSymbol("RI_PROTFIRE02");
+        expectSymbol(Op::PUSHV,grant.itemSymbol);
+        } else {
+        grant.item = take(Op::PUSHI).immediate;
+        }
+      grant.amount = take(Op::PUSHI).immediate;
+      expectSymbol(Op::BE,create);
+      grants.push_back(grant);
+      }
+    return grants;
+    };
   const auto bindStock = [&](const Symbol& body) {
     pc = body.address();
     auto* actor = findSymbol(body.name()+".SLF");
@@ -260,36 +295,59 @@ void GameScript::loadNativeTradeInventory() {
     std::vector<StockBatch> stock;
     while(vm.instruction_at(pc).op!=Op::RSR) {
       StockBatch batch;
-      uint32_t end = 0;
+      uint32_t end = vm.size();
       if(vm.instruction_at(pc).op==Op::PUSHV) {
         expectSymbol(Op::PUSHV,no);
         batch.granted = findSymbol(take(Op::PUSHV).symbol);
         if(batch.granted==nullptr || batch.granted->name().find("_ITEMSGIVEN_CHAPTER_")==std::string::npos)
           malformed();
         take(Op::EQ);
+        if(pushes(yes)) {
+          expectSymbol(Op::PUSHV,yes);
+          expectSymbol(Op::PUSHV,oldWorldFlag);
+          take(Op::EQ);
+          batch.requiresOldWorld = true;
+          }
         if(vm.instruction_at(pc).op==Op::PUSHI) {
           batch.minimumChapter = take(Op::PUSHI).immediate;
           expectSymbol(Op::PUSHV,chapter);
           take(Op::GTE);
           take(Op::AND);
           }
+        if(batch.requiresOldWorld) {
+          if(!batch.minimumChapter)
+            malformed();
+          take(Op::AND);
+          }
         end = take(Op::BZ).address;
         }
-      while(vm.instruction_at(pc).op==Op::PUSHVI) {
-        StockGrant grant;
-        grant.recipient = findSymbol(take(Op::PUSHVI).symbol);
-        if(grant.recipient!=actor && grant.recipient!=vm.global_self())
-          malformed();
-        if(vm.instruction_at(pc).op==Op::PUSHV) {
-          // Samuel's stock reads the live item index.
-          grant.itemSymbol = findSymbol("RI_PROTFIRE02");
-          expectSymbol(Op::PUSHV,grant.itemSymbol);
-          } else {
-          grant.item = take(Op::PUSHI).immediate;
+      batch.grants = readGrants(actor,end);
+      std::optional<StockBonus::Condition> bonus;
+      const auto bonusStart = vm.instruction_at(pc);
+      if(pushes(militia)) {
+        for(auto* allowed : {militia,paladin}) {
+          expectSymbol(Op::PUSHV,allowed);
+          expectSymbol(Op::GMOVI,vm.global_hero());
+          expectSymbol(Op::PUSHV,guild);
+          take(Op::EQ);
           }
-        grant.amount = take(Op::PUSHI).immediate;
-        expectSymbol(Op::BE,create);
-        batch.grants.push_back(grant);
+        take(Op::ORR);
+        bonus = StockBonus::Condition::HeroGuild;
+        } else if(pushes(yes) && vm.instruction_at(pc+bonusStart.size).symbol==secretSign->index()) {
+        expectSymbol(Op::PUSHV,yes);
+        expectSymbol(Op::PUSHV,secretSign);
+        take(Op::EQ);
+        bonus = StockBonus::Condition::SecretSign;
+        }
+      if(bonus) {
+        const auto bonusEnd = take(Op::BZ).address;
+        if(bonusEnd>=end)
+          malformed();
+        auto grants = readGrants(actor,bonusEnd);
+        if(pc!=bonusEnd || grants.empty())
+          malformed();
+        // Gorax's third-chapter batch includes a grant after the guild check.
+        batch.bonus = StockBonus{*bonus,std::move(grants),readGrants(actor,end)};
         }
       if(batch.granted!=nullptr) {
         expectSymbol(Op::PUSHV,yes);
@@ -304,14 +362,9 @@ void GameScript::loadNativeTradeInventory() {
       }
     take(Op::RSR);
     vm.override_function(body.name(),std::function<void(NpcRef)>{
-      [this,actor,create,yes,no,stock=std::move(stock)](NpcRef npc) {
-        actor->set_instance(std::move(npc));
-        for(const auto& batch : stock) {
-          const bool pending = batch.granted==nullptr || batch.granted->get_int()==no->get_int();
-          const bool chapterReached = !batch.minimumChapter || storyChapter>=*batch.minimumChapter;
-          if(!pending || !chapterReached)
-            continue;
-          for(const auto& grant : batch.grants) {
+      [this,actor,create,yes,no,oldWorldFlag,secretSign,militia,paladin,stock=std::move(stock)](NpcRef npc) {
+        const auto grantItems = [&](const std::vector<StockGrant>& grants) {
+          for(const auto& grant : grants) {
             vm.push_reference(grant.recipient);
             if(grant.itemSymbol)
               vm.push_reference(grant.itemSymbol);
@@ -320,18 +373,41 @@ void GameScript::loadNativeTradeInventory() {
             vm.push_int(grant.amount);
             vm.unsafe_call_external(create);
             }
+          };
+        const auto hasHeroGuild = [&](const Symbol* expected) {
+          const auto value = expected->get_int();
+          const auto hero = std::static_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+          vm.unsafe_set_gi(hero);
+          return (hero ? hero->guild : 0)==value;
+          };
+        actor->set_instance(std::move(npc));
+        for(const auto& batch : stock) {
+          const bool pending = batch.granted==nullptr || batch.granted->get_int()==no->get_int();
+          const bool enteredOldWorld = !batch.requiresOldWorld || oldWorldFlag->get_int()==yes->get_int();
+          const bool chapterReached = !batch.minimumChapter || storyChapter>=*batch.minimumChapter;
+          if(!pending || !enteredOldWorld || !chapterReached)
+            continue;
+          grantItems(batch.grants);
+          if(batch.bonus) {
+            bool eligible = false;
+            if(batch.bonus->condition==StockBonus::Condition::HeroGuild) {
+              const bool isMilitia = hasHeroGuild(militia);
+              const bool isPaladin = hasHeroGuild(paladin);
+              eligible = isMilitia || isPaladin;
+              } else {
+              eligible = secretSign->get_int()==yes->get_int();
+              }
+            if(eligible)
+              grantItems(batch.bonus->grants);
+            grantItems(batch.bonus->following);
+            }
           if(batch.granted)
             batch.granted->set_int(yes->get_int());
           }
         }},enabled);
     };
-  for(const auto& restock : restocks) {
-    const auto& body = *restock.second;
-    // These authored shops have additional guild or quest conditions.
-    if(body.name()=="B_GIVETRADEINV_GORAX" || body.name()=="B_GIVETRADEINV_KARDIF" || body.name()=="B_GIVETRADEINV_KARRAS")
-      continue;
-    bindStock(body);
-    }
+  for(const auto& restock : restocks)
+    bindStock(*restock.second);
 
   const auto getNpc = [this,lookup](int32_t source,Symbol* alias) {
     vm.push_int(source);

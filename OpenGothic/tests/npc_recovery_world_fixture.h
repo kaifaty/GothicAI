@@ -178,6 +178,39 @@ void tradeInventoryAfterDefeat(ActivityEventsWorld& test, bool native) {
   vm.global_self()->set_instance(oldSelf);
   }
 
+void kardifStockWithSecretSign(ActivityEventsWorld& test, bool native) {
+  auto& world = test.world();
+  auto& script = world.script();
+  auto& vm = script.getVm();
+  auto* kardif = activityNpc(world,"VLK_431_KARDIF");
+  auto* recipient = world.player();
+  require(kardif && recipient,"trade inventory: need the stock tavern keeper and a recipient for the sign bonus");
+  const auto oldSelf = vm.global_self()->get_instance();
+  const auto merchant = std::static_pointer_cast<daedalus::INpc>(kardif->handlePtr());
+  vm.global_self()->set_instance(std::static_pointer_cast<daedalus::INpc>(recipient->handlePtr()));
+  script.findSymbol("KAPITEL")->set_int(2);
+  script.findSymbol("KARDIF_ITEMSGIVEN_CHAPTER_1")->set_int(1);
+  auto* stocked = script.findSymbol("KARDIF_ITEMSGIVEN_CHAPTER_2");
+  auto* sign = script.findSymbol("KNOWS_SECRETSIGN");
+  const auto id = script.findSymbolIndex("ITKE_LOCKPICK");
+  const auto recipientBefore = recipient->itemCount(id), merchantBefore = kardif->itemCount(id);
+  const auto* restock = script.findSymbol("B_GIVETRADEINV_KARDIF");
+  bool ranVm = false;
+  vm.observe_instructions([&](const auto&) { ranVm |= vm.pc()==restock->address(); });
+  for(const bool known : {false,true}) {
+    stocked->set_int(0);
+    sign->set_int(known ? 1 : 0);
+    vm.push_instance(merchant);
+    vm.unsafe_call_bl(restock);
+    require(stocked->get_int()==1 && kardif->itemCount(id)==merchantBefore &&
+            recipient->itemCount(id)==recipientBefore+(known ? 20u : 0u),
+            "trade inventory: Kardif completes the batch either way and gives the sign bonus to live SELF");
+    }
+  require(ranVm!=native,"trade inventory: Kardif uses the selected executor");
+  vm.observe_instructions({});
+  vm.global_self()->set_instance(oldSelf);
+  }
+
 void stockDeathTrophies(ActivityEventsWorld& test, bool native) {
   auto& world = test.world();
   auto& script = world.script();
@@ -343,6 +376,7 @@ void npcDeathLifecycle(Gothic& gothic) {
       corpse=save("inside death state");
       }
     tradeInventoryAfterDefeat(test,native);
+    kardifStockWithSecretSign(test,native);
     dragonDeathBranches(gothic,native);
     stockDeathTrophies(test,native);
     }
