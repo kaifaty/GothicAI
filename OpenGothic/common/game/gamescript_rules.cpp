@@ -514,6 +514,16 @@ void GameScript::loadNativeHumanPerceptions() {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
   using Actor = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("B_GHOSTSPECIALDAMAGE",std::function<int32_t(Actor,Actor)>{[this](const Actor& attacker,const Actor& defender) {
+    ghostSpecialDamage(attacker,defender);
+    return 0;
+    }},enabled);
+  vm.override_function("B_BELIARSWEAPONSPECIALDAMAGE",std::function<void(Actor,Actor)>{[this](const Actor& attacker,const Actor& defender) {
+    beliarWeaponSpecialDamage(attacker,defender);
+    }},enabled);
+  vm.override_function("C_SCHASREADIEDBELIARSWEAPON",std::function<int32_t()>{[this] { return hasReadiedBeliarWeapon(); }},enabled);
+  vm.override_function("C_ISITEMBELIARSWEAPON",std::function<int32_t(std::shared_ptr<daedalus::IItem>)>{
+    [this](const auto& weapon) { return isBeliarWeaponItem(weapon); }},enabled);
   vm.override_function("C_NPCISTOUGHGUY",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return isToughGuy(npc);
     }},enabled);
@@ -961,10 +971,10 @@ void GameScript::runDamageReaction() {
     return;
   const auto selfId = hlp_getinstanceid(self);
   if(selfId==hlp_getinstanceid(rhademes) || selfId==hlp_getinstanceid(quarhodron)) {
-    vm.call_function<int32_t>("B_GHOSTSPECIALDAMAGE",other(),self);
+    ghostSpecialDamage(other(),self);
     return;
     }
-  vm.call_function<void>("B_BELIARSWEAPONSPECIALDAMAGE",other(),self);
+  beliarWeaponSpecialDamage(other(),self);
 
   auto& aivar = self->aivar;
   if(aivar[arenaFight]==findSymbol("AF_AFTER")->get_int())

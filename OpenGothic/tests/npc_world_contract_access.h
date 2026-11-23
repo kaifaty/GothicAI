@@ -116,6 +116,7 @@ struct NpcDefinitionContract {
   // an object's model and its effects of the animations' events (MdlVisual::startEffect)
   static const MdlVisual& model(const Interactive& mob) { return mob.objVisual().mdl.view; }
   static const auto& effects(const MdlVisual& view) { return view.effects; }
+  static const auto& effects(const Npc& npc) { return effects(npc.visual); }
   static size_t bone(const MdlVisual& view, std::string_view name) { return view.skeleton->findNode(name); }
   static const AnimationSolver& solver(const MdlVisual& view) { return view.solver; }
   };

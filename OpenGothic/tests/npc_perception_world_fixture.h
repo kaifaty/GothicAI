@@ -1004,6 +1004,7 @@ void damagePerceptions(World& world,Npc& npc,Npc& hero) {
   npc.setTarget(savedTarget);
   enabled=wasEnabled;
   std::puts("Damage perception: stock damage and spell end routes preserve warnings, attack reasons, crime and retargeting");
+  specialDamagePerceptions(world,npc,hero);
   }
 
 void humanAttackAnnouncements(World& world,Npc& npc,Npc& hero) {

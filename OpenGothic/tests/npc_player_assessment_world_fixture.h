@@ -1,5 +1,153 @@
 #pragma once
 
+void specialDamagePerceptions(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const auto wasEnabled=enabled;
+  const auto symbol=[&](std::string_view name) { return vm.find_symbol_by_name(name); };
+  auto& body=npc.handle();
+  auto& player=hero.handle();
+  const auto savedNpcVars=std::to_array(body.aivar);
+  const auto savedNpcHp=body.attribute[ATR_HITPOINTS],savedNpcMax=body.attribute[ATR_HITPOINTSMAX];
+  const auto savedHeroHp=player.attribute[ATR_HITPOINTS],savedHeroMax=player.attribute[ATR_HITPOINTSMAX];
+  const auto savedNpcFlags=body.flags,savedHeroFlags=player.flags;
+  const auto savedState=Contract::aiState(npc).funcIni;
+  const auto savedPerception=Contract::perceptions(npc)[PERC_ASSESSDAMAGE];
+  const auto savedNpcQueue=Contract::queue(npc),savedHeroQueue=Contract::queue(hero);
+  const auto savedRandom=Contract::random(script);
+  const auto savedItem=vm.global_item()->get_instance();
+  const auto attacker=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  const auto defender=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto ghostPc=symbol("B_GHOSTSPECIALDAMAGE")->address();
+  const auto beliarPc=symbol("B_BELIARSWEAPONSPECIALDAMAGE")->address();
+  const auto readyPc=symbol("C_SCHASREADIEDBELIARSWEAPON")->address();
+  std::array pointers={symbol("NONE_ADDON_111_QUARHODRON"),symbol("RAVEN"),
+      symbol("B_GHOSTSPECIALDAMAGE.SLF"),symbol("B_GHOSTSPECIALDAMAGE.OTH"),symbol("B_GHOSTSPECIALDAMAGE.QUARHO"),
+      symbol("B_GHOSTSPECIALDAMAGE.RHADEM"),symbol("B_GHOSTSPECIALDAMAGE.HER"),
+      symbol("B_BELIARSWEAPONSPECIALDAMAGE.SLF"),symbol("B_BELIARSWEAPONSPECIALDAMAGE.OTH"),
+      symbol("C_SCHASREADIEDBELIARSWEAPON.READYWEAP"),symbol("C_ISITEMBELIARSWEAPON.WEAP")};
+  std::array<std::shared_ptr<daedalus::DaedalusInstance>,pointers.size()> savedPointers;
+  std::ranges::transform(pointers,savedPointers.begin(),[](auto* slot) { return slot->get_instance(); });
+  std::array numbers={symbol("GHOSTATTACKWARN"),symbol("BELIARDAMAGECHANCE"),symbol("RAVENBLITZ"),
+                      symbol("B_BELIARSWEAPONSPECIALDAMAGE.RAVENRANDY"),symbol("B_BELIARSWEAPONSPECIALDAMAGE.DAMAGERANDY")};
+  std::array<int32_t,numbers.size()> savedNumbers;
+  std::ranges::transform(numbers,savedNumbers.begin(),[](auto* slot) { return slot->get_int(); });
+  const auto* rage=Gothic::inst().loadVisualFx("spellFX_BELIARSRAGE");
+  const auto* collide=Gothic::inst().loadVisualFx("spellFX_BELIARSRAGE_COLLIDE");
+  const auto fx=[&](const Npc& actor) {
+    std::string result;
+    for(const auto& effect:Contract::effects(actor)) {
+      if(effect.view.handle()==rage) result+='R';
+      if(effect.view.handle()==collide) result+='C';
+      }
+    return result;
+    };
+  require(rage && collide && fx(npc).empty() && fx(hero).empty(),
+          "special damage: both original effects are available and the fixture starts clear");
+  const auto weapon=script.findSymbolIndex("ITMW_BELIARWEAPON_1H_01");
+  const bool temporaryWeapon=hero.itemCount(weapon)==0;
+  if(temporaryWeapon)
+    hero.addItem(weapon,1);
+  hero.setToFightMode(weapon);
+  require(hero.activeWeapon() && hero.activeWeapon()->clsId()==weapon,"special damage: the real Claw is ready");
+  const auto claw=std::static_pointer_cast<daedalus::IItem>(hero.activeWeapon()->handlePtr());
+  const auto damage=script.findFunction("B_ASSESSDAMAGE");
+  enum class Site { GhostWarn, GhostKill, Claw, Glow, Reflect, Raven, RavenReset };
+  for(const auto site:{Site::GhostWarn,Site::GhostKill,Site::Claw,Site::Glow,Site::Reflect,Site::Raven,Site::RavenReset}) {
+    const bool ghost=site==Site::GhostWarn || site==Site::GhostKill;
+    const bool raven=site==Site::Raven || site==Site::RavenReset;
+    const bool checkClaw=!ghost && !raven;
+    for(bool native:{false,true}) {
+      enabled=native;
+      Contract::queue(npc).clear();
+      Contract::queue(hero).clear();
+      body.flags=player.flags=NpcFlag::NONE;
+      body.attribute[ATR_HITPOINTSMAX]=player.attribute[ATR_HITPOINTSMAX]=500;
+      body.attribute[ATR_HITPOINTS]=player.attribute[ATR_HITPOINTS]=400;
+      body.aivar[15]=1;
+      body.aivar[43]=site==Site::Reflect ? script.intSymbol("ID_DRAGON_UNDEAD",-1) : 0;
+      Contract::aiState(npc).funcIni=script.findFunction("ZS_ATTACK");
+      npc.setPerceptionEnable(PERC_ASSESSDAMAGE,damage.ptr);
+      pointers[0]->set_instance(ghost ? defender : nullptr);
+      pointers[1]->set_instance(raven ? defender : nullptr);
+      for(size_t i=2;i<pointers.size();++i)
+        pointers[i]->set_instance(nullptr);
+      numbers[0]->set_int(site==Site::GhostKill ? 2 : 1);
+      numbers[1]->set_int(site==Site::Glow ? 0 : 99);
+      numbers[2]->set_int(site==Site::RavenReset ? 3 : 0);
+      numbers[3]->set_int(-1);
+      numbers[4]->set_int(-1);
+      vm.global_item()->set_instance(nullptr);
+      script.setSeed(73106);
+      auto random=Contract::random(script);
+      const int expectedDamageRoll=checkClaw ? int(random()%100) : -1;
+      const int expectedRavenRoll=site==Site::RavenReset ? int(random()%3) : -1;
+      size_t ghostCode=0,beliarCode=0,readyCode=0;
+      vm.observe_instructions([&](const auto&) {
+        ghostCode+=vm.pc()==ghostPc;
+        beliarCode+=vm.pc()==beliarPc;
+        readyCode+=vm.pc()==readyPc;
+        });
+      require(npc.passPerception(hero,&npc,PERC_ASSESSDAMAGE),"special damage: deliver the stock damage callback");
+      vm.observe_instructions({});
+      require(ghostCode==size_t(!native && ghost) && beliarCode==size_t(!native && !ghost) &&
+              readyCode==2u*size_t(!native && checkClaw) && numbers[3]->get_int()==expectedRavenRoll &&
+              numbers[4]->get_int()==expectedDamageRoll && Contract::random(script)==random,
+              "special damage: routing, both weapon checks and the original RNG draws agree");
+      const auto heroHp=site==Site::GhostWarn ? 200 : site==Site::GhostKill ? 0 : site==Site::Reflect ? 300 : site==Site::Raven ? 350 : 400;
+      require(body.attribute[ATR_HITPOINTS]==(site==Site::Claw ? 300 : 400) && player.attribute[ATR_HITPOINTS]==heroHp &&
+              numbers[0]->get_int()==(site==Site::GhostKill ? 3 : ghost ? 2 : 1) &&
+              numbers[2]->get_int()==(site==Site::Raven ? 1 : 0),
+              "special damage: warnings, ordinary damage, reflection and Raven's cadence preserve the original health");
+      require(fx(npc)==(raven ? "C" : site==Site::Claw ? "R" : "") &&
+              fx(hero)==(ghost || site==Site::Raven ? "R" : site==Site::Claw ? "CC" : site==Site::Reflect ? "RCC" : site==Site::Glow ? "C" : ""),
+              "special damage: the original actors receive the same visual effects in order");
+      if(ghost) {
+        require(pointers[2]->get_instance()==defender && pointers[3]->get_instance()==attacker &&
+                pointers[4]->get_instance()==defender && pointers[6]->get_instance()==attacker,
+                "special damage: direct arguments and quest aliases keep their original roles");
+        if(site==Site::GhostKill)
+          require(hero.aiQueueFront() && hero.aiQueueFront()->act==AI_PlayAnim && hero.aiQueueFront()->s0=="T_DEAD",
+                  "special damage: the third warning queues the stock death clip");
+        } else {
+        require(pointers[7]->get_instance()==defender && pointers[8]->get_instance()==attacker,
+                "special damage: the Claw helper keeps the original arguments");
+        if(checkClaw)
+          require(pointers[9]->get_instance()==claw && pointers[10]->get_instance()==claw && vm.global_item()->get_instance()==claw,
+                  "special damage: readying the real Claw preserves the saved slot and ITEM alias");
+        }
+      for(auto* actor:{&npc,&hero}) {
+        while(!fx(*actor).empty()) {
+          actor->stopEffect(*rage);
+          actor->stopEffect(*collide);
+          }
+        }
+      }
+    }
+  enabled=wasEnabled;
+  hero.closeWeapon(true);
+  if(temporaryWeapon)
+    hero.delItem(weapon,1);
+  body.flags=savedNpcFlags;
+  player.flags=savedHeroFlags;
+  body.attribute[ATR_HITPOINTS]=savedNpcHp;
+  body.attribute[ATR_HITPOINTSMAX]=savedNpcMax;
+  player.attribute[ATR_HITPOINTS]=savedHeroHp;
+  player.attribute[ATR_HITPOINTSMAX]=savedHeroMax;
+  std::copy(savedNpcVars.begin(),savedNpcVars.end(),body.aivar);
+  Contract::aiState(npc).funcIni=savedState;
+  Contract::perceptions(npc)[PERC_ASSESSDAMAGE]=savedPerception;
+  Contract::queue(npc)=savedNpcQueue;
+  Contract::queue(hero)=savedHeroQueue;
+  Contract::random(script)=savedRandom;
+  for(size_t i=0;i<pointers.size();++i) pointers[i]->set_instance(savedPointers[i]);
+  for(size_t i=0;i<numbers.size();++i) numbers[i]->set_int(savedNumbers[i]);
+  vm.global_item()->set_instance(savedItem);
+  std::puts("Special damage: ghost warnings, the Claw and Raven agree with the VM");
+  }
+
 void productionDialogEnd(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();

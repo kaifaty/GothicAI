@@ -1,6 +1,7 @@
 #include "gamescript.h"
 
 #include <algorithm>
+#include <bit>
 
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
@@ -736,7 +737,7 @@ void GameScript::runMonsterAssessDamage() {
   const auto other = [&] { return std::static_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
   auto& ai = self->aivar;
   ai[monsterPriority] = findSymbol("PRIO_ATTACK")->get_int();
-  vm.call_function<void>("B_BELIARSWEAPONSPECIALDAMAGE",other(),self);
+  beliarWeaponSpecialDamage(other(),self);
 
   const auto hammer = int(findSymbolIndex("HOLY_HAMMER_MIS"));
   if(npc_hasitems(other(),hammer)>0) {
@@ -1270,6 +1271,119 @@ void GameScript::magicHurtNpc(const std::shared_ptr<daedalus::INpc>& attacker,
     if(credited)
       credited->aivar[16]=1;
     }
+  }
+
+void GameScript::ghostSpecialDamage(const std::shared_ptr<daedalus::INpc>& attacker,
+                                    const std::shared_ptr<daedalus::INpc>& defender) {
+  findSymbol("B_GHOSTSPECIALDAMAGE.SLF")->set_instance(defender);
+  findSymbol("B_GHOSTSPECIALDAMAGE.OTH")->set_instance(attacker);
+  const auto quarhodron = hlp_getnpc(int(findSymbolIndex("NONE_ADDON_111_QUARHODRON")));
+  findSymbol("B_GHOSTSPECIALDAMAGE.QUARHO")->set_instance(quarhodron);
+  const auto rhademes = hlp_getnpc(int(findSymbolIndex("NONE_ADDON_112_RHADEMES")));
+  findSymbol("B_GHOSTSPECIALDAMAGE.RHADEM")->set_instance(rhademes);
+  const auto hero = hlp_getnpc(int(findSymbolIndex("PC_HERO")));
+  findSymbol("B_GHOSTSPECIALDAMAGE.HER")->set_instance(hero);
+  const auto selfId = hlp_getinstanceid(vm.global_self()->get_instance());
+  if(selfId!=hlp_getinstanceid(rhademes) && selfId!=hlp_getinstanceid(quarhodron))
+    return;
+  wld_playeffect("spellFX_BELIARSRAGE",attacker,attacker,0,0,0,0);
+  if(attacker && attacker->flags==NpcFlag::IMMORTAL)
+    return;
+  if(hlp_getinstanceid(attacker)!=hlp_getinstanceid(hero)) {
+    const auto hp = attacker ? attacker->attribute[ATR_HITPOINTSMAX] : 0;
+    npc_changeattribute(attacker,ATR_HITPOINTS,std::bit_cast<int32_t>(0u-uint32_t(hp)));
+    return;
+    }
+  auto& warning = *findSymbol("GHOSTATTACKWARN");
+  const auto count = std::bit_cast<int32_t>(uint32_t(warning.get_int())+1u);
+  warning.set_int(count);
+  if(attacker==nullptr)
+    return;
+  if(count<3) {
+    attacker->attribute[ATR_HITPOINTS] /= 2;
+    } else {
+    attacker->attribute[ATR_HITPOINTS] = 0;
+    ai_playani(attacker,"T_DEAD");
+    }
+  }
+
+bool GameScript::isBeliarWeaponItem(const std::shared_ptr<daedalus::IItem>& weapon) {
+  findSymbol("C_ISITEMBELIARSWEAPON.WEAP")->set_instance(weapon);
+  const auto* item = findItem(weapon.get());
+  if(item==nullptr)
+    return false;
+  const auto id = item->clsId();
+  const auto contains = [&](std::string_view first,std::string_view last) {
+    return id>=findSymbolIndex(first) && id<=findSymbolIndex(last);
+    };
+  // These three contiguous ranges are the 48 comparisons in the verified program.
+  return contains("ITMW_BELIARWEAPON_1H_01","ITMW_BELIARWEAPON_1H_20") ||
+         contains("ITMW_BELIARWEAPON_RAVEN","ITMW_BELIARWEAPON_2H_20") ||
+         contains("ITRU_BELIARSRAGE","ITRU_SUMMONGUARDIAN");
+  }
+
+bool GameScript::hasReadiedBeliarWeapon() {
+  const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+  const auto weapon = npc_getreadiedweapon(hero);
+  findSymbol("C_SCHASREADIEDBELIARSWEAPON.READYWEAP")->set_instance(weapon);
+  return isBeliarWeaponItem(weapon);
+  }
+
+void GameScript::beliarWeaponSpecialDamage(const std::shared_ptr<daedalus::INpc>& attacker,
+                                           const std::shared_ptr<daedalus::INpc>& defender) {
+  findSymbol("B_BELIARSWEAPONSPECIALDAMAGE.SLF")->set_instance(defender);
+  findSymbol("B_BELIARSWEAPONSPECIALDAMAGE.OTH")->set_instance(attacker);
+  const auto rage = [&](const auto& actor) { wld_playeffect("spellFX_BELIARSRAGE",actor,actor,0,0,0,0); };
+  const auto collide = [&](const auto& actor) { wld_playeffect("spellFX_BELIARSRAGE_COLLIDE",actor,actor,0,0,0,0); };
+  const auto hurt = [&](const auto& source,const auto& target,int32_t damage) {
+    vm.push_instance(source);
+    vm.push_instance(target);
+    vm.push_int(damage);
+    vm.unsafe_call_bl(findSymbol("B_MAGICHURTNPC"));
+    };
+
+  const auto raven = findSymbol("RAVEN")->get_instance();
+  if(hlp_getinstanceid(defender)==hlp_getinstanceid(raven)) {
+    collide(defender);
+    auto& lightning = *findSymbol("RAVENBLITZ");
+    if(lightning.get_int()<=0) {
+      rage(attacker);
+      hurt(defender,attacker,50);
+      lightning.set_int(std::bit_cast<int32_t>(uint32_t(lightning.get_int())+1u));
+      } else if(lightning.get_int()>=3) {
+      const auto roll = hlp_random(3);
+      findSymbol("B_BELIARSWEAPONSPECIALDAMAGE.RAVENRANDY")->set_int(roll);
+      if(roll<=50)
+        lightning.set_int(0);
+      } else {
+      lightning.set_int(lightning.get_int()+1);
+      }
+    return;
+    }
+
+  const auto hero = [&] { return vm.global_hero()->get_instance(); };
+  if(hlp_getinstanceid(attacker)!=hlp_getinstanceid(hero()))
+    return;
+
+  auto& chance = *findSymbol("B_BELIARSWEAPONSPECIALDAMAGE.DAMAGERANDY");
+  chance.set_int(hlp_random(100));
+  const bool proc = chance.get_int()<=findSymbol("BELIARDAMAGECHANCE")->get_int();
+  const bool ready = hasReadiedBeliarWeapon();
+  if(proc && ready) {
+    constexpr size_t dragonId = 43; // AIV_DRAGONID
+    if(defender && defender->aivar[dragonId]==findSymbol("ID_DRAGON_UNDEAD")->get_int()) {
+      rage(attacker);
+      hurt(defender,attacker,100);
+      } else if(!defender || defender->flags!=NpcFlag::IMMORTAL) {
+      rage(defender);
+      hurt(attacker,defender,100);
+      }
+    collide(hero());
+    }
+  const bool showEffect = chance.get_int()<=50;
+  const bool stillReady = hasReadiedBeliarWeapon();
+  if(showEffect && stillReady)
+    collide(hero());
   }
 
 void GameScript::raisePaladinZombie(Npc& npc) {

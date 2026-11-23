@@ -322,6 +322,10 @@ class GameScript final : public GameRules {
     bool runMagicHurtState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     void magicHurtNpc(const std::shared_ptr<daedalus::INpc>& attacker, const std::shared_ptr<daedalus::INpc>& target,
                       int32_t damage);
+    void ghostSpecialDamage(const std::shared_ptr<daedalus::INpc>& attacker, const std::shared_ptr<daedalus::INpc>& defender);
+    void beliarWeaponSpecialDamage(const std::shared_ptr<daedalus::INpc>& attacker, const std::shared_ptr<daedalus::INpc>& defender);
+    bool hasReadiedBeliarWeapon();
+    bool isBeliarWeaponItem(const std::shared_ptr<daedalus::IItem>& weapon);
     bool usesNativeShrinkSpell(const Item* item) const;
     int runShrinkMana(Npc& caster, int mana, bool release);
     void castShrink(Npc& caster, Npc* target);
