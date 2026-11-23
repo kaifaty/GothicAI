@@ -752,16 +752,13 @@ bool GameScript::invokeNativeMonsterPerception(const daedalus::DaedalusSymbol& s
   }
 
 bool GameScript::monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monster, const std::shared_ptr<daedalus::INpc>& body) {
-  // An old save can restore a last target that is absent from this world.
-  if(body==nullptr)
-    return vm.call_function<int32_t>("C_WANTTOEAT",monster,body)!=0;
-
-  findSymbol("C_WANTTOEAT.SLF")->set_instance(monster);
   findSymbol("C_WANTTOEAT.OTH")->set_instance(body);
-  if(monster->aivar[partyMember]==1)
+  findSymbol("C_WANTTOEAT.SLF")->set_instance(monster);
+  if(monster==nullptr || monster->aivar[partyMember]==1)
     return false;
 
-  const auto guild = body->guild;
+  // The stock VM reads a missing body's guild as zero, including a stale saved last target.
+  const auto guild = body ? body->guild : 0;
   const bool humanoid = guild<humanGuildSeparator || guild>orcGuildSeparator;
   const bool smallAnimal = guild==GIL_SHEEP || guild==GIL_GIANT_RAT || guild==GIL_MOLERAT;
   const bool commonPrey = smallAnimal || guild==GIL_HARPY || guild==GIL_WOLF || guild==GIL_SUMMONED_WOLF ||
@@ -793,6 +790,18 @@ bool GameScript::monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monste
     default:
       return false;
     }
+  }
+
+void GameScript::pushMonsterWantsToEat() {
+  const auto body = std::static_pointer_cast<daedalus::INpc>(vm.pop_instance());
+  const auto monster = std::static_pointer_cast<daedalus::INpc>(vm.pop_instance());
+  const bool eats = monsterWantsToEat(monster,body);
+  // Every true result and the final shadowbeast test leave the body context on the reference.
+  const bool bodyContext = eats || (monster && monster->aivar[partyMember]!=1 && monster->guild==GIL_SHADOWBEAST);
+  const auto caller = vm.unsafe_get_gi();
+  vm.unsafe_set_gi(bodyContext ? body : monster);
+  vm.push_reference(findSymbol(eats ? "TRUE" : "FALSE"));
+  vm.unsafe_set_gi(caller);
   }
 
 void GameScript::runMonsterAssessBody() {
@@ -910,14 +919,49 @@ void GameScript::runMonsterAssessOthersDamage() {
     attack(victim);
   }
 
+void GameScript::assignDragonTalk(const std::shared_ptr<daedalus::INpc>& dragon) {
+  findSymbol("B_ASSIGNDRAGONTALK.SLF")->set_instance(dragon);
+  if(dragon==nullptr || dragon->guild!=GIL_DRAGON)
+    return;
+
+  using Dialogues = std::array<std::string_view,4>;
+  static constexpr Dialogues common = {"DIA_DRAGONTALK_MAIN_1","DIA_DRAGONTALK_MAIN_2",
+                                       "DIA_DRAGONTALK_MAIN_3","DIA_DRAGONTALK_MAIN_4"};
+  static constexpr struct Dragon {
+    std::string_view alias, local;
+    Dialogues dialogues;
+    } dragons[] = {
+    {"SWAMPDRAGON","B_ASSIGNDRAGONTALK_SWAMP.SLF",
+     {"DIA_DRAGON_SWAMP_EXIT","DIA_DRAGON_SWAMP_HELLO","DIA_DRAGON_SWAMP_WERBISTDU","DIA_DRAGON_SWAMP_WOSINDDIEANDEREN"}},
+    {"ROCKDRAGON","B_ASSIGNDRAGONTALK_ROCK.SLF",
+     {"DIA_DRAGON_ROCK_EXIT","DIA_DRAGON_ROCK_HELLO","DIA_DRAGON_ROCK_WERBISTDU","DIA_DRAGON_ROCK_HIERARCHIE"}},
+    {"FIREDRAGON","B_ASSIGNDRAGONTALK_FIRE.SLF",
+     {"DIA_DRAGON_FIRE_EXIT","DIA_DRAGON_FIRE_HELLO","DIA_DRAGON_FIRE_WERBISTDU","DIA_DRAGON_FIRE_HORT"}},
+    {"ICEDRAGON","B_ASSIGNDRAGONTALK_ICE.SLF",
+     {"DIA_DRAGON_ICE_EXIT","DIA_DRAGON_ICE_HELLO","DIA_DRAGON_ICE_WERBISTDU","DIA_DRAGON_ICE_BELIAR"}},
+    };
+  const auto id = hlp_getinstanceid(dragon);
+  auto* member = findSymbol("C_INFO.NPC");
+  const auto assign = [&](std::string_view local, const Dialogues& dialogues) {
+    findSymbol(local)->set_instance(dragon);
+    for(const auto dialogue : dialogues)
+      vm.set_int(findSymbol(dialogue)->get_instance(),member,0,id);
+    };
+  for(const auto& family : dragons) {
+    if(id==hlp_getinstanceid(findSymbol(family.alias)->get_instance())) {
+      assign(family.local,family.dialogues);
+      assign("B_ASSIGNDRAGONTALK_MAIN.SLF",common);
+      }
+    }
+  }
+
 void GameScript::runMonsterAssessPlayer() {
   const auto self = std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const auto other = [&] { return std::static_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
   if(other()->aivar[invincible]==1 || isNpcDownInScript(other()))
     return;
 
-  vm.push_instance(self);
-  vm.unsafe_call_bl(findSymbol("B_ASSIGNDRAGONTALK"));
+  assignDragonTalk(self);
   const bool importantInfo = npc_checkinfo(self,1);
   const auto distance = npc_getdisttonpc(self,other());
   if(importantInfo && distance<=700 && (self->guild==GIL_DRAGON || distance<=findSymbol("PERC_DIST_DIALOG")->get_int())) {

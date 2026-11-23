@@ -314,12 +314,14 @@ class GameScript final : public GameRules {
     void runMonsterAssessEnemy();
     void runMonsterAssessOthersDamage();
     void runMonsterAssessPlayer();
+    void assignDragonTalk(const std::shared_ptr<daedalus::INpc>& dragon);
     void runMonsterAssessWarn();
     void runMonsterAssessSurprise();
     void runMonsterAssessQuietSoundSleep();
     void runMonsterSummonedAssessTalk();
     void awakenStoneGuardian(const std::shared_ptr<daedalus::INpc>& actor);
     bool monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monster, const std::shared_ptr<daedalus::INpc>& body);
+    void pushMonsterWantsToEat();
     bool monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runShrinkState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);

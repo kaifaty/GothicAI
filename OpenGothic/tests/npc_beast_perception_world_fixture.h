@@ -375,8 +375,71 @@ void monsterDamagePerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
   std::puts("Monster damage perception: original and native attack, flee, retargeting and witnessed hits agree");
   }
 
+void monsterDragonDialogue(World& world, Npc& actor) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  const auto previousGuild=actor.handle().guild;
+  const auto handle=std::static_pointer_cast<daedalus::INpc>(actor.handlePtr());
+  const auto callGi=vm.unsafe_get_gi();
+  auto* assign=script.findSymbol("B_ASSIGNDRAGONTALK");
+  auto* swamp=script.findSymbol("SWAMPDRAGON");
+  const auto oldSwamp=swamp->get_instance();
+  const std::array formals={script.findSymbol("B_ASSIGNDRAGONTALK.SLF"),
+                            script.findSymbol("B_ASSIGNDRAGONTALK_SWAMP.SLF"),
+                            script.findSymbol("B_ASSIGNDRAGONTALK_MAIN.SLF")};
+  std::array<std::shared_ptr<daedalus::DaedalusInstance>,formals.size()> oldFormals;
+  std::ranges::transform(formals,oldFormals.begin(),[](auto* symbol) { return symbol->get_instance(); });
+  const std::array names={"DIA_DRAGON_SWAMP_EXIT","DIA_DRAGON_SWAMP_HELLO","DIA_DRAGON_SWAMP_WERBISTDU",
+                         "DIA_DRAGON_SWAMP_WOSINDDIEANDEREN","DIA_DRAGONTALK_MAIN_1","DIA_DRAGONTALK_MAIN_2",
+                         "DIA_DRAGONTALK_MAIN_3","DIA_DRAGONTALK_MAIN_4"};
+  std::array<std::shared_ptr<daedalus::IInfo>,names.size()> dialogues;
+  std::array<int32_t,names.size()> oldOwners;
+  std::vector<const daedalus::DaedalusInstance*> originalOrder;
+  for(size_t i=0;i<names.size();++i) {
+    dialogues[i]=std::dynamic_pointer_cast<daedalus::IInfo>(script.findSymbol(names[i])->get_instance());
+    require(bool(dialogues[i]),"dragon dialogue: stock topic instances must be initialized");
+    oldOwners[i]=dialogues[i]->npc;
+    originalOrder.push_back(dialogues[i].get());
+    }
+  actor.handle().guild=GIL_DRAGON;
+  swamp->set_instance(handle);
+  for(bool native:{false,true}) {
+    events=native;
+    for(const auto& dialogue:dialogues)
+      dialogue->npc=-1;
+    for(auto* symbol:formals)
+      symbol->set_instance(nullptr);
+    size_t entries=0;
+    std::vector<const daedalus::DaedalusInstance*> writes;
+    vm.observe_instructions([&](const auto&) { entries+=vm.pc()==assign->address(); });
+    vm.observe_member_writes([&](const auto& member,uint16_t,const auto* context) {
+      if(member.name()=="C_INFO.NPC")
+        writes.push_back(context);
+      });
+    vm.push_int(0x5a5a);
+    vm.push_instance(handle);
+    vm.unsafe_call_bl(assign);
+    vm.observe_member_writes({});
+    vm.observe_instructions({});
+    require(entries==size_t(!native) && writes==originalOrder && vm.pop_int()==0x5a5a && vm.unsafe_get_gi()==callGi &&
+            std::ranges::all_of(dialogues,[&](const auto& info) { return info->npc==int32_t(actor.instanceSymbol()); }) &&
+            std::ranges::all_of(formals,[&](auto* symbol) { return symbol->get_instance()==handle; }),
+            "dragon dialogue: preserve regional and shared topic order, owners and saved actors");
+    }
+  for(size_t i=0;i<dialogues.size();++i)
+    dialogues[i]->npc=oldOwners[i];
+  for(size_t i=0;i<formals.size();++i)
+    formals[i]->set_instance(oldFormals[i]);
+  swamp->set_instance(oldSwamp);
+  actor.handle().guild=previousGuild;
+  events=previousEvents;
+  }
+
 void monsterPlayerWarnAndSurprise(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
   using Contract=NpcDefinitionContract;
+  monsterDragonDialogue(world,wolf);
   auto& script=world.script();
   auto& vm=script.getVm();
   auto& events=Contract::activityEventsOn(script);
@@ -427,8 +490,8 @@ void monsterPlayerWarnAndSurprise(World& world, Npc& wolf, Npc& sheep, Npc& hero
         });
       const bool delivered=wolf.perceptionProcess(source,victim,wolf.qDistTo(source),perception);
       vm.observe_instructions({});
-      require(delivered && entries==(native ? 0u : 1u) && dragonTalkEntries==expectedDragonTalk,
-              "monster perceptions: the handler follows the executor and preserves the real dragon dialogue call");
+      require(delivered && entries==(native ? 0u : 1u) && dragonTalkEntries==expectedDragonTalk*size_t(!native),
+              "monster perceptions: the handler and dragon dialogue assignment follow the selected executor");
       auto witness=activityQueue(wolf);
       witness.push_back(std::to_string(world.npcId(wolf.target())));
       witness.push_back(std::to_string(world.npcId(wolf.stateOther())));

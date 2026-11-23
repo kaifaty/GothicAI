@@ -131,6 +131,15 @@ void GameScript::loadNativeRoutines() {
       }
     },enabled);
   vm.override_function("B_GETWISPDETECTEDITEM",std::function<void()>{[this] { approachWispItem(); }},enabled);
+  vm.override_function("B_ASSIGNDRAGONTALK",std::function<void(NpcHandle)>{[this](const NpcHandle& dragon) {
+    assignDragonTalk(dragon);
+    }},enabled);
+  vm.override_function("C_WANTTOEAT",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [this](auto&) -> daedalus::DaedalusNakedCall {
+      pushMonsterWantsToEat();
+      return {};
+      }
+    },enabled);
   vm.override_function("C_NPCISMONSTERMAGE",std::function<int32_t(NpcHandle)>{
     [this](NpcHandle npc) { return int32_t(isMonsterMage(npc)); }},enabled);
   vm.override_function("PERCEPTION_SET_MONSTER_RTN",std::function<void()>{[this] {

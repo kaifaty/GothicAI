@@ -2521,7 +2521,11 @@ void monsterBodyPerception(World& world, Npc& monster, Npc& body) {
   const auto handler=script.findFunction("B_MM_ASSESSBODY");
   const auto eat=script.findFunction("ZS_MM_EATBODY");
   const auto handlerPc=script.findSymbol(size_t(handler.ptr))->address();
-  const auto wantsToEatPc=script.findSymbol("C_WANTTOEAT")->address();
+  auto* wantsToEat=script.findSymbol("C_WANTTOEAT");
+  const auto wantsToEatPc=wantsToEat->address();
+  auto* selfSlot=script.findSymbol("C_WANTTOEAT.SLF");
+  auto* bodySlot=script.findSymbol("C_WANTTOEAT.OTH");
+  const auto oldSelfSlot=selfSlot->get_instance(), oldBodySlot=bodySlot->get_instance();
   const auto boar=script.findSymbol("ID_KEILER")->get_int();
   struct Scene { Guild monster; Guild body; int party; int realId; int priority; bool eat; };
   const std::array scenes={Scene{GIL_WOLF,GIL_SHEEP,0,0,0,true},Scene{GIL_WOLF,GIL_SHEEP,1,0,0,false},
@@ -2562,6 +2566,34 @@ void monsterBodyPerception(World& world, Npc& monster, Npc& body) {
         original=queue;
       }
     }
+  monster.handle().guild=GIL_WOLF;
+  ai[43]=0;
+  const auto monsterHandle=std::static_pointer_cast<daedalus::INpc>(monster.handlePtr());
+  const auto bodyHandle=std::static_pointer_cast<daedalus::INpc>(body.handlePtr());
+  const auto callGi=vm.unsafe_get_gi();
+  for(bool native:{false,true}) {
+    events=native;
+    for(bool party:{false,true}) {
+      ai[15]=int32_t(party);
+      selfSlot->set_instance(nullptr);
+      bodySlot->set_instance(bodyHandle);
+      size_t entries=0;
+      vm.observe_instructions([&](const auto&) { entries+=vm.pc()==wantsToEatPc; });
+      vm.push_int(0x5a5a);
+      vm.push_instance(monsterHandle);
+      vm.push_instance(nullptr);
+      vm.unsafe_call_bl(wantsToEat);
+      vm.observe_instructions({});
+      const auto frame=vm.stack_frame(0);
+      require(entries==size_t(!native) && frame.reference && frame.context==(party ? monsterHandle : nullptr) &&
+              std::get<daedalus::DaedalusSymbol*>(frame.value)==script.findSymbol(party ? "FALSE" : "TRUE") &&
+              vm.pop_int()==int32_t(!party) && vm.pop_int()==0x5a5a && selfSlot->get_instance()==monsterHandle &&
+              !bodySlot->get_instance() && vm.unsafe_get_gi()==callGi,
+              "monster body perception: an absent saved target keeps the original guild-zero result and stack reference");
+      }
+    }
+  selfSlot->set_instance(oldSelfSlot);
+  bodySlot->set_instance(oldBodySlot);
   events=previousEvents;
   monster.setExternalControl(externalControl);
   monster.handle().guild=previousGuild;
