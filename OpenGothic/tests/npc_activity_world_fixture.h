@@ -2685,10 +2685,6 @@ void shrinkSpellCast(World& world) {
   }
 
 void shrinkSpellStates(World& world) {
-  const auto program=NpcSnapshot::load(baseProgramIndex().dir.parent_path());
-  if(program.sha256!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
-    return;
-
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
   auto& vm=script.getVm();
@@ -2770,6 +2766,128 @@ void shrinkSpellStates(World& world) {
   shrinkSpellCast(world);
   }
 
+void magicHurtStates(World& world) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  const auto previousEvents=events;
+  auto* actor=script.findSymbol("VLK_408_JORA");
+  auto* helper=script.findSymbol("B_MAGICHURTNPC");
+  auto* sourceLocal=script.findSymbol("B_MAGICHURTNPC.SLF");
+  auto* targetLocal=script.findSymbol("B_MAGICHURTNPC.OTH");
+  auto* damageLocal=script.findSymbol("B_MAGICHURTNPC.DAMAGE");
+  auto* hero=world.player();
+  const auto* wp=world.findWayPoint("NW_CITY_PATH_HABOUR_03");
+  require(actor && helper && sourceLocal && targetLocal && damageLocal && hero && wp,"the magic damage fixture needs stock bindings");
+  const auto previousActor=actor->get_instance();
+  const auto previousSource=sourceLocal->get_instance(), previousTarget=targetLocal->get_instance();
+  const auto previousDamage=damageLocal->get_int();
+  auto& heroRecord=hero->handle();
+  const auto previousExp=heroRecord.exp, previousNext=heroRecord.exp_next, previousLevel=heroRecord.level;
+
+  const struct Case {
+    const char* name;
+    int32_t damage;
+    bool exactSecond, shortBurn;
+    } cases[]={
+    {"ZS_MAGICBURN",1,true,false},
+    {"ZS_MAGICBURNSHORT",1,true,true},
+    {"ZS_PYRO",20,false,false},
+    {"ZS_ZAPPED",2,false,false}
+    };
+  for(const auto& c:cases) {
+    const auto init=script.findFunction(c.name);
+    const auto loop=script.findFunction(std::string(c.name)+"_LOOP");
+    const auto end=script.findFunction(std::string(c.name)+"_END");
+    require(init.isValid() && loop.isValid() && end.isValid(),"the magic damage fixture needs three stock phases");
+    const std::array addresses{script.findSymbol(init.ptr)->address(),script.findSymbol(loop.ptr)->address(),
+                               script.findSymbol(end.ptr)->address(),helper->address()};
+    std::vector<uint8_t> oldSave;
+    const auto run=[&](bool native) {
+      events=native;
+      auto* npc=world.addNpc(actor->index(),wp->position());
+      require(npc!=nullptr,"the magic damage fixture needs a disposable NPC");
+      npc->handle().attribute[ATR_HITPOINTS]=100;
+      npc->handle().attribute[ATR_HITPOINTSMAX]=100;
+      npc->handle().flags=NpcFlag::NONE;
+      npc->handle().aivar[16]=0;
+      npc->handle().level=3;
+      npc->setLastHitBy(nullptr);
+
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) {
+        if(std::ranges::find(addresses,vm.pc())!=addresses.end()) ++instructions;
+        });
+      require(npc->startState(init,""),"the NPC must enter the magic damage state");
+      npc->setOther(hero);
+      Contract::tickRoutine(*npc);
+      require(npc->hasPerc(PERC_ASSESSSTOPMAGIC),"Init must subscribe to the stock stop perception");
+
+      const auto snapshot=[&](int result) {
+        return std::tuple(result,npc->handle().attribute[ATR_HITPOINTS],npc->stateTime(),
+                          npc->hasPerc(PERC_ASSESSMAGIC),npc->hasPerc(PERC_ASSESSSTOPMAGIC),activityQueue(*npc));
+        };
+      std::vector<decltype(snapshot(0))> observations{snapshot(0)};
+      npc->setStateTime(999);
+      if(!native)
+        oldSave=savedNpc(*npc);
+      else {
+        npc->setStateTime(0);
+        loadSavedNpc(*npc,oldSave);
+        require(npc->stateTime()==999 && npc->isInState(init) && Contract::aiState(*npc).started,
+                "an old save must resume damage timing with Init already executed");
+        }
+
+      for(const int32_t time:{999,1000,1999,2000}) {
+        npc->handle().attribute[ATR_HITPOINTS]=100;
+        npc->setStateTime(time);
+        const auto result=script.invokeState(npc,hero,nullptr,loop);
+        const bool due=time>=1000 && (!c.exactSecond || time<2000);
+        require(npc->attribute(ATR_HITPOINTS)==100-(due ? c.damage : 0) &&
+                npc->stateTime()==uint64_t(due ? 0 : time) && npc->lastHitBy()==nullptr &&
+                result==(c.shortBurn && due ? LOOP_END : LOOP_CONTINUE),
+                "each hit must keep the original integer timing, attribution and loop result");
+        if(due)
+          require(sourceLocal->get_instance()==std::static_pointer_cast<daedalus::INpc>(hero->handlePtr()) &&
+                  targetLocal->get_instance()==std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) &&
+                  damageLocal->get_int()==c.damage,"the original damage locals must survive the call");
+        observations.push_back(snapshot(result));
+        }
+      observations.push_back(snapshot(script.invokeState(npc,hero,nullptr,end)));
+
+      if(std::string_view(c.name)=="ZS_PYRO") {
+        heroRecord.level=1;
+        heroRecord.exp=100;
+        heroRecord.exp_next=10000;
+        npc->handle().attribute[ATR_HITPOINTS]=c.damage;
+        npc->setStateTime(1000);
+        script.invokeState(npc,hero,nullptr,loop);
+        require(npc->isDead() && npc->handle().aivar[16]==1 && heroRecord.exp==130 && npc->lastHitBy()==nullptr,
+                "the lethal tick must use SELF level, preserve attribution and credit victory once");
+        npc->setStateTime(1000);
+        script.invokeState(npc,hero,nullptr,loop);
+        require(heroRecord.exp==130,"a victim already credited must not award XP again");
+        heroRecord.exp=previousExp;
+        heroRecord.exp_next=previousNext;
+        heroRecord.level=previousLevel;
+        }
+      vm.observe_instructions({});
+      require((instructions==0)==native,"the selected executor must run the expected magic damage code");
+      world.removeNpc(*npc);
+      actor->set_instance(previousActor);
+      return observations;
+      };
+    const auto stock=run(false);
+    require(run(true)==stock,"magic damage phases must match VM on state, queue, perceptions and timing");
+    }
+  sourceLocal->set_instance(previousSource);
+  targetLocal->set_instance(previousTarget);
+  damageLocal->set_int(previousDamage);
+  events=previousEvents;
+  std::puts("Magic damage states: stock ticks, queue, old save, attribution and one-time XP match");
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
@@ -2778,7 +2896,11 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
     const auto save=pointActivitiesWorld(gothic,events);
     itemRoutinePhasesWorld(gothic,events);
-    if(events) shrinkSpellStates(*gothic.world());
+    if(events && NpcSnapshot::load(baseProgramIndex().dir.parent_path()).sha256==
+                 "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
+      shrinkSpellStates(*gothic.world());
+      magicHurtStates(*gothic.world());
+      }
     ActivityEventsWorld paired(gothic);
     pairedSmalltalkWorld(paired,events);
     sleepRoutineWorld(gothic,events);

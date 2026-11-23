@@ -255,6 +255,9 @@ class GameScript final : public GameRules {
     bool runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runShrinkState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runMagicHurtState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    void magicHurtNpc(const std::shared_ptr<daedalus::INpc>& attacker, const std::shared_ptr<daedalus::INpc>& target,
+                      int32_t damage);
     bool usesNativeShrinkSpell(const Item* item) const;
     int runShrinkMana(Npc& caster, int mana, bool release);
     void castShrink(Npc& caster, Npc* target);

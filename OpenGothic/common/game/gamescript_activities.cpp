@@ -53,6 +53,10 @@ void GameScript::loadNativeRoutines() {
     {"ZS_MM_RTN_ORCSIT",      &GameScript::runMonsterRoutine},
     {"ZS_MAGICSHRINK",        &GameScript::runShrinkState},
     {"ZS_MAGICSHRUNK",        &GameScript::runShrinkState},
+    {"ZS_MAGICBURN",          &GameScript::runMagicHurtState},
+    {"ZS_MAGICBURNSHORT",     &GameScript::runMagicHurtState},
+    {"ZS_PYRO",               &GameScript::runMagicHurtState},
+    {"ZS_ZAPPED",             &GameScript::runMagicHurtState},
     };
   for(const auto& routine : routines) {
     for(const std::string_view suffix : {"", "_LOOP", "_END"}) {
@@ -64,6 +68,13 @@ void GameScript::loadNativeRoutines() {
       nativeRoutinePhases.emplace(symbol->index(),phase);
       }
     }
+
+  using Handle=std::shared_ptr<daedalus::INpc>;
+  vm.override_function("B_MAGICHURTNPC",std::function<void(Handle,Handle,int32_t)>{
+    [this](Handle attacker, Handle target, int32_t damage) { magicHurtNpc(attacker,target,damage); }},
+    [this] {
+      return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+      });
   }
 
 bool GameScript::runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol&, int& result) {

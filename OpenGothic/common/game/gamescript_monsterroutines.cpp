@@ -1,5 +1,7 @@
 #include "gamescript.h"
 
+#include <algorithm>
+
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 
@@ -215,4 +217,108 @@ void GameScript::castShrink(Npc& caster, Npc* target) {
       }
     }
   ++self->aivar[20]; // AIV_SELECTSPELL
+  }
+
+bool GameScript::runMagicHurtState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  static constexpr struct State {
+    std::string_view name, stop, restart;
+    int32_t damage;
+    } states[]={
+    {"ZS_MAGICBURN","B_STOPMAGICBURN","B_RESTARTBURN",1},
+    {"ZS_MAGICBURNSHORT","B_STOPMAGICBURNSHORT","B_RESTARTBURNSHORT",1},
+    {"ZS_PYRO","B_STOPPYRO","",20},
+    {"ZS_ZAPPED","B_STOPZAPPED","",2}
+    };
+  const std::string_view name=symbol.name();
+  const bool loop=name.ends_with("_LOOP"), end=name.ends_with("_END");
+  const auto stateName=name.substr(0,name.size()-(loop ? 5 : end ? 4 : 0));
+  const auto state=std::ranges::find(states,stateName,&State::name);
+  if(state==std::end(states))
+    return false;
+
+  const auto self=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const bool shortBurn=stateName=="ZS_MAGICBURNSHORT";
+  const bool burns=!state->restart.empty();
+  const auto stand=[&] {
+    npc_clearaiqueue(self);
+    ai_standup(self);
+    };
+  result=LOOP_CONTINUE;
+  if(end) {
+    if(shortBurn)
+      stand();
+    return true;
+    }
+
+  const bool human=self->guild<int32_t(GIL_SEPERATOR_HUM);
+  if(!loop) {
+    npc_percenable(self,PERC_ASSESSSTOPMAGIC,int(findFunction(state->stop).ptr));
+    if(npc_hasbodyflag(self,BS_FLAG_INTERRUPTABLE))
+      ai_standupquick(self);
+    else
+      ai_standup(self);
+    if(shortBurn && human)
+      npc_playani(self,"S_FIRE_VICTIM");
+    else if(!burns && human)
+      ai_playani(self,"T_STAND_2_LIGHTNING_VICTIM");
+    return true;
+    }
+
+  if(burns)
+    npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction(state->restart).ptr));
+  const auto seconds=npc_getstatetime(self);
+  const bool damageDue=burns ? seconds==1 : seconds>=1;
+  if(damageDue) {
+    npc_setstatetime(self,0);
+    vm.push_instance(vm.global_other()->get_instance());
+    vm.push_instance(self);
+    vm.push_int(state->damage);
+    vm.unsafe_call_bl(findSymbol("B_MAGICHURTNPC"));
+    } else if(shortBurn && human) {
+    npc_playani(self,"S_FIRE_VICTIM");
+    }
+
+  if((shortBurn && damageDue) || ((burns || damageDue) && self->attribute[ATR_HITPOINTS]<=0)) {
+    stand();
+    result=LOOP_END;
+    }
+  return true;
+  }
+
+void GameScript::magicHurtNpc(const std::shared_ptr<daedalus::INpc>& attacker,
+                             const std::shared_ptr<daedalus::INpc>& target,int32_t damage) {
+  auto* oth=findSymbol("B_MAGICHURTNPC.OTH");
+  auto* slf=findSymbol("B_MAGICHURTNPC.SLF");
+  findSymbol("B_MAGICHURTNPC.DAMAGE")->set_int(damage);
+  oth->set_instance(target);
+  slf->set_instance(attacker);
+
+  // Use the original engine damage callback and its startup placement barrier.
+  vm.push_instance(target);
+  vm.push_int(ATR_HITPOINTS);
+  vm.push_int(-damage);
+  vm.unsafe_call_external(findSymbol("NPC_CHANGEATTRIBUTE"));
+  const auto victim=std::static_pointer_cast<daedalus::INpc>(oth->get_instance());
+  vm.push_instance(victim);
+  vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
+  if(vm.pop_int()==0)
+    return;
+
+  const bool uncredited=!victim || victim->aivar[16]==0; // AIV_VictoryXPGiven
+  const auto source=std::static_pointer_cast<daedalus::INpc>(slf->get_instance());
+  const bool partyMember=source && source->aivar[15]==1; // AIV_PARTYMEMBER
+  vm.unsafe_set_gi(source);
+  vm.push_instance(source);
+  vm.unsafe_call_external(findSymbol("NPC_ISPLAYER"));
+  const bool player=vm.pop_int()!=0;
+  if(uncredited && (player || partyMember)) {
+    // The stock XP rule reads SELF rather than the damage helper's target parameter.
+    const auto self=std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+    vm.unsafe_set_gi(self);
+    vm.push_int(self ? self->level*10 : 0);
+    vm.unsafe_call_bl(findSymbol("B_GIVEPLAYERXP"));
+    const auto credited=std::static_pointer_cast<daedalus::INpc>(oth->get_instance());
+    if(credited)
+      credited->aivar[16]=1;
+    }
   }
