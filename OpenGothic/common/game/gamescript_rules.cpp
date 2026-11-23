@@ -3473,6 +3473,194 @@ void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
     }},enabled);
   }
 
+CollideMask GameScript::runStockSpellCollision(Npc& target, Npc& caster, int32_t spellId) {
+  // Spell IDs in the verified NotR collision predicate.
+  enum Spell : int32_t {
+    PalHolyBolt=2, PalRepelEvil=4, PalDestroyEvil=6, FireBolt=19, IceBolt=20, InstantFireball=23, Zap=24,
+    WindFist=26, LightningFlash=29, ChargeFireball=30, Fear=32, IceCube=33, ChargeZap=34, DestroyUndead=36,
+    Pyrokinesis=37, Firestorm=38, IceWave=39, FireRain=42, BreathOfDeath=43, MassDeath=44, Shrink=46,
+    MasterOfDisaster=60, DeathBolt=61, DeathBall=62, ConcussionBolt=63, Thunderstorm=70, Whirlwind=71,
+    WaterFist=72, IceLance=73, Geyser=75, Swarm=81, GreenTentacle=82, EnergyBall=85, SuckEnergy=86, Skull=87,
+    };
+  constexpr int32_t humanSeparator = int32_t(GIL_SEPERATOR_HUM);
+  constexpr auto nonlethalDamage = CollideMask(COLL_APPLYDAMAGE | COLL_DONTKILL);
+  findSymbol("C_CANNPCCOLLIDEWITHSPELL.SPELLTYPE")->set_int(spellId);
+  const auto self = std::static_pointer_cast<daedalus::INpc>(target.handlePtr());
+  const auto other = std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
+  const auto guild = int32_t(self->guild);
+  const int32_t realId = self->aivar[43]; // AIV_MM_REAL_ID
+  const auto idIs = [&](std::string_view name) { return realId==findSymbol(name)->get_int(); };
+  const auto wet = [&] {
+    const bool diving = npcBodyStateContains(self,BS_DIVE);
+    const bool swimming = npcBodyStateContains(self,BS_SWIM);
+    return diving || swimming;
+    };
+  const auto wetOrDown = [&] {
+    const bool inWater = wet();
+    const bool down = isNpcDownInScript(self);
+    return inWater || down;
+    };
+  const auto heroTarget = [&] { return hlp_getinstanceid(self)==hlp_getinstanceid(vm.global_hero()->get_instance()); };
+  const auto sturdy = [&] {
+    return guild==GIL_DRAGON || guild==GIL_TROLL || guild==GIL_SUMMONED_DEMON || guild==GIL_DEMON ||
+           guild==GIL_SUMMONED_GOLEM || guild==GIL_STONEGOLEM;
+    };
+  const auto fireCreature = [&] { return guild==GIL_Gargoyle || guild==GIL_FIREGOLEM || idIs("ID_FIREWARAN"); };
+  const auto heat = [&] { return idIs("ID_DRAGON_FIRE") || fireCreature(); };
+  const auto cold = [&] { return idIs("ID_DRAGON_ICE") || idIs("ID_ICEWOLF") || guild==GIL_ICEGOLEM; };
+  const auto hpMax = self->attribute[ATR_HITPOINTSMAX];
+
+  // Thunderstorm already returns in its own earlier branch in the stock program.
+  if(other->guild==GIL_DMT) {
+    if(spellId==LightningFlash || spellId==FireRain) {
+      if(guild==GIL_DMT)
+        return COLL_DONOTHING;
+      if(heroTarget())
+        return COLL_APPLYHALVEDAMAGE;
+      }
+    if(spellId==Firestorm && guild==GIL_DMT)
+      return COLL_DONOTHING;
+    }
+
+  switch(spellId) {
+    case Whirlwind: {
+      const bool impaired = wetOrDown();
+      if(impaired || sturdy() || guild==GIL_Gargoyle || guild==GIL_SHADOWBEAST || guild==GIL_Stoneguardian ||
+         guild==GIL_FIREGOLEM || guild==GIL_ICEGOLEM || self->flags==NpcFlag::IMMORTAL)
+        return COLL_DONOTHING;
+      return isGateGuard(self) ? COLL_APPLYDAMAGE : COLL_DOEVERYTHING;
+      }
+    case IceLance:
+    case Thunderstorm:
+      if(wetOrDown())
+        return COLL_DONOTHING;
+      if(cold())
+        return COLL_APPLYHALVEDAMAGE;
+      if(heat())
+        return COLL_APPLYDOUBLEDAMAGE;
+      return spellId==IceLance ? COLL_APPLYDAMAGE : COLL_DOEVERYTHING;
+    case Geyser: {
+      const bool impaired = wetOrDown();
+      return impaired || sturdy() || guild==GIL_Stoneguardian || guild==GIL_FIREGOLEM || guild==GIL_ICEGOLEM
+             ? COLL_DONOTHING : nonlethalDamage;
+      }
+    case WaterFist:
+      if(wetOrDown())
+        return COLL_DONOTHING;
+      if(guild==GIL_TROLL || guild==GIL_DRAGON)
+        return COLL_APPLYHALVEDAMAGE;
+      return fireCreature() ? COLL_APPLYDOUBLEDAMAGE : nonlethalDamage;
+    case EnergyBall:
+      if(wetOrDown())
+        return COLL_DONOTHING;
+      return isUndeadNpc(self) ? COLL_APPLYHALVEDAMAGE : COLL_DOEVERYTHING;
+    case SuckEnergy: {
+      const bool tooFar = npc_getdisttonpc(self,other)>1000;
+      const bool impaired = wetOrDown();
+      return impaired || tooFar || guild==GIL_DMT || guild>humanSeparator || self->flags==NpcFlag::IMMORTAL
+             ? COLL_DONOTHING : COLL_DOEVERYTHING;
+      }
+    case GreenTentacle: {
+      const bool guard = isGateGuard(self);
+      const bool impaired = wetOrDown();
+      return guard || impaired || idIs("ID_SKELETON_MAGE") || guild==GIL_Gargoyle || guild==GIL_HARPY || guild==GIL_DRAGON ||
+             guild==GIL_TROLL || guild==GIL_DEMON || guild==GIL_BLOODFLY ? COLL_DONOTHING : COLL_DOEVERYTHING;
+      }
+    case Swarm: {
+      const bool undead = isUndeadNpc(self);
+      const bool impaired = wetOrDown();
+      if(undead || impaired || sturdy() || guild==GIL_Stoneguardian || guild==GIL_DMT || guild==GIL_Gargoyle ||
+         guild==GIL_BLOODFLY || guild==GIL_FIREGOLEM || guild==GIL_ICEGOLEM)
+        return COLL_DONOTHING;
+      const bool guard = isGateGuard(self);
+      return guard || guild>humanSeparator ? COLL_APPLYDAMAGE : COLL_DOEVERYTHING;
+      }
+    case Skull: {
+      const bool undead = isUndeadNpc(self);
+      const bool impaired = wetOrDown();
+      return undead || impaired ? COLL_DONOTHING : COLL_DOEVERYTHING;
+      }
+    case WindFist:
+      return npc_getdisttonpc(other,self)>=1000 ? COLL_DONOTHING : COLL_DOEVERYTHING;
+    case ConcussionBolt:
+    case ChargeZap:
+    case Zap:
+      return isNpcDownInScript(self) ? COLL_DONOTHING : nonlethalDamage;
+    case DeathBall:
+    case DeathBolt:
+    case Pyrokinesis:
+    case Firestorm:
+    case FireBolt:
+    case FireRain:
+    case InstantFireball:
+    case ChargeFireball:
+      if(wetOrDown())
+        return COLL_DONOTHING;
+      if(heat())
+        return COLL_APPLYHALVEDAMAGE;
+      if(cold())
+        return COLL_APPLYDOUBLEDAMAGE;
+      return sturdy() ? COLL_APPLYDAMAGE : COLL_DOEVERYTHING;
+    case IceBolt:
+    case IceWave:
+    case IceCube:
+      if(wetOrDown())
+        return COLL_DONOTHING;
+      if(heat())
+        return COLL_APPLYDOUBLEDAMAGE;
+      if(cold())
+        return COLL_APPLYHALVEDAMAGE;
+      return sturdy() ? COLL_APPLYDAMAGE : COLL_DOEVERYTHING;
+    case LightningFlash:
+      if(isNpcDownInScript(self))
+        return COLL_DONOTHING;
+      wet(); // The stock body probes both water states, then pushes the full mask before returning.
+      return COLL_DOEVERYTHING;
+    case Fear: {
+      const bool guard = isGateGuard(self);
+      const bool evil = isEvilNpc(self);
+      return guard || evil || guild==GIL_TROLL || guild==GIL_SWAMPSHARK || guild==GIL_SUMMONED_GOLEM ||
+             guild==GIL_STONEGOLEM || guild==GIL_ICEGOLEM || guild==GIL_FIREGOLEM ? COLL_DONOTHING : COLL_DOEVERYTHING;
+      }
+    case DestroyUndead: {
+      const bool undead = isUndeadNpc(self);
+      return undead && hpMax<=findSymbol("SPL_DAMAGE_DESTROYUNDEAD")->get_int() ? COLL_DOEVERYTHING : COLL_DONOTHING;
+      }
+    case BreathOfDeath: {
+      const bool undead = isUndeadNpc(self);
+      const bool inRange = npc_getdisttonpc(other,self)<1000;
+      if(undead || !inRange)
+        return COLL_DONOTHING;
+      return !heroTarget() || guild==GIL_DRAGON ? COLL_APPLYHALVEDAMAGE : COLL_DOEVERYTHING;
+      }
+    case MassDeath:
+      if(isUndeadNpc(self))
+        return COLL_DONOTHING;
+      return guild==GIL_DRAGON ? COLL_APPLYHALVEDAMAGE : COLL_DOEVERYTHING;
+    case MasterOfDisaster: {
+      const bool evil = isEvilNpc(self);
+      const bool impaired = wetOrDown();
+      return evil && !impaired ? COLL_DOEVERYTHING : COLL_DONOTHING;
+      }
+    case Shrink: {
+      const bool impaired = wetOrDown();
+      return guild==GIL_DRAGON || impaired ? COLL_DONOTHING : COLL_DOEVERYTHING;
+      }
+    case PalHolyBolt:
+      return isEvilNpc(self) ? COLL_DOEVERYTHING : COLL_DONOTHING;
+    case PalRepelEvil:
+      if(!isEvilNpc(self))
+        return COLL_DONOTHING;
+      return hpMax<=findSymbol("SPL_DAMAGE_PALREPELEVIL")->get_int() ? COLL_DOEVERYTHING : COLL_APPLYHALVEDAMAGE;
+    case PalDestroyEvil: {
+      const bool evil = isEvilNpc(self);
+      return evil && hpMax<=findSymbol("SPL_DAMAGE_PALDESTROYEVIL")->get_int() ? COLL_DOEVERYTHING : COLL_DONOTHING;
+      }
+    default:
+      return COLL_DOEVERYTHING;
+    }
+  }
+
 std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
   if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
      ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)

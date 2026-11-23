@@ -575,6 +575,86 @@ void stockSpellCastAccounting(World& world) {
   std::puts("Spell accounting: mana admission, rune, scroll, level and counter-only callbacks match both executors");
   }
 
+void stockSpellCollisionParity(World& world) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  const bool priorEvents=events;
+  auto& hero=*world.player();
+  auto* sheep=script.findSymbol("SHEEP");
+  auto* collision=script.findSymbol("C_CANNPCCOLLIDEWITHSPELL");
+  auto& spellType=*script.findSymbol("C_CANNPCCOLLIDEWITHSPELL.SPELLTYPE");
+  const auto* point=world.findWayPoint("NW_FARM4_BALTHASAR");
+  require(sheep && collision && point,"spell collision: the stock scene must provide the actor and predicate");
+  const auto priorSheep=sheep->get_instance();
+  const auto priorSpellType=spellType.get_int();
+  const auto priorHero=vm.global_hero()->get_instance();
+  const auto priorHeroGuild=hero.handle().guild;
+  const auto priorSelf=vm.global_self()->get_instance(), priorOther=vm.global_other()->get_instance();
+  const auto priorGi=vm.unsafe_get_gi();
+  auto& bodySlot=*script.findSymbol("C_BODYSTATECONTAINS.SLF");
+  auto& bodyState=*script.findSymbol("C_BODYSTATECONTAINS.BODYSTATE");
+  auto& downSlot=*script.findSymbol("C_NPCISDOWN.SLF");
+  auto& undeadSlot=*script.findSymbol("C_NPCISUNDEAD.SLF");
+  const auto priorBodySlot=bodySlot.get_instance(), priorDown=downSlot.get_instance(), priorUndead=undeadSlot.get_instance();
+  const auto priorBodyState=bodyState.get_int();
+  auto* actor=world.addNpc(sheep->index(),point->position());
+  require(actor && !actor->isDown(),"spell collision: a live actor must exist");
+  const auto target=std::static_pointer_cast<daedalus::INpc>(actor->handlePtr());
+  vm.global_hero()->set_instance(std::static_pointer_cast<daedalus::INpc>(hero.handlePtr()));
+  for(bool native:{false,true}) {
+    events=native;
+    const auto check=[&](Npc& victim, Npc& caster, std::string_view spell, CollideMask expected) {
+      const auto id=script.intSymbol(spell,-1);
+      const auto callSelf=vm.global_self()->get_instance(), callOther=vm.global_other()->get_instance();
+      const auto callGi=vm.unsafe_get_gi();
+      size_t entries=0;
+      vm.observe_instructions([&](const auto&) { entries+=vm.pc()==collision->address(); });
+      vm.push_int(0x12345678);
+      const auto result=script.canNpcCollideWithSpell(victim,&caster,id);
+      const auto marker=vm.pop_int();
+      vm.observe_instructions({});
+      require(result==expected && entries==size_t(!native) && spellType.get_int()==id && marker==0x12345678,
+              "spell collision: the public entry preserves the mask, original parameter and VM stack");
+      require(vm.global_self()->get_instance()==callSelf && vm.global_other()->get_instance()==callOther && vm.unsafe_get_gi()==callGi,
+              "spell collision: the public entry restores the two actor aliases and VM context");
+      };
+    target->guild=GIL_FIREGOLEM;
+    target->aivar[43]=0;
+    check(*actor,hero,"SPL_ICELANCE",COLL_APPLYDOUBLEDAMAGE);
+    require(bodySlot.get_instance()==target && downSlot.get_instance()==target && bodyState.get_int()==BS_SWIM,
+            "spell collision: the original water and down checks still update their saved arguments");
+    check(*actor,hero,"SPL_FIREBOLT",COLL_APPLYHALVEDAMAGE);
+    check(*actor,hero,"SPL_ZAP",CollideMask(COLL_APPLYDAMAGE | COLL_DONTKILL));
+    target->guild=GIL_SKELETON;
+    target->attribute[ATR_HITPOINTSMAX]=1000;
+    check(*actor,hero,"SPL_DESTROYUNDEAD",COLL_DOEVERYTHING);
+    target->attribute[ATR_HITPOINTSMAX]=1001;
+    check(*actor,hero,"SPL_DESTROYUNDEAD",COLL_DONOTHING);
+    require(undeadSlot.get_instance()==target,"spell collision: a rejected undead target still updates the original argument");
+    target->guild=GIL_DMT;
+    hero.handle().guild=GIL_DMT;
+    check(*actor,hero,"SPL_FIRESTORM",COLL_DONOTHING);
+    hero.handle().guild=GIL_NONE;
+    check(hero,*actor,"SPL_LIGHTNINGFLASH",COLL_APPLYHALVEDAMAGE);
+    hero.handle().guild=priorHeroGuild;
+    }
+  world.removeNpc(*actor);
+  sheep->set_instance(priorSheep);
+  vm.global_hero()->set_instance(priorHero);
+  vm.global_self()->set_instance(priorSelf);
+  vm.global_other()->set_instance(priorOther);
+  vm.unsafe_set_gi(priorGi);
+  spellType.set_int(priorSpellType);
+  bodySlot.set_instance(priorBodySlot);
+  bodyState.set_int(priorBodyState);
+  downSlot.set_instance(priorDown);
+  undeadSlot.set_instance(priorUndead);
+  events=priorEvents;
+  std::puts("Spell collision: masks, saved arguments and world entry match the VM");
+  }
+
 void shrinkSpellStates(World& world) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();

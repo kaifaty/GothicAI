@@ -2199,6 +2199,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     if(stockMagic) {
       shrinkSpellStates(*gothic.world());
       stockSpellCastAccounting(*gothic.world());
+      stockSpellCollisionParity(*gothic.world());
       magicHurtStates(*gothic.world());
       }
     ActivityEventsWorld paired(gothic);

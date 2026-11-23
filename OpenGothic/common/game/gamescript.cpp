@@ -1290,6 +1290,8 @@ CollideMask GameScript::canNpcCollideWithSpell(Npc& npc, Npc* shooter, int32_t s
 
   ScopeVar self (*vm.global_self(),  npc.handlePtr());
   ScopeVar other(*vm.global_other(), shooter->handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockSpellCollision(npc,*shooter,spellId);
   return CollideMask(vm.call_function<int>(fn, spellId));
   }
 
