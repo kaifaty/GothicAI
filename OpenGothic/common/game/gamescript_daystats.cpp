@@ -77,7 +77,11 @@ void DayScriptStats::call(const daedalus::DaedalusSymbol& symbol, const daedalus
     }
   if(kind=="npc_creation" || kind=="item_creation") creationKinds[symbol.name()]=kind;
   if(auto* p=phase()) {
-    if(contexts.back().root) contexts.back().root=false; else ++p->nested;
+    auto& root=contexts.back().root;
+    if(root==RootCall::Pending)
+      root=RootCall::Observed;
+    else
+      ++p->nested;
     }
   stack.push_back({symbol.name(),symbol.address()});
   }
@@ -111,14 +115,21 @@ DayScriptStats::Phase* DayScriptStats::phase() {
 void DayScriptStats::begin(std::string_view symbol) {
   auto [state,phase]=statePhase(symbol);
   if(state.empty() && !symbol.starts_with("RTN_")) perceptions.insert(std::string(symbol));
-  contexts.push_back({std::move(state),std::move(phase),true});
+  contexts.push_back({std::move(state),std::move(phase)});
   if(auto* p=this->phase()) ++p->engine;
   }
 
-// A phase from its record has no root script call: its first VM call (a deferred helper) is nested.
 void DayScriptStats::record() {
-  if(auto* p=phase()) ++p->records;
-  if(!contexts.empty()) contexts.back().root=false;
+  if(contexts.empty() || contexts.back().root==RootCall::Record)
+    return;
+  auto& root=contexts.back().root;
+  if(auto* p=phase()) {
+    ++p->records;
+    // Some native handlers report acceptance after running their helpers.
+    if(root==RootCall::Observed)
+      ++p->nested;
+    }
+  root=RootCall::Record;
   }
 
 void DayScriptStats::end() {

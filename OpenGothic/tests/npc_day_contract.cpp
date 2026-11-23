@@ -121,6 +121,47 @@ void checkOverrides() {
   stats->stop(vm);
   }
 
+void checkNativePhaseAccounting() {
+  auto vm=makeVm();
+  vm.register_external("HLP_RANDOM",[] {});
+  auto stats=DayScriptStats::attach(vm,{});
+
+  stats->begin("ZS_LATE_LOOP");
+  vm.call_function<void>("HELPER");
+  stats->begin("ZS_A_LOOP");
+  vm.call_function<void>("ZS_A_LOOP");
+  stats->end();
+  stats->record();
+  stats->end();
+
+  stats->begin("ZS_EARLY_LOOP");
+  stats->record();
+  vm.call_function<void>("HELPER");
+  stats->end();
+  stats->begin("ZS_EMPTY_LOOP");
+  stats->record();
+  stats->end();
+  stats->begin("ZS_B_LOOP");
+  vm.call_function<void>("HELPER");
+  vm.call_function<void>("ZS_B_LOOP");
+  stats->end();
+
+  rapidjson::Document counters;
+  counters.Parse(stats->json().c_str());
+  const auto phase=[&](const char* state) -> const rapidjson::Value& {
+    return counters["states"][state]["phases"]["loop"];
+    };
+  check(phase("ZS_LATE")["records"]==1 && phase("ZS_LATE")["nested"]==1 &&
+        phase("ZS_LATE")["instructions"]==2,"late native acceptance counts its first VM helper as nested");
+  check(phase("ZS_EARLY")["records"]==1 && phase("ZS_EARLY")["nested"]==1 &&
+        phase("ZS_EMPTY")["records"]==1 && phase("ZS_EMPTY")["nested"]==0,
+        "early native acceptance counts only callbacks that ran");
+  check(phase("ZS_A")["records"]==0 && phase("ZS_A")["nested"]==1 &&
+        phase("ZS_B")["records"]==0 && phase("ZS_B")["nested"]==2,
+        "the inner script phase and later fallback retain their own root calls");
+  stats->stop(vm);
+  }
+
 void run() {
   auto vm=makeVm();
   RoutineDefinitions::Library catalog;
@@ -170,6 +211,7 @@ int main() {
     check(NpcActivityProbe::instance==nullptr,"engine hooks disabled by default");
     run();
     checkOverrides();
+    checkNativePhaseAccounting();
     Sink sink;
     int actorToken=0;
     auto* actor=reinterpret_cast<const Npc*>(&actorToken);
