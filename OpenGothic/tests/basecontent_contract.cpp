@@ -3192,7 +3192,7 @@ struct BaseContentContract {
       const auto incomplete=temporary/("missing-"+kind+"-index");
       fs::create_directories(incomplete/kind);
       fs::copy_file(base/"base.json",incomplete/"base.json");
-      for(const auto* part:{"base-files.json","worlds","textures","meshes","zen","models","fonts","programs","outputunits","audio","music","sources"})
+      for(const auto* part:{"base-files.json","worlds","textures","meshes","zen","models","fonts","programs","definitions","outputunits","audio","music","sources"})
         if(part!=kind) fs::create_symlink(base/part,incomplete/part);
       for(const auto& file:fs::directory_iterator(base/kind))
         if(file.path().filename()!=kind+".json") fs::create_symlink(file.path(),incomplete/kind/file.path().filename());
