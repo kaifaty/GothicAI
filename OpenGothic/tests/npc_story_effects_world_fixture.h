@@ -8,6 +8,7 @@ void assessTalkEntry(World& world,Npc& npc,Npc& player) {
   const bool savedEffects=effects;
   const auto savedNpcQueue=Contract::queue(npc);
   const auto savedPlayerQueue=Contract::queue(player);
+  const auto savedOutputOrder=Contract::outputOrder(script);
   const auto savedVars=std::to_array(npc.handle().aivar);
   const auto savedPerceptions=std::to_array(Contract::perceptions(npc));
   const auto savedState=Contract::aiState(npc);
@@ -21,6 +22,7 @@ void assessTalkEntry(World& world,Npc& npc,Npc& player) {
   const auto restore=[&] {
     Contract::queue(npc)=savedNpcQueue;
     Contract::queue(player)=savedPlayerQueue;
+    Contract::outputOrder(script)=savedOutputOrder;
     std::copy(savedVars.begin(),savedVars.end(),npc.handle().aivar);
     std::copy(savedPerceptions.begin(),savedPerceptions.end(),Contract::perceptions(npc));
     Contract::aiState(npc)=savedState;
@@ -69,6 +71,7 @@ void assessTalkEntry(World& world,Npc& npc,Npc& player) {
       if(site.guardRefusal) {
         const auto* line=npc.aiQueueFront();
         require(line && line->act==AI_OutputSvm && line->target==&player && line->s0=="$NOTNOW" &&
+                line->i0==savedOutputOrder && Contract::outputOrder(script)==savedOutputOrder+1 &&
                 npc.hasPerc(PERC_ASSESSTALK),
                 "an unpassed gate guard on cooldown must decline without disabling talk perception");
         } else {
