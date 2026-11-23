@@ -1115,33 +1115,39 @@ int GameScript::runShrinkMana(Npc& caster, int mana, bool release) {
   return (scroll && available>=shrinkScrollCost) || available>=shrinkRuneCost ? SPL_SENDCAST : SPL_SENDSTOP;
   }
 
+bool GameScript::isUndeadNpc(const std::shared_ptr<daedalus::INpc>& npc) {
+  findSymbol("C_NPCISUNDEAD.SLF")->set_instance(npc);
+  if(!npc)
+    return false;
+  const auto guild = npc->guild;
+  return npc->aivar[realId]==findSymbol("ID_DRAGON_UNDEAD")->get_int() ||
+         guild==GIL_UNDEADORC || guild==GIL_SHADOWBEAST_SKELETON || guild==GIL_ZOMBIE || guild==GIL_SKELETON_MAGE ||
+         guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON || guild==GIL_SUMMONED_GOBBO_SKELETON || guild==GIL_GOBBO_SKELETON;
+  }
+
+bool GameScript::isEvilNpc(const std::shared_ptr<daedalus::INpc>& npc) {
+  findSymbol("C_NPCISEVIL.SLF")->set_instance(npc);
+  const auto undead = isUndeadNpc(npc);
+  if(!npc)
+    return false;
+  const auto guild = npc->guild;
+  return undead || npc->aivar[realId]==findSymbol("ID_TROLL_BLACK")->get_int() ||
+         guild==GIL_SUMMONED_DEMON || guild==GIL_DEMON || guild==GIL_DRACONIAN ||
+         guild==GIL_ORC || guild==GIL_DRAGON || guild==GIL_DMT;
+  }
+
 void GameScript::castShrink(Npc& caster, Npc* target) {
   const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
   self->attribute[ATR_MANA]-=npc_getactivespellisscroll(self) ? shrinkScrollCost : shrinkRuneCost;
 
   const auto victim=target ? std::static_pointer_cast<daedalus::INpc>(target->handlePtr()) : nullptr;
   // The stock predicate evaluates the undead check even for ineligible targets.
-  findSymbol("C_NPCISUNDEAD.SLF")->set_instance(victim);
-  if(victim) {
-    bool undead=victim->aivar[43]==42; // AIV_MM_REAL_ID == ID_DRAGON_UNDEAD
-    switch(victim->guild) {
-      case GIL_UNDEADORC:
-      case GIL_SHADOWBEAST_SKELETON:
-      case GIL_ZOMBIE:
-      case GIL_SKELETON_MAGE:
-      case GIL_SUMMONED_SKELETON:
-      case GIL_SKELETON:
-      case GIL_SUMMONED_GOBBO_SKELETON:
-      case GIL_GOBBO_SKELETON:
-        undead=true;
-        break;
-      }
-    if(victim->aivar[shrinkStage]==0 && victim->guild>int32_t(GIL_SEPERATOR_HUM) &&
-       !undead && victim->flags!=NpcFlag::IMMORTAL) {
-      npc_clearaiqueue(victim);
-      clearPerceptions(victim);
-      ai_startstate(victim,int(findFunction("ZS_MAGICSHRINK").ptr),0,"");
-      }
+  const auto undead = isUndeadNpc(victim);
+  if(victim && victim->aivar[shrinkStage]==0 && victim->guild>int32_t(GIL_SEPERATOR_HUM) &&
+     !undead && victim->flags!=NpcFlag::IMMORTAL) {
+    npc_clearaiqueue(victim);
+    clearPerceptions(victim);
+    ai_startstate(victim,int(findFunction("ZS_MAGICSHRINK").ptr),0,"");
     }
   ++self->aivar[20]; // AIV_SELECTSPELL
   }

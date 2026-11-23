@@ -186,13 +186,17 @@ auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& rese
   auto& spellChoice=*script.findSymbol("B_SELECTSPELL");
   auto& ready=*script.findSymbol("B_READYSPELL");
   auto& kill=*script.findSymbol("C_NPCHASATTACKREASONTOKILL");
-  size_t createBody=0,selectBody=0,spellChoiceBody=0,readyBody=0,killBody=0;
+  auto& evil=*script.findSymbol("C_NPCISEVIL");
+  auto& undead=*script.findSymbol("C_NPCISUNDEAD");
+  size_t createBody=0,selectBody=0,spellChoiceBody=0,readyBody=0,killBody=0,evilBody=0,undeadBody=0;
   vm.observe_instructions([&](const auto&) {
     createBody+=vm.pc()==create.address();
     selectBody+=vm.pc()==select.address();
     spellChoiceBody+=vm.pc()==spellChoice.address();
     readyBody+=vm.pc()==ready.address();
     killBody+=vm.pc()==kill.address();
+    evilBody+=vm.pc()==evil.address();
+    undeadBody+=vm.pc()==undead.address();
     });
   const auto locals=[&](std::string_view name) { return script.findSymbol(name)->get_instance(); };
   auto refill=[&] {
@@ -304,6 +308,19 @@ auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& rese
   require(summons.act==AI_DrawSpell && summons.i0==script.findSymbol("SPL_SUMMONSKELETON")->get_int() &&
           summons.i1==script.findSymbol("SPL_COST_SUMMONSKELETON")->get_int() && Contract::random(script)==random,
           "equipment: the wrapped skeleton choice prepares the stock summon without another RNG draw");
+  const auto heroGuild=hero.handle().guild,tactic=actor.handle().fight_tactic;
+  hero.handle().guild=GIL_UNDEADORC;
+  actor.handle().guild=GIL_PAL;
+  actor.handle().fight_tactic=0;
+  auto holyBolt=choose(601);
+  require(holyBolt.size()==1 && locals("C_NPCISEVIL.SLF")==other && locals("C_NPCISUNDEAD.SLF")==other &&
+          evilBody==(native ? 0u : 1u) && undeadBody==(native ? 0u : 1u),
+          "equipment: paladin spell choice classifies the target through both stock predicates");
+  const auto boltCommand=holyBolt.pop();
+  require(boltCommand.act==AI_DrawSpell && boltCommand.i0==script.findSymbol("SPL_PALHOLYBOLT")->get_int(),
+          "equipment: an undead orc qualifies for the paladin's holy bolt");
+  hero.handle().guild=heroGuild;
+  actor.handle().fight_tactic=tactic;
   actor.handle().guild=GIL_DMT;
   actor.handle().aivar[51]=script.findSymbol("MAGIC_ALWAYS")->get_int();
   actor.handle().aivar[20]=expectedRoll;

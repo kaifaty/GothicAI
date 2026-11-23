@@ -476,6 +476,8 @@ class GameScript final : public GameRules {
     void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
     void selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     bool chooseCombatSpell(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool isUndeadNpc(const std::shared_ptr<daedalus::INpc>& npc);
+    bool isEvilNpc(const std::shared_ptr<daedalus::INpc>& npc);
     void loadNativeTalkReaction();
     bool canRunNativeTalkReaction();
     bool invokeNativeTalkPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);

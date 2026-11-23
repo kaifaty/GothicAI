@@ -2523,6 +2523,12 @@ void GameScript::loadNativeEquipment() {
   vm.override_function("C_NPCHASATTACKREASONTOKILL",std::function<bool(NpcRef)>{[this](NpcRef self) {
     return hasAttackReasonToKill(self);
     }},enabled);
+  vm.override_function("C_NPCISUNDEAD",std::function<bool(NpcRef)>{[this](NpcRef npc) {
+    return isUndeadNpc(npc);
+    }},enabled);
+  vm.override_function("C_NPCISEVIL",std::function<bool(NpcRef)>{[this](NpcRef npc) {
+    return isEvilNpc(npc);
+    }},enabled);
   }
 
 void GameScript::createAmmo(const std::shared_ptr<daedalus::INpc>& self) {
@@ -2680,9 +2686,7 @@ bool GameScript::chooseCombatSpell(const std::shared_ptr<daedalus::INpc>& self, 
     if(int32_t(self->fight_tactic)==number("FAI_NAILED"))
       return false;
     grant({"ITRU_PALHOLYBOLT"});
-    vm.push_instance(other);
-    vm.unsafe_call_bl(findSymbol("C_NPCISEVIL"));
-    const auto evil = vm.pop_int()!=0;
+    const auto evil = isEvilNpc(other);
     const auto far = distance()>number("FIGHT_DIST_MELEE");
     return evil && far && ready("SPL_PALHOLYBOLT","SPL_COST_PALHOLYBOLT");
     }
