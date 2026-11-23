@@ -2016,6 +2016,45 @@ void npcDeathLifecycle(Gothic& gothic) {
   std::puts("Death lifecycle: native Init and Loop match Daedalus, including the ordinary corpse load");
   }
 
+void stockItemRestoreCoverage(GameScript& script) {
+  using Op=daedalus::DaedalusOpcode;
+  using Type=daedalus::DaedalusDataType;
+  const auto& vm=script.getVm();
+  const auto& effects=NpcDefinitionContract::items(script).restoreEffects;
+  const auto self=vm.find_symbol_by_name("SELF")->index();
+  const auto change=vm.find_symbol_by_name("NPC_CHANGEATTRIBUTE")->index();
+  size_t health=0,mana=0;
+  for(const auto& fn:vm.symbols()) {
+    if(!fn.name().starts_with("USE") || fn.type()!=Type::FUNCTION || fn.rtype()!=Type::VOID ||
+       !fn.is_const() || fn.is_external() || fn.address()>=vm.size())
+      continue;
+    auto pc=fn.address();
+    std::array<daedalus::DaedalusInstruction,5> ops;
+    for(auto& op:ops) {
+      if(pc>=vm.size()) break;
+      op=vm.instruction_at(pc);
+      pc+=op.size;
+      }
+    if(ops[0].op!=Op::PUSHVI || ops[0].symbol!=self || ops[1].op!=Op::PUSHV || ops[2].op!=Op::PUSHV ||
+       ops[3].op!=Op::BE || ops[3].symbol!=change || ops[4].op!=Op::RSR)
+      continue;
+    const auto* attr=vm.find_symbol_by_index(ops[1].symbol);
+    const auto* dose=vm.find_symbol_by_index(ops[2].symbol);
+    require(attr && dose && attr->is_const() && dose->is_const() && attr->type()==Type::INT && dose->type()==Type::INT &&
+            attr->count()==1 && dose->count()==1 && dose->get_int()>0,
+            "stock restores: both arguments must be scalar constants and the dose positive");
+    const auto value=attr->get_int();
+    require(value==ATR_HITPOINTS || value==ATR_MANA,"stock restores: the callback restores a current attribute");
+    const auto effect=effects.find(fn.index());
+    require(effect!=effects.end() && effect->second.attribute==value && effect->second.amountSymbol==dose->index(),
+            ("stock restores: exact callback and argument match for "+fn.name()).c_str());
+    health+=value==ATR_HITPOINTS;
+    mana+=value==ATR_MANA;
+    }
+  require(effects.size()==health+mana && health==29 && mana==7,
+          "stock restores: cover exactly all 29 health and 7 mana callbacks and no others");
+  }
+
 void npcUnconsciousLifecycle(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   constexpr auto* actor="BAU_951_HILDA";
@@ -2074,50 +2113,65 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     npc->handle().aivar[16]=0; // AIV_VictoryXPGiven
     script.setSeed(73106);
     Contract::activityEventsOn(script)=native;
+    if(native) stockItemRestoreCoverage(script);
     const auto beforeXp=hero.experience();
     const auto wakeAt=int64_t(script.findSymbol("HAI_TIME_UNCONSCIOUS")->get_int())*1000;
     auto& vm=script.getVm();
-    size_t phaseCalls=0,rewards=0,minimalCalls=0,potionCalls=0;
+    size_t phaseCalls=0,rewards=0,minimalCalls=0,restoreCalls=0;
     const auto observer=vm.add_call_observer([&](const auto& symbol) {
       phaseCalls+=symbol.name().starts_with("ZS_UNCONSCIOUS");
       rewards+=symbol.name()=="B_GIVEPLAYERXP";
       minimalCalls+=symbol.name()=="PERCEPTION_SET_MINIMAL";
-      potionCalls+=symbol.name().starts_with("USEITPO_HEALTH_");
+      restoreCalls+=symbol.name().starts_with("USEITPO_HEALTH_") || symbol.name()=="USEITPO_MANA_01" || symbol.name()=="USE_CHEESE";
       });
 
     require(Settings::physicsFlags().meleeHealInterrupt,"health potions: the fixture uses deferred potion effects");
-    const auto health=std::array{npc->attribute(ATR_HITPOINTS),npc->attribute(ATR_HITPOINTSMAX)};
+    const auto attributes=std::to_array(npc->handle().attribute);
     const auto heroHealth=hero.attribute(ATR_HITPOINTS);
     const auto previousSelf=vm.global_self()->get_instance();
     vm.global_self()->set_instance(std::static_pointer_cast<daedalus::INpc>(hero.handlePtr()));
     const auto self=vm.global_self()->get_instance(),other=vm.global_other()->get_instance(),
                victim=vm.global_victim()->get_instance(),itemGlobal=vm.global_item()->get_instance();
-    const std::array potionUse={std::tuple{"ITPO_HEALTH_01",20,70},std::tuple{"ITPO_HEALTH_02",20,90},
-                                std::tuple{"ITPO_HEALTH_03",20,120},std::tuple{"ITPO_HEALTH_03",125,200}};
+    const std::array potionUse={std::tuple{"ITPO_HEALTH_01",ATR_HITPOINTS,20,70},
+                                std::tuple{"ITPO_HEALTH_02",ATR_HITPOINTS,20,90},
+                                std::tuple{"ITPO_HEALTH_03",ATR_HITPOINTS,20,120},
+                                std::tuple{"ITPO_HEALTH_03",ATR_HITPOINTS,125,200},
+                                std::tuple{"ITPO_MANA_01",ATR_MANA,20,70}};
     npc->handle().attribute[ATR_HITPOINTSMAX]=200;
-    for(const auto& [item,startHp,endHp]:potionUse) {
-      npc->handle().attribute[ATR_HITPOINTS]=startHp;
+    npc->handle().attribute[ATR_MANAMAX]=200;
+    auto startUse=[&](std::string_view item) {
       const auto id=script.findSymbolIndex(item);
       const auto initialItems=npc->itemCount(id);
-      require(npc->addItem(id,1)!=nullptr,"health potions: add a real stock item to the NPC");
+      require(npc->addItem(id,1)!=nullptr,"item restores: add a real stock item to the NPC");
       npc->setAnim(Npc::Anim::Idle);
       npc->aiPush(AiQueue::aiUseItem(int32_t(id)));
       Contract::nextAiAction(*npc);
-      require(npc->isAiQueueEmpty() && Contract::pendingItemUse(*npc)==id &&
-              npc->attribute(ATR_HITPOINTS)==startHp && npc->itemCount(id)==initialItems+1,
-              "health potions: the queue starts drinking and waits for the animation event");
-      if(!native && endHp==200) save(pendingPotion,"VM-era save with a potion in use");
-      Contract::finishPotionAnimation(*npc);
-      require(Contract::pendingItemUse(*npc)==0 && npc->attribute(ATR_HITPOINTS)==endHp &&
+      require(npc->isAiQueueEmpty() && Contract::pendingItemUse(*npc)==id && npc->itemCount(id)==initialItems+1,
+              "item restores: the queue waits for the animation event");
+      return std::pair{id,initialItems};
+      };
+    for(const auto& [item,attribute,before,after]:potionUse) {
+      npc->handle().attribute[attribute]=before;
+      const auto [id,initialItems]=startUse(item);
+      require(npc->attribute(attribute)==before,"item restores: the potion has no effect before the tag");
+      if(!native && after==200) save(pendingPotion,"VM-era save with a potion in use");
+      Contract::finishItemUseAnimation(*npc);
+      require(Contract::pendingItemUse(*npc)==0 && npc->attribute(attribute)==after &&
               npc->itemCount(id)==initialItems && hero.attribute(ATR_HITPOINTS)==heroHealth &&
               vm.global_self()->get_instance()==self && vm.global_other()->get_instance()==other &&
               vm.global_victim()->get_instance()==victim && vm.global_item()->get_instance()==itemGlobal,
-              "health potions: the tag heals only the drinker once, consumes one item and restores the VM context");
+              "item restores: the tag restores only the drinker once, consumes one item and restores the VM context");
       }
-    require(potionCalls==(native ? 0u : potionUse.size()),"health potions: only fallback executes the three callback bodies");
+    require(Settings::physicsFlags().foodOverTime,"item restores: the fixture uses gradual food effects");
+    npc->handle().attribute[ATR_HITPOINTS]=20;
+    const auto [cheese,initialCheese]=startUse("ITFO_CHEESE");
+    Contract::finishItemUseAnimation(*npc);
+    const auto& pool=Contract::foodPool(*npc);
+    require(npc->attribute(ATR_HITPOINTS)==20 && pool.hp==15 && pool.mana==0 && pool.remaining==Healing::FoodDuration &&
+            npc->itemCount(cheese)==initialCheese,"item restores: food adds its dose to the existing gradual pool");
+    require(restoreCalls==(native ? 0u : potionUse.size()+1),"item restores: only fallback executes the callback bodies");
     vm.global_self()->set_instance(previousSelf);
-    npc->handle().attribute[ATR_HITPOINTSMAX]=health[1];
-    npc->handle().attribute[ATR_HITPOINTS]=health[0];
+    std::copy(attributes.begin(),attributes.end(),npc->handle().attribute);
     npc->changeAttribute(ATR_HITPOINTS,-npc->attribute(ATR_HITPOINTS),true);
     npc->setOther(&hero);
     require(npc->isUnconscious() && !npc->isDead() && npc->attribute(ATR_HITPOINTS)==1,
@@ -2258,7 +2312,7 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   const auto potionObserver=potionVm.add_call_observer([&](const auto& symbol) {
     loadedPotionCalls+=symbol.name()=="USEITPO_HEALTH_03";
     });
-  Contract::finishPotionAnimation(*drinker);
+  Contract::finishItemUseAnimation(*drinker);
   potionVm.remove_call_observer(potionObserver);
   require(Contract::pendingItemUse(*drinker)==0 && drinker->attribute(ATR_HITPOINTS)==200 &&
           drinker->itemCount(potion)==count-1 && potionWorld.player()->attribute(ATR_HITPOINTS)==before && loadedPotionCalls==0,
