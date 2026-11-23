@@ -1933,15 +1933,15 @@ void activityDefinitionsSynthetic(World& world) {
   auto& script=world.script();
   // The record phases against the VM: the polled Loop of OPENGOTHIC_ACTIVITY_EVENTS=0.
   NpcDefinitionContract::activityEventsOn(script)=false;
-  activitySwitch(script,{"ZS_SMITH_ANVIL","ZS_SMOKE_WATERPIPE"},"ZS_ROAST_SCAVENGER");
+  activitySwitch(script,{"ZS_SMITH_ANVIL","ZS_SMOKE_WATERPIPE"},"ZS_TEST_ROAST");
   // The game's accepted list itself, without game data.
   for(const char* state:{"ZS_SMITH_ANVIL","ZS_SMITH_COOL","ZS_SMITH_FIRE","ZS_SMITH_SHARP","ZS_READ_BOOKSTAND",
                          "ZS_STOMP_HERB","ZS_SMOKE_WATERPIPE"})
     require(ActivityDefinitionRuntime::accepted(state),(std::string("the game must accept ")+state).c_str());
-  require(!ActivityDefinitionRuntime::accepted("ZS_ROAST_SCAVENGER"),"ZS_ROAST_SCAVENGER has no day parity and stays in the VM");
+  require(!ActivityDefinitionRuntime::accepted("ZS_TEST_ROAST"),"ZS_TEST_ROAST is a captured but unaccepted test record");
   auto* npc=world.addNpc(script.findSymbolIndex("NPC_NO_ID"),Tempest::Vec3{});
   require(npc!=nullptr,"activity NPC must exist");
-  const auto anvil=activityPhases(script,"ZS_SMITH_ANVIL"),roast=activityPhases(script,"ZS_ROAST_SCAVENGER");
+  const auto anvil=activityPhases(script,"ZS_SMITH_ANVIL"),roast=activityPhases(script,"ZS_TEST_ROAST");
   const auto& phases=NpcDefinitionContract::activities(script).phases;
   require(phases.contains(anvil.init) && phases.contains(anvil.loop) && phases.contains(anvil.end),
           "the game must load the accepted activity record");
@@ -1987,19 +1987,19 @@ void activityDefinitionsSynthetic(World& world) {
   for(const char* name:{"init","loop","end"}) {
     require(phase("ZS_SMITH_ANVIL",name,"engine")==1 && phase("ZS_SMITH_ANVIL",name,"records")==1,
             "the accepted phase must be counted once, from its record");
-    require(phase("ZS_ROAST_SCAVENGER",name,"engine")==1 && phase("ZS_ROAST_SCAVENGER",name,"records")==0,
+    require(phase("ZS_TEST_ROAST",name,"engine")==1 && phase("ZS_TEST_ROAST",name,"records")==0,
             "the outside phase must be counted once, from the VM");
     }
   require(phase("ZS_SMITH_ANVIL","init","nested")==1 && phase("ZS_SMITH_ANVIL","loop","nested")==0 &&
           phase("ZS_SMITH_ANVIL","end","nested")==0,"a record phase runs only its deferred perception helper in the VM");
-  require(phase("ZS_ROAST_SCAVENGER","init","nested")==3 && phase("ZS_ROAST_SCAVENGER","loop","nested")==1,
+  require(phase("ZS_TEST_ROAST","init","nested")==3 && phase("ZS_TEST_ROAST","loop","nested")==1,
           "the VM phase runs its helpers");
   require(phase("ZS_SMITH_ANVIL","init","instructions")==9 && phase("ZS_SMITH_ANVIL","loop","instructions")==0 &&
-          phase("ZS_SMITH_ANVIL","end","instructions")==0 && phase("ZS_ROAST_SCAVENGER","init","instructions")>9,
+          phase("ZS_SMITH_ANVIL","end","instructions")==0 && phase("ZS_TEST_ROAST","init","instructions")>9,
           "a record phase counts only the instructions of its deferred helper");
   activityEventsSynthetic(world,*npc,anvil,roast);
   world.removeNpc(*npc);
-  std::printf("Activity counters: ZS_SMITH_ANVIL 3 phases from the record, ZS_ROAST_SCAVENGER 3 from the VM; %zu equal events\n",events);
+  std::printf("Activity counters: ZS_SMITH_ANVIL 3 phases from the record, ZS_TEST_ROAST 3 from the VM; %zu equal events\n",events);
   }
 
 Npc* activityNpc(World& world,const char* name) {
@@ -2173,8 +2173,10 @@ void activityDefinitionsWorld(Gothic& gothic) {
   std::vector<std::string> accepted;
   for(const auto& spec:worldActivities)
     accepted.emplace_back(spec.state);
-  constexpr size_t eventPhases=7*2; // Init and End of five point activities and two seated activities.
-  activitySwitch(script,accepted,"ZS_ROAST_SCAVENGER",eventPhases);
+  accepted.emplace_back("ZS_SIT_THRONE");
+  accepted.emplace_back("ZS_ROAST_SCAVENGER");
+  constexpr size_t eventPhases=10*2; // Init and End of five point activities and five timed MOB activities.
+  activitySwitch(script,accepted,nullptr,eventPhases);
   std::vector<WorldActivity> activities;
   std::set<Npc*> actors;
   for(const auto& spec:worldActivities) {

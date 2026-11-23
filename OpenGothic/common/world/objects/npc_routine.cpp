@@ -194,7 +194,7 @@ void Npc::tickRoutine() {
         if(!events && owner.rules().routineTimerDue(*this,aiState.funcLoop))
           loop = invokeRoutine(aiState.funcLoop);
         else if(events && !atPoint)
-          tickSeatedGesture(); // the seated Loop also draws before End on the final perception beat
+          tickMobTimer(); // The timer also fires on the final perception beat before End.
         }
       }
     else if(!events) {

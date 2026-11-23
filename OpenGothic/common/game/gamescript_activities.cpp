@@ -88,17 +88,20 @@ bool GameScript::routineTimerDue(const Npc& npc, ScriptFn loop) const {
 
 void GameScript::runActivityGesture(Npc& npc, const ActivityEvents::Record& activity) {
   const auto& loop=findSymbol(npc.aiState.funcLoop.ptr)->name();
-  auto draw=[&](int32_t range,const char* variable) {
+  auto draw=[&](int32_t range,const std::string& variable) {
     const auto value=int32_t(rollRandom(uint32_t(range),&npc,true));
     if(auto* local=findSymbol(loop+variable))
       local->set_int(value);
     return value;
     };
   if(const auto* mob=activity.mob) {
-    const auto& seated=*mob->seated;
-    const auto roll=draw(seated.rollRange,".RANDOM");
-    for(const auto& animation:seated.animationsFor(roll))
-      npc.pushActivityCommand(AiQueue::aiPlayAnimBs(animation,BodyState(mob->busyBodyState)));
+    const auto& timer=*mob->timer;
+    if(timer.rollRange>0) {
+      const auto roll=draw(timer.rollRange,timer.rollVariable);
+      for(const auto& gesture:timer.gestures)
+        if(roll<=gesture.throughRoll)
+          npc.pushActivityCommand(AiQueue::aiPlayAnimBs(gesture.animation,BodyState(mob->busyBodyState)));
+      }
     npc.setStateTime(0);
     return;
     }
@@ -124,7 +127,8 @@ bool GameScript::invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::P
   if(floorDefer.active())
     return false;
   const auto* phase = ActivityDefinitionRuntime::find(activityDefinitions,function);
-  if(phase==nullptr || (!activityEvents && (phase->record.point || phase->record.mob->seated)))
+  if(phase==nullptr || (!activityEvents && (phase->record.point || phase->record.mob->timer ||
+                                             phase->record.mob->skipApproachWhenBusy)))
     return false;
   probe.fromRecord();
   probe.result = ActivityDefinitionRuntime::run(vm,world(),npc,*phase);

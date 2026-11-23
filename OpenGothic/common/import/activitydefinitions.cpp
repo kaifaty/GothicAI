@@ -151,8 +151,8 @@ class ScriptRun {
         if(++instructions>100000) throw Stop("execution_limit",phaseName);
         // The write observer fires before assignment. Read the value before the next instruction.
         if(drawWrite) {
-          const auto* name=drawWrite==random ? "RANDOM" : "EVENTRANDY";
-          current->events.push_back({"draw_write",std::string(name)+"="+std::to_string(drawWrite->get_int()),{}});
+          const auto& name=drawWrite->name();
+          current->events.push_back({"draw_write",name.substr(name.rfind('.')+1)+"="+std::to_string(drawWrite->get_int()),{}});
           drawWrite=nullptr;
           }
         if(instruction.op==DaedalusOpcode::RSR && !frames.empty()) frames.pop_back();
@@ -200,9 +200,13 @@ class ScriptRun {
       vm.register_default_external_custom([this](DaedalusVm&,DaedalusSymbol& function) { external(function); });
       }
 
-    void watchRollWrites(const DaedalusSymbol& loop) {
-      random=mutableInt(loop.name()+".RANDOM");
+    void watchRollWrites(const DaedalusSymbol& loop,std::string_view suffix=".RANDOM") {
+      random=mutableInt(loop.name()+std::string(suffix));
       eventRandy=mutableInt(loop.name()+".EVENTRANDY");
+      }
+    void watchMobTimer(const DaedalusSymbol& loop,std::string_view suffix) {
+      timedMob=true;
+      watchRollWrites(loop,suffix);
       }
 
     Run run(const DaedalusSymbol& function,const Situation& situation) {
@@ -255,7 +259,7 @@ class ScriptRun {
         "AI_ALIGNTOFP","AI_ALIGNTOWP","AI_PLAYANI"};
       static const std::set<std::string> poseCalls={"AI_PLAYANIBS","NPC_GETSTATETIME","NPC_SETSTATETIME","HLP_RANDOM"};
       if(!known.contains(name) && !(points && pointCalls.contains(name)) &&
-         !((points || random) && poseCalls.contains(name))) throw Stop("unsupported_external",name);
+         !((points || timedMob) && poseCalls.contains(name))) throw Stop("unsupported_external",name);
       const auto parameters=vm.find_parameters_for_function(&function);
       Event event{name,name+"(",{}};
       std::vector<std::string> texts(parameters.size());
@@ -322,6 +326,7 @@ class ScriptRun {
     size_t                    draws = 0;
     std::set<uint32_t>        deferred;
     bool                     points = false;
+    bool                     timedMob = false;
   };
 
 struct Capture {
@@ -336,16 +341,24 @@ std::vector<std::string> walk(const MobActivity& activity,Phase phase,const Situ
   StubHost stub(situation);
   Recorder recorder(stub,[&](std::string event) { events.push_back(std::move(event)); });
   result=run(activity,phase,recorder);
-  if(phase==Phase::Loop && activity.seated) {
-    const auto& seated=*activity.seated;
-    events.push_back("NPC_GETSTATETIME(self)->"+std::to_string(situation.seconds));
-    const bool sitting=bodyStateContains(recorder.bodyState(),activity.busyBodyState);
-    if(situation.seconds>seated.timerSeconds && sitting) {
-      const auto roll=std::to_string(situation.roll);
-      events.push_back("HLP_RANDOM("+std::to_string(seated.rollRange)+")->"+roll);
-      events.push_back("RANDOM="+roll);
-      for(const auto& animation:seated.animationsFor(situation.roll))
-        events.push_back("AI_PLAYANIBS(self,"+Recorder::text(animation)+","+std::to_string(activity.busyBodyState)+")");
+  if(phase==Phase::Loop && activity.timer) {
+    const auto& timer=*activity.timer;
+    const auto readTime=[&] { events.push_back("NPC_GETSTATETIME(self)->"+std::to_string(situation.seconds)); };
+    // The seat scripts read time before body state; the work scripts read body state first.
+    if(activity.skipApproachWhenBusy)
+      readTime();
+    const bool busy=bodyStateContains(recorder.bodyState(),activity.busyBodyState);
+    if(!activity.skipApproachWhenBusy)
+      readTime();
+    if(situation.seconds>timer.timerSeconds && busy) {
+      if(timer.rollRange>0) {
+        const auto roll=std::to_string(situation.roll);
+        events.push_back("HLP_RANDOM("+std::to_string(timer.rollRange)+")->"+roll);
+        events.push_back(timer.rollVariable.substr(1)+"="+roll);
+        for(const auto& gesture:timer.gestures)
+          if(situation.roll<=gesture.throughRoll)
+            events.push_back("AI_PLAYANIBS(self,"+Recorder::text(gesture.animation)+","+std::to_string(activity.busyBodyState)+")");
+        }
       events.push_back("NPC_SETSTATETIME(self,0)");
       }
     }
@@ -381,8 +394,8 @@ class Recognizer {
       try {
         ScriptRun script(program);
         const auto phases=phasesOf(script.script());
-        if(seatedState(state))
-          script.watchRollWrites(*phases.loop);
+        if(timedMobState(state))
+          script.watchMobTimer(*phases.loop,mobRollVariable());
         result.activity=extract(script,phases);
         result.situations=compare(script,phases,result.activity);
         }
@@ -733,35 +746,50 @@ class Recognizer {
       const auto* leave=firstEvent(end,"AI_USEMOB");
       if(leave==nullptr || leave->args.size()!=2) throw Stop("no_mob_leave",state);
       activity.leaveState=std::get<int32_t>(leave->args.at(1));
-      if(seatedState(state))
-        activity.seated=extractSeated(script,*phases.loop,activity.busyBodyState);
+      activity.skipApproachWhenBusy=mobInitChecksBody(state);
+      if(timedMobState(state))
+        activity.timer=extractMobTimer(script,*phases.loop,activity.busyBodyState);
       return activity;
       }
 
-    MobActivity::Seated extractSeated(ScriptRun& script,const DaedalusSymbol& loop,int32_t body) const {
-      MobActivity::Seated seated;
+    std::string_view mobRollVariable() const {
+      return state=="ZS_REPAIR_HUT" ? ".ZUFALL" : ".RANDOM";
+      }
+
+    MobActivity::Timer extractMobTimer(ScriptRun& script,const DaedalusSymbol& loop,int32_t body) const {
+      MobActivity::Timer timer;
       Situation s;
       s.body=body;
-      seated.timerSeconds=lastBefore([&](int32_t seconds) {
+      timer.timerSeconds=lastBefore([&](int32_t seconds) {
         s.seconds=seconds;
-        return firstEvent(script.run(loop,s),"HLP_RANDOM")!=nullptr;
+        return firstEvent(script.run(loop,s),"NPC_SETSTATETIME")!=nullptr;
         });
-      if(seated.timerSeconds<0 || seated.timerSeconds==std::numeric_limits<int32_t>::max())
-        throw Stop("template_mismatch",loop.name()+" seated gesture timer");
-      s.seconds=seated.timerSeconds+1;
+      if(timer.timerSeconds<0 || timer.timerSeconds==std::numeric_limits<int32_t>::max())
+        throw Stop("template_mismatch",loop.name()+" missing mob timer");
+      s.seconds=timer.timerSeconds+1;
       const auto timed=script.run(loop,s);
       const auto* draw=firstEvent(timed,"HLP_RANDOM");
-      if(!draw) throw Stop("template_mismatch",loop.name()+" missing seated gesture draw");
-      seated.rollRange=std::get<int32_t>(draw->args.at(0));
-      // Bench and chair use at most ten outcomes. Every one is checked below.
-      if(seated.rollRange<1 || seated.rollRange>10)
-        throw Stop("template_mismatch",loop.name()+" seated gesture range");
+      if(!draw)
+        return timer;
+      timer.rollVariable=mobRollVariable();
+      timer.rollRange=std::get<int32_t>(draw->args.at(0));
+      if(timer.rollRange<1 || timer.rollRange>100)
+        throw Stop("template_mismatch",loop.name()+" mob timer roll range");
       for(const auto& event:timed.events)
         if(event.name=="AI_PLAYANIBS")
-          seated.animations.push_back(std::get<std::string>(event.args.at(0)));
-      if(seated.animations.empty() || seated.animations.size()>size_t(seated.rollRange))
-        throw Stop("template_mismatch",loop.name()+" seated animations");
-      return seated;
+          timer.gestures.push_back({std::get<std::string>(event.args.at(0)),0});
+      // All outcomes in these states play a suffix of the queue observed at draw zero.
+      // The phase comparison checks each resulting animation and the order of all calls.
+      for(s.roll=1;s.roll<timer.rollRange;++s.roll) {
+        const auto rolled=script.run(loop,s);
+        const auto count=size_t(std::count_if(rolled.events.begin(),rolled.events.end(),
+                                [](const auto& e) { return e.name=="AI_PLAYANIBS"; }));
+        if(count>timer.gestures.size())
+          throw Stop("template_mismatch",loop.name()+" mob timer gesture queue");
+        for(size_t i=timer.gestures.size()-count;i<timer.gestures.size();++i)
+          timer.gestures[i].throughRoll=s.roll;
+        }
+      return timer;
       }
 
     // Last non-negative distance/time before the script issues a command.
@@ -798,7 +826,7 @@ class Recognizer {
               Situation s;
               s.waypoint=waypoint; s.lookAt=lookAt; s.nearest=nearest; s.distance=distance;
               situations.emplace_back(Phase::Init,s);
-              if(activity.seated) {
+              if(activity.skipApproachWhenBusy) {
                 s.body=busy;
                 situations.emplace_back(Phase::Init,s);
                 }
@@ -809,11 +837,12 @@ class Recognizer {
           Situation s;
           s.available=available; s.body=body;
           situations.emplace_back(Phase::Loop,s);
-          if(activity.seated) {
-            const auto& seated=*activity.seated;
-            for(auto seconds:{seated.timerSeconds,seated.timerSeconds+1,std::numeric_limits<int32_t>::max()}) {
+          if(activity.timer) {
+            const auto& timer=*activity.timer;
+            for(auto seconds:{timer.timerSeconds,timer.timerSeconds+1,std::numeric_limits<int32_t>::max()}) {
               s.seconds=seconds;
-              for(s.roll=0;s.roll<seated.rollRange;++s.roll)
+              const auto rolls=seconds==timer.timerSeconds+1 && bodyStateContains(body,busy) ? std::max(1,timer.rollRange) : 1;
+              for(s.roll=0;s.roll<rolls;++s.roll)
                 situations.emplace_back(Phase::Loop,s);
               }
             }
@@ -943,14 +972,21 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
   put(parameters,"use_state",Json(a.useState),allocator);
   put(parameters,"leave_state",Json(a.leaveState),allocator);
   put(parameters,"loop_result",Json(a.loopResult),allocator);
-  if(a.seated) {
-    Json seated(rapidjson::kObjectType),animations(rapidjson::kArrayType);
-    put(seated,"timer_seconds",Json(a.seated->timerSeconds),allocator);
-    put(seated,"roll_range",Json(a.seated->rollRange),allocator);
-    for(const auto& animation:a.seated->animations)
-      animations.PushBack(text(encode(animation),allocator),allocator);
-    put(seated,"animations",std::move(animations),allocator);
-    put(parameters,"seated",std::move(seated),allocator);
+  if(a.skipApproachWhenBusy)
+    put(parameters,"skip_approach_when_busy",Json(true),allocator);
+  if(a.timer) {
+    Json timer(rapidjson::kObjectType),gestures(rapidjson::kArrayType);
+    put(timer,"timer_seconds",Json(a.timer->timerSeconds),allocator);
+    put(timer,"roll_range",Json(a.timer->rollRange),allocator);
+    put(timer,"roll_variable",text(a.timer->rollVariable,allocator),allocator);
+    for(const auto& entry:a.timer->gestures) {
+      Json gesture(rapidjson::kObjectType);
+      put(gesture,"animation",text(encode(entry.animation),allocator),allocator);
+      put(gesture,"through_roll",Json(entry.throughRoll),allocator);
+      gestures.PushBack(std::move(gesture),allocator);
+      }
+    put(timer,"gestures",std::move(gestures),allocator);
+    put(parameters,"timer",std::move(timer),allocator);
     }
   put(json,"template",text("mob",allocator),allocator);
   put(json,"parameters",std::move(parameters),allocator);
