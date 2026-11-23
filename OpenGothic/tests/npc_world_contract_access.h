@@ -146,6 +146,8 @@ inline void loadSavedNpc(Npc& npc,const std::vector<uint8_t>& bytes) {
   Serialize in(reader);
   in.setContext(&npc.world());
   npc.load(in,0,"/npc/");
+  if(npc.world().player()==&npc)
+    npc.world().script().setInstanceNPC("HERO",npc);
   npc.postValidate();
   npc.setSimTier(NpcSimTier::Full);
   }
