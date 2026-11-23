@@ -1691,7 +1691,7 @@ void quietSoundRooms(Gothic& gothic) {
     for(bool native:{false,true}) {
       prepare(true);
       const auto guild=npc->handle().guild;
-      const auto aivar=npc->handle().aivar;
+  const auto aivar=std::to_array(npc->handle().aivar);
       if(hostile) npc->handle().guild=GIL_MIL;
       setPrivateRoom(true);
       events=native;
@@ -1764,7 +1764,7 @@ void quietSoundRooms(Gothic& gothic) {
       require(vmEntries==(native ? std::array<size_t,4>{} : expected),
               "clear room: Init, Loop, End and the exit callback use the selected executor");
       npc->handle().guild=guild;
-      npc->handle().aivar=aivar;
+      std::ranges::copy(aivar,std::begin(npc->handle().aivar));
       npc->setTarget(nullptr);
       setPrivateRoom(false);
       events=enabled;
