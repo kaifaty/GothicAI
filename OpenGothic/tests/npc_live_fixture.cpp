@@ -1067,7 +1067,7 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
     };
   std::vector<uint32_t> migrated{init->address(),entry->address()};
   for(const auto& [name,levelValue]:expected) {
-    if(name.starts_with("INIT_SUB_ADDON_PART_") || name=="B_ENTER_ADDONWORLD_KAPITEL_2" || name=="B_ENTER_ADDONWORLD_KAPITEL_3")
+    if(name.starts_with("INIT_SUB_ADDON_PART_") || name.starts_with("B_ENTER_ADDONWORLD_KAPITEL_"))
       migrated.push_back(script.findSymbol(name)->address());
     }
   const auto none=script.intSymbol("GIL_NONE",-1), publicGuild=script.intSymbol("GIL_PUBLIC",-1);

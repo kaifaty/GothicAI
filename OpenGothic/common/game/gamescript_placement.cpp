@@ -115,6 +115,10 @@ void GameScript::runStartup(std::string_view fn) {
 void GameScript::runWorldInit(std::string_view fn) {
   const auto* function = vm.find_symbol_by_name(fn);
   const bool native = nativeRoutineProgram && PlacementDefinitionRuntime::enabled() && function;
+  if(native && function->name()=="INIT_GLOBAL") {
+    vm.unsafe_call_bl(function);
+    return;
+    }
   if(native && (function->name()=="INIT_NEWWORLD" || function->name()=="INIT_OLDWORLD")) {
     const bool oldWorld = function->name()=="INIT_OLDWORLD";
     if(oldWorld) {
@@ -264,6 +268,109 @@ void GameScript::loadNativeWorldEntry() {
   using Op = daedalus::DaedalusOpcode;
   using Type = daedalus::DaedalusDataType;
   using Symbol = daedalus::DaedalusSymbol;
+  vm.override_function("INIT_GLOBAL",std::function<void()>{[this] {
+    // The void script frame discards GAME_INITGERMAN's integer result.
+    vm.unsafe_call_external(findSymbol("GAME_INITGERMAN"));
+    }},PlacementDefinitionRuntime::enabled);
+
+  auto* yes = findSymbol("TRUE");
+  auto* no = findSymbol("FALSE");
+  auto* enteredAddon4 = findSymbol("ENTERADW_KAPITEL4");
+  const auto* insertNpc = findSymbol("WLD_INSERTNPC");
+  auto pc = findSymbol("B_ENTER_ADDONWORLD_KAPITEL_4")->address();
+  const auto takeAddon4 = [&] {
+    const auto instruction = vm.instruction_at(pc);
+    pc += instruction.size;
+    return instruction;
+    };
+  const auto expectAddon4 = [](bool match) {
+    if(!match)
+      throw std::runtime_error("Unexpected Addon World chapter 4 placement");
+    };
+  const auto compareAddon4 = takeAddon4();
+  const auto latchAddon4 = takeAddon4();
+  expectAddon4(compareAddon4.op==Op::PUSHV && compareAddon4.symbol==no->index() &&
+               latchAddon4.op==Op::PUSHV && latchAddon4.symbol==enteredAddon4->index() &&
+               takeAddon4().op==Op::EQ);
+  const auto skipAddon4 = takeAddon4();
+  expectAddon4(skipAddon4.op==Op::BZ);
+
+  struct NpcPlacement {
+    int32_t instance;
+    Symbol* point;
+    };
+  std::array<NpcPlacement,137> addon4Spawns;
+  for(auto& spawn : addon4Spawns) {
+    const auto instance = takeAddon4();
+    const auto point = takeAddon4();
+    const auto call = takeAddon4();
+    const auto* actor = instance.op==Op::PUSHI ? findSymbol(uint32_t(instance.immediate)) : nullptr;
+    auto* waypoint = point.op==Op::PUSHV ? findSymbol(point.symbol) : nullptr;
+    expectAddon4(actor && actor->type()==Type::INSTANCE && actor->is_const() &&
+                 waypoint && waypoint->type()==Type::STRING && waypoint->is_const() &&
+                 !waypoint->is_member() && waypoint->count()==1 &&
+                 call.op==Op::BE && call.symbol==insertNpc->index());
+    spawn = {instance.immediate,waypoint};
+    }
+  const auto valueAddon4 = takeAddon4();
+  const auto updateAddon4 = takeAddon4();
+  expectAddon4(valueAddon4.op==Op::PUSHV && valueAddon4.symbol==yes->index() &&
+               updateAddon4.op==Op::PUSHV && updateAddon4.symbol==enteredAddon4->index() &&
+               takeAddon4().op==Op::MOVI && pc==skipAddon4.address && takeAddon4().op==Op::RSR);
+  vm.override_function("B_ENTER_ADDONWORLD_KAPITEL_4",std::function<void()>{[this,yes,no,enteredAddon4,insertNpc,addon4Spawns] {
+    if(enteredAddon4->get_int()!=no->get_int())
+      return;
+    for(const auto& spawn : addon4Spawns) {
+      vm.push_int(spawn.instance);
+      vm.push_reference(spawn.point);
+      vm.unsafe_call_external(insertNpc);
+      }
+    enteredAddon4->set_int(yes->get_int());
+    }},PlacementDefinitionRuntime::enabled);
+
+  const auto removeActor = [this](std::string_view actor) {
+    vm.push_int(int32_t(findSymbolIndex(actor)));
+    vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
+    };
+  vm.override_function("B_ENTER_ADDONWORLD_KAPITEL_1",std::function<void()>{[this,yes,no,removeActor] {
+    if(findSymbol("RAVENISDEAD")->get_int()==yes->get_int())
+      removeActor("KDW_14030_ADDON_MYXIR_ADW");
+    auto* slavesRemoved = findSymbol("REMOVESKLAVEN");
+    if(slavesRemoved->get_int()==no->get_int() && findSymbol("SKLAVEN_WEG")->get_int()==yes->get_int()) {
+      for(const auto* actor : {"STRF_1118_ADDON_PATRICK","STRF_1119_ADDON_MONTY","STRF_1120_ADDON_TONAK",
+                              "STRF_1121_ADDON_TELBOR","STRF_1122_ADDON_PARDOS"})
+        removeActor(actor);
+      slavesRemoved->set_int(yes->get_int());
+      }
+    }},PlacementDefinitionRuntime::enabled);
+
+  vm.override_function("B_ENTER_OLDWORLD_KAPITEL_5",std::function<void()>{[this,yes,no,removeActor] {
+    auto* entered = findSymbol("ENTEROW_KAPITEL5");
+    if(entered->get_int()==no->get_int()) {
+      const auto grant = [this](std::string_view actor,std::string_view item) {
+        vm.push_reference(findSymbol(actor));
+        vm.push_int(int32_t(findSymbolIndex(item)));
+        vm.push_int(1);
+        vm.unsafe_call_external(findSymbol("CREATEINVITEMS"));
+        };
+      auto* guard = findSymbol("VLK_4143_HAUPTTORWACHE");
+      const auto actor = guard->get_instance();
+      vm.unsafe_set_gi(actor);
+      vm.set_int(actor,findSymbol("C_NPC.FLAGS"),0,0);
+      grant(guard->name(),"ITKE_OC_MAINGATE_MIS");
+
+      vm.push_reference(findSymbol("BRUTUS"));
+      vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
+      if(vm.pop_int()==no->get_int())
+        grant("VLK_4100_BRUTUS","ITWR_DEMENTOROBSESSIONBOOK_MIS");
+      if(findSymbol("TSCHUESSBILGOT")->get_int()==yes->get_int())
+        removeActor("VLK_4120_BILGOT");
+      entered->set_int(yes->get_int());
+      }
+    if(findSymbol("BIFF_FOLLOWSTHROUGHPASS")->get_int()==findSymbol("LOG_SUCCESS")->get_int())
+      removeActor("DJG_713_BIFF");
+    }},PlacementDefinitionRuntime::enabled);
+
   struct Room {
     Symbol* label;
     Symbol* guild;
