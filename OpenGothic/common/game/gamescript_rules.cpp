@@ -547,6 +547,9 @@ void GameScript::loadNativeHumanPerceptions() {
   vm.override_function("B_USEITEM",std::function<void(Actor,int32_t)>{[this](const Actor& self, int32_t item) {
     queueItemUse(self,item);
     }},enabled);
+  vm.override_function("B_TURNTONPC",std::function<void(Actor,Actor)>{[this](const Actor& self,const Actor& other) {
+    turnToNpc(self,other);
+    }},enabled);
   vm.override_function("B_LOOKATNPC",std::function<void(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     lookAtNpc(self,other);
     }},enabled);
@@ -1514,7 +1517,7 @@ bool GameScript::runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol,
   const auto constant = [&](std::string_view name) { return findSymbol(name)->get_int(); };
   const auto guild = [](const std::shared_ptr<daedalus::INpc>& actor) { return actor ? int32_t(actor->guild) : 0; };
   const auto turn = [&](const std::shared_ptr<daedalus::INpc>& actor) {
-    vm.call_function<void>("B_TURNTONPC",self,actor);
+    turnToNpc(self,actor);
     };
   auto& aivar = self->aivar;
   const std::string_view name = symbol.name();
@@ -1598,9 +1601,9 @@ bool GameScript::runFakeGuildComment(Npc& npc, const daedalus::DaedalusSymbol& s
   setPerceptionPreset(false);
   ai_standup(self);
   if(!seated(self))
-    vm.call_function<void>("B_TURNTONPC",self,other());
+    turnToNpc(self,other());
   if(!seated(other())) {
-    vm.call_function<void>("B_TURNTONPC",other(),self);
+    turnToNpc(other(),self);
     if(npc_getdisttonpc(other(),self)<80)
       ai_dodge(other());
     }
@@ -1663,7 +1666,7 @@ bool GameScript::runHumanPlunder(Npc& npc, const daedalus::DaedalusSymbol& symbo
   if(name!="ZS_RANSACKBODY_END")
     return false;
 
-  vm.call_function<void>("B_TURNTONPC",self,other());
+  turnToNpc(self,other());
   ai_playani(self,"T_PLUNDER");
   const auto questStock = [&](std::string_view owner, int item) {
     const auto ownerId = hlp_getinstanceid(findSymbol(owner)->get_instance());
@@ -3084,7 +3087,7 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
   const auto distance = npc_getdisttonpc(self,other());
   const auto canSee = npc_canseenpcfreelos(self,other());
   if(distance<number("PERC_DIST_INTERMEDIAT") && canSee) {
-    vm.call_function<void>("B_TURNTONPC",self,other());
+    turnToNpc(self,other());
     const auto attitude = npc_getpermattitude(self,other());
     const auto toughGuy = isToughGuy(self);
     const bool threatens = int32_t(self->type)!=number("NPCTYPE_FRIEND") && attitude!=ATT_HOSTILE && toughGuy!=0;

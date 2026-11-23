@@ -454,9 +454,9 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
       ai_removeweapon(self);
       }
     if(!seated(self))
-      vm.call_function<void>("B_TURNTONPC",self,other());
+      turnToNpc(self,other());
     if(!seated(other())) {
-      vm.call_function<void>("B_TURNTONPC",other(),self);
+      turnToNpc(other(),self);
       if(npc_getdisttonpc(other(),self)<80)
         ai_dodge(other());
       }
