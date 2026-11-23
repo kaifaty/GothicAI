@@ -2186,21 +2186,7 @@ void activityEventsWorld(Gothic& gothic) {
       harad.clearAiQueue();
       NpcDefinitionContract::tickRoutine(harad);
       }
-    std::array<ScriptFn,PERC_Count> callbacks;
-    for(uint8_t slot=0;slot<PERC_Count;++slot)
-      callbacks[slot]=NpcDefinitionContract::perception(harad,PercType(slot));
-    const auto preset=std::tuple{harad.handle().senses,harad.handle().senses_range,
-                                 NpcDefinitionContract::perceptionTime(harad),callbacks};
-    if(stream && !events) {
-      auto& trace=stream->events;
-      const std::string guard="NPC_ISINSTATE(self,"+
-                              std::to_string(test.world().script().findFunction("ZS_GUARD_PASSAGE").ptr)+")->";
-      require(trace.size()>=19 && trace[0]=="phase "+state && trace[1].starts_with(guard) &&
-              trace[2].starts_with("NPC_KNOWSINFO(") && trace[3].starts_with("NPC_SETPERCTIME(") &&
-              std::all_of(trace.begin()+4,trace.begin()+19,[](const auto& call) { return call.starts_with("NPC_PERCENABLE("); }),
-              "the polled Init must trace its normal perception preset");
-      trace.erase(trace.begin()+1,trace.begin()+19);
-      }
+    const auto preset=activityApproachPerceptions(test.world(),harad,state,stream && !events ? &stream->events : nullptr);
     require(!harad.wasInState(ScriptFn(anvil.phases.init)),"before the interruption the activity is no previous state");
     NpcDefinitionContract::pushFront(harad,AiQueue::aiStartState(ScriptFn(cool.phases.init),1,nullptr,nullptr,""));
     NpcDefinitionContract::nextAiAction(harad);

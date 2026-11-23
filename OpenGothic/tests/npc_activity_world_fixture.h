@@ -6,6 +6,23 @@
 
 namespace {
 
+auto activityApproachPerceptions(World& world,Npc& npc,const std::string& state,std::vector<std::string>* polledTrace) {
+  std::array<ScriptFn,PERC_Count> callbacks;
+  for(uint8_t slot=0;slot<PERC_Count;++slot)
+    callbacks[slot]=NpcDefinitionContract::perception(npc,PercType(slot));
+  if(polledTrace!=nullptr) {
+    auto& trace=*polledTrace;
+    const std::string guard="NPC_ISINSTATE(self,"+
+                            std::to_string(world.script().findFunction("ZS_GUARD_PASSAGE").ptr)+")->";
+    require(trace.size()>=19 && trace[0]=="phase "+state && trace[1].starts_with(guard) &&
+            trace[2].starts_with("NPC_KNOWSINFO(") && trace[3].starts_with("NPC_SETPERCTIME(") &&
+            std::all_of(trace.begin()+4,trace.begin()+19,[](const auto& call) { return call.starts_with("NPC_PERCENABLE("); }),
+            "the polled Init must trace its normal perception preset");
+    trace.erase(trace.begin()+1,trace.begin()+19);
+    }
+  return std::tuple{npc.handle().senses,npc.handle().senses_range,NpcDefinitionContract::perceptionTime(npc),callbacks};
+  }
+
 const WayPoint* activityRow(Npc& npc,size_t init,std::string& name,gtime* start=nullptr) {
   const WayPoint* point=nullptr;
   npc.forEachRoutine([&](const Npc::RoutineInfo& row) {
