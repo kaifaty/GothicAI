@@ -18,4 +18,6 @@ Definitions load(const std::filesystem::path& base,const daedalus::DaedalusScrip
 // Arguments have already been pushed by NPC record playback. A fallback leaves them untouched.
 bool invoke(daedalus::DaedalusVm& vm,const std::shared_ptr<daedalus::INpc>& npc,
             const daedalus::DaedalusSymbol* function,const Definitions& definitions);
+bool addFightSkill(daedalus::DaedalusVm& vm,const std::shared_ptr<daedalus::INpc>& npc,
+                   int32_t talent,int32_t percent,const Definitions& definitions);
 }

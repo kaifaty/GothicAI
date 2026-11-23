@@ -1175,7 +1175,7 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
       npc_changeattribute(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()),effect.attribute,amount);
       return;
       }
-    if(applyArmorSetEffect(*npc,functionSymbol->index()))
+    if(applyArmorSetEffect(*npc,functionSymbol->index()) || applyFightSkillItemEffect(*npc,functionSymbol->index()))
       return;
     }
   vm.call_function<void>(functionSymbol);

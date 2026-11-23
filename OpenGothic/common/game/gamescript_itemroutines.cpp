@@ -24,6 +24,17 @@ bool GameScript::applyArmorSetEffect(Npc& npc, uint32_t callback) {
   return true;
   }
 
+bool GameScript::applyFightSkillItemEffect(Npc& npc, uint32_t callback) {
+  const auto it = itemDefinitions.fightSkillEffects.find(callback);
+  if(it==itemDefinitions.fightSkillEffects.end())
+    return false;
+  const auto& effect = it->second;
+  if(effect.playerOnly && !npc.isPlayer())
+    return true;
+  return NpcHelperRuntime::addFightSkill(vm,std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),
+                                       effect.talent,effect.delta,npcDefinitions.helpers);
+  }
+
 namespace {
 enum class Kind { HoldItem, Brush, Eat, Drink, Joint, Spit, Wash, Hammer };
 
