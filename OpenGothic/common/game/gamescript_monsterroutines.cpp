@@ -604,10 +604,7 @@ bool GameScript::runMonsterSummoned(Npc& npc, const daedalus::DaedalusSymbol& sy
     npc.setPerceptionEnable(PERC_ASSESSDAMAGE,findFunction("B_MM_ASSESSDAMAGE").ptr);
     npc.setPerceptionEnable(PERC_ASSESSFIGHTSOUND,findFunction("B_MM_ASSESSOTHERSDAMAGE").ptr);
     npc.setPerceptionEnable(PERC_ASSESSTALK,findFunction(wisp ? "B_ASSESSTALK" : "B_SUMMONEDASSESSTALK").ptr);
-    findSymbol("B_SETATTITUDE.ATT")->set_int(ATT_FRIENDLY);
-    findSymbol("B_SETATTITUDE.SLF")->set_instance(self);
-    npc_setattitude(self,ATT_FRIENDLY);
-    npc_settempattitude(self,ATT_FRIENDLY);
+    setCombatAttitude(self,ATT_FRIENDLY);
     self->aivar[partyMember] = 1;
     ai_standup(self);
     ai_setwalkmode(self,int(WalkBit::WM_Run));

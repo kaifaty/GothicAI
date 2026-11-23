@@ -1064,6 +1064,34 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
   const auto arenaRunning=script.intSymbol("AF_RUNNING",-1);
   const auto arenaAfter=script.intSymbol("AF_AFTER",-1);
   require(!hero.isDown() && maxHp>2 && npc.qDistTo(hero)<500.f*500.f,"human attack: a standing fight with a live target");
+  {
+    const auto permanent=npc.attitude();
+    const auto self=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+    const auto* setAttitude=script.findSymbol("B_SETATTITUDE");
+    auto* argument=script.findSymbol("B_SETATTITUDE.ATT");
+    auto* actor=script.findSymbol("B_SETATTITUDE.SLF");
+    const auto oldArgument=argument->get_int();
+    const auto oldActor=actor->get_instance();
+    for(const bool native:{false,true}) {
+      enabled=native;
+      npc.setAttitude(ATT_NEUTRAL);
+      npc.setTempAttitude(ATT_FRIENDLY);
+      unsigned bytecode=0;
+      vm.observe_instructions([&](const auto&) { ++bytecode; });
+      vm.push_instance(self);
+      vm.push_int(ATT_HOSTILE);
+      vm.unsafe_call_bl(setAttitude);
+      vm.observe_instructions({});
+      require((bytecode==0)==native && npc.attitude()==ATT_HOSTILE && npc.tempAttitude()==ATT_HOSTILE &&
+              argument->get_int()==ATT_HOSTILE && actor->get_instance()==self,
+              "combat attitude: preserve both attitudes and the saved helper arguments");
+      }
+    argument->set_int(oldArgument);
+    actor->set_instance(oldActor);
+    npc.setAttitude(permanent);
+    npc.setTempAttitude(savedAttitude);
+    enabled=wasEnabled;
+    }
   hero.handle().aivar[4]=0;
   state=ScriptFn(phases.init);
   std::vector<std::string> original;

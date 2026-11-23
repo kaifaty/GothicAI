@@ -452,6 +452,13 @@ bool GameScript::nativeHumanPerceptionsEnabled() const {
   return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
   }
 
+void GameScript::setCombatAttitude(const std::shared_ptr<daedalus::INpc>& npc,int32_t attitude) {
+  findSymbol("B_SETATTITUDE.ATT")->set_int(attitude);
+  findSymbol("B_SETATTITUDE.SLF")->set_instance(npc);
+  npc_setattitude(npc,attitude);
+  npc_settempattitude(npc,attitude);
+  }
+
 void GameScript::loadNativeHumanPerceptions() {
   if(!nativeRoutineProgram)
     return;
@@ -500,6 +507,9 @@ void GameScript::loadNativeHumanPerceptions() {
     }},enabled);
   vm.override_function("B_CLEARPERCEPTIONS",std::function<void(Actor)>{[this](const Actor& npc) {
     clearPerceptions(npc);
+    }},enabled);
+  vm.override_function("B_SETATTITUDE",std::function<void(Actor,int32_t)>{[this](const Actor& npc,int32_t attitude) {
+    setCombatAttitude(npc,attitude);
     }},enabled);
   vm.override_function("B_SAY",std::function<void(Actor,Actor,std::string_view)>{[this](const Actor& self, const Actor& other, std::string_view line) {
     sayToNpc(self,other,line);
@@ -1995,7 +2005,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
       sayAttackEnd();
     }
   if(wld_getguildattitude(int(self->guild),guild(hero()))!=ATT_HOSTILE && targetValue(killedByPlayer)==1)
-    vm.call_function<void>("B_SETATTITUDE",self,int(ATT_FRIENDLY));
+    setCombatAttitude(self,ATT_FRIENDLY);
   if(vm.call_function<int32_t>("C_NPCHASATTACKREASONTOKILL",self)!=0 && npc_isinstate(other(),int(ZS_Unconscious)))
     vm.call_function<void>("B_FINISHINGMOVE",self,other());
   ai_removeweapon(self);
@@ -2481,12 +2491,8 @@ void GameScript::startNpcAttack(const std::shared_ptr<daedalus::INpc>& attacker,
 
   if(npc_isinstate(self(),int(ZS_Attack)))
     return;
-  if(hasReason("AR_KILL")) {
-    findSymbol("B_SETATTITUDE.ATT")->set_int(int32_t(ATT_HOSTILE));
-    findSymbol("B_SETATTITUDE.SLF")->set_instance(self());
-    npc_setattitude(self(),ATT_HOSTILE);
-    npc_settempattitude(self(),ATT_HOSTILE);
-    }
+  if(hasReason("AR_KILL"))
+    setCombatAttitude(self(),ATT_HOSTILE);
   if(npc_isplayer(other()))
     self()->aivar[0] = value("FIGHT_CANCEL");
   self()->aivar[lastFightComment] = 0;
