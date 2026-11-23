@@ -1406,6 +1406,100 @@ void loadCampfireGroup(Gothic& gothic,const CampfireSave& save) {
               save.edge.c_str(),double(std::hypot(step.x,step.z)));
   }
 
+void assessTalkEntry(World& world,Npc& npc,Npc& player) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& effects=Contract::activityEventsOn(script);
+  const bool savedEffects=effects;
+  const auto savedNpcQueue=Contract::queue(npc);
+  const auto savedPlayerQueue=Contract::queue(player);
+  const auto savedVars=std::to_array(npc.handle().aivar);
+  const auto savedPerceptions=std::to_array(Contract::perceptions(npc));
+  const auto savedState=Contract::aiState(npc);
+  const auto savedDeadline=Contract::refusalDeadline(npc);
+  const auto savedAttitude=npc.attitude();
+  auto* savedOther=npc.stateOther();
+  const auto savedVictim=vm.global_victim()->get_instance();
+  const auto* callback=vm.find_symbol_by_name("B_ASSESSTALK");
+  const auto refusal=vm.find_symbol_by_name("C_REFUSETALK")->address();
+  const auto started=script.findFunction("ZS_TALK");
+  const auto restore=[&] {
+    Contract::queue(npc)=savedNpcQueue;
+    Contract::queue(player)=savedPlayerQueue;
+    std::copy(savedVars.begin(),savedVars.end(),npc.handle().aivar);
+    std::copy(savedPerceptions.begin(),savedPerceptions.end(),Contract::perceptions(npc));
+    Contract::aiState(npc)=savedState;
+    Contract::refusalDeadline(npc)=savedDeadline;
+    npc.setAttitude(savedAttitude);
+    npc.setOther(savedOther);
+    vm.global_victim()->set_instance(savedVictim);
+    effects=savedEffects;
+    };
+  struct Site {
+    bool nested, guardRefusal;
+    };
+  for(const auto site : {Site{false,false},Site{true,false},Site{false,true}}) {
+    std::vector<std::string> originalNpc,originalPlayer;
+    for(bool native : {false,true}) {
+      if(native && (!savedEffects || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+        continue;
+      restore();
+      effects=native;
+      Contract::queue(npc).clear();
+      Contract::queue(player).clear();
+      npc.setAttitude(ATT_NEUTRAL);
+      npc.handle().aivar[1]=0;
+      npc.handle().aivar[3]=1;
+      npc.handle().aivar[12]=0;
+      npc.setPerceptionEnable(PERC_ASSESSTALK,callback->index());
+      Contract::aiState(npc).funcIni = site.guardRefusal ? script.findFunction("ZS_GUARD_PASSAGE") : ScriptFn();
+      Contract::aiState(npc).started = true;
+      Contract::refusalDeadline(npc)=world.tickCount()+1000;
+      vm.global_victim()->set_instance(nullptr);
+      size_t entryBytecode=0,refusalBytecode=0;
+      vm.observe_instructions([&](const auto&) {
+        entryBytecode+=vm.pc()==callback->address();
+        refusalBytecode+=vm.pc()==refusal;
+        });
+      if(site.nested) {
+        StoryRuntime::Bind context(vm,&npc,&player);
+        vm.unsafe_call_bl(callback);
+        } else {
+        require(npc.perceptionProcess(player,nullptr,0,PERC_ASSESSTALK),
+                "talk entry must arrive through the NPC's registered perception");
+        }
+      vm.observe_instructions({});
+      require(entryBytecode==size_t(!native) && refusalBytecode==size_t(!native),
+              "the selected executor must handle the entry and refusal rule");
+      if(site.guardRefusal) {
+        const auto* line=npc.aiQueueFront();
+        require(line && line->act==AI_OutputSvm && line->target==&player && line->s0=="$NOTNOW" &&
+                npc.hasPerc(PERC_ASSESSTALK),
+                "an unpassed gate guard on cooldown must decline without disabling talk perception");
+        } else {
+        auto queued=Contract::queue(npc);
+        bool opensDialog=false;
+        while(queued.size()>0) {
+          const auto action=queued.pop();
+          opensDialog|=action.act==AI_StartState && action.func==started && action.target==&player;
+          }
+        const auto* stand=player.aiQueueFront();
+        require(opensDialog && stand && stand->act==AI_StandUpQuick && !npc.hasPerc(PERC_ASSESSTALK),
+                "an accepted approach must stand the player and queue ZS_TALK");
+        }
+      if(native) {
+        require(activityQueue(npc)==originalNpc && activityQueue(player)==originalPlayer,
+                "talk entry must queue the same actions as the original callback");
+        } else {
+        originalNpc=activityQueue(npc);
+        originalPlayer=activityQueue(player);
+        }
+      }
+    }
+  restore();
+  }
+
 void talkPhases(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   auto& world=*gothic.world();
@@ -1506,6 +1600,7 @@ void talkPhases(Gothic& gothic) {
       }
     }
   restore();
+  assessTalkEntry(world,npc,player);
   }
 
 auto storyJournalBeforeSave(GameScript& script) {

@@ -354,6 +354,11 @@ class GameScript final : public GameRules {
     bool nativeRoomReactionsEnabled() const;
     bool invokeNativeRoomPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
     void loadNativeRoomReaction();
+    void loadNativeTalkReaction();
+    bool canRunNativeTalkReaction();
+    bool invokeNativeTalkPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
+    void runAssessTalk();
+    bool refusesTalk(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     int32_t runEnterRoomReaction();
     int32_t runExitIfRoomLeft();
     void runPortalCollisionReaction();
