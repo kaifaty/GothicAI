@@ -1840,6 +1840,7 @@ void sleepRoutineWorld(Gothic& gothic,bool events) {
   vm.remove_call_observer(observer);
 
   Contract::aiState(*matteo).eTime=world.time();
+  Contract::aiState(*matteo).loopNextTime=world.tickCount();
   Contract::tickRoutine(*matteo);
   auto tail=Contract::queue(*matteo);
   require(tail.size()!=0,"sleep routine: waking queues a bed release");
