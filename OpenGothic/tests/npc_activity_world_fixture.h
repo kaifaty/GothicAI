@@ -3304,6 +3304,123 @@ void playerXpRule(World& world) {
   std::puts("Player XP: stock wrap, single level-up, saved text, notices and quest hook match");
   }
 
+void questClosureRule(World& world) {
+  using Status=QuestLog::Status;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  auto* check=script.findSymbol("B_CHECKLOG");
+  auto* close=script.findSymbol("B_CLOSETOPIC");
+  auto* setStatus=script.findSymbol("LOG_SETTOPICSTATUS");
+  auto* topicLocal=script.findSymbol("B_CLOSETOPIC.TOPIC");
+  require(check && close && setStatus && topicLocal && world.player(),"the journal fixture needs the stock rule and hero");
+  const auto oldTopic=std::string(topicLocal->get_string());
+  auto& hero=world.player()->handle();
+  const auto oldGuild=hero.guild;
+  const auto oldGi=vm.unsafe_get_gi();
+  const std::array topics{script.findSymbol("TOPIC_ADDON_FORTUNO"),script.findSymbol("TOPIC_RESCUEBENNET"),
+                          script.findSymbol("TOPIC_ADDON_BUDDLER"),script.findSymbol("TOPIC_BALTHASARSSCHAFE")};
+  const std::array inputs{script.findSymbol("KAPITEL"),script.findSymbol("SC_KNOWSFORTUNOINFOS"),
+                          script.findSymbol("MIS_RESCUEBENNET"),script.findSymbol("MIS_SEND_BUDDLER"),
+                          script.findSymbol("MIS_BALTHASAR_BENGARSWEIDE")};
+  const std::array locals{script.findSymbol("B_CLOSETOPIC.MISSIONVAR"),script.findSymbol("B_CLOSETOPIC.COMMONVAR"),
+                          script.findSymbol("B_CLOSETOPIC.ENDCHAPTER")};
+  std::array<int32_t,inputs.size()> previousInputs{};
+  std::array<int32_t,locals.size()> previousLocals{};
+  for(size_t i=0;i<inputs.size();++i) previousInputs[i]=inputs[i]->get_int();
+  for(size_t i=0;i<locals.size();++i) previousLocals[i]=locals[i]->get_int();
+
+  const auto save=[&] {
+    std::vector<uint8_t> bytes;
+    Tempest::MemWriter writer(bytes);
+    {
+      Serialize out(writer);
+      out.setEntry("game/quests");
+      script.saveQuests(out);
+      }
+    return bytes;
+    };
+  const auto before=save();
+  const auto load=[&] {
+    Tempest::MemReader reader(before);
+    Serialize in(reader);
+    require(in.setEntry("game/quests"),"the journal fixture must have a saved quest section");
+    script.loadQuests(in);
+    };
+  const auto status=[&](size_t topic) {
+    const auto& journal=script.questLog();
+    for(size_t i=0;i<journal.questCount();++i)
+      if(journal.quest(i).name==topics[topic]->get_string())
+        return journal.quest(i).status;
+    throw std::runtime_error("Quest fixture topic is absent from the journal");
+    };
+
+  const std::array roots{check->address(),close->address(),script.findSymbol("B_CLOSETOPICS_MATTES")->address(),
+                         script.findSymbol("B_CLOSETOPICS_HOSHI")->address(),script.findSymbol("B_CLOSETOPICS_YOLY")->address()};
+  const auto run=[&](bool native) {
+    events=native;
+    load();
+    for(auto* topic:topics) {
+      vm.push_reference(topic);
+      vm.push_int(int32_t(Status::Running));
+      vm.unsafe_call_external(setStatus);
+      }
+    std::vector<std::pair<std::string,int32_t>> logCalls;
+    size_t instructions=0;
+    vm.observe_instructions([&](const auto&) {
+      if(std::ranges::find(roots,vm.pc())!=roots.end()) ++instructions;
+      });
+    vm.observe_externals([&](const auto& external) {
+      if(external.name()!="LOG_SETTOPICSTATUS")
+        return;
+      const auto& topic=vm.stack_frame(1);
+      const auto& value=vm.stack_frame(0);
+      const auto code=value.reference ?
+                      std::get<daedalus::DaedalusSymbol*>(value.value)->get_int(value.index,value.context.get()) :
+                      std::get<int32_t>(value.value);
+      logCalls.emplace_back(std::get<daedalus::DaedalusSymbol*>(topic.value)->get_string(topic.index,topic.context.get()),code);
+      });
+    vm.push_reference(topics[0]);
+    vm.push_int(int32_t(Status::Failed));
+    vm.push_int(1);
+    vm.push_int(6);
+    vm.unsafe_call_bl(close);
+    require(status(0)==Status::Success,"a true common flag must win over a failed mission");
+
+    inputs[0]->set_int(4);
+    inputs[1]->set_int(1);
+    inputs[2]->set_int(int32_t(Status::Failed));
+    inputs[3]->set_int(0);
+    inputs[4]->set_int(int32_t(Status::Success));
+    hero.guild=int32_t(GIL_SLD);
+    vm.unsafe_call_bl(check);
+    require(status(0)==Status::Success && status(1)==Status::Failed && status(2)==Status::Obsolete &&
+            status(3)==Status::Success,"chapter cutoff and the mercenary exception must match stock");
+    const auto atCutoff=archiveEntries(save());
+
+    inputs[2]->set_int(int32_t(Status::Obsolete));
+    hero.guild=int32_t(GIL_MIL);
+    vm.unsafe_call_bl(check);
+    require(status(1)==Status::Obsolete && status(3)==Status::Obsolete,
+            "the next check must use live mission and guild values");
+    vm.observe_instructions({});
+    vm.observe_externals({});
+    require((instructions==0)==native && vm.unsafe_get_gi()==oldGi,"quest closure must restore the context and select the expected path");
+    return std::tuple(atCutoff,archiveEntries(save()),logCalls,std::string(topicLocal->get_string()),
+                      locals[0]->get_int(),locals[1]->get_int(),locals[2]->get_int());
+    };
+  const auto stock=run(false);
+  require(run(true)==stock,"all ordered quest updates and the serialized journal must match stock");
+  load();
+  hero.guild=oldGuild;
+  for(size_t i=0;i<inputs.size();++i) inputs[i]->set_int(previousInputs[i]);
+  for(size_t i=0;i<locals.size();++i) locals[i]->set_int(previousLocals[i]);
+  topicLocal->set_string(oldTopic);
+  events=previousEvents;
+  std::puts("Quest closure: stock priority, chapter, guild, live flags, saved journal and ordered updates match");
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
@@ -3328,6 +3445,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     if(stockMagic) {
       assessMagicPerception(*gothic.world());
       playerXpRule(*gothic.world());
+      questClosureRule(*gothic.world());
       }
     gothic.clearGame().reset();
     seatedActivitiesWorld(gothic,events);

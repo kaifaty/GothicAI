@@ -273,6 +273,8 @@ class GameScript final : public GameRules {
     void assessMagic(Npc& npc);
     void clearNpcPerceptions(const std::shared_ptr<daedalus::INpc>& npc);
     void givePlayerXp(int32_t amount);
+    void loadNativeQuestLog(const std::function<bool()>& enabled);
+    void closeQuestTopic(std::string_view topic, int32_t mission, int32_t common, int32_t endChapter);
     bool monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window);
     void enableMonsterRoutinePerceptions(Npc& npc);
     void beginMonsterRoutine(Npc& npc, bool desynchronize = true, WalkBit mode = WalkBit::WM_Walk);
