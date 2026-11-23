@@ -1887,12 +1887,14 @@ void sleepRoutineWorld(Gothic& gothic,bool events,bool deep) {
   size_t vmLoops=0;
   size_t vmBed=0;
   size_t vmAlchemy=0;
+  size_t vmSmith=0;
   const auto actor=std::static_pointer_cast<daedalus::INpc>(matteo->handlePtr());
   const auto observer=vm.add_call_observer([&](const auto& function) {
     vmLoops+=function.name()==loopName;
     if(vm.global_self()->get_instance()==actor) {
       vmBed+=function.name()=="SLEEPABIT_S1";
       vmAlchemy+=function.name()=="POTIONALCHEMY_S1";
+      vmSmith+=function.name()=="SMITHWEAPON_S1";
       }
     });
   const auto hero=vm.find_symbol_by_name("PC_HERO")->get_instance();
@@ -1922,6 +1924,32 @@ void sleepRoutineWorld(Gothic& gothic,bool events,bool deep) {
   require(vmAlchemy==(events ? 0u : 1u) && alchemyHero.get_instance()==hero && matteo->isAiQueueEmpty() &&
           vm.find_symbol_by_name("PLAYER_MOBSI_PRODUCTION")->get_int()==production,
           "an NPC's alchemy callback must bind the hero and leave the player menu and NPC queue alone");
+
+  auto& smithHero=*vm.find_symbol_by_name("SMITHWEAPON_S1.HER");
+  smithHero.set_instance(nullptr);
+  const auto plain=std::dynamic_pointer_cast<daedalus::IInfo>(vm.find_symbol_by_name("PC_ITMW_1H_COMMON")->get_instance());
+  const auto ore=std::dynamic_pointer_cast<daedalus::IInfo>(vm.find_symbol_by_name("PC_ITMW_2H_SPECIAL_01")->get_instance());
+  require(plain && ore,"smithing: two live recipe infos are needed");
+  const auto previousPlain=plain->description,previousOre=ore->description;
+  const auto& title=vm.find_symbol_by_name("NAME_ITMW_2H_SPECIAL_01")->get_string();
+  auto& cost=*vm.find_symbol_by_name("PRINT_SMITH_2H_SPECIAL_01");
+  const auto previousCost=cost.get_string();
+  const auto beforeGi=vm.unsafe_get_gi(),beforeSelf=vm.global_self()->get_instance();
+  plain->description="stale recipe";
+  vm.push_int(0x12345678);
+  for(const auto* costText:{" (first cost)"," (new cost)"}) {
+    cost.set_string(costText);
+    world.script().useInteractive(matteo->handlePtr(),"SMITHWEAPON_S1");
+    require(plain->description==vm.find_symbol_by_name("NAME_ITMW_1H_COMMON_01")->get_string() &&
+            ore->description==title+costText,"smithing: refresh the current captions from the live recipe symbols");
+    }
+  require(vmSmith==(events ? 0u : 2u) && smithHero.get_instance()==hero && matteo->isAiQueueEmpty() &&
+          vm.global_self()->get_instance()==beforeSelf && vm.unsafe_get_gi()==beforeGi && vm.pop_int()==0x12345678 &&
+          vm.find_symbol_by_name("PLAYER_MOBSI_PRODUCTION")->get_int()==production,
+          "smithing: the NPC updates descriptions while preserving the caller context, queue and player menu");
+  cost.set_string(previousCost);
+  plain->description=previousPlain;
+  ore->description=previousOre;
   vm.remove_call_observer(observer);
 
   if(deep) {
