@@ -550,6 +550,234 @@ PlacementDefinitionRuntime::Definitions dragonIslandPlacement(daedalus::Daedalus
   call("B_KAPITELWECHSEL",{integer(6),integer(number("DRAGONISLAND_ZEN"))},true);
   return PlacementDefinitionRuntime::resolve(library,vm);
   }
+
+void runTeleportStation(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& function) {
+  const auto symbol = [&vm](std::string_view name) { return vm.find_symbol_by_name(name); };
+  const auto number = [&](std::string_view name) { return symbol(name)->get_int(); };
+  const auto set = [&](std::string_view name) { vm.set_int(vm.unsafe_get_gi(),symbol(name),0,number("TRUE")); };
+  const auto reference = [&](const char* name) { vm.push_reference(symbol(name)); };
+  const auto external = [&](const char* name) { vm.unsafe_call_external(symbol(name)); };
+  const auto helper = [&](const char* name) { vm.unsafe_call_bl(symbol(name)); };
+  const auto teleport = [&](const char* point) {
+    vm.push_reference(vm.global_hero());
+    reference(point);
+    external("AI_TELEPORT");
+    };
+  const auto record = [&](const char* topic,const char* entry) {
+    reference(topic);
+    reference("LOG_MISSION");
+    external("LOG_CREATETOPIC");
+    reference(topic);
+    reference("LOG_RUNNING");
+    external("LOG_SETTOPICSTATUS");
+    reference(topic);
+    reference(entry);
+    helper("B_LOGENTRY");
+    };
+  const auto experience = [&](const char* amount) {
+    reference(amount);
+    helper("B_GIVEPLAYERXP");
+    };
+
+  reference("$17837"); // spellFX_Teleport_RING
+  vm.push_reference(vm.global_hero());
+  vm.push_reference(vm.global_hero());
+  for(int i=0;i<3;++i)
+    vm.push_int(0);
+  reference("FALSE");
+  external("WLD_PLAYEFFECT");
+  reference("$17838"); // MFX_TELEPORT_CAST
+  external("SND_PLAY");
+  vm.push_reference(vm.global_hero());
+  external("NPC_CLEARAIQUEUE");
+  set("SCUSED_TELEPORTER");
+
+  struct Station {
+    const char* source;
+    const char* destination;
+    const char* visited;
+    const char* journalEntry;
+    };
+  const auto level = number("CURRENTLEVEL");
+  if(level==number("NEWWORLD_ZEN")) {
+    static constexpr Station stations[] = {
+      {"$17839","$17840","SCUSED_NW_TELEPORTSTATION_CITY","$17841"},
+      {"$17842","$17843","SCUSED_NW_TELEPORTSTATION_TAVERNE","$17844"},
+      {"$17845","$17846","SCUSED_NW_TELEPORTSTATION_MAYA","$17847"},
+      };
+    bool travelled = false;
+    for(const auto& station:stations) {
+      vm.push_reference(vm.global_hero());
+      reference(station.source);
+      external("NPC_GETDISTTOWP");
+      if(vm.pop_int()>=3000)
+        continue;
+      teleport(station.destination);
+      if(number(station.visited)==number("FALSE"))
+        record("TOPIC_ADDON_TELEPORTSNW",station.journalEntry);
+      set(station.visited);
+      travelled = true;
+      break;
+      }
+    if(!travelled)
+      teleport("$17848"); // MARKT
+    bool award = number("SCUSED_ALLNWTELEPORSTSTONES")==number("FALSE");
+    for(const auto& station:stations)
+      award &= number(station.visited)==number("TRUE");
+    if(award) {
+      set("SCUSED_ALLNWTELEPORSTSTONES");
+      experience("XP_ADDON_ALLNWTELEPORSTSTONES");
+      }
+    return;
+    }
+  if(level!=number("ADDONWORLD_ZEN"))
+    return;
+
+  static constexpr Station stations[] = {
+    {"$17849","$17850","SCUSED_ADW_TELEPORTSTATION_PORTALTEMPEL","$17851"},
+    {"$17852","$17853","SCUSED_ADW_TELEPORTSTATION_ADANOSTEMPEL","$17854"},
+    {"$17855","$17856","SCUSED_ADW_TELEPORTSTATION_SOUTHEAST","$17857"},
+    {"$17858","$17859","SCUSED_ADW_TELEPORTSTATION_SOUTHWEST","$17860"},
+    {"$17861","$17862","SCUSED_ADW_TELEPORTSTATION_PIRATES","$17863"},
+    {"$17870","$17871","SCUSED_ADW_TELEPORTSTATION_RAVENTELEPORT_OUT",nullptr},
+    };
+  for(const auto& station:stations) {
+    // The stock checks query the nearest waypoint for each row, including misses.
+    vm.push_reference(vm.global_hero());
+    external("NPC_GETNEARESTWP");
+    reference(station.source);
+    external("HLP_STRCMP");
+    if(!vm.pop_int())
+      continue;
+    teleport(station.destination);
+    if(station.journalEntry && number(station.visited)==number("FALSE")) {
+      record("TOPIC_ADDON_TELEPORTSADW",station.journalEntry);
+      experience("XP_AMBIENT");
+      }
+    if(std::string_view(station.visited)=="SCUSED_ADW_TELEPORTSTATION_PIRATES" &&
+       number("SCUSED_ADW_TELEPORTSTATION_PIRATES_JACKSMONSTER")==number("FALSE") &&
+       number("MIS_KROKOJAGD")==number("LOG_SUCCESS")) {
+      // Six literal inserts follow the stock pirate-camp quest guard.
+      auto pc = function.address()+1197u;
+      for(int i=0;i<6;++i) {
+        const auto spawn = readLiteralPlacement(vm,pc,function.name());
+        vm.push_int(int32_t(spawn.instance->index()));
+        vm.push_reference(spawn.point);
+        vm.unsafe_call_external(spawn.external);
+        }
+      set("SCUSED_ADW_TELEPORTSTATION_PIRATES_JACKSMONSTER");
+      }
+    set(station.visited);
+    return;
+    }
+  teleport("$17872"); // ADW_ENTRANCE
+  }
+
+bool runAddonNpcTrigger(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& function) {
+  const auto& name = function.name();
+  if(name=="EVT_TELEPORTSTATION_FUNC") {
+    runTeleportStation(vm,function);
+    return true;
+    }
+  const bool entrance = name=="ADW_ADANOSTEMPEL_STONEGRD_TRIGG_FUNC_01";
+  const bool rhademes = name=="ADW_ADANOSTEMPEL_STONEGRD_TRIGG_FUNC_02";
+  const bool portal = name=="ADW_PORTALTEMPEL_FOCUS_FUNC";
+  const bool library = name=="SC_COMESINTO_CANYONLIBRARY_FUNC";
+  if(!entrance && !rhademes && !portal && !library)
+    return false;
+
+  struct RestoreContext {
+    daedalus::DaedalusVm& vm;
+    std::shared_ptr<daedalus::DaedalusInstance> caller;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+    } restore{vm,vm.unsafe_get_gi()};
+  const auto symbol = [&vm](std::string_view name) { return vm.find_symbol_by_name(name); };
+  const auto truth = symbol("TRUE")->get_int();
+  const auto falsity = symbol("FALSE")->get_int();
+  auto* once = symbol(name+"_ONETIME");
+  const auto mark = [&](daedalus::DaedalusSymbol* flag) { vm.set_int(vm.unsafe_get_gi(),flag,0,truth); };
+  const auto sound = [&](const char* literal) {
+    vm.push_reference(symbol(literal));
+    vm.unsafe_call_external(symbol("SND_PLAY"));
+    };
+  const auto awaken = [&](daedalus::DaedalusSymbol* npc) {
+    vm.push_reference(npc);
+    vm.unsafe_call_bl(symbol("B_AWAKE_STONEGUARDIAN"));
+    };
+  const auto alive = [&](daedalus::DaedalusSymbol* npc) {
+    vm.push_reference(npc);
+    vm.unsafe_call_external(symbol("NPC_ISDEAD"));
+    return vm.pop_int()==falsity;
+    };
+
+  if(portal) {
+    vm.push_reference(vm.global_hero());
+    vm.push_int(int32_t(symbol("ITMI_FOCUS")->index()));
+    vm.push_int(1);
+    const bool inventoryResult = vm.unsafe_call_external(symbol("NPC_REMOVEINVITEMS"));
+    auto* count = symbol("TRIGGEREDTELEPORTERADW");
+    const auto activated = std::bit_cast<int32_t>(uint32_t(count->get_int())+1u);
+    vm.set_int(restore.caller,count,0,activated);
+    sound("$17873"); // MFX_TELEKINESIS_STARTINVEST
+    if(count->get_int()>=5)
+      mark(symbol("SC_ADW_ACTIVATEDALLTELEPORTSTONES"));
+    vm.push_reference(vm.global_hero());
+    vm.push_reference(symbol("$17874")); // ADW_PORTALTEMPEL_TELEPORTSTATION
+    vm.unsafe_call_external(symbol("NPC_GETDISTTOWP"));
+    if(vm.pop_int()<3000 && once->get_int()==falsity) {
+      auto* statue = symbol("STONEGUARDIAN_NAILEDPORTALADW1");
+      const auto actor = statue->get_instance();
+      vm.unsafe_set_gi(actor);
+      const bool sleeping = vm.get_int(actor,symbol("C_NPC.AIVAR"),61)==truth;
+      const bool stillAlive = alive(statue);
+      if(sleeping && stillAlive)
+        sound("$17875"); // THRILLJINGLE_02
+      awaken(statue);
+      mark(once);
+      }
+    if(inventoryResult)
+      (void)vm.pop_int(); // The original void trigger discards the removal result on return.
+    return true;
+    }
+
+  if(once->get_int()!=falsity)
+    return true;
+  if(entrance) {
+    static constexpr const char* statues[] = {"STONEGUARDIAN_ADANOSTEMPELENTRANCE_01","STONEGUARDIAN_ADANOSTEMPELENTRANCE_02",
+                                               "STONEGUARDIAN_ADANOSTEMPELENTRANCE_03","STONEGUARDIAN_ADANOSTEMPELENTRANCE_04"};
+    for(const auto* statue:statues)
+      awaken(symbol(statue));
+    bool anyoneAlive = false;
+    for(auto i=std::rbegin(statues);i!=std::rend(statues);++i)
+      anyoneAlive |= alive(symbol(*i));
+    if(anyoneAlive)
+      sound("$52007"); // THRILLJINGLE_02
+    for(const auto* victim:{"BDT_10400_ADDON_DEADBANDIT","BDT_10401_ADDON_DEADBANDIT"}) {
+      vm.push_int(int32_t(symbol(victim)->index()));
+      vm.unsafe_call_bl(symbol("B_KILLNPC"));
+      }
+    }
+  else if(rhademes) {
+    for(const auto* statue:{"STONEGUARDIAN_RHADEMES_14A","STONEGUARDIAN_RHADEMES_14D","STONEGUARDIAN_RHADEMES_14F"})
+      awaken(symbol(statue));
+    mark(symbol("SC_TOOKRHADEMESTRAP"));
+    }
+  else {
+    auto* beast = symbol("SHADOWBEAST_ADDON_FIRE_CANYONLIB");
+    if(alive(beast)) {
+      vm.push_reference(beast);
+      vm.unsafe_call_external(symbol("AI_STANDUP"));
+      const auto actor = beast->get_instance();
+      vm.unsafe_set_gi(actor);
+      vm.set_int(actor,symbol("C_NPC.AIVAR"),61,falsity);
+      sound("$52190"); // THRILLJINGLE_03
+      sound("$52191"); // GOL_Ambient_A2
+      }
+    }
+  mark(once);
+  return true;
+  }
+
 }
 
 void GameScript::invokeWorldTrigger(std::string_view fn) {
@@ -579,7 +807,7 @@ void GameScript::invokeWorldTrigger(std::string_view fn) {
         }
       return;
       }
-    if(runIslandSpawnTrigger(vm,*symbol))
+    if(runIslandSpawnTrigger(vm,*symbol) || runAddonNpcTrigger(vm,*symbol))
       return;
     }
   vm.call_function(symbol);

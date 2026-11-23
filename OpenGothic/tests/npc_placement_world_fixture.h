@@ -44,7 +44,25 @@ void khorinisCryptTriggers(World& world) {
               after-before==(name==names.back() ? 6u : 7u) && spawns.size()==after,
               "Khorinis crypt: each trigger inserts its wave only once through the selected executor");
       }
+    size_t repeatEffects=0;
+    vm.observe_externals([&](const auto&) { ++repeatEffects; });
+    for(const auto* name:{"ADW_ADANOSTEMPEL_STONEGRD_TRIGG_FUNC_01","ADW_ADANOSTEMPEL_STONEGRD_TRIGG_FUNC_02",
+                          "SC_COMESINTO_CANYONLIBRARY_FUNC"}) {
+      const auto* root=script.findSymbol(name);
+      auto* once=script.findSymbol(std::string(name)+"_ONETIME");
+      const auto previousOnce=once->get_int();
+      once->set_int(script.intSymbol("TRUE",-1));
+      size_t entries=0;
+      const auto before=vm.unsafe_get_gi();
+      vm.observe_instructions([&](const auto&) { entries+=vm.pc()==root->address(); });
+      script.invokeWorldTrigger(name);
+      vm.observe_instructions({});
+      require(entries==size_t(!native) && once->get_int()==script.intSymbol("TRUE",-1) && vm.unsafe_get_gi()==before,
+              "Addon triggers: preserve loaded one-time gates and route the selected executor");
+      once->set_int(previousOnce);
+      }
     vm.observe_externals({});
+    require(repeatEffects==0,"Addon triggers: previously used encounters have no effects");
 
     constexpr auto valley = "ENTER_OLDWORLD_FIRSTTIME_TRIGGER";
     constexpr auto addon = "ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC";
