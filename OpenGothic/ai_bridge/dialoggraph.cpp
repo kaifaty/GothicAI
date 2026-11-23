@@ -532,24 +532,18 @@ bool DialogGraph::onScript(daedalus::DaedalusSymbol& fn, int32_t& result) {
   auto* v = vm();
   if(v==nullptr || (!running && replaced.empty()))
     return false;
-  rt.ensureLifter();
-  auto& interp = interpreter(*v);
-  auto& resolver = interp.resolveProgram;
-  struct RestoreResolver {
-    decltype(storygraph::Interpreter::resolveProgram)& target;
-    decltype(storygraph::Interpreter::resolveProgram)  saved;
-    ~RestoreResolver() { target = std::move(saved); }
-    } restore{resolver,std::exchange(resolver,{})};
-  if(auto* mine = replaced.empty() ? nullptr : replacedProgram(*v,fn.index())) {
-    // the director's program in place of the scripts'
-    auto r = interp.run(*mine);
-    replacedRuns++;
-    if(!r.ok) {
-      runErrors++;
-      Log::e("[story] program for ",fn.name(),": ",r.error);
+  if(!replaced.empty()) {
+    rt.ensureLifter();
+    if(const auto* program = replacedProgram(*v,fn.index())) {
+      auto r = interpreter(*v).run(*program);
+      replacedRuns++;
+      if(!r.ok) {
+        runErrors++;
+        Log::e("[story] program for ",fn.name(),": ",r.error);
+        }
+      result = r.returned.type==storygraph::Value::Int ? r.returned.i : 0;
+      return true;
       }
-    result = r.returned.type==storygraph::Value::Int ? r.returned.i : 0;
-    return true;
     }
   if(!running)
     return false;
@@ -563,6 +557,8 @@ bool DialogGraph::onScript(daedalus::DaedalusSymbol& fn, int32_t& result) {
     runErrors += size_t(failed);
     return true;
     }
+  rt.ensureLifter();
+  auto& interp = interpreter(*v);
   const auto lift = [this,v](const daedalus::DaedalusSymbol& symbol) -> const storygraph::Program* {
     auto it = programs.find(symbol.index());
     if(it==programs.end()) {
