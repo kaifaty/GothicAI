@@ -2057,6 +2057,9 @@ void propertyCrimePerceptions(World& world,Npc& npc,Npc& hero) {
   const auto useMob=script.findFunction("B_ASSESSUSEMOB");
   const auto theftPc=vm.find_symbol_by_name("B_ASSESSTHEFT")->address();
   const auto useMobPc=vm.find_symbol_by_name("B_ASSESSUSEMOB")->address();
+  const auto mobPossessionPc=vm.find_symbol_by_name("C_ISUSEDMOBMYPOSSESSION")->address();
+  const auto itemPossessionPc=vm.find_symbol_by_name("C_ISTAKENITEMMYPOSSESSION")->address();
+  const auto thiefPolicyPc=vm.find_symbol_by_name("C_WANTTOATTACKTHIEF")->address();
   const auto attack=script.findFunction("ZS_ATTACK");
   const auto guard=script.findFunction("ZS_GUARD_PASSAGE");
   const auto hammer=script.findSymbolIndex("HOLY_HAMMER_MIS");
@@ -2065,6 +2068,7 @@ void propertyCrimePerceptions(World& world,Npc& npc,Npc& hero) {
   const auto theftCrime=script.intSymbol("CRIME_THEFT",-1);
   auto& hammerTaken=*vm.find_symbol_by_name("HAMMER_TAKEN");
   auto& possessionItem=*vm.find_symbol_by_name("C_ISTAKENITEMMYPOSSESSION.ITM");
+  auto& possessionRoom=*vm.find_symbol_by_name("C_ISTAKENITEMMYPOSSESSION.PORTALGUILD");
   auto& mobScratch=*vm.find_symbol_by_name("B_ASSESSUSEMOB.DETMOB");
   auto& aivar=npc.handle().aivar;
   auto& state=Contract::aiState(npc).funcIni;
@@ -2074,6 +2078,7 @@ void propertyCrimePerceptions(World& world,Npc& npc,Npc& hero) {
   auto* savedMob=hero.detectedMob();
   const auto savedItem=vm.global_item()->get_instance();
   const auto savedPossessionItem=possessionItem.get_instance();
+  const auto savedPossessionRoom=possessionRoom.get_int();
   const int savedHammerTaken=hammerTaken.get_int();
   const std::string savedMobScratch(mobScratch.get_string());
   const auto savedHeroGuild=hero.handle().guild;
@@ -2082,6 +2087,11 @@ void propertyCrimePerceptions(World& world,Npc& npc,Npc& hero) {
           world.guildOfRoom(hero.portalName())==int32_t(GIL_PUBLIC),
           "property crime: the fixture has a real item and a visible player in a public room");
   const auto savedOwner=item->handle().owner;
+  const auto savedOwnerGuild=item->handle().owner_guild;
+  const auto savedItemFlags=item->handle().flags;
+  const auto dropped=uint32_t(script.intSymbol("ITEM_DROPPED",0));
+  require(dropped!=0 && script.guildAttitude(npc,npc)==ATT_FRIENDLY,
+          "property crime: dropped items and the witness's friendly guild are available");
   Interactive* chest=nullptr;
   Interactive* furniture=nullptr;
   for(uint32_t id=0; auto* mob=world.mobsiById(id); ++id) {
@@ -2092,18 +2102,25 @@ void propertyCrimePerceptions(World& world,Npc& npc,Npc& hero) {
     }
   require(chest && furniture,"property crime: the fixture needs a real chest and a separate interactive");
 
-  enum class Site { Take, GuardTake, Unowned, UseChest, UseFurniture };
-  for(const auto site:{Site::Take,Site::GuardTake,Site::Unowned,Site::UseChest,Site::UseFurniture}) {
+  enum class Site { Take, GuardTake, Unowned, Dropped, RoomOwned, GuildOwned, UseChest, UseFurniture };
+  for(const auto site:{Site::Take,Site::GuardTake,Site::Unowned,Site::Dropped,Site::RoomOwned,Site::GuildOwned,
+                       Site::UseChest,Site::UseFurniture}) {
     const bool usingMob=site==Site::UseChest || site==Site::UseFurniture;
-    const bool attacks=site==Site::Take || site==Site::UseChest;
+    const bool owned=site==Site::Take || site==Site::GuardTake;
+    const bool attacks=site==Site::Take || site==Site::UseChest || site==Site::RoomOwned || site==Site::GuildOwned;
     const bool remembers=attacks || site==Site::GuardTake;
+    const bool personallyChecked=owned || site==Site::Unowned;
+    const int32_t roomGuild=site==Site::RoomOwned ? int32_t(npc.handle().guild)
+                           : site==Site::GuildOwned ? int32_t(GIL_NONE) : int32_t(GIL_PUBLIC);
+    world.assignRoomToGuild("FARM01",roomGuild);
+    require(world.guildOfRoom(hero.portalName())==roomGuild,"property crime: both trials use the intended occupied room");
     const auto perc=usingMob ? PERC_ASSESSUSEMOB : PERC_ASSESSTHEFT;
     const auto callback=usingMob ? useMob : theft;
     const auto pc=usingMob ? useMobPc : theftPc;
     auto* mob=site==Site::UseChest ? chest : furniture;
-    hero.handle().guild=usingMob ? uint32_t(GIL_BDT) : uint32_t(GIL_NONE);
-    require((script.guildAttitude(npc,hero)==ATT_FRIENDLY)!=usingMob,
-            "property crime: theft checks personal ownership and mob use checks the public room");
+    hero.handle().guild=personallyChecked ? GIL_NONE : GIL_BDT;
+    require((script.guildAttitude(npc,hero)==ATT_FRIENDLY)==personallyChecked,
+            "property crime: friendly guilds check ownership before the general property rule");
     std::vector<std::string> original;
     for(bool native:{false,true}) {
       enabled=native;
@@ -2118,15 +2135,23 @@ void propertyCrimePerceptions(World& world,Npc& npc,Npc& hero) {
       npc.setPerceptionEnable(perc,callback.ptr);
       hammerTaken.set_int(0);
       mobScratch.set_string("");
-      item->handle().owner=site==Site::Unowned ? -1 : int32_t(npc.instanceSymbol());
+      possessionRoom.set_int(-1);
+      item->handle().owner=owned ? int32_t(npc.instanceSymbol()) : -1;
+      item->handle().owner_guild=site==Site::GuildOwned ? int32_t(npc.handle().guild) : int32_t(GIL_NONE);
+      item->handle().flags=daedalus::ItemFlag((uint32_t(savedItemFlags)&~dropped) | (site==Site::Dropped || site==Site::Take ? dropped : 0u));
       script.setInstanceItem(hero,hammer);
       hero.setDetectedMob(usingMob ? mob : nullptr);
-      size_t bytecode=0;
-      vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==pc; });
+      size_t bytecode=0,possessionCode=0,policyCode=0;
+      vm.observe_instructions([&](const auto&) {
+        bytecode+=vm.pc()==pc;
+        possessionCode+=vm.pc()==(usingMob ? mobPossessionPc : itemPossessionPc);
+        policyCode+=vm.pc()==thiefPolicyPc;
+        });
       const bool delivered=npc.perceptionProcess(hero,nullptr,npc.qDistTo(hero),perc);
       vm.observe_instructions({});
       const auto* next=npc.aiQueueFront();
-      require(delivered && bytecode==(native ? 0u : 1u) && aivar[1]==(remembers ? theftCrime : 0),
+      require(delivered && bytecode==size_t(!native) && possessionCode==size_t(!native && site!=Site::Unowned) &&
+              policyCode==size_t(!native && remembers) && aivar[1]==(remembers ? theftCrime : 0),
               "property crime: each route uses the selected executor and records the original crime");
       if(attacks) {
         require(next && next->act==AI_StartState && next->func==attack && next->target==&hero &&
@@ -2136,14 +2161,15 @@ void propertyCrimePerceptions(World& world,Npc& npc,Npc& hero) {
         require(next && next->act==AI_Wait && npc.target()==nullptr && npc.hasPerc(perc),
                 "property crime: a guard report, unrelated item and non-chest preserve the queue");
         }
-      require(hammerTaken.get_int()==(!usingMob && site!=Site::Unowned ? 1 : 0) &&
-              (!usingMob || mobScratch.get_string()==mob->schemeName()),
+      require(hammerTaken.get_int()==int32_t(owned) && (!usingMob || mobScratch.get_string()==mob->schemeName()) &&
+              (!usingMob && site!=Site::Unowned ? possessionRoom.get_int()==roomGuild : possessionRoom.get_int()==-1),
               "property crime: the ownership quest flag and detected scheme match the source");
       auto queue=activityQueue(npc);
       if(native) require(original==queue,"property crime: action queues match the VM");
       else original=std::move(queue);
       }
     }
+  world.assignRoomToGuild("FARM01",int32_t(GIL_PUBLIC));
   enabled=wasEnabled;
   state=savedState;
   std::copy(savedAivar.begin(),savedAivar.end(),aivar);
@@ -2151,9 +2177,12 @@ void propertyCrimePerceptions(World& world,Npc& npc,Npc& hero) {
   hero.setDetectedMob(savedMob);
   hero.handle().guild=savedHeroGuild;
   item->handle().owner=savedOwner;
+  item->handle().owner_guild=savedOwnerGuild;
+  item->handle().flags=savedItemFlags;
   hero.delItem(hammer,1);
   vm.global_item()->set_instance(savedItem);
   possessionItem.set_instance(savedPossessionItem);
+  possessionRoom.set_int(savedPossessionRoom);
   hammerTaken.set_int(savedHammerTaken);
   mobScratch.set_string(savedMobScratch);
   std::puts("Property crime: theft, guard report and chest use match the VM");

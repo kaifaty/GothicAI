@@ -514,6 +514,12 @@ void GameScript::loadNativeHumanPerceptions() {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
   using Actor = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("C_ISUSEDMOBMYPOSSESSION",std::function<int32_t(Actor,Actor)>{
+    [this](const Actor& self,const Actor& other) { return usedMobIsPossession(self,other); }},enabled);
+  vm.override_function("C_ISTAKENITEMMYPOSSESSION",std::function<int32_t(Actor,Actor,std::shared_ptr<daedalus::IItem>)>{
+    [this](const Actor& self,const Actor& other,const auto& item) { return takenItemIsPossession(self,other,item); }},enabled);
+  vm.override_function("C_WANTTOATTACKTHIEF",std::function<int32_t(Actor,Actor)>{
+    [this](const Actor& self,const Actor& other) { return wantsToAttackThief(self,other); }},enabled);
   vm.override_function("B_GHOSTSPECIALDAMAGE",std::function<int32_t(Actor,Actor)>{[this](const Actor& attacker,const Actor& defender) {
     ghostSpecialDamage(attacker,defender);
     return 0;
@@ -773,11 +779,13 @@ bool GameScript::wantsToAttackThief(const std::shared_ptr<daedalus::INpc>& self,
                                    const std::shared_ptr<daedalus::INpc>& other) {
   findSymbol("C_WANTTOATTACKTHIEF.OTH")->set_instance(other);
   findSymbol("C_WANTTOATTACKTHIEF.SLF")->set_instance(self);
-  const auto guild = self->guild;
-  constexpr size_t dontAttackThief = 55;
+  const auto guild = self ? self->guild : int32_t(GIL_NONE);
+  constexpr size_t dontAttackThief = 55; // AIV_IGNORE_THEFT
   if(guild==GIL_DJG || guild==GIL_STRF || guild==GIL_DMT ||
-     self->aivar[dontAttackThief]==1 || self->aivar[0]==findSymbol("FIGHT_LOST")->get_int() ||
-     (self->type==NpcType::G2_FRIEND && npc_isplayer(other)))
+     (self && (self->aivar[dontAttackThief]==1 || self->aivar[0]==findSymbol("FIGHT_LOST")->get_int())))
+    return false;
+  const bool player = npc_isplayer(other);
+  if(self && self->type==NpcType::G2_FRIEND && player)
     return false;
   return !isGateGuard(self);
   }
@@ -1152,6 +1160,43 @@ void GameScript::runCheerFight() {
   ai_playani(self,upset ? "T_WATCHFIGHT_OHNO" : "T_WATCHFIGHT_YEAH");
   }
 
+bool GameScript::usedMobIsPossession(const std::shared_ptr<daedalus::INpc>& self,
+                                     const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("C_ISUSEDMOBMYPOSSESSION.OTH")->set_instance(other);
+  findSymbol("C_ISUSEDMOBMYPOSSESSION.SLF")->set_instance(self);
+  const auto witness = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto user = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  if(npc_isdetectedmobownedbynpc(user,witness))
+    return true;
+  const bool publicRoom = wld_getplayerportalguild()==int32_t(GIL_PUBLIC);
+  const bool bothered = isBotheredByPlayerRoomGuild(witness);
+  return publicRoom || bothered;
+  }
+
+bool GameScript::takenItemIsPossession(const std::shared_ptr<daedalus::INpc>& self,
+                                       const std::shared_ptr<daedalus::INpc>& other,
+                                       const std::shared_ptr<daedalus::IItem>& item) {
+  findSymbol("C_ISTAKENITEMMYPOSSESSION.ITM")->set_instance(item);
+  findSymbol("C_ISTAKENITEMMYPOSSESSION.OTH")->set_instance(other);
+  findSymbol("C_ISTAKENITEMMYPOSSESSION.SLF")->set_instance(self);
+  findSymbol("C_ISTAKENITEMMYPOSSESSION.PORTALGUILD")->set_int(wld_getplayerportalguild());
+  if(npc_ownedbynpc(item,self)) {
+    if(hlp_isitem(item,int(findSymbolIndex("HOLY_HAMMER_MIS"))))
+      findSymbol("HAMMER_TAKEN")->set_int(1);
+    return true;
+    }
+  const auto dropped = uint32_t(findSymbol("ITEM_DROPPED")->get_int());
+  if(item && (uint32_t(item->flags)&dropped)==dropped)
+    return false;
+  const bool publicRoom = wld_getplayerportalguild()==int32_t(GIL_PUBLIC);
+  const auto witness = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const bool bothered = isBotheredByPlayerRoomGuild(witness);
+  if(publicRoom || bothered)
+    return true;
+  const auto guild = self ? int32_t(self->guild) : int32_t(GIL_NONE);
+  return wld_getguildattitude(guild,item ? item->owner_guild : int32_t(GIL_NONE))==ATT_FRIENDLY;
+  }
+
 void GameScript::runPropertyCrime(bool usingMob) {
   const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
@@ -1168,8 +1213,7 @@ void GameScript::runPropertyCrime(bool usingMob) {
     if(!personallyOwned)
       return;
     }
-  const bool possession = usingMob ? vm.call_function<int32_t>("C_ISUSEDMOBMYPOSSESSION",self,other())!=0
-                                   : vm.call_function<int32_t>("C_ISTAKENITEMMYPOSSESSION",self,other(),item())!=0;
+  const bool possession = usingMob ? usedMobIsPossession(self,other()) : takenItemIsPossession(self,other(),item());
   if(!possession)
     return;
   if(!npc_canseenpc(self,other())) {
@@ -1184,7 +1228,7 @@ void GameScript::runPropertyCrime(bool usingMob) {
     if(scheme!="CHESTSMALL" && scheme!="CHESTBIG")
       return;
     }
-  if(vm.call_function<int32_t>("C_WANTTOATTACKTHIEF",self,other())==0) {
+  if(!wantsToAttackThief(self,other())) {
     if(isGateGuard(self))
       memorizePlayerCrime(self,other(),findSymbol("CRIME_THEFT")->get_int());
     return;

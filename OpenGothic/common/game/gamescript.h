@@ -484,6 +484,9 @@ class GameScript final : public GameRules {
     void runCompanionFightSound(bool follower);
     int32_t diegoRouteBoundary(int32_t tolerance);
     void runPropertyCrime(bool usingMob);
+    bool usedMobIsPossession(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool takenItemIsPossession(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
+                               const std::shared_ptr<daedalus::IItem>& item);
     void runMoveMobReaction();
     void runSurpriseReaction();
     void runMurderReaction();
