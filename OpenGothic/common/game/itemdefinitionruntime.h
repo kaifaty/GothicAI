@@ -5,12 +5,17 @@
 #include "daedalus/vm.h"
 #include "game/rpgvocabulary.h"
 
+#include <optional>
 #include <unordered_map>
 
 namespace ItemDefinitionRuntime {
-struct RestoreEffect {
+struct RestoreChange {
   Attribute attribute;
   uint32_t amountSymbol;
+  };
+struct RestoreEffect {
+  RestoreChange first;
+  std::optional<RestoreChange> second;
   };
 struct ArmorSetEffect {
   uint32_t armorFlag;

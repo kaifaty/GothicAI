@@ -77,11 +77,13 @@ bool ItemDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::shar
   }
 
 void ItemDefinitionRuntime::registerStockRestoreEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
-  // Each callback changes one of SELF's current attributes and returns.
+  // These callbacks make one or two constant changes to the current attributes of SELF.
   struct StockRestore {
     std::string_view callback;
     Attribute attribute;
     std::string_view amount;
+    Attribute secondAttribute=ATR_HITPOINTS;
+    std::string_view secondAmount={};
     };
   static constexpr StockRestore stock[] = {
     {"USE_SHELLFLESH",       ATR_HITPOINTS,  "HP_SHELLFLESH"},
@@ -120,14 +122,26 @@ void ItemDefinitionRuntime::registerStockRestoreEffects(Definitions& definitions
     {"USE_SCHAFSWURST",      ATR_HITPOINTS,  "HP_SAUSAGE"},
     {"USE_HEALHILDA",        ATR_HITPOINTS,  "HP_ESSENZ"},
     {"USE_HEALRANDOLPH",     ATR_HITPOINTS,  "HP_ESSENZ"},
+    {"USE_BEER",             ATR_HITPOINTS,  "HP_BEER",      ATR_MANA,      "MANA_BEER"},
+    {"USE_BOOZE",            ATR_HITPOINTS,  "HP_BOOZE",     ATR_MANA,      "MANA_BOOZE"},
+    {"USE_WINE",             ATR_HITPOINTS,  "HP_WINE",      ATR_MANA,      "MANA_WINE"},
+    {"USE_MILK",             ATR_HITPOINTS,  "HP_MILK",      ATR_MANA,      "MANA_MILK"},
+    {"USE_BLUEPLANT",        ATR_MANA,       "MANA_BLUEPLANT", ATR_HITPOINTS, "HP_BLUEPLANT"},
     };
-  for(const auto& [callback,attribute,amount] : stock) {
-    const auto* function = program.find_symbol_by_name(callback);
-    const auto* value = program.find_symbol_by_name(amount);
+  for(const auto& row : stock) {
+    const auto* function = program.find_symbol_by_name(row.callback);
+    const auto* value = program.find_symbol_by_name(row.amount);
     if(function==nullptr || value==nullptr)
-      throw std::runtime_error("stock item restore: missing symbol for "+std::string(callback));
-    if(!definitions.restoreEffects.emplace(function->index(),RestoreEffect{attribute,value->index()}).second)
-      throw std::runtime_error("stock item restore: duplicate callback "+std::string(callback));
+      throw std::runtime_error("stock item restore: missing symbol for "+std::string(row.callback));
+    RestoreEffect effect{{row.attribute,value->index()},{}};
+    if(!row.secondAmount.empty()) {
+      const auto* second = program.find_symbol_by_name(row.secondAmount);
+      if(second==nullptr)
+        throw std::runtime_error("stock item restore: missing second dose for "+std::string(row.callback));
+      effect.second = RestoreChange{row.secondAttribute,second->index()};
+      }
+    if(!definitions.restoreEffects.emplace(function->index(),effect).second)
+      throw std::runtime_error("stock item restore: duplicate callback "+std::string(row.callback));
     }
   }
 

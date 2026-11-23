@@ -129,36 +129,50 @@ void stockItemRestoreCoverage(GameScript& script) {
   const auto& effects=NpcDefinitionContract::items(script).restoreEffects;
   const auto self=vm.find_symbol_by_name("SELF")->index();
   const auto change=vm.find_symbol_by_name("NPC_CHANGEATTRIBUTE")->index();
-  size_t health=0,mana=0;
+  size_t health=0,mana=0,paired=0;
   for(const auto& fn:vm.symbols()) {
     if(!fn.name().starts_with("USE") || fn.type()!=Type::FUNCTION || fn.rtype()!=Type::VOID ||
        !fn.is_const() || fn.is_external() || fn.address()>=vm.size())
       continue;
     auto pc=fn.address();
-    std::array<daedalus::DaedalusInstruction,5> ops;
+    std::array<daedalus::DaedalusInstruction,9> ops{};
     for(auto& op:ops) {
       if(pc>=vm.size()) break;
       op=vm.instruction_at(pc);
       pc+=op.size;
+      if(op.op==Op::RSR) break;
       }
-    if(ops[0].op!=Op::PUSHVI || ops[0].symbol!=self || ops[1].op!=Op::PUSHV || ops[2].op!=Op::PUSHV ||
-       ops[3].op!=Op::BE || ops[3].symbol!=change || ops[4].op!=Op::RSR)
+    const auto changeAt=[&](size_t from) {
+      return ops[from].op==Op::PUSHVI && ops[from].symbol==self && ops[from+1].op==Op::PUSHV &&
+             ops[from+2].op==Op::PUSHV && ops[from+3].op==Op::BE && ops[from+3].symbol==change;
+      };
+    const bool single=ops[4].op==Op::RSR;
+    if(!changeAt(0) || (!single && (!changeAt(4) || ops[8].op!=Op::RSR)))
       continue;
-    const auto* attr=vm.find_symbol_by_index(ops[1].symbol);
-    const auto* dose=vm.find_symbol_by_index(ops[2].symbol);
-    require(attr && dose && attr->is_const() && dose->is_const() && attr->type()==Type::INT && dose->type()==Type::INT &&
-            attr->count()==1 && dose->count()==1 && dose->get_int()>0,
-            "stock restores: both arguments must be scalar constants and the dose positive");
-    const auto value=attr->get_int();
-    require(value==ATR_HITPOINTS || value==ATR_MANA,"stock restores: the callback restores a current attribute");
     const auto effect=effects.find(fn.index());
-    require(effect!=effects.end() && effect->second.attribute==value && effect->second.amountSymbol==dose->index(),
-            ("stock restores: exact callback and argument match for "+fn.name()).c_str());
-    health+=value==ATR_HITPOINTS;
-    mana+=value==ATR_MANA;
+    require(effect!=effects.end() && effect->second.second.has_value()!=single,
+            ("stock restores: exact number of changes for "+fn.name()).c_str());
+    const auto check=[&](size_t from, const ItemDefinitionRuntime::RestoreChange& step) {
+      const auto* attr=vm.find_symbol_by_index(ops[from+1].symbol);
+      const auto* dose=vm.find_symbol_by_index(ops[from+2].symbol);
+      require(attr && dose && attr->is_const() && dose->is_const() && attr->type()==Type::INT && dose->type()==Type::INT &&
+              attr->count()==1 && dose->count()==1 && dose->get_int()>0,
+              "stock restores: both arguments must be scalar constants and the dose positive");
+      const auto value=attr->get_int();
+      require((value==ATR_HITPOINTS || value==ATR_MANA) && step.attribute==value && step.amountSymbol==dose->index(),
+              ("stock restores: exact attribute and dose for "+fn.name()).c_str());
+      };
+    check(0,effect->second.first);
+    if(effect->second.second) {
+      check(4,*effect->second.second);
+      ++paired;
+      } else {
+      health+=effect->second.first.attribute==ATR_HITPOINTS;
+      mana+=effect->second.first.attribute==ATR_MANA;
+      }
     }
-  require(effects.size()==health+mana && health==29 && mana==7,
-          "stock restores: cover exactly all 29 health and 7 mana callbacks and no others");
+  require(effects.size()==health+mana+paired && health==29 && mana==7 && paired==5,
+          "stock restores: cover all 36 single and five paired restorations in stock instruction order");
   }
 
 auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& reserved, bool native) {
@@ -580,7 +594,8 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
       phaseCalls+=symbol.name().starts_with("ZS_UNCONSCIOUS");
       rewards+=symbol.name()=="B_GIVEPLAYERXP";
       minimalCalls+=symbol.name()=="PERCEPTION_SET_MINIMAL";
-      restoreCalls+=symbol.name().starts_with("USEITPO_HEALTH_") || symbol.name()=="USEITPO_MANA_01" || symbol.name()=="USE_CHEESE";
+      restoreCalls+=symbol.name().starts_with("USEITPO_HEALTH_") || symbol.name()=="USEITPO_MANA_01" ||
+                    symbol.name()=="USE_CHEESE" || symbol.name()=="USE_BEER" || symbol.name()=="USE_BLUEPLANT";
       });
 
     require(Settings::physicsFlags().meleeHealInterrupt,"health potions: the fixture uses deferred potion effects");
@@ -622,12 +637,21 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
       }
     require(Settings::physicsFlags().foodOverTime,"item restores: the fixture uses gradual food effects");
     npc->handle().attribute[ATR_HITPOINTS]=20;
-    const auto [cheese,initialCheese]=startUse("ITFO_CHEESE");
-    Contract::finishItemUseAnimation(*npc);
-    const auto& pool=Contract::foodPool(*npc);
-    require(npc->attribute(ATR_HITPOINTS)==20 && pool.hp==15 && pool.mana==0 && pool.remaining==Healing::FoodDuration &&
-            npc->itemCount(cheese)==initialCheese,"item restores: food adds its dose to the existing gradual pool");
-    require(restoreCalls==(native ? 0u : potionUse.size()+1),"item restores: only fallback executes the callback bodies");
+    npc->handle().attribute[ATR_MANA]=20;
+    const std::array foodUse={std::tuple{"ITFO_CHEESE",15,0},std::tuple{"ITFO_BEER",3,1},std::tuple{"ITPL_BLUEPLANT",5,5}};
+    int hp=0,mana=0;
+    for(const auto& [food,healthDose,manaDose]:foodUse) {
+      const auto [id,initialItems]=startUse(food);
+      Contract::finishItemUseAnimation(*npc);
+      hp+=healthDose;
+      mana+=manaDose;
+      const auto& pool=Contract::foodPool(*npc);
+      require(npc->attribute(ATR_HITPOINTS)==20 && npc->attribute(ATR_MANA)==20 &&
+              pool.hp==hp && pool.mana==mana && pool.remaining==Healing::FoodDuration &&
+              npc->itemCount(id)==initialItems,"item restores: food adds both ordered doses to the gradual pool and consumes once");
+      }
+    require(restoreCalls==(native ? 0u : potionUse.size()+foodUse.size()),
+            "item restores: only fallback executes the callback bodies");
     vm.global_self()->set_instance(previousSelf);
     std::copy(attributes.begin(),attributes.end(),npc->handle().attribute);
     npc->changeAttribute(ATR_HITPOINTS,-npc->attribute(ATR_HITPOINTS),true);
