@@ -426,13 +426,15 @@ void guardActivityWorld(Gothic& gothic) {
   std::swap(Contract::activities(script),empty);
   checkPolled(true);
 
-  // This STAND user still runs the original AI_GotoFP with events enabled.
+  // Exercise an original AI_GotoFP alongside the guard's event-driven reservation.
   EventActor dementor=guard;
   dementor.state="ZS_STAND_DEMENTOR";
   dementor.phases=activityPhases(script,dementor.state.c_str());
   first.setSimTier(NpcSimTier::Full);
   second.setSimTier(NpcSimTier::Full);
   auto scriptSelect = [&](Npc& npc,EventActor& actor) {
+    auto& events=Contract::activityEventsOn(script);
+    const bool previous=std::exchange(events,false);
     test.start(actor,wp->position(),&npc,false);
     npc.attachToPoint(wp);
     npc.updateTransform();
@@ -440,6 +442,7 @@ void guardActivityWorld(Gothic& gothic) {
     activityDrain(npc);
     const auto loops=calls.phase(npc,actor.state+"_LOOP");
     Contract::tickRoutine(npc);
+    events=previous;
     require(calls.phase(npc,actor.state+"_LOOP")==loops+1 && npc.aiQueueFront() && npc.aiQueueFront()->point==post &&
             npc.aiQueueFront()->s0.empty(),"the original VM Loop selected the harbour post through AI_GotoFP");
     };
