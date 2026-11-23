@@ -79,7 +79,7 @@
 void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
                       void (*placement)(World&), void (*placementDisabled)(World&), void (*activities)(World&));
 #include "npc_world_contract_access.h"
-
+#include "storygraph/eval.h"
 namespace {
 
 void require(bool condition, const char* message) {

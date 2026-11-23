@@ -1129,7 +1129,8 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
     }
   else if(npc!=nullptr && ((sym!=nullptr && (invokeNativeRoomPerception(*sym,phase) ||
                                             invokeNativeMonsterPerception(*sym,phase) ||
-                                            invokeNativeRoutineReaction(*npc,*sym,phase))) ||
+                                            invokeNativeRoutineReaction(*npc,*sym,phase) ||
+                                            invokeNativeStatusPerception(*npc,*sym,phase))) ||
                            invokeNativeHumanPerception(fn,phase))) {
     // The perception ran in the engine.
     }
@@ -1180,6 +1181,10 @@ int GameScript::invokeMana(Npc &npc, Npc* target, int mana) {
   ScopeVar self (*vm.global_self(),  npc.handlePtr());
   ScopeVar other(*vm.global_other(), target != nullptr ? target->handlePtr() : nullptr);
 
+  if(usesNativeShrinkSpell(npc.activeWeapon()))
+    return runShrinkMana(npc,mana,false);
+  if(const auto result=runStockSpellMana(npc,mana))
+    return *result;
   return vm.call_function<int>(fn,mana);
   }
 
@@ -1191,6 +1196,8 @@ int GameScript::invokeManaRelease(Npc &npc, Npc* target, int mana) {
   ScopeVar self (*vm.global_self(),  npc.handlePtr());
   ScopeVar other(*vm.global_other(), target != nullptr ? target->handlePtr() : nullptr);
 
+  if(usesNativeShrinkSpell(npc.activeWeapon()))
+    return runShrinkMana(npc,mana,true);
   return vm.call_function<int>(fn,mana);
   }
 
@@ -1206,6 +1213,12 @@ void GameScript::invokeSpell(Npc &npc, Npc* target, Item &it) {
   ScopeVar self (*vm.global_self(),  npc.handlePtr());
   ScopeVar other(*vm.global_other(), target != nullptr ? target->handlePtr() : nullptr);
   try {
+    if(fn->name()=="SPELL_CAST_SHRINK" && usesNativeShrinkSpell(&it)) {
+      castShrink(npc,target);
+      return;
+      }
+    if(runStockSpellCast(npc,fn->name(),splLevel))
+      return;
     if(fn->count()==1) {
       // this is a leveled spell
       vm.call_function<void>(fn, splLevel);

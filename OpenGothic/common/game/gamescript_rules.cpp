@@ -6,9 +6,13 @@
 #include "gothic.h"
 
 #include "world/bodytraces.h"
+#include "world/objects/item.h"
 #include "world/objects/npc.h"
 
 #include <algorithm>
+#include <bit>
+#include <stdexcept>
+#include <variant>
 
 std::string_view GameScript::symbolName(size_t id) {
   if(auto* symbol = findSymbol(id))
@@ -2262,6 +2266,462 @@ void GameScript::startNpcAttack(const std::shared_ptr<daedalus::INpc>& attacker,
   findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self());
   const auto mustStand = ActivityDefinitions::bodyStateContains(npc_getbodystate(self()),BS_LIE);
   ai_startstate(self(),int(ZS_Attack),mustStand ? 1 : 0,"");
+  }
+
+bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  enum class Kind { Inflate, Drain, Swarm };
+  struct TimedSpell {
+    Kind kind;
+    std::string_view state, restart, spellId, duration, damage, victimLoop, victimTransition;
+    size_t lastSecond;
+    };
+  static constexpr TimedSpell spells[] = {
+    {Kind::Inflate,"ZS_INFLATE","B_RESTARTINFLATE","SPL_INFLATE","SPL_TIME_INFLATE","SPL_INFLATE_DAMAGE",
+     "S_INFLATE_VICTIM","T_STAND_2_INFLATE_VICTIM",77},
+    {Kind::Drain,"ZS_SUCKENERGY","B_RESTARTSUCKENERGY","SPL_SUCKENERGY","SPL_TIME_SUCKENERGY","SPL_SUCKENERGY_DAMAGE",
+     "S_SUCKENERGY_VICTIM","T_STAND_2_SUCKENERGY_VICTIM",79},
+    {Kind::Swarm,"ZS_SWARM","B_RESTARTSWARM","SPL_SWARM","SPL_TIME_SWARM","SPL_SWARM_DAMAGE",
+     "S_SWARM_VICTIM","T_STAND_2_SWARM_VICTIM",78},
+    };
+  const std::string_view name = symbol.name();
+  const auto* spell = std::find_if(std::begin(spells),std::end(spells),[&](const auto& s) {
+    return name.starts_with(s.state) || name==s.restart;
+    });
+  if(spell==std::end(spells))
+    return false;
+
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return vm.global_other()->get_instance(); };
+  const auto number = [&](std::string_view key) { return findSymbol(key)->get_int(); };
+  const auto enableMagic = [&](std::string_view callback) {
+    npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction(callback).ptr));
+    };
+  const auto playTransition = [&] {
+    findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self);
+    findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(BS_UNCONSCIOUS);
+    if(!ActivityDefinitions::bodyStateContains(npc_getbodystate(self),BS_UNCONSCIOUS))
+      ai_playanibs(self,spell->victimTransition,BS_UNCONSCIOUS);
+    };
+  const bool drain = spell->kind==Kind::Drain;
+  result = 0;
+  if(name==spell->restart) {
+    if(npc_getlasthitspellid(self)==number(spell->spellId)) {
+      npc_setstatetime(self,0);
+      if(drain)
+        ai_playani(self,spell->victimTransition);
+      }
+    return true;
+    }
+  auto& lastSecond = self->aivar[spell->lastSecond];
+  const auto phase = name.substr(spell->state.size());
+  if(phase.empty()) {
+    enableMagic(spell->restart);
+    npc_stopani(self,spell->victimLoop);
+    if(spell->kind!=Kind::Inflate) {
+      npc_clearaiqueue(self);
+      ai_standup(self);
+      }
+    if(!drain)
+      playTransition();
+    lastSecond = drain ? 1 : 0;
+    if(drain)
+      findSymbol("TEMP_SUCKENERGY_DISTTOPLAYER")->set_int(npc_getdisttoplayer(self));
+    return true;
+    }
+  if(phase=="_END")
+    return true;
+  if(phase!="_LOOP")
+    return false;
+
+  const auto seconds = npc_getstatetime(self);
+  // Drain remembers the original distance to HERO, shared by victims in the script.
+  const bool approachedHero = drain && number("TEMP_SUCKENERGY_DISTTOPLAYER")>=int32_t(uint32_t(npc_getdisttoplayer(self))+100u);
+  if(approachedHero || seconds>number(spell->duration)) {
+    enableMagic("B_ASSESSMAGIC");
+    npc_clearaiqueue(self);
+    ai_standup(self);
+    if(self->guild<int32_t(GIL_SEPERATOR_HUM))
+      vm.call_function<void>("B_ASSESSDAMAGE");
+    else
+      npc_settempattitude(self,ATT_HOSTILE);
+    result = LOOP_END;
+    return true;
+    }
+  result = LOOP_CONTINUE;
+  if(seconds==lastSecond)
+    return true;
+
+  std::string_view line;
+  if(spell->kind==Kind::Inflate) {
+    static constexpr float fatness[] = {1,3,8,12,9,15,18,11,15,13,12,10,8,5,6,4,2,1,1};
+    if(seconds>0 && seconds<=int(std::size(fatness)))
+      mdl_setmodelfatness(self,fatness[seconds-1]);
+    switch(seconds) {
+      case 5: line="$Aargh_1"; break;
+      case 8: line="$Aargh_2"; break;
+      case 14: line="$Aargh_3"; break;
+      }
+    }
+  else if(spell->kind==Kind::Swarm) {
+    switch(seconds) {
+      case 2: line="$RunAway"; break;
+      case 6: line="$Aargh_2"; break;
+      case 7: line="$Aargh_3"; break;
+      case 8: line="$Aargh_1"; break;
+      }
+    }
+  else if(seconds==0) {
+    playTransition();
+    wld_playeffect("spellFX_SuckEnergy_BloodFly",self,vm.global_hero()->get_instance(),0,0,0,0);
+    }
+  if(!line.empty())
+    vm.call_function<void>("B_SAY",self,other(),line);
+
+  lastSecond = npc_getstatetime(self);
+  const auto hp = self->attribute[NpcAttribute::hitpoints];
+  const auto fullDamage = number(spell->damage);
+  magicHurtNpc(std::dynamic_pointer_cast<daedalus::INpc>(other()),self,hp>fullDamage ? fullDamage : hp-1);
+  if(drain && hp>fullDamage)
+    npc_changeattribute(std::dynamic_pointer_cast<daedalus::INpc>(other()),ATR_HITPOINTS,fullDamage);
+  return true;
+  }
+
+void GameScript::givePlayerXp(int32_t amount) {
+  const auto add=[](int32_t a,int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a)+uint32_t(b));
+    };
+  const auto hero=[&] {
+    return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+    };
+  const auto print=[&](daedalus::DaedalusSymbol* text,const char* y,const char* font) {
+    vm.push_reference(text);
+    vm.push_int(-1);
+    vm.push_reference(findSymbol(y));
+    vm.push_reference(findSymbol(font));
+    vm.push_int(2);
+    vm.unsafe_call_external(findSymbol("PRINTSCREEN"));
+    };
+
+  auto* savedAmount=findSymbol("B_GIVEPLAYERXP.ADD_XP");
+  auto* text=findSymbol("B_GIVEPLAYERXP.CONCATTEXT");
+  savedAmount->set_int(amount);
+  const auto current=hero();
+  vm.unsafe_set_gi(current);
+  if(current) {
+    if(current->level==0)
+      current->exp_next=500;
+    current->exp=add(current->exp,amount);
+    }
+
+  // The original formatting calls also update the VM's temporary strings.
+  text->set_string(findSymbol("PRINT_XPGAINED")->get_string());
+  vm.push_reference(text);
+  vm.push_reference(savedAmount);
+  vm.unsafe_call_external(findSymbol("INTTOSTRING"));
+  vm.unsafe_call_external(findSymbol("CONCATSTRINGS"));
+  text->set_string(vm.pop_string());
+  print(text,"YPOS_XPGAINED","FONT_SCREENSMALL");
+
+  const auto levelUp=hero();
+  vm.unsafe_set_gi(levelUp);
+  if(!levelUp || levelUp->exp>=levelUp->exp_next) {
+    if(levelUp) {
+      levelUp->level=add(levelUp->level,1);
+      const auto threshold=std::bit_cast<int32_t>(500u*(uint32_t(levelUp->level)+1u));
+      levelUp->exp_next=add(levelUp->exp_next,threshold);
+      const auto health=findSymbol("HP_PER_LEVEL")->get_int();
+      levelUp->attribute[ATR_HITPOINTSMAX]=add(levelUp->attribute[ATR_HITPOINTSMAX],health);
+      levelUp->attribute[ATR_HITPOINTS]=add(levelUp->attribute[ATR_HITPOINTS],health);
+      levelUp->lp=add(levelUp->lp,findSymbol("LP_PER_LEVEL")->get_int());
+      }
+    print(findSymbol("PRINT_LEVELUP"),"YPOS_LEVELUP","FONT_SCREEN");
+    // Reference the verified program's LevelUp literal to preserve the temporary string slots.
+    vm.push_reference(findSymbol("$12941"));
+    vm.unsafe_call_external(findSymbol("SND_PLAY"));
+    }
+
+  vm.unsafe_call_bl(findSymbol("B_CHECKLOG"));
+  }
+
+void GameScript::closeQuestTopic(std::string_view topic, int32_t mission, int32_t common, int32_t endChapter) {
+  auto* savedTopic=findSymbol("B_CLOSETOPIC.TOPIC");
+  findSymbol("B_CLOSETOPIC.ENDCHAPTER")->set_int(endChapter);
+  findSymbol("B_CLOSETOPIC.COMMONVAR")->set_int(common);
+  findSymbol("B_CLOSETOPIC.MISSIONVAR")->set_int(mission);
+  savedTopic->set_string(topic);
+
+  using Status=QuestLog::Status;
+  auto status=Status::Running;
+  if(common==1 || mission==int32_t(Status::Success))
+    status=Status::Success;
+  else if(mission==int32_t(Status::Obsolete) || mission==int32_t(Status::Failed))
+    status=Status(mission);
+  else if((common==0 || mission==int32_t(Status::Running)) && findSymbol("KAPITEL")->get_int()>=endChapter)
+    status=Status::Obsolete;
+  if(status!=Status::Running) {
+    vm.push_reference(savedTopic);
+    vm.push_int(int32_t(status));
+    vm.unsafe_call_external(findSymbol("LOG_SETTOPICSTATUS"));
+    }
+  }
+
+void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
+  using Op=daedalus::DaedalusOpcode;
+  using Type=daedalus::DaedalusDataType;
+  using Number=std::variant<int32_t,uint32_t>; // literal or live integer symbol
+  struct Row {
+    uint32_t topic;
+    std::array<Number,3> values;
+    };
+  struct GuildRule {
+    size_t before;
+    uint32_t topic, status;
+    std::array<uint32_t,3> excluded;
+    };
+  static constexpr std::array groups{
+    std::pair{"B_CLOSETOPICS_MATTES",101u},
+    std::pair{"B_CLOSETOPICS_HOSHI",18u},
+    std::pair{"B_CLOSETOPICS_YOLY",87u}
+    };
+  const auto* closeFunction=findSymbol("B_CLOSETOPIC");
+  const auto close=closeFunction->index();
+  const auto setStatus=findSymbol("LOG_SETTOPICSTATUS")->index();
+  auto pc=findSymbol("B_CHECKLOG")->address();
+  const auto invalid=[&] {
+    return std::runtime_error("Invalid stock quest log record at "+std::to_string(pc));
+    };
+  const auto take=[&](Op expected) {
+    const auto instruction=vm.instruction_at(pc);
+    if(instruction.op!=expected)
+      throw invalid();
+    pc+=instruction.size;
+    return instruction;
+    };
+  const auto reference=[&](Type type) {
+    const auto id=take(Op::PUSHV).symbol;
+    const auto* symbol=findSymbol(id);
+    if(symbol==nullptr || symbol->type()!=type || symbol->is_member())
+      throw invalid();
+    return id;
+    };
+  const auto number=[&]() -> Number {
+    if(vm.instruction_at(pc).op==Op::PUSHI)
+      return take(Op::PUSHI).immediate;
+    return reference(Type::INT);
+    };
+
+  for(const auto& [name,count]:groups)
+    if(take(Op::BL).address!=findSymbol(name)->address())
+      throw invalid();
+  take(Op::RSR);
+
+  vm.override_function("B_CLOSETOPIC",std::function<void(std::string_view,int32_t,int32_t,int32_t)>{
+    [this](std::string_view topic,int32_t mission,int32_t common,int32_t chapter) {
+      closeQuestTopic(topic,mission,common,chapter);
+      }},enabled);
+  for(const auto& [name,count]:groups) {
+    pc=findSymbol(name)->address();
+    std::vector<Row> rows;
+    rows.reserve(count);
+    std::optional<GuildRule> guildRule;
+    while(vm.instruction_at(pc).op!=Op::RSR) {
+      const auto* first=findSymbol(vm.instruction_at(pc).symbol);
+      if(first!=nullptr && first->type()==Type::STRING) {
+        Row row{reference(Type::STRING),{number(),number(),number()}};
+        if(take(Op::BL).address!=closeFunction->address())
+          throw invalid();
+        rows.push_back(row);
+        continue;
+        }
+      // The only branch in the three groups is Yoly's guild exception.
+      if(std::string_view(name)!="B_CLOSETOPICS_YOLY" || guildRule)
+        throw invalid();
+      GuildRule rule{rows.size(),0,0,{}};
+      for(auto& guild:rule.excluded) {
+        guild=reference(Type::INT);
+        if(take(Op::GMOVI).symbol!=vm.global_hero()->index() ||
+           take(Op::PUSHV).symbol!=findSymbol("C_NPC.GUILD")->index())
+          throw invalid();
+        take(Op::NEQ);
+        }
+      take(Op::AND);
+      take(Op::AND);
+      const auto skip=take(Op::BZ).address;
+      rule.topic=reference(Type::STRING);
+      rule.status=reference(Type::INT);
+      if(take(Op::BE).symbol!=setStatus || pc!=skip)
+        throw invalid();
+      guildRule=rule;
+      }
+    const bool hasGuildRule=std::string_view(name)=="B_CLOSETOPICS_YOLY";
+    if(rows.size()!=count || guildRule.has_value()!=hasGuildRule || (guildRule && guildRule->before>=rows.size()))
+      throw invalid();
+
+    vm.override_function(name,std::function<void()>{[this, rows=std::move(rows), guildRule, close, setStatus] {
+      for(size_t i=0;i<rows.size();++i) {
+        if(guildRule && i==guildRule->before) {
+          const auto context=vm.global_hero()->get_instance();
+          vm.unsafe_set_gi(context);
+          const auto hero=std::dynamic_pointer_cast<daedalus::INpc>(context);
+          const auto guild=hero ? hero->guild : 0;
+          if(std::ranges::none_of(guildRule->excluded,[&](uint32_t id) { return findSymbol(id)->get_int()==guild; })) {
+            vm.push_reference(findSymbol(guildRule->topic));
+            vm.push_reference(findSymbol(guildRule->status));
+            vm.unsafe_call_external(findSymbol(setStatus));
+            }
+          }
+        const auto& row=rows[i];
+        vm.push_reference(findSymbol(row.topic));
+        for(const auto& value:row.values) {
+          if(const auto* literal=std::get_if<int32_t>(&value))
+            vm.push_int(*literal);
+          else
+            vm.push_reference(findSymbol(std::get<uint32_t>(value)));
+          }
+        vm.unsafe_call_bl(findSymbol(close));
+        }
+      }},enabled);
+    }
+  vm.override_function("B_CHECKLOG",std::function<void()>{[this] {
+    for(const auto& [name,count]:groups)
+      vm.unsafe_call_bl(findSymbol(name));
+    }},enabled);
+  }
+
+std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
+  if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
+     ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
+    return {};
+
+  const auto* active=caster.activeWeapon();
+  if(active==nullptr || !active->isSpellOrRune())
+    return {};
+
+  struct Admission {
+    int spell;
+    std::string_view invested, runeCost;
+    };
+  // Stock dispatcher IDs whose handlers only store the argument and compare mana.
+  static constexpr Admission admissions[] = {
+    { 0, "SPELL_LOGIC_PALLIGHT.MANAINVESTED", "SPL_COST_PALLIGHT"},
+    { 1, "SPELL_LOGIC_PALLIGHTHEAL.MANAINVESTED", "SPL_COST_PALLIGHTHEAL"},
+    { 2, "SPELL_LOGIC_PALHOLYBOLT.MANAINVESTED", "SPL_COST_PALHOLYBOLT"},
+    { 3, "SPELL_LOGIC_PALMEDIUMHEAL.MANAINVESTED", "SPL_COST_PALMEDIUMHEAL"},
+    { 4, "SPELL_LOGIC_PALREPELEVIL.MANAINVESTED", "SPL_COST_PALREPELEVIL"},
+    { 5, "SPELL_LOGIC_PALFULLHEAL.MANAINVESTED", "SPL_COST_PALFULLHEAL"},
+    { 6, "SPELL_LOGIC_PALDESTROYEVIL.MANAINVESTED", "SPL_COST_PALDESTROYEVIL"},
+    {18, "SPELL_LOGIC_LIGHT.MANAINVESTED", "SPL_COST_LIGHT"},
+    {19, "SPELL_LOGIC_FIREBOLT.MANAINVESTED", "SPL_COST_FIREBOLT"},
+    {20, "SPELL_LOGIC_ICEBOLT.MANAINVESTED", "SPL_COST_ICEBOLT"},
+    {21, "SPELL_LOGIC_LIGHTHEAL.MANAINVESTED", "SPL_COST_LIGHTHEAL"},
+    {22, "SPELL_LOGIC_SUMMONGOBLINSKELETON.MANAINVESTED", "SPL_COST_SUMMONGOBLINSKELETON"},
+    {23, "SPELL_LOGIC_INSTANTFIREBALL.MANAINVESTED", "SPL_COST_INSTANTFIREBALL"},
+    {24, "SPELL_LOGIC_ZAP.MANAINVESTED", "SPL_COST_ZAP"},
+    {25, "SPELL_LOGIC_SUMMONWOLF.MANAINVESTED", "SPL_COST_SUMMONWOLF"},
+    {28, "SPELL_LOGIC_MEDIUMHEAL.MANAINVESTED", "SPL_COST_MEDIUMHEAL"},
+    {29, "SPELL_LOGIC_LIGHTNINGFLASH.MANAINVESTED", "SPL_COST_LIGHTNINGFLASH"},
+    {31, "SPELL_LOGIC_SUMMONSKELETON.MANAINVESTED", "SPL_COST_SUMMONSKELETON"},
+    {32, "SPELL_LOGIC_FEAR.MANAINVESTED", "SPL_COST_FEAR"},
+    {33, "SPELL_LOGIC_ICECUBE.MANAINVESTED", "SPL_COST_ICECUBE"},
+    {35, "SPELL_LOGIC_SUMMONGOLEM.MANAINVESTED", "SPL_COST_SUMMONGOLEM"},
+    {36, "SPELL_LOGIC_DESTROYUNDEAD.MANAINVESTED", "SPL_COST_DESTROYUNDEAD"},
+    {38, "SPELL_LOGIC_FIRESTORM.MANAINVESTED", "SPL_COST_INSTANTFIRESTORM"},
+    {39, "SPELL_LOGIC_ICEWAVE.MANAINVESTED", "SPL_COST_ICEWAVE"},
+    {40, "SPELL_LOGIC_SUMMONDEMON.MANAINVESTED", "SPL_COST_SUMMONDEMON"},
+    {41, "SPELL_LOGIC_FULLHEAL.MANAINVESTED", "SPL_COST_FULLHEAL"},
+    {42, "SPELL_LOGIC_FIRERAIN.MANAINVESTED", "SPL_COST_FIRERAIN"},
+    {43, "SPELL_LOGIC_BREATHOFDEATH.MANAINVESTED", "SPL_COST_BREATHOFDEATH"},
+    {44, "SPELL_LOGIC_MASSDEATH.MANAINVESTED", "SPL_COST_MASSDEATH"},
+    {45, "SPELL_LOGIC_ARMYOFDARKNESS.MANAINVESTED", "SPL_COST_ARMYOFDARKNESS"},
+    {60, "SPELL_LOGIC_MASTEROFDISASTER.MANAINVESTED", "SPL_COST_MASTEROFDISASTER"},
+    {61, "SPELL_LOGIC_DEATHBOLT.MANAINVESTED", "SPL_COST_DEATHBOLT"},
+    {62, "SPELL_LOGIC_DEATHBALL.MANAINVESTED", "SPL_COST_DEATHBALL"},
+    {63, "SPELL_LOGIC_CONCUSSIONBOLT.MANAINVESTED", "SPL_COST_CONCUSSIONBOLT"},
+    {70, "SPELL_LOGIC_THUNDERSTORM.MANAINVESTED", "SPL_COST_THUNDERSTORM"},
+    {71, "SPELL_LOGIC_WHIRLWIND.MANAINVESTED", "SPL_COST_WHIRLWIND"},
+    {72, "SPELL_LOGIC_WATERFIST.MANAINVESTED", "SPL_COST_WATERFIST"},
+    {73, "SPELL_LOGIC_ICELANCE.MANAINVESTED", "SPL_COST_ICELANCE"},
+    {75, "SPELL_LOGIC_GEYSER.MANAINVESTED", "SPL_COST_GEYSER"},
+    {82, "SPELL_LOGIC_GREENTENTACLE.MANAINVESTED", "SPL_COST_GREENTENTACLE"},
+    {84, "SPELL_LOGIC_SUMMONGUARDIAN.MANAINVESTED", "SPL_COST_SUMMONGUARDIAN"},
+    {85, "SPELL_LOGIC_ENERGYBALL.MANAINVESTED", "SPL_COST_ENERGYBALL"},
+    {87, "SPELL_LOGIC_SKULL.MANAINVESTED", "SPL_COST_SKULL"},
+    {88, "SPELL_LOGIC_SUMMONZOMBIE.MANAINVESTED", "SPL_COST_SUMMONZOMBIE"},
+    {89, "SPELL_LOGIC_SUMMONMUD.MANAINVESTED", "SPL_COST_SUMMONMUD"},
+    };
+  const auto rule=std::ranges::find(admissions,active->spellId(),&Admission::spell);
+  if(rule==std::end(admissions))
+    return {};
+
+  const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
+  findSymbol("SPELL_PROCESSMANA.MANAINVESTED")->set_int(mana);
+  // This external also publishes the active item on its stock instance symbol.
+  findSymbol("SPELL_PROCESSMANA.ACTIVESPELL")->set_int(npc_getactivespell(self));
+  findSymbol(rule->invested)->set_int(mana);
+
+  const auto available=self->attribute[ATR_MANA];
+  const auto scroll=npc_getactivespellisscroll(self);
+  const auto scrollCost=findSymbol("SPL_COST_SCROLL")->get_int();
+  const auto runeCost=findSymbol(rule->runeCost)->get_int();
+  return (scroll && available>=scrollCost) || available>=runeCost ? SPL_SENDCAST : SPL_SENDSTOP;
+  }
+
+bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32_t level) {
+  if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
+     ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
+    return false;
+
+  struct Cast {
+    std::string_view function, runeCost = {}, levelParameter = {};
+    };
+  // These stock bodies only save an optional argument, debit mana, and advance selection.
+  static constexpr Cast casts[] = {
+    {"SPELL_CAST_BREATHOFDEATH",    "SPL_COST_BREATHOFDEATH", "SPELL_CAST_BREATHOFDEATH.SPELLLEVEL"},
+    {"SPELL_CAST_CHARM",            "SPL_COST_CHARM"},
+    {"SPELL_CAST_CONCUSSIONBOLT",   "SPL_COST_CONCUSSIONBOLT"},
+    {"SPELL_CAST_DEATHBALL",        "SPL_COST_DEATHBALL"},
+    {"SPELL_CAST_DEATHBOLT",        "SPL_COST_DEATHBOLT"},
+    {"SPELL_CAST_DESTROYUNDEAD",    "SPL_COST_DESTROYUNDEAD"},
+    {"SPELL_CAST_ENERGYBALL",       "SPL_COST_ENERGYBALL"},
+    {"SPELL_CAST_FIREBOLT",         "SPL_COST_FIREBOLT"},
+    {"SPELL_CAST_FIRERAIN",         "SPL_COST_FIRERAIN"},
+    {"SPELL_CAST_FIRESTORM",        "SPL_COST_INSTANTFIRESTORM"},
+    {"SPELL_CAST_GEYSER",           "SPL_COST_GEYSER"},
+    {"SPELL_CAST_GREENTENTACLE",    "SPL_COST_GREENTENTACLE"},
+    {"SPELL_CAST_ICEBOLT",          "SPL_COST_ICEBOLT"},
+    {"SPELL_CAST_ICECUBE",          "SPL_COST_ICECUBE"},
+    {"SPELL_CAST_ICELANCE",         "SPL_COST_ICELANCE"},
+    {"SPELL_CAST_ICEWAVE",          "SPL_COST_ICEWAVE"},
+    {"SPELL_CAST_INFLATE"},
+    {"SPELL_CAST_INSTANTFIREBALL",  "SPL_COST_INSTANTFIREBALL"},
+    {"SPELL_CAST_LIGHTNINGFLASH",   "SPL_COST_LIGHTNINGFLASH"},
+    {"SPELL_CAST_PALLIGHT",         "SPL_COST_PALLIGHT"},
+    {"SPELL_CAST_LIGHT",            "SPL_COST_LIGHT"},
+    {"SPELL_CAST_MASSDEATH",        "SPL_COST_MASSDEATH"},
+    {"SPELL_CAST_MASTEROFDISASTER", "SPL_COST_MASTEROFDISASTER"},
+    {"SPELL_CAST_PALDESTROYEVIL",   "SPL_COST_PALDESTROYEVIL"},
+    {"SPELL_CAST_PALHOLYBOLT",      "SPL_COST_PALHOLYBOLT"},
+    {"SPELL_CAST_PALREPELEVIL",     "SPL_COST_PALREPELEVIL"},
+    {"SPELL_CAST_SLEEP"},
+    {"SPELL_CAST_SUCKENERGY",       "SPL_COST_SUCKENERGY"},
+    {"SPELL_CAST_SWARM"},
+    {"SPELL_CAST_THUNDERSTORM",     "SPL_COST_THUNDERSTORM"},
+    {"SPELL_CAST_WATERFIST",        "SPL_COST_WATERFIST"},
+    {"SPELL_CAST_WHIRLWIND",        "SPL_COST_WHIRLWIND"},
+    {"SPELL_CAST_ZAP",              "SPL_COST_ZAP", "SPELL_CAST_ZAP.SPELLLEVEL"},
+    };
+  const auto cast=std::ranges::find(casts,function,&Cast::function);
+  if(cast==std::end(casts))
+    return false;
+  if(!cast->levelParameter.empty())
+    findSymbol(cast->levelParameter)->set_int(level);
+  if(!cast->runeCost.empty()) {
+    const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
+    const auto cost=findSymbol(npc_getactivespellisscroll(self) ? "SPL_COST_SCROLL" : cast->runeCost)->get_int();
+    caster.handle().attribute[ATR_MANA]-=cost;
+    }
+  ++caster.handle().aivar[20]; // AIV_SELECTSPELL
+  return true;
   }
 
 int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {

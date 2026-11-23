@@ -67,6 +67,17 @@ void GameScript::loadNativeRoutines() {
     {"ZS_RANSACKBODY",         &GameScript::runHumanPlunder},
     {"ZS_GREENTENTACLE",       &GameScript::runControlSpell},
     {"ZS_SHORTZAPPED",         &GameScript::runControlSpell},
+    {"ZS_MAGICFLEE",          &GameScript::runFearOrSleepSpell},
+    {"ZS_MAGICSLEEP",         &GameScript::runFearOrSleepSpell},
+    {"ZS_MAGICFREEZE",        &GameScript::runFreezeOrWhirlwindSpell},
+    {"ZS_WHIRLWIND",          &GameScript::runFreezeOrWhirlwindSpell},
+    {"ZS_PAL_ZOMBIE",         &GameScript::runMonsterRoutine},
+    {"ZS_INFLATE",            &GameScript::runSpellVictimState},
+    {"ZS_SUCKENERGY",         &GameScript::runSpellVictimState},
+    {"ZS_SWARM",              &GameScript::runSpellVictimState},
+    {"B_RESTARTINFLATE",      &GameScript::runSpellVictimState},
+    {"B_RESTARTSUCKENERGY",   &GameScript::runSpellVictimState},
+    {"B_RESTARTSWARM",        &GameScript::runSpellVictimState},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
     {"ZS_MM_ATTACK",         &GameScript::runMonsterAttack},
     {"ZS_MM_THREATENENEMY",   &GameScript::runMonsterThreat},
@@ -83,6 +94,12 @@ void GameScript::loadNativeRoutines() {
     {"ZS_MM_RTN_EATGROUND",   &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_WUSEL",       &GameScript::runRoamingRoutine},
     {"ZS_MM_RTN_ORCSIT",      &GameScript::runMonsterRoutine},
+    {"ZS_MAGICSHRINK",        &GameScript::runShrinkState},
+    {"ZS_MAGICSHRUNK",        &GameScript::runShrinkState},
+    {"ZS_MAGICBURN",          &GameScript::runMagicHurtState},
+    {"ZS_MAGICBURNSHORT",     &GameScript::runMagicHurtState},
+    {"ZS_PYRO",               &GameScript::runMagicHurtState},
+    {"ZS_ZAPPED",             &GameScript::runMagicHurtState},
     };
   for(const auto& routine : routines) {
     for(const std::string_view suffix : {"", "_LOOP", "_END"}) {
@@ -94,6 +111,16 @@ void GameScript::loadNativeRoutines() {
       nativeRoutinePhases.emplace(symbol->index(),phase);
       }
     }
+
+  const auto enabled=[this] {
+    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+    };
+  using Handle=std::shared_ptr<daedalus::INpc>;
+  vm.override_function("B_MAGICHURTNPC",std::function<void(Handle,Handle,int32_t)>{
+    [this](Handle attacker, Handle target, int32_t damage) { magicHurtNpc(attacker,target,damage); }},enabled);
+  vm.override_function("B_GIVEPLAYERXP",std::function<void(int32_t)>{
+    [this](int32_t amount) { givePlayerXp(amount); }},enabled);
+  loadNativeQuestLog(enabled);
   }
 
 bool GameScript::runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol&, int& result) {
@@ -166,6 +193,59 @@ bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& s
   const auto& phase = it->second;
   probe.fromRecord();
   ActivityEvents::countWakes(phase.state,phase.enters ? ActivityEvents::Entered : 0,true);
+  return true;
+  }
+
+bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol,
+                                              NpcActivityProbe::Phase& phase) {
+  const std::string_view name = symbol.name();
+  const bool stopDamage = name=="B_STOPMAGICBURN" || name=="B_STOPMAGICBURNSHORT" || name=="B_STOPPYRO" || name=="B_STOPZAPPED";
+  const bool restartBurn = name=="B_RESTARTBURN" || name=="B_RESTARTBURNSHORT";
+  if((name!="B_ASSESSMAGIC" && name!="B_STOPMAGICFLEE" && name!="B_STOPMAGICSLEEP" && name!="B_ASSESSMAGICSLEEPTALK" &&
+      name!="B_PAL_ZOMBIE_RISE" && name!="B_RESTARTFREEZE" && name!="B_RESTARTWHIRLWIND" && !stopDamage && !restartBurn) ||
+     !nativeRoomReactionsEnabled())
+    return false;
+  phase.fromRecord();
+  if(name=="B_ASSESSMAGIC")
+    assessMagic(npc);
+  else if(name=="B_STOPMAGICFLEE")
+    stopMagicFear(npc);
+  else if(name=="B_STOPMAGICSLEEP")
+    stopMagicSleep(npc);
+  else if(name=="B_ASSESSMAGICSLEEPTALK") {
+    sayMagicReaction(npc,"$YOUDISTURBEDMYSLUMBER",false);
+    ai_startstate(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),int(findFunction("ZS_OBSERVEPLAYER").ptr),1,"");
+    }
+  else if(name=="B_PAL_ZOMBIE_RISE") {
+    raisePaladinZombie(npc);
+    }
+  else if(stopDamage) {
+    stopInterruptedSpell(npc,true);
+    }
+  else if(restartBurn) {
+    const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+    const auto spell = npc.lastHitSpellId();
+    const auto id = [this](std::string_view symbol) { return findSymbol(symbol)->get_int(); };
+    const bool shortBurn = name=="B_RESTARTBURNSHORT";
+    const bool sameEffect = spell==id("SPL_CHARGEFIREBALL") || (shortBurn
+      ? spell==id("SPL_FIRESTORM")
+      : spell==id("SPL_FIREBOLT") || spell==id("SPL_INSTANTFIREBALL") || spell==id("SPL_FIRERAIN"));
+    if(sameEffect) {
+      npc.setStateTime(0);
+      }
+    else if(spell==id("SPL_ICECUBE") || spell==id("SPL_ICEWAVE")) {
+      npc.clearAiQueue();
+      clearNpcPerceptions(self);
+      ai_startstate(self,int(findFunction("ZS_MAGICFREEZE").ptr),0,"");
+      }
+    }
+  else {
+    constexpr int32_t iceCube=33, iceWave=39, whirlwind=71; // Spell IDs in the verified program.
+    const auto spell = npc.lastHitSpellId();
+    const bool matches = name=="B_RESTARTFREEZE" ? spell==iceCube || spell==iceWave : spell==whirlwind;
+    if(matches)
+      npc.setStateTime(0);
+    }
   return true;
   }
 
