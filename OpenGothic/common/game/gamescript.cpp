@@ -1131,7 +1131,8 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
     }
   else if(npc!=nullptr && ((sym!=nullptr && (invokeNativeRoomPerception(*sym,phase) ||
                                             invokeNativeTalkPerception(*sym,phase) ||
-                                            invokeNativeMonsterPerception(*sym,phase))) ||
+                                            invokeNativeMonsterPerception(*sym,phase) ||
+                                            invokeNativeRoutineReaction(*npc,*sym,phase))) ||
                            invokeNativeHumanPerception(fn,phase))) {
     // The perception ran in the engine.
     }
