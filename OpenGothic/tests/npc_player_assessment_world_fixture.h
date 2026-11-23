@@ -272,9 +272,61 @@ void assessTalkEntry(World& world,Npc& npc,Npc& player) {
   restore();
   }
 
+void stockLearnString(GameScript& script) {
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const bool saved=events;
+  auto* builder=vm.find_symbol_by_name("B_BUILDLEARNSTRING");
+  auto* result=vm.find_symbol_by_name("B_BUILDLEARNSTRING.CONCATTEXT");
+  auto* topic=vm.find_symbol_by_name("DIA_BARTOK_TEACHSNEAK");
+  const auto topicBefore=topic->get_instance();
+  const auto context=vm.unsafe_get_gi();
+  const auto self=vm.global_self()->get_instance();
+  const auto other=vm.global_other()->get_instance();
+  std::pair<std::string,std::string> original;
+  for(bool native:{false,true}) {
+    if(native && (!saved || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+      continue;
+    events=native;
+    size_t instructions=0;
+    vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==builder->address(); });
+    vm.push_int(77);
+    vm.push_string("learning fixture");
+    vm.push_int(7);
+    vm.unsafe_call_bl(builder);
+    const auto first=result->get_string();
+    vm.push_reference(result);
+    vm.push_int(-2);
+    vm.unsafe_call_bl(builder);
+    for(int i=0;i<2;++i) {
+      require(vm.top_is_reference(),"learn string: each return must remain a reference");
+      const auto [symbol,index,instance]=vm.pop_reference();
+      require(symbol==result && index==0 && instance==context,
+              "learn string: both queued returns must observe the shared saved string with the caller's context");
+      }
+    require(vm.pop_int()==77 && vm.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->get_int()==-2 &&
+            vm.find_symbol_by_name("B_BUILDLEARNSTRING.TEXT")->get_string()==first,
+            "learn string: consume the old result as the next title and leave earlier operands intact");
+    const auto second=result->get_string();
+    const auto restored=vm.init_instance<daedalus::IInfo>(topic);
+    topic->set_instance(topicBefore);
+    vm.observe_instructions({});
+    require(instructions==(native ? 0u : 3u) && vm.unsafe_get_gi()==context &&
+            vm.global_self()->get_instance()==self && vm.global_other()->get_instance()==other,
+            "learn string: direct BL and a stock nested BL must use the selected executor and preserve caller context");
+    const auto descriptions=std::pair{second,restored->description};
+    if(native)
+      require(descriptions==original,"learn string: direct and nested descriptions must match the raw VM bytes");
+    else
+      original=descriptions;
+    }
+  events=saved;
+  }
+
 void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
+  stockLearnString(script);
   auto& vm=script.getVm();
   auto& events=Contract::activityEventsOn(script);
   const bool savedEvents=events;

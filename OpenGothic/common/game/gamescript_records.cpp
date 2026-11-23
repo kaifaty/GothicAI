@@ -89,6 +89,34 @@ auto GameScript::npcRecord(daedalus::DaedalusSymbol* symbol) -> std::shared_ptr<
   return nullptr;
   }
 
+void GameScript::loadNativeLearnString() {
+  if(!nativeRoutineProgram)
+    return;
+  vm.override_function("B_BUILDLEARNSTRING",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [this](auto& machine) -> daedalus::DaedalusNakedCall {
+      machine.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->set_int(machine.pop_int());
+      // The script returns its global string slot, which a later call can overwrite before it is read.
+      machine.push_reference(&buildLearnString(machine.pop_string()));
+      return {};
+      }
+    },[this] {
+      return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+      });
+  }
+
+auto GameScript::buildLearnString(std::string_view title) -> daedalus::DaedalusSymbol& {
+  auto& savedTitle = *vm.find_symbol_by_name("B_BUILDLEARNSTRING.TEXT");
+  savedTitle.set_string(title);
+  const auto cost = vm.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->get_int();
+  const auto text = savedTitle.get_string() + vm.find_symbol_by_name("PRINT_KOSTEN")->get_string() +
+                    std::to_string(cost) + vm.find_symbol_by_name("PRINT_LP")->get_string();
+  // The formatting externals reuse one temporary slot, which the legacy save also stores.
+  vm.push_string(text);
+  auto& result = *vm.find_symbol_by_name("B_BUILDLEARNSTRING.CONCATTEXT");
+  result.set_string(vm.pop_string());
+  return result;
+  }
+
 auto GameScript::readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_ptr<daedalus::IInfo> {
   using Op = daedalus::DaedalusOpcode;
   using Type = daedalus::DaedalusDataType;
@@ -191,13 +219,7 @@ auto GameScript::readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_pt
       vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.OTH")->set_instance(vm.global_other()->get_instance());
       vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.KOSTEN")->set_int(lesson.cost);
       vm.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->set_int(lesson.cost);
-      vm.find_symbol_by_name("B_BUILDLEARNSTRING.TEXT")->set_string(*field.text);
-      const auto text = *field.text + vm.find_symbol_by_name("PRINT_KOSTEN")->get_string() +
-                        std::to_string(lesson.cost) + vm.find_symbol_by_name("PRINT_LP")->get_string();
-      // The legacy save also contains the VM's last string temporary.
-      vm.push_string(text);
-      vm.find_symbol_by_name("B_BUILDLEARNSTRING.CONCATTEXT")->set_string(vm.pop_string());
-      field.member->set_string(text,0,info.get());
+      field.member->set_string(buildLearnString(*field.text).get_string(),0,info.get());
       }
     else if(field.text!=nullptr)
       field.member->set_string(*field.text,0,info.get());
