@@ -139,8 +139,12 @@ void tradeInventoryAfterDefeat(ActivityEventsWorld& test, bool native) {
       calls.emplace_back(name);
     });
   const auto* trade = script.findSymbol("B_GIVETRADEINV");
-  bool tradeVm = false;
-  vm.observe_instructions([&](const auto&) { tradeVm |= vm.pc()==trade->address(); });
+  const auto* ambient = script.findSymbol("B_CREATEAMBIENTINV");
+  bool tradeVm=false, ambientVm=false;
+  vm.observe_instructions([&](const auto&) {
+    tradeVm |= vm.pc()==trade->address();
+    ambientVm |= vm.pc()==ambient->address();
+    });
   const auto run = [&] {
     vm.push_int(0x12345678);
     vm.push_reference(vm.global_self());
@@ -158,6 +162,14 @@ void tradeInventoryAfterDefeat(ActivityEventsWorld& test, bool native) {
   require(calls==std::vector<std::string>{"B_CLEARRUNEINV","B_CLEARDEADTRADER"} && matteo->itemCount(gold)==0 &&
           actor->aivar[49]==0 && stocked->get_int()==1,
           "trade inventory: a defeated merchant resets stock without re-granting ambient loot");
+  calls.clear();
+  actor->aivar[16]=0;
+  run();
+  const bool nativeAmbient=native && NpcHelperRuntime::enabled() &&
+                           NpcDefinitionContract::definitions(script).helpers.helpers.contains(ambient->index());
+  require(calls==std::vector<std::string>{"B_CLEARRUNEINV","B_CLEARDEADTRADER","B_CREATEAMBIENTINV"} &&
+          ambientVm!=nativeAmbient && script.findSymbol("B_CREATEAMBIENTINV.SLF")->get_instance()==actor,
+          "trade inventory: allow the original ambient inventory record for an unrewarded defeat");
   vm.observe_instructions({});
   vm.remove_call_observer(observer);
   vm.global_self()->set_instance(oldSelf);

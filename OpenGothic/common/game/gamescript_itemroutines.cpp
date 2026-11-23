@@ -101,6 +101,14 @@ void GameScript::loadNativeTradeInventory() {
   const auto enabled = [this] {
     return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
     };
+  const auto* ambient=findSymbol("B_CREATEAMBIENTINV");
+  if(npcDefinitions.helpers.helpers.contains(ambient->index())) {
+    vm.override_function("B_CREATEAMBIENTINV",std::function<void(NpcRef)>{[this,ambient](const NpcRef& actor) {
+      vm.push_instance(actor);
+      if(!actor || !NpcHelperRuntime::invoke(vm,actor,ambient,npcDefinitions.helpers))
+        vm.unsafe_call(ambient);
+      }},[enabled] { return enabled() && NpcHelperRuntime::enabled(); });
+    }
   auto* lookup = findSymbol("HLP_GETNPC");
   auto* instanceId = findSymbol("HLP_GETINSTANCEID");
   auto* hasItems = findSymbol("NPC_HASITEMS");
