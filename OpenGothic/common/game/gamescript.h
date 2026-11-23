@@ -4,6 +4,7 @@
 #include "daedalus/classes.h"
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <random>
 #include <unordered_map>
@@ -311,7 +312,6 @@ class GameScript final : public GameRules {
     bool monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monster, const std::shared_ptr<daedalus::INpc>& body);
     bool monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey);
     bool monsterTargetHasBodyState(const std::shared_ptr<daedalus::INpc>& target, int32_t state);
-    bool monsterTargetIsDown(const std::shared_ptr<daedalus::INpc>& target);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runShrinkState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMagicHurtState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -475,6 +475,7 @@ class GameScript final : public GameRules {
     int32_t playerCrime(const std::shared_ptr<daedalus::INpc>& self);
     void memorizePlayerCrime(const std::shared_ptr<daedalus::INpc>& witness, const std::shared_ptr<daedalus::INpc>& offender, int32_t crime);
     int32_t currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>& self);
+    void adjustPetzCrime(const std::shared_ptr<daedalus::INpc>& witness, std::optional<int32_t> newCrime);
     bool isToughGuy(const std::shared_ptr<daedalus::INpc>& self);
     void startNpcAttack(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
                         int32_t reason, int32_t wait);

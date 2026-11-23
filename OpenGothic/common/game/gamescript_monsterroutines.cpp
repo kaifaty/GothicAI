@@ -169,12 +169,6 @@ bool GameScript::monsterTargetHasBodyState(const std::shared_ptr<daedalus::INpc>
   return ActivityDefinitions::bodyStateContains(npc_getbodystate(target),state);
   }
 
-bool GameScript::monsterTargetIsDown(const std::shared_ptr<daedalus::INpc>& target) {
-  findSymbol("C_NPCISDOWN.SLF")->set_instance(target);
-  return npc_isdead(target) || npc_isinstate(target,int(findFunction("ZS_MAGICSLEEP").ptr)) ||
-         npc_isinstate(target,int(ZS_Unconscious));
-  }
-
 bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   auto& ai = self->aivar;
@@ -833,7 +827,7 @@ void GameScript::runMonsterAssessOthersDamage() {
 void GameScript::runMonsterAssessPlayer() {
   const auto self = std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const auto other = [&] { return std::static_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
-  if(other()->aivar[invincible]==1 || monsterTargetIsDown(other()))
+  if(other()->aivar[invincible]==1 || isNpcDownInScript(other()))
     return;
 
   vm.push_instance(self);

@@ -12,6 +12,7 @@
 #include <bit>
 #include <stdexcept>
 #include <variant>
+#include <array>
 
 std::string_view GameScript::symbolName(size_t id) {
   if(auto* symbol = findSymbol(id))
@@ -391,6 +392,12 @@ void GameScript::loadNativeHumanPerceptions() {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
   using Actor = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("B_ADDPETZCRIME",std::function<void(Actor,int32_t)>{[this](const Actor& witness, int32_t crime) {
+    adjustPetzCrime(witness,crime);
+    }},enabled);
+  vm.override_function("B_DELETEPETZCRIME",std::function<void(Actor)>{[this](const Actor& witness) {
+    adjustPetzCrime(witness,std::nullopt);
+    }},enabled);
   vm.override_function("C_NPCISBOTHEREDBYWEAPON",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     return botheredByWeapon(self,other);
     }},enabled);
@@ -2021,8 +2028,8 @@ void GameScript::memorizePlayerCrime(const std::shared_ptr<daedalus::INpc>& witn
     return;
 
   if(crime>playerCrime(witness)) {
-    vm.call_function<void>("B_DELETEPETZCRIME",witness);
-    vm.call_function<void>("B_ADDPETZCRIME",witness,crime);
+    adjustPetzCrime(witness,std::nullopt);
+    adjustPetzCrime(witness,crime);
     }
   if(crime>=playerCrime(witness)) {
     constexpr size_t crimeType = 1, crimeDay = 2, crimeAbsolution = 46;
@@ -2032,26 +2039,70 @@ void GameScript::memorizePlayerCrime(const std::shared_ptr<daedalus::INpc>& witn
     }
   }
 
-int32_t GameScript::currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>& self) {
-  findSymbol("B_GETCURRENTABSOLUTIONLEVEL.SLF")->set_instance(self);
-  findSymbol("C_NPCBELONGSTOOLDCAMP.SLF")->set_instance(self);
-  const auto guild = self ? self->guild : GIL_NONE;
-  const auto type = self ? self->type : NpcType::G2_AMBIENT;
+namespace {
+
+constexpr struct {
+  std::string_view witnessSlot;
+  std::string_view absolution;
+  std::array<std::string_view,4> counters;
+  } crimeJurisdictions[] = {
+  {"C_NPCBELONGSTOOLDCAMP.SLF",   "ABSOLUTIONLEVEL_OLDCAMP",
+   {"PETZCOUNTER_OLDCAMP_MURDER",   "PETZCOUNTER_OLDCAMP_THEFT",   "PETZCOUNTER_OLDCAMP_ATTACK",   "PETZCOUNTER_OLDCAMP_SHEEPKILLER"}},
+  {"C_NPCBELONGSTOCITY.SLF",      "ABSOLUTIONLEVEL_CITY",
+   {"PETZCOUNTER_CITY_MURDER",      "PETZCOUNTER_CITY_THEFT",      "PETZCOUNTER_CITY_ATTACK",      "PETZCOUNTER_CITY_SHEEPKILLER"}},
+  {"C_NPCBELONGSTOMONASTERY.SLF", "ABSOLUTIONLEVEL_MONASTERY",
+   {"PETZCOUNTER_MONASTERY_MURDER", "PETZCOUNTER_MONASTERY_THEFT", "PETZCOUNTER_MONASTERY_ATTACK", "PETZCOUNTER_MONASTERY_SHEEPKILLER"}},
+  {"C_NPCBELONGSTOFARM.SLF",      "ABSOLUTIONLEVEL_FARM",
+   {"PETZCOUNTER_FARM_MURDER",      "PETZCOUNTER_FARM_THEFT",      "PETZCOUNTER_FARM_ATTACK",      "PETZCOUNTER_FARM_SHEEPKILLER"}},
+  {"C_NPCBELONGSTOBL.SLF",        "ABSOLUTIONLEVEL_BL",
+   {"PETZCOUNTER_BL_MURDER",        "PETZCOUNTER_BL_THEFT",        "PETZCOUNTER_BL_ATTACK",        {}}},
+  };
+
+std::array<bool,std::size(crimeJurisdictions)> crimeJurisdictionMembership(const daedalus::INpc* witness) {
+  const auto guild = witness ? witness->guild : GIL_NONE;
+  const auto type = witness ? witness->type : NpcType::G2_AMBIENT;
   const bool city = guild==GIL_PAL || guild==GIL_MIL || guild==GIL_VLK;
-  if(city && (type==NpcType::G2_OC_AMBIENT || type==NpcType::G2_OC_MAIN))
-    return findSymbol("ABSOLUTIONLEVEL_OLDCAMP")->get_int();
-  findSymbol("C_NPCBELONGSTOCITY.SLF")->set_instance(self);
-  if(city)
-    return findSymbol("ABSOLUTIONLEVEL_CITY")->get_int();
-  findSymbol("C_NPCBELONGSTOMONASTERY.SLF")->set_instance(self);
-  if(guild==GIL_NOV || guild==GIL_KDF)
-    return findSymbol("ABSOLUTIONLEVEL_MONASTERY")->get_int();
-  findSymbol("C_NPCBELONGSTOFARM.SLF")->set_instance(self);
-  if(guild==GIL_SLD || guild==GIL_BAU)
-    return findSymbol("ABSOLUTIONLEVEL_FARM")->get_int();
-  if(belongsToBanditCamp(self))
-    return findSymbol("ABSOLUTIONLEVEL_BL")->get_int();
+  const bool oldCamp = city && (type==NpcType::G2_OC_AMBIENT || type==NpcType::G2_OC_MAIN);
+  return {oldCamp,city && !oldCamp,guild==GIL_NOV || guild==GIL_KDF,guild==GIL_SLD || guild==GIL_BAU,
+          type==NpcType::G2_BL_MAIN || type==NpcType::G2_BL_AMBIENT};
+  }
+
+}
+
+int32_t GameScript::currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>& witness) {
+  findSymbol("B_GETCURRENTABSOLUTIONLEVEL.SLF")->set_instance(witness);
+  const auto membership = crimeJurisdictionMembership(witness.get());
+  for(size_t i=0; i<std::size(crimeJurisdictions); ++i) {
+    const auto& jurisdiction = crimeJurisdictions[i];
+    findSymbol(jurisdiction.witnessSlot)->set_instance(witness);
+    if(membership[i])
+      return findSymbol(jurisdiction.absolution)->get_int();
+    }
   return 0;
+  }
+
+void GameScript::adjustPetzCrime(const std::shared_ptr<daedalus::INpc>& witness, std::optional<int32_t> newCrime) {
+  if(newCrime) {
+    findSymbol("B_ADDPETZCRIME.CRIME")->set_int(*newCrime);
+    findSymbol("B_ADDPETZCRIME.SLF")->set_instance(witness);
+    } else {
+    findSymbol("B_DELETEPETZCRIME.SLF")->set_instance(witness);
+    }
+  static constexpr std::array<std::string_view,4> crimes = {"CRIME_MURDER","CRIME_THEFT","CRIME_ATTACK","CRIME_SHEEPKILLER"};
+  const auto membership = crimeJurisdictionMembership(witness.get());
+  for(size_t i=0; i<std::size(crimeJurisdictions); ++i) {
+    const auto& jurisdiction = crimeJurisdictions[i];
+    findSymbol(jurisdiction.witnessSlot)->set_instance(witness);
+    if(!membership[i])
+      continue;
+    const auto crime = newCrime ? *newCrime : playerCrime(witness);
+    for(size_t j=0; j<crimes.size(); ++j) {
+      if(jurisdiction.counters[j].empty() || crime!=findSymbol(crimes[j])->get_int())
+        continue;
+      auto& counter = *findSymbol(jurisdiction.counters[j]);
+      counter.set_int(counter.get_int()+(newCrime ? 1 : -1));
+      }
+    }
   }
 
 bool GameScript::isToughGuy(const std::shared_ptr<daedalus::INpc>& self) {
@@ -2340,7 +2391,7 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
   vm.call_function<void>("B_GIVETRADEINV",self);
   vm.call_function<void>("B_GIVEDEATHINV",self);
   vm.call_function<void>("B_CLEARRUNEINV",self);
-  vm.call_function<void>("B_DELETEPETZCRIME",self);
+  adjustPetzCrime(self,std::nullopt);
   self->aivar[sawCrime] = number("CRIME_NONE");
   ai_unequipweapons(self);
   self->aivar[deathHandled] = 0;

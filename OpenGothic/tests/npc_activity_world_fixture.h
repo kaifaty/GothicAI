@@ -3209,6 +3209,7 @@ void quietSoundRooms(Gothic& gothic) {
   companionPlayerPerceptions(world,*npc,hero);
   fightSoundPerceptions(world,*npc,hero);
   damagePerceptions(world,*npc,hero);
+  npcPetzCrimeParity(world,*npc,hero,events);
   humanAttackPhases(world,*npc,hero);
   fleeAndWatchPhases(world,*npc,hero);
   humanPlunderAndArmorPhases(world,*npc,hero);

@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled);
 
 // Test-only access keeps the production creation entry point unchanged.
 struct NpcDefinitionContract {
