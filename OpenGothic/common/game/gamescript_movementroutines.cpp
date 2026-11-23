@@ -262,18 +262,7 @@ void GameScript::stopMagicSleep(Npc& npc) {
 void GameScript::sayMagicReaction(Npc& npc, std::string_view line, bool overlay) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
-  if(overlay) {
-    findSymbol("B_SAY_OVERLAY.TEXT")->set_string(line);
-    findSymbol("B_SAY_OVERLAY.OTH")->set_instance(other);
-    findSymbol("B_SAY_OVERLAY.SLF")->set_instance(self);
-    ai_outputsvm_overlay(self,other,line);
-    }
-  else {
-    findSymbol("B_SAY.TEXT")->set_string(line);
-    findSymbol("B_SAY.OTH")->set_instance(other);
-    findSymbol("B_SAY.SLF")->set_instance(self);
-    ai_outputsvm(self,other,line);
-    }
+  sayToNpc(self,other,line,overlay);
   }
 
 bool GameScript::runFreezeOrWhirlwindSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {

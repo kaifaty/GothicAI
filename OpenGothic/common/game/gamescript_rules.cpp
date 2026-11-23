@@ -155,12 +155,15 @@ void GameScript::desynchronizeNpc() {
   }
 
 void GameScript::sayToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
-                         std::string_view line) {
-  auto& text = *findSymbol("B_SAY.TEXT");
+                         std::string_view line, bool overlay) {
+  auto& text = *findSymbol(overlay ? "B_SAY_OVERLAY.TEXT" : "B_SAY.TEXT");
   text.set_string(line);
-  findSymbol("B_SAY.OTH")->set_instance(other);
-  findSymbol("B_SAY.SLF")->set_instance(self);
-  ai_outputsvm(self,other,text.get_string());
+  findSymbol(overlay ? "B_SAY_OVERLAY.OTH" : "B_SAY.OTH")->set_instance(other);
+  findSymbol(overlay ? "B_SAY_OVERLAY.SLF" : "B_SAY.SLF")->set_instance(self);
+  if(overlay)
+    ai_outputsvm_overlay(self,other,text.get_string());
+  else
+    ai_outputsvm(self,other,text.get_string());
   }
 
 void GameScript::turnToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
@@ -393,6 +396,12 @@ void GameScript::loadNativeHumanPerceptions() {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
   using Actor = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("B_SAY",std::function<void(Actor,Actor,std::string_view)>{[this](const Actor& self, const Actor& other, std::string_view line) {
+    sayToNpc(self,other,line);
+    }},enabled);
+  vm.override_function("B_SAY_OVERLAY",std::function<void(Actor,Actor,std::string_view)>{[this](const Actor& self, const Actor& other, std::string_view line) {
+    sayToNpc(self,other,line,true);
+    }},enabled);
   vm.override_function("B_ADDPETZCRIME",std::function<void(Actor,int32_t)>{[this](const Actor& witness, int32_t crime) {
     adjustPetzCrime(witness,crime);
     }},enabled);
@@ -946,7 +955,7 @@ void GameScript::runCheerFight() {
   const bool friendAttacker = npc_getattitude(self,other)==ATT_FRIENDLY;
   const bool friendVictim = npc_getattitude(self,victim)==ATT_FRIENDLY;
   const bool upset = !friendAttacker && friendVictim;
-  vm.call_function<void>("B_SAY_OVERLAY",self,self,upset ? concern[size_t(variation)] : cheer[size_t(variation)]);
+  sayToNpc(self,self,upset ? concern[size_t(variation)] : cheer[size_t(variation)],true);
   ai_playani(self,upset ? "T_WATCHFIGHT_OHNO" : "T_WATCHFIGHT_YEAH");
   }
 
@@ -1255,7 +1264,7 @@ bool GameScript::runHumanFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
     npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction("B_ASSESSMAGIC").ptr));
     validateCombatTarget(self);
     if(self->aivar[loadedGame]==0)
-      vm.call_function<void>("B_SAY_OVERLAY",self,vm.global_other()->get_instance(),std::string_view("$RUNAWAY"));
+      sayToNpc(self,std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()),"$RUNAWAY",true);
     ai_removeweapon(self);
     ai_setwalkmode(self,findSymbol("NPC_RUN")->get_int());
     mdl_applyoverlaymds(self,fleeOverlay);
@@ -1312,7 +1321,7 @@ bool GameScript::runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol,
        (npc_getdisttonpc(self,victim())<distance || npc_getdisttonpc(self,other())<distance)) {
       const bool tough = vm.call_function<int32_t>("C_NPCISTOUGHGUY",self)!=0;
       const std::string_view line = tough ? "$THERESAFIGHT" : "$OHMYGODITSAFIGHT";
-      vm.call_function<void>("B_SAY",self,other(),line);
+      sayToNpc(self,other(),line);
       }
     aivar[inPosition] = constant("NOTINPOS");
     aivar[lastTurn] = 0;
@@ -1398,7 +1407,7 @@ bool GameScript::runFakeGuildComment(Npc& npc, const daedalus::DaedalusSymbol& s
     line = "$ADDON_NOARMOR_BDT";
     }
   if(!line.empty())
-    vm.call_function<void>("B_SAY",self,other(),line);
+    sayToNpc(self,other(),line);
   result = 0;
   return true;
   }
@@ -1469,7 +1478,7 @@ bool GameScript::runHumanPlunder(Npc& npc, const daedalus::DaedalusSymbol& symbo
     transfer(gold,amount);
     }
   const std::string_view line = amount>0 ? "$ITOOKYOURGOLD" : "$SHITNOGOLD";
-  vm.call_function<void>("B_SAY",self,other(),line);
+  sayToNpc(self,other(),line);
 
   npc_perceiveall(self);
   // Both scans can update ITEM. Melee weapons take precedence when both find a candidate.
@@ -1479,7 +1488,7 @@ bool GameScript::runHumanPlunder(Npc& npc, const daedalus::DaedalusSymbol& symbo
     const auto item = std::dynamic_pointer_cast<daedalus::IItem>(vm.global_item()->get_instance());
     if(hlp_isvaliditem(item) && npc_getdisttoitem(self,item)<500) {
       ai_takeitem(self,item);
-      vm.call_function<void>("B_SAY",self,self,std::string_view("$ITAKEYOURWEAPON"));
+      sayToNpc(self,self,"$ITAKEYOURWEAPON");
       ai_equipbestmeleeweapon(self);
       ai_equipbestrangedweapon(self);
       }
@@ -2491,7 +2500,7 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
     const auto attitude = npc_getpermattitude(self,other());
     const auto toughGuy = vm.call_function<int32_t>("C_NPCISTOUGHGUY",self);
     const bool threatens = int32_t(self->type)!=number("NPCTYPE_FRIEND") && attitude!=ATT_HOSTILE && toughGuy!=0;
-    vm.call_function<void>("B_SAY",self,other(),std::string_view(threatens ? "$NEXTTIMEYOUREINFORIT" : "$OHMYHEAD"));
+    sayToNpc(self,other(),threatens ? "$NEXTTIMEYOUREINFORIT" : "$OHMYHEAD");
     }
   npc_perceiveall(self);
   // Both detections run. A melee item overrides ITEM when both searches succeed.
@@ -2650,7 +2659,7 @@ bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& s
     wld_playeffect("spellFX_SuckEnergy_BloodFly",self,vm.global_hero()->get_instance(),0,0,0,0);
     }
   if(!line.empty())
-    vm.call_function<void>("B_SAY",self,other(),line);
+    sayToNpc(self,other(),line);
 
   lastSecond = npc_getstatetime(self);
   const auto hp = self->attribute[NpcAttribute::hitpoints];

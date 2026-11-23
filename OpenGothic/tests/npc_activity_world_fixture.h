@@ -2307,7 +2307,12 @@ void fleeAndWatchPhases(World& world,Npc& npc,Npc& hero) {
       ++invocations;
       return script.invokeState(&npc,other,victim,ScriptFn(phase));
       };
+    const auto overlayPc=vm.find_symbol_by_name("B_SAY_OVERLAY")->address();
+    size_t overlayInstructions=0;
+    vm.observe_instructions([&](const auto&) { overlayInstructions+=vm.pc()==overlayPc; });
     invoke(flee.init,&hero);
+    vm.observe_instructions({});
+    require(overlayInstructions==(native ? 0u : 1u),"flee: only the original phase executes the overlay speech body");
     require(npc.hasPerc(PERC_ASSESSMAGIC) && npc.hasOverlay(overlay) && aivar[65]==0 && npc.target()==&hero,
             "flee: fresh Init applies the overlay and keeps the active target");
     const auto* warning=Contract::overlayQueue(npc).front();
