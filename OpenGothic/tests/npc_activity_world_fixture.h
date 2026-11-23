@@ -2953,7 +2953,7 @@ void monsterWispSearch(World& world, Npc& actor, Npc& hero) {
   vm.global_self()->set_instance(actorHandle);
   actor.setStateTime(0);
   actor.handle().senses_range=3000;
-  const auto origin=actor.position()+Tempest::Vec3(0,4000,0);
+  const auto origin=Tempest::Vec3(std::round(previousActor.x),std::round(previousActor.y)+4000,std::round(previousActor.z));
   auto* apple=world.addItem(script.findSymbolIndex("ITFO_APPLE"),origin+Tempest::Vec3(100,0,0));
   require(apple,"Wisp search: the item fixture needs a placed apple");
   const auto itemHandle=std::static_pointer_cast<daedalus::IItem>(apple->handlePtr());
