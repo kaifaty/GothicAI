@@ -3347,6 +3347,118 @@ void monsterDamagePerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
   std::puts("Monster damage perception: original and native attack, flee, retargeting and witnessed hits agree");
   }
 
+void monsterPlayerWarnAndSurprise(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  const auto previousEvents=events;
+  const auto attack=script.findFunction("ZS_MM_ATTACK");
+  const auto threat=script.findFunction("ZS_MM_THREATENENEMY");
+  const auto player=script.findFunction("B_MM_ASSESSPLAYER");
+  const auto warn=script.findFunction("B_MM_ASSESSWARN");
+  const auto surprise=script.findFunction("B_MM_ASSESSSURPRISE");
+  const auto dragonTalkPc=script.findSymbol("B_ASSIGNDRAGONTALK")->address();
+  const auto wolfState=Contract::aiState(wolf), sheepState=Contract::aiState(sheep);
+  const auto wolfPosition=wolf.position(), sheepPosition=sheep.position(), heroPosition=hero.position();
+  const auto sheepGuild=sheep.handle().guild;
+  const auto wolfVars=std::to_array(wolf.handle().aivar);
+  auto& invincible=hero.handle().aivar[4];
+  const auto previousInvincibility=invincible;
+  auto* previousOther=wolf.stateOther();
+  const auto previousExternal=wolf.isExternalControl();
+  const auto place=[](Npc& actor,Tempest::Vec3 position) {
+    actor.setPosition(position);
+    actor.updateTransform();
+    };
+  place(sheep,wolfPosition+Tempest::Vec3(-220,0,0));
+  place(hero,wolfPosition+Tempest::Vec3(220,0,0));
+  wolf.setExternalControl(false);
+
+  std::vector<std::vector<std::string>> original;
+  for(bool native:{false,true}) {
+    events=native;
+    auto& ai=wolf.handle().aivar;
+    std::copy(wolfVars.begin(),wolfVars.end(),ai);
+    ai[15]=0;
+    Contract::aiState(wolf)=wolfState;
+    Contract::aiState(sheep)=sheepState;
+    sheep.handle().guild=sheepGuild;
+    wolf.setTarget(nullptr);
+    wolf.setOther(nullptr);
+    size_t index=0;
+    auto perceive=[&](Npc& source,Npc* victim,PercType perception,ScriptFn handler,size_t expectedDragonTalk=0) {
+      wolf.clearAiQueue();
+      wolf.aiPush(AiQueue::aiWait(100));
+      wolf.setPerceptionEnable(perception,handler.ptr);
+      const auto handlerPc=script.findSymbol(size_t(handler.ptr))->address();
+      size_t entries=0,dragonTalkEntries=0;
+      vm.observe_instructions([&](const auto&) {
+        entries+=vm.pc()==handlerPc;
+        dragonTalkEntries+=vm.pc()==dragonTalkPc;
+        });
+      const bool delivered=wolf.perceptionProcess(source,victim,wolf.qDistTo(source),perception);
+      vm.observe_instructions({});
+      require(delivered && entries==(native ? 0u : 1u) && dragonTalkEntries==expectedDragonTalk,
+              "monster perceptions: the handler follows the executor and preserves the real dragon dialogue call");
+      auto witness=activityQueue(wolf);
+      witness.push_back(std::to_string(world.npcId(wolf.target())));
+      witness.push_back(std::to_string(world.npcId(wolf.stateOther())));
+      witness.push_back(std::to_string(ai[3]));
+      if(native)
+        require(witness==original[index],"monster perceptions: original and native leave the same queue and target context");
+      else
+        original.push_back(std::move(witness));
+      ++index;
+      };
+
+    invincible=1;
+    perceive(hero,nullptr,PERC_ASSESSPLAYER,player);
+    invincible=0;
+    perceive(hero,nullptr,PERC_ASSESSPLAYER,player,1);
+    perceive(hero,nullptr,PERC_ASSESSSURPRISE,surprise);
+    require(wolf.target()==&hero && wolf.aiQueueFront() && wolf.aiQueueFront()->act==AI_Wait,
+            "monster surprise: the new target does not replace the queued action");
+
+    require(wolf.startState(attack,wolf.handle().wp),"monster warning: the receiver must enter an attack");
+    Contract::aiState(wolf).started=true;
+    ai[7]=int32_t(hero.instanceSymbol());
+    ai[29]=1;
+    perceive(sheep,&hero,PERC_ASSESSWARN,warn);
+    require(wolf.target()==&hero && wolf.stateOther()==&hero,"monster warning: protect an existing combat target and restore OTHER");
+    ai[29]=0;
+    perceive(sheep,&hero,PERC_ASSESSWARN,warn);
+    require(wolf.target()==&sheep && wolf.isAiQueueEmpty(),"monster warning: an eating predator chooses the prey instead");
+    Contract::aiState(wolf)=wolfState;
+
+    sheep.handle().guild=wolf.handle().guild;
+    ai[50]=1;
+    require(sheep.startState(threat,sheep.handle().wp),"monster warning: the caller must enter threat");
+    perceive(sheep,&hero,PERC_ASSESSWARN,warn);
+    auto commands=Contract::queue(wolf);
+    require(commands.size()==3 && commands.pop().act==AI_Wait && commands.pop().act==AI_SetWalkMode &&
+            commands.pop().target==&hero,"monster warning: the pack runs to the warned target without breaking the existing queue");
+    require(sheep.startState(attack,sheep.handle().wp),"monster warning: the caller must enter attack");
+    perceive(sheep,&hero,PERC_ASSESSWARN,warn);
+    require(wolf.target()==&hero && wolf.aiQueueFront() && wolf.aiQueueFront()->func==attack,
+            "monster warning: the pack joins a member's attack against the victim");
+    }
+  events=previousEvents;
+  Contract::aiState(wolf)=wolfState;
+  Contract::aiState(sheep)=sheepState;
+  sheep.handle().guild=sheepGuild;
+  std::copy(wolfVars.begin(),wolfVars.end(),wolf.handle().aivar);
+  invincible=previousInvincibility;
+  wolf.setOther(previousOther);
+  wolf.setTarget(nullptr);
+  wolf.setExternalControl(previousExternal);
+  wolf.clearAiQueue();
+  sheep.clearAiQueue();
+  place(sheep,sheepPosition);
+  place(hero,heroPosition);
+  std::puts("Monster player, warning and surprise perceptions: original and native target context and queues agree");
+  }
+
 std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -3506,6 +3618,7 @@ std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   monsterBodyPerception(world,*wolf,sheep);
   specialMonsterRoutines(session,world,*wolf,sheep,hero);
   monsterDamagePerception(world,*wolf,sheep,hero);
+  monsterPlayerWarnAndSurprise(world,*wolf,sheep,hero);
   const auto attack=script.findFunction("ZS_MM_ATTACK");
   require(wolf->startState(attack,site->name),"the wolf must enter attack before saving");
   wolf->setTarget(&hero);

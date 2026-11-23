@@ -267,9 +267,13 @@ class GameScript final : public GameRules {
     void runMonsterAssessDamage();
     void runMonsterAssessEnemy();
     void runMonsterAssessOthersDamage();
+    void runMonsterAssessPlayer();
+    void runMonsterAssessWarn();
+    void runMonsterAssessSurprise();
     bool monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monster, const std::shared_ptr<daedalus::INpc>& body);
     bool monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey);
     bool monsterTargetHasBodyState(const std::shared_ptr<daedalus::INpc>& target, int32_t state);
+    bool monsterTargetIsDown(const std::shared_ptr<daedalus::INpc>& target);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window);
     void enableMonsterRoutinePerceptions(Npc& npc);
