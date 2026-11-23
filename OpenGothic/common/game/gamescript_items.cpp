@@ -10,7 +10,7 @@
 daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                          RoutineDefinitionRuntime::Definitions& routines,
                                          NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,
-                                         ActivityDefinitionRuntime::Definitions& activities, QuietSoundHeight& quietSound,
+                                         ActivityDefinitionRuntime::Definitions& activities, QuietSoundReaction& quietSound,
                                          bool& nativeRoutineProgram) {
   const auto lang=Settings::getI("GAME", "language");
   std::string sha256;
@@ -26,7 +26,8 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
   if(nativeRoutineProgram) {
     const auto* callback=script.find_symbol_by_name("B_ASSESSQUIETSOUND");
     const auto* height=script.find_symbol_by_name("PERC_DIST_HEIGHT");
-    quietSound={ScriptFn(callback->index()),height->get_int(0)};
+    const auto* indoorHeight=script.find_symbol_by_name("PERC_DIST_INDOOR_HEIGHT");
+    quietSound={ScriptFn(callback->index()),height->get_int(0),indoorHeight->get_int(0)};
     }
   const auto flags=daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
   daedalus::DaedalusVm vm(std::move(script),flags);

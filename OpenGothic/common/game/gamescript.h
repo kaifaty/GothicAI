@@ -189,7 +189,7 @@ class GameScript final : public GameRules {
     void playerHotLameHeal(Npc& pl) override;
 
     const PerDist& percRanges() const override { return perceptionRanges; }
-    std::optional<int32_t> quietSoundHeightLimit(ScriptFn callback) const override;
+    bool usesNativeQuietSound(ScriptFn callback) const override;
 
     bool isDead       (const Npc &pl) override;
     bool isUnconscious(const Npc &pl) override;
@@ -341,14 +341,16 @@ class GameScript final : public GameRules {
     bool aiOutputSvm(Npc &from, std::string_view name, std::string_view svm, Npc* target, bool overlay);
 
     bool searchScheme(std::string_view sc, std::string_view listName);
-    struct QuietSoundHeight {
+    struct QuietSoundReaction {
       ScriptFn callback;
-      int32_t limit = 0;
+      int32_t heightLimit = 0;
+      int32_t indoorHeightLimit = 0;
       };
+    void runQuietSoundReaction(Npc& listener);
     static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                        RoutineDefinitionRuntime::Definitions& routines,
                                        NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,
-                                       ActivityDefinitionRuntime::Definitions& activities, QuietSoundHeight& quietSound,
+                                       ActivityDefinitionRuntime::Definitions& activities, QuietSoundReaction& quietSound,
                                        bool& nativeRoutineProgram);
     int initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* function);
     bool game_initgerman     ();
@@ -584,7 +586,7 @@ class GameScript final : public GameRules {
     PlacementDefinitionRuntime::Definitions                     placementDefinitions;
     ActivityDefinitionRuntime::Definitions                      activityDefinitions;
     bool                                                        activityEvents = ActivityDefinitionRuntime::events();
-    QuietSoundHeight                                            quietSoundHeight;
+    QuietSoundReaction                                          quietSound;
     bool                                                        nativeRoutineProgram = false;
     std::unordered_map<uint32_t,NativeRoutinePhase>              nativeRoutinePhases;
     daedalus::DaedalusVm                                          vm;

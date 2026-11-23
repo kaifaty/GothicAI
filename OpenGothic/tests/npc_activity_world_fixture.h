@@ -1390,6 +1390,147 @@ void loadCampfireGroup(Gothic& gothic,const CampfireSave& save) {
               save.edge.c_str(),double(std::hypot(step.x,step.z)));
   }
 
+void quietSoundRooms(Gothic& gothic) {
+  using Contract=NpcDefinitionContract;
+  ActivityEventsWorld test(gothic);
+  auto& world=test.world();
+  auto& script=world.script();
+  auto* npc=activityNpc(world,"BAU_951_HILDA");
+  const auto* post=world.findWayPoint("NW_FARM1_INHOUSE_02");
+  const auto* otherRoom=world.findWayPoint("NW_FARM1_INHOUSE_01");
+  const auto* beyond=world.findWayPoint("NW_FARM1_ENTRANCE_01");
+  require(npc && post && otherRoom && beyond,"quiet sound: Lobart's house needs two rooms and an exit fixture");
+  // Movement caches the ground ray's portal. The BSP room alone also contains untagged furniture surfaces.
+  constexpr std::string_view portal="S:FARM01_NW_CITY_BODENDIELEN_01";
+  const auto at=post->groundPos;
+  std::optional<Tempest::Vec3> inside;
+  for(const auto offset : {Tempest::Vec3(-180,0,0),Tempest::Vec3(180,0,0),Tempest::Vec3(0,0,180),Tempest::Vec3(0,0,-180),
+                           Tempest::Vec3(-180,0,180),Tempest::Vec3(-180,0,-180),Tempest::Vec3(180,0,180),Tempest::Vec3(180,0,-180)}) {
+    const auto floor=world.physic()->landRay(at+offset+Tempest::Vec3(0,40,0),120);
+    const Tempest::Vec3 eyes(0,160,0);
+    if(floor.sector!=nullptr && std::string_view(floor.sector)==portal &&
+       !world.physic()->ray(at+eyes,floor.v+eyes).hasCol) {
+      inside=floor.v;
+      break;
+      }
+    }
+  require(inside.has_value(),"quiet sound: the guest needs a clear floor position on the listener's portal");
+  auto& hero=*world.player();
+  auto& events=Contract::activityEventsOn(script);
+  const bool enabled=events;
+  auto& vm=script.getVm();
+  const auto observe=script.findFunction("ZS_OBSERVEPLAYER");
+  EventActor activity;
+  activity.npc=npc;
+  activity.state="ZS_STAND_WP";
+  activity.phases=activityPhases(script,activity.state.c_str());
+  activity.pointName=post->name;
+  const auto stand=ScriptFn(activity.phases.init);
+  npc->clearRoutine();
+  npc->addRoutine(gtime(0,0),gtime(23,59),uint32_t(activity.phases.init),activity.pointName);
+  const auto prepare=[&](bool sameRoom) {
+    test.only({});
+    test.stop(*npc);
+    npc->clearGoTo();
+    test.moveHero(sameRoom ? *inside : otherRoom->groundPos,0);
+    test.start(activity,post->groundPos,npc,false);
+    npc->setAttitude(ATT_NEUTRAL);
+    Contract::tickRoutine(*npc);
+    for(size_t i=0;i<PERC_Count;++i)
+      if(i!=PERC_ASSESSQUIETSOUND) npc->setPerceptionDisable(PercType(i));
+    test.only({npc,&hero});
+    try {
+      test.stepUntil(120,[&] {
+        return world.guildOfRoom(npc->portalName())==int32_t(GIL_PUBLIC) &&
+               ((npc->portalName()==hero.portalName())==sameRoom) && npc->isAiQueueEmpty();
+        },"quiet sound: the listener and source settle in the requested rooms");
+      }
+    catch(const std::runtime_error& error) {
+      const auto where=[&](Npc& actor) {
+        const auto p=actor.position();
+        return std::string("portal='")+std::string(actor.portalName())+"' room='"+std::string(world.roomAt(p))+"' guild="+
+               std::to_string(world.guildOfRoom(actor.portalName()))+" body="+std::to_string(actor.bodyStateMasked())+
+               " xyz="+std::to_string(p.x)+","+std::to_string(p.y)+","+std::to_string(p.z);
+        };
+      const auto* action=npc->aiQueueFront();
+      throw std::runtime_error(std::string(error.what())+" at "+(sameRoom ? "the interior offset" : otherRoom->name)+": listener "+where(*npc)+" state="+
+                               std::string(script.symbolName(Contract::aiState(*npc).funcIni.ptr))+" queue="+
+                               (action ? std::string(AiQueue::actionName(action->act)) : "empty")+"; hero "+where(hero)+
+                               " distance="+std::to_string(std::sqrt(npc->qDistTo(hero))));
+      }
+    npc->setDirection(hero.position()-npc->position());
+    npc->updateTransform();
+    if(sameRoom) test.step();
+    npc->setStateTime(0);
+    require(npc->isInState(stand) && npc->hasPerc(PERC_ASSESSQUIETSOUND) && npc->qDistTo(hero)<1000.f*1000.f,
+            "quiet sound: the standing listener is close enough to check the room");
+    if(sameRoom) require(npc->canSeeNpc(hero,false),"quiet sound: the listener sees the guest in his portal");
+    };
+  struct Site { bool sameRoom; int height; const char* label; };
+  for(const Site site : {Site{true,0,"same room"},Site{false,0,"separate room"},Site{true,251,"indoor height"}}) {
+    std::vector<std::string> original;
+    for(bool native:{false,true}) {
+      prepare(site.sameRoom);
+      if(site.height!=0) {
+        auto position=hero.position();
+        position.y=std::nextafter(npc->position().y+float(site.height),std::numeric_limits<float>::infinity());
+        test.moveHero(position,hero.rotation());
+        require(int32_t(std::abs(hero.position().y-npc->position().y))==site.height &&
+                world.guildOfRoom(hero.portalName())==int32_t(GIL_PUBLIC),
+                "quiet sound: the elevated source retains its indoors portal for the height gate");
+        }
+      if(!site.sameRoom) {
+        // A hostile listener with no line of sight reaches the quiet handler's own transition.
+        npc->setAttitude(ATT_HOSTILE);
+        npc->aiPush(AiQueue::aiStopLookAt());
+        Contract::nextAiAction(*npc);
+        require(!npc->canSeeSource(),"quiet sound: the outside source is unseen");
+        npc->aiPush(AiQueue::aiWait(173));
+        }
+      size_t quietCalls=0,roomCalls=0,fakeBanditCalls=0,clearCalls=0;
+      const auto observer=vm.add_call_observer([&](const auto& symbol) {
+        quietCalls+=symbol.name()=="B_ASSESSQUIETSOUND";
+        roomCalls+=symbol.name()=="B_ASSESSENTERROOM";
+        fakeBanditCalls+=symbol.name()=="C_PLAYERISFAKEBANDIT";
+        clearCalls+=symbol.name()=="B_CLEARPERCEPTIONS";
+        });
+      events=native;
+      const bool heard=npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSQUIETSOUND);
+      events=enabled;
+      vm.remove_call_observer(observer);
+      require(heard && quietCalls==(native ? 0u : 1u) && roomCalls==(site.height==0 ? 1u : 0u),
+              "quiet sound: ordinary perception preserves the indoor height gate in both executors");
+      if(site.height==0) {
+        const auto* queued=npc->aiQueueFront();
+        require(queued && queued->act==AI_StartState && queued->func==observe && queued->target==&hero &&
+                clearCalls==1 && fakeBanditCalls==(site.sameRoom ? 0u : 1u),
+                "quiet sound: the public room and the unseen source reach their corresponding observation transitions");
+        }
+      if(site.height!=0) require(npc->isAiQueueEmpty(),"quiet sound: the other floor leaves the original activity in place");
+      const auto queue=activityQueue(*npc);
+      if(native) require(queue==original,"quiet sound: the original and native handlers leave the same room reaction queue");
+      else original=queue;
+      }
+    std::printf("D5.1 %s: ordinary quiet perception preserves the stock queue (%zu actions)\n",
+                site.label,original.size());
+    }
+
+  prepare(true);
+  PhysicsNoise impact;
+  impact.culprit=&hero;
+  impact.position=hero.position();
+  size_t quietCalls=0;
+  const auto observer=vm.add_call_observer([&](const auto& symbol) { quietCalls+=symbol.name()=="B_ASSESSQUIETSOUND"; });
+  require(npc->hearPhysicsNoise(impact) && npc->isInState(observe) && Contract::aiState(*npc).started &&
+          npc->hasPerc(PERC_ASSESSTHEFT) && quietCalls==0,
+          "quiet sound: native impact starts observation immediately and restores perceptions");
+  vm.remove_call_observer(observer);
+  test.moveHero(beyond->groundPos,hero.rotation());
+  test.stepUntil(240,[&] { return npc->isInState(stand) && Contract::aiState(*npc).started; },
+                 "quiet sound: the listener resumes its original routine when the source leaves");
+  std::puts("D5.1 physical sound: ordinary load, immediate observation and return to the standing routine");
+  }
+
 void quietSoundAtPost(Gothic& gothic) {
   constexpr auto* state="ZS_STAND_ARMSCROSSED";
   constexpr auto* actor="VLK_412_HARAD";
@@ -1398,7 +1539,7 @@ void quietSoundAtPost(Gothic& gothic) {
   std::string program;
   loadBaseProgram(gothic.defaultGameDatFile(),Settings::getI("GAME","language"),&program);
   if(program!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
-    std::puts("SKIP quiet sound: the high-source fixture is for the verified NotR program");
+    std::puts("SKIP quiet sound: the fixtures are for the verified NotR program");
     return;
     }
   const auto directory=std::filesystem::temp_directory_path()/("gothic-quiet-sound-"+std::to_string(getpid()));
@@ -1412,7 +1553,7 @@ void quietSoundAtPost(Gothic& gothic) {
     return npc.activityStage()==ActivityEvents::Stage::Hold && npc.currentWayPoint()==&post &&
            npc.isAiQueueEmpty() && npc.animProgress("S_LGUARD")>=0;
     };
-  const auto run=[&](const char* leg, float height, bool expectVm, bool checkReturn) {
+  const auto run=[&](const char* leg, float height, bool native, bool checkReturn) {
     ActivityEventsWorld test(gothic);
     auto& world=test.world();
     auto& script=world.script();
@@ -1437,15 +1578,21 @@ void quietSoundAtPost(Gothic& gothic) {
     std::string error;
     if(!NpcDayMeasurement::start(world,trace,error)) throw std::runtime_error(error);
     require(vm.call_observer_count()==observers,"quiet sound: trace-only must not attach a VM observer");
-    size_t vmCalls=0,quietCalls=0;
+    size_t vmCalls=0,quietCalls=0,roomCalls=0;
     const auto observer=vm.add_call_observer([&](const auto& symbol) {
       ++vmCalls;
       if(symbol.name()=="B_ASSESSQUIETSOUND") ++quietCalls;
+      if(symbol.name()=="B_ASSESSENTERROOM") ++roomCalls;
       });
     PhysicsNoise impact;
     impact.culprit=&hero;
     impact.position=npc->position()+Tempest::Vec3(-post->dir.z,0,post->dir.x)*300.f;
-    require(npc->hearPhysicsNoise(impact),"quiet sound: the impact from a known source is heard");
+    auto& events=NpcDefinitionContract::activityEventsOn(script);
+    const bool enabled=events;
+    events=native;
+    const bool heard=npc->hearPhysicsNoise(impact);
+    events=enabled;
+    require(heard,"quiet sound: the impact from a known source is heard");
     if(checkReturn) {
       const auto until=world.tickCount()+2000;
       test.stepUntil(120,[&] {
@@ -1458,8 +1605,9 @@ void quietSoundAtPost(Gothic& gothic) {
       }
     vm.remove_call_observer(observer);
     NpcDayMeasurement::stop(world);
-    require(quietCalls==(expectVm ? 1u : 0u) && (expectVm ? vmCalls>0 : vmCalls==0),
-            "quiet sound: the observed VM dispatch must match the expected reaction");
+    require(quietCalls==(native ? 0u : 1u) && roomCalls==(height==1000.f ? 1u : 0u) &&
+            (!checkReturn || vmCalls==(native ? 0u : 1u)),
+            "quiet sound: the expected executor preserves the early height gate and includes the exact boundary");
     require(!std::filesystem::exists(directory/"npc-day-script.json"),"quiet sound: trace-only writes no VM summary");
     std::ifstream rows(directory/"npc-day-activity.jsonl");
     bool noiseRow=false,returnRow=false;
@@ -1471,7 +1619,7 @@ void quietSoundAtPost(Gothic& gothic) {
       if(kind=="header") continue;
       require(row["symbol"].GetString()==std::string_view(actor),"quiet sound: only the requested actor is traced");
       if(kind=="physics_noise") {
-        noiseRow=row["executor"].GetString()==std::string_view(expectVm ? "vm" : "engine");
+        noiseRow=row["executor"].GetString()==std::string_view(native ? "engine" : "vm");
         std::printf("D5 %s %s\n",leg,line.c_str());
         }
       if(kind=="activity_transition" && row["to"].GetString()==std::string_view("hold") &&
@@ -1483,6 +1631,7 @@ void quietSoundAtPost(Gothic& gothic) {
       }
     require(noiseRow && (!checkReturn || returnRow),"quiet sound: trace identifies the executor and the return to the owned post");
     std::printf("D5 %s: %zu VM calls (%zu quiet callbacks), maximum turn %.1f degrees\n",leg,vmCalls,quietCalls,double(excursion));
+    return excursion;
     };
 
   gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
@@ -1516,13 +1665,14 @@ void quietSoundAtPost(Gothic& gothic) {
     std::memset(preview.data(),0,4);
     gothic.gameSession()->save(out,"quiet sound before impact",preview);
   }
-  run("first",1100.f,false,true);
-  gothic.clearGame().reset();
-  {
+  const auto originalTurn=run("original",1100.f,false,true);
+  const auto reload=[&] {
+    gothic.clearGame().reset();
     Tempest::MemReader reader(save);
     Serialize in(reader);
     gothic.setGame(std::make_unique<GameSession>(in));
-  }
+    };
+  reload();
   {
     ActivityEventsWorld test(gothic);
     auto* npc=activityNpc(test.world(),actor);
@@ -1531,10 +1681,13 @@ void quietSoundAtPost(Gothic& gothic) {
     test.only({npc});
     test.stepUntil(120,[&] { return settled(*npc,*post); },"quiet sound: the loaded listener restores his pose");
   }
-  run("reloaded",1100.f,false,true);
+  require(run("reloaded",1100.f,true,true)==originalTurn,"quiet sound: native replay after loading turns as far as the original");
   // The cooldown is one tick longer than the native turn. Keep the same stance for the boundary check.
   ActivityEventsWorld(gothic).step();
   run("threshold",1000.f,true,false);
+  // The height cases move the player off the ground. Start the room checks from the saved pose.
+  reload();
+  quietSoundRooms(gothic);
   gothic.clearGame().reset();
   std::filesystem::remove_all(directory);
   }

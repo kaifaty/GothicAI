@@ -1,6 +1,5 @@
 #include "npc.h"
 
-#include "game/npcactivityhost.h"
 #include "world/npcactivityprobe.h"
 
 #include <algorithm>
@@ -326,16 +325,11 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
   const auto* point = activityEvents.activity ? activityEvents.activity->point : nullptr;
   if(point && (point->form==Form::ArmsCrossed || point->form==Form::Pee))
     activityEvents.awaitQueue = true;
-  // Vanilla B_AssessQuietSound dereferences OTHER. Unknown physical causes
-  // still turn the listener natively, without inventing a script actor.
+  // Quiet sound needs a source NPC. Impacts without one still turn the listener.
   const auto callback=perception[PERC_ASSESSQUIETSOUND].func;
-  bool callbackDispatched=noise.culprit!=nullptr && callback.isValid();
-  if(callbackDispatched && point && point->form==Form::ArmsCrossed && activityEvents.stage==ActivityEvents::Stage::Hold) {
-    if(const auto limit=owner.rules().quietSoundHeightLimit(callback))
-      callbackDispatched=NpcEngineCalls::heightDifference(*this,*noise.culprit)<=*limit;
-    }
+  const bool callbackDispatched=noise.culprit!=nullptr && callback.isValid();
   if(auto* probe=NpcActivityProbe::instance)
-    probe->physicsNoise(*this,noise.culprit,callbackDispatched);
+    probe->physicsNoise(*this,noise.culprit,callbackDispatched && !owner.rules().usesNativeQuietSound(callback));
   if(callbackDispatched) {
     physicsNoiseCallback = true;
     owner.rules().invokeState(this,noise.culprit,nullptr,callback);
