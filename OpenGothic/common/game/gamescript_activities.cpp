@@ -9,6 +9,11 @@ void GameScript::loadNativeRoutines() {
   if(!nativeRoutineProgram || !activityEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return;
 
+  using NpcHandle = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("B_GIVEINVITEMS",std::function<int32_t(NpcHandle,NpcHandle,int32_t,int32_t)>{
+    [this](NpcHandle giver,NpcHandle taker,int32_t item,int32_t amount) { return giveInventoryItems(giver,taker,item,amount); }
+    },[this] { return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off; });
+
   static constexpr NativeRoutinePhase routines[] = {
     {"ZS_GOTOBED",            &GameScript::runMovementRoutine},
     {"ZS_SLEEP",              &GameScript::runMovementRoutine, 0, RoutineWake::Sleep},

@@ -1650,6 +1650,95 @@ auto storyJournalBeforeSave(GameScript& script) {
   return requireJournal;
   }
 
+auto storyBeforeSave(World& world) {
+  using namespace storygraph::ex;
+  auto& script=world.script();
+  const auto requireJournal=storyJournalBeforeSave(script);
+  auto& vm=script.getVm();
+  constexpr const char* itemName="ITMI_ORNAMENT_ADDON_VATRAS";
+  const auto item=script.findSymbolIndex(itemName);
+  auto* giver=activityNpc(world,"VLK_449_LARES");
+  auto* player=world.player();
+  auto* dialog=vm.find_symbol_by_name("DIA_ADDON_LARES_PATCH_INFO");
+  auto* transfer=vm.find_symbol_by_name("B_GIVEINVITEMS");
+  require(giver && player && dialog && transfer && item!=size_t(-1),"the transfer fixture needs Lares and the ornament dialog");
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const bool savedEvents=events;
+  const auto savedQueue=NpcDefinitionContract::queue(*giver);
+  const auto savedItem=vm.global_item()->get_instance();
+  StoryRuntime story(nullptr);
+  StoryRuntime::Bind dialogContext(vm,giver,player);
+  story.ensureLifter();
+  const auto program=storygraph::liftProgram(vm,story.bytecode(),dialog->index());
+  require(program.error.empty(),program.error.c_str());
+
+  storygraph::Program handIn;
+  handIn.returns=true;
+  auto& ret=handIn.steps.emplace_back();
+  ret.kind=storygraph::Step::Return;
+  ret.value=fn("B_GIVEINVITEMS",{inst("OTHER"),inst("SELF"),sym(itemName),param(0)});
+  auto& interpreter=story.interpreter(vm);
+  const auto give=[&](int32_t count) {
+    const auto result=interpreter.run(handIn,{storygraph::Value::integer(count)});
+    require(result.ok,result.error.c_str());
+    return result.returned.i;
+    };
+  std::vector<std::string> original;
+  for(bool native:{false,true}) {
+    if(native && (!savedEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+      continue;
+    events=native;
+    NpcDefinitionContract::queue(*giver).clear();
+    giver->delItem(item,uint32_t(giver->itemCount(item)));
+    player->delItem(item,uint32_t(player->itemCount(item)));
+    vm.global_item()->set_instance(savedItem);
+    size_t bytecode=0;
+    vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==transfer->address(); });
+    require(give(0)==1 && give(1)==0 && vm.global_item()->get_instance()==savedItem &&
+            giver->itemCount(item)==0 && player->itemCount(item)==0 && giver->aiQueueFront()==nullptr,
+            "zero and refused player hand-ins must leave both inventories, ITEM and the queue alone");
+    const auto result=interpreter.run(program);
+    require(result.ok,result.error.c_str());
+    require(giver->itemCount(item)==0 && player->itemCount(item)==1 &&
+            vm.global_item()->get_instance()==std::static_pointer_cast<daedalus::IItem>(player->getItem(item)->handlePtr()),
+            "Lares's lifted dialog must grant the requested ornament and set ITEM, even from an empty giver");
+    require(give(1)==1 && giver->itemCount(item)==1 && player->itemCount(item)==0 &&
+            vm.global_item()->get_instance()==std::static_pointer_cast<daedalus::IItem>(giver->getItem(item)->handlePtr()),
+            "the hand-in must remove the ornament from the player and set ITEM to Lares's copy");
+    vm.observe_instructions({});
+    require(bytecode==(native ? 0u : 4u),"the same lifted dialog and hand-in must use the selected transfer executor");
+    auto queue=NpcDefinitionContract::queue(*giver);
+    require(queue.size()==2,"each successful hero transfer must enqueue one notification on SELF");
+    for(auto y:{"YPOS_ITEMTAKEN","YPOS_ITEMGIVEN"}) {
+      const auto line=queue.pop();
+      require(line.act==AI_PrintScreen && line.i0==-1 && line.i1==vm.find_symbol_by_name(y)->get_int() &&
+              line.i2==2 && line.s1==vm.find_symbol_by_name("FONT_SCREENSMALL")->get_string(),
+              "transfer notifications must keep their order, placement, duration and font");
+      }
+    if(native)
+      require(activityQueue(*giver)==original,"the native notices must match the original localized text");
+    else
+      original=activityQueue(*giver);
+    }
+  const auto itemText=vm.find_symbol_by_name("B_GIVEINVITEMS.ITEMNAME")->get_string();
+  vm.global_item()->set_instance(savedItem);
+  NpcDefinitionContract::queue(*giver)=savedQueue;
+  events=savedEvents;
+  return [requireJournal,item,itemText](World& restored) {
+    auto& script=restored.script();
+    auto& vm=script.getVm();
+    requireJournal(script.questLog());
+    const auto* lares=activityNpc(restored,"VLK_449_LARES");
+    const auto* hero=restored.player();
+    require(lares && hero && lares->itemCount(item)==1 && hero->itemCount(item)==0 &&
+            vm.find_symbol_by_name("B_GIVEINVITEMS.ITEMNAME")->get_string()==itemText &&
+            vm.find_symbol_by_name("B_GIVEINVITEMS.AMOUNT")->get_int()==1 &&
+            vm.find_symbol_by_name("B_GIVEINVITEMS.TAKER")->get_instance().get()==
+              static_cast<const daedalus::INpc*>(lares->handlePtr().get()),
+            "the transferred ornament and the script transfer locals must survive saving and loading");
+    };
+  }
+
 void observePlayerPhases(World& world,Npc& npc,Npc& hero,bool seated) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();

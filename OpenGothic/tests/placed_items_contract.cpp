@@ -3847,7 +3847,7 @@ void moverChildSave() {
   savedPose.translate(25,0,0);
   child.item->setObjMatrix(savedPose);
 
-  const auto requireJournal=storyJournalBeforeSave(gothic.world()->script());
+  const auto requireStory=storyBeforeSave(*gothic.world());
   std::vector<uint8_t> bytes;
   {
     Tempest::MemWriter writer(bytes);
@@ -3867,7 +3867,7 @@ void moverChildSave() {
     Serialize in(reader);
     gothic.setGame(std::make_unique<GameSession>(in));
   }
-  requireJournal(gothic.world()->script().questLog());
+  requireStory(*gothic.world());
   const auto& restored=findChild(*gothic.world());
   require(gothic.world()->script().getVm().global_item()->get_instance()==
           std::static_pointer_cast<daedalus::IItem>(restored.item->handlePtr()),

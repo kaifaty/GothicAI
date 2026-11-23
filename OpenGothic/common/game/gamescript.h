@@ -249,6 +249,8 @@ class GameScript final : public GameRules {
     bool invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);
     bool runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    int32_t giveInventoryItems(const std::shared_ptr<daedalus::INpc>& giver,
+                               const std::shared_ptr<daedalus::INpc>& taker, int32_t item, int32_t amount);
     bool runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
