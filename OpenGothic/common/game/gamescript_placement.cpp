@@ -223,6 +223,102 @@ void GameScript::runWorldInit(std::string_view fn) {
     (void)vm.pop_int();
   }
 
+void GameScript::loadNewWorldChapterEntries() {
+  const auto place=[this](std::string_view external,std::string_view instance,std::string_view point) {
+    vm.push_int(int32_t(findSymbolIndex(instance)));
+    vm.push_reference(findSymbol(point));
+    vm.unsafe_call_external(findSymbol(external));
+    };
+  const auto remove=[this](std::string_view instance) {
+    vm.push_int(int32_t(findSymbolIndex(instance)));
+    vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
+    };
+  const auto number=[this](std::string_view name) { return findSymbol(name)->get_int(); };
+  vm.override_function("B_ENTER_NEWWORLD_KAPITEL_1",std::function<void()>{[this,place,remove,number] {
+    constexpr std::string_view myxir="KDW_140300_ADDON_MYXIR_CITY";
+    vm.push_reference(findSymbol(myxir));
+    vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
+    const bool myxirDead=vm.pop_int()!=0;
+    const bool ravenDead=number("RAVENISDEAD")==number("TRUE");
+    if(myxirDead && ravenDead)
+      place("WLD_INSERTNPC",myxir,"$28058"); // CITY1
+
+    if(number("ENTERED_ADDONWORLD")==number("TRUE")) {
+      for(auto instance:{"KDW_1400_ADDON_SATURAS_NW","KDW_1401_ADDON_CRONOS_NW","KDW_1402_ADDON_NEFARIUS_NW",
+                         "KDW_1403_ADDON_MYXIR_NW","KDW_1404_ADDON_RIORDIAN_NW","KDW_1405_ADDON_MERDARION_NW",
+                         "PIR_1301_ADDON_SKIP_NW"})
+        remove(instance);
+      auto* portalKey=findSymbol("SC_GOTPORTALTEMPELWALKTHROUGHKEY");
+      if(portalKey->get_int()==number("FALSE")) {
+        place("WLD_INSERTNPC","STONEGUARDIAN_MERDARIONSSCHLUESSEL","$28059");
+        portalKey->set_int(number("TRUE"));
+        }
+      }
+
+    auto* escaped=findSymbol("SKLAVEN_WEG");
+    const bool alreadyReturned=escaped->get_int()!=number("FALSE");
+    const bool haveEscaped=number("SKLAVEN_FLUCHT")==number("TRUE");
+    if(!alreadyReturned && haveEscaped) {
+      static constexpr std::pair<std::string_view,std::string_view> homes[]={
+        {"STRF_1123_ADDON_PATRICK_NW","$28060"},
+        {"STRF_1124_ADDON_MONTY_NW",  "$28061"},
+        {"STRF_1125_ADDON_TONAK_NW",  "$28062"},
+        {"STRF_1126_ADDON_TELBOR_NW", "$28063"},
+        {"STRF_1127_ADDON_PARDOS_NW", "$28064"},
+        };
+      for(const auto& [instance,waypoint]:homes)
+        place("WLD_INSERTNPC",instance,waypoint);
+      escaped->set_int(number("TRUE"));
+      findSymbol("MISSINGPEOPLERETURNEDHOME")->set_int(number("TRUE"));
+      }
+    }},PlacementDefinitionRuntime::enabled);
+
+  constexpr auto chapterTwo="B_ENTER_NEWWORLD_KAPITEL_2";
+  // The verified callback starts its block of 50 literal NPC rows after the two tests.
+  auto pc=findSymbol(chapterTwo)->address()+42;
+  std::array<LiteralPlacement,50> population{};
+  for(auto& row:population) {
+    row=readLiteralPlacement(vm,pc,chapterTwo);
+    if(row.external->name()!="WLD_INSERTNPC")
+      throw std::runtime_error("Unexpected NPC placement in "+std::string(chapterTwo));
+    }
+  vm.override_function(chapterTwo,std::function<void()>{[this,place,remove,number,population] {
+    if(number("GREGISBACK")==number("TRUE"))
+      remove("PIR_1300_ADDON_GREG_NW");
+    auto* entered=findSymbol("ENTERNW_KAPITEL2");
+    if(entered->get_int()!=number("FALSE"))
+      return;
+    for(const auto& row:population) {
+      vm.push_int(int32_t(row.instance->index()));
+      vm.push_reference(row.point);
+      vm.unsafe_call_external(row.external);
+      }
+
+    const auto heroGuild=[this] {
+      const auto hero=vm.global_hero()->get_instance();
+      vm.unsafe_set_gi(hero);
+      return vm.get_int(hero,findSymbol("C_NPC.GUILD"),0);
+      };
+    const auto guildMatches=[&](std::string_view first,std::string_view second) {
+      const bool matchesFirst=heroGuild()==number(first);
+      const bool matchesSecond=heroGuild()==number(second);
+      return matchesFirst || matchesSecond;
+      };
+    if(guildMatches("GIL_PAL","GIL_MIL"))
+      place("WLD_INSERTITEM","ITAM_DEX_01","$28115");
+    else if(guildMatches("GIL_DJG","GIL_SLD"))
+      place("WLD_INSERTITEM","ITAM_HP_01","$28116");
+    else
+      place("WLD_INSERTITEM","ITAM_HP_MANA_01","$28117");
+    if(heroGuild()==number("GIL_KDF")) {
+      vm.push_reference(findSymbol("AGON"));
+      vm.push_reference(findSymbol("$28118")); // StillAlive
+      vm.unsafe_call_bl(findSymbol("B_STARTOTHERROUTINE"));
+      }
+    entered->set_int(number("TRUE"));
+    }},PlacementDefinitionRuntime::enabled);
+  }
+
 void GameScript::loadNativeWorldEntry() {
   if(!nativeRoutineProgram)
     return;
@@ -247,6 +343,8 @@ void GameScript::loadNativeWorldEntry() {
   for(const auto& [name,region]:worlds)
     vm.override_function(name,std::function<void()>{[this,region] { enterChapterWorld(region); }},
                          PlacementDefinitionRuntime::enabled);
+
+  loadNewWorldChapterEntries();
 
   static constexpr std::pair<const char*,const char*> latches[]={
     {"B_ENTER_NEWWORLD_KAPITEL_6","ENTERNW_KAPITEL6"},
