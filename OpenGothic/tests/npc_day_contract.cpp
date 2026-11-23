@@ -74,6 +74,9 @@ std::string measure(daedalus::DaedalusVm& vm, DayScriptStats& stats, const std::
   j.Parse(bytes.c_str());
   check(!j.HasParseError(),"valid counter JSON");
   check(j["calls"].GetUint64()==10,"all nested script calls included");
+  const auto& instructions=j["instructions_by_symbol"];
+  check(instructions["ZS_A_LOOP"]==2 && instructions["ZS_B_LOOP"]==4 && instructions["HELPER"]==10 &&
+        instructions["OUTSIDE"]==4 && j["unattributed_instructions"]==0,"executed VM instructions belong to their actual body");
   check(j["states"]["ZS_A"]["phases"]["loop"]["engine"]==2,"engine phase entries counted separately from VM calls");
   check(j["states"]["ZS_A"]["phases"]["loop"]["nested"]==1,"nested call belongs to phase");
   check(j["states"]["ZS_A"]["phases"]["loop"]["instructions"]==4,"inclusive VM instruction count");
@@ -107,6 +110,15 @@ void checkOverrides() {
   check(overrides==2 && notifications==1,"bytecode BL reports an overridden call once");
   vm.unsafe_call_bl(vm.find_symbol_by_name("HELPER"));
   check(overrides==3 && notifications==2,"unsafe_call_bl reports an overridden call once");
+
+  stats=DayScriptStats::attach(vm,{});
+  vm.call_function<void>("OUTSIDE");
+  rapidjson::Document counters;
+  counters.Parse(stats->json().c_str());
+  check(counters["symbols"]["HELPER"]==1 && !counters["instructions_by_symbol"].HasMember("HELPER") &&
+        counters["instructions_by_symbol"]["OUTSIDE"]==2 && counters["unattributed_instructions"]==0,
+        "overridden engine calls leave no executed bytecode for the helper");
+  stats->stop(vm);
   }
 
 void run() {
