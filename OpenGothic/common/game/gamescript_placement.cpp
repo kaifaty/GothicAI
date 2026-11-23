@@ -208,11 +208,11 @@ void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
   // insert calls are read here, while the conditions are evaluated at entry.
   static constexpr std::array groups4 = {Group{82,15}, Group{328,61}, Group{1281,6},
                                           Group{1552,90}, Group{2923,23}, Group{3330,1}};
-  static constexpr std::array groups5 = {Group{160,1}, Group{191,18}, Group{482,2},
-                                          Group{554,26}, Group{1000,9}, Group{1772,1}};
-  const auto read = [&](const char* name,const std::array<Group,6>& groups) {
+  static constexpr std::array groups5 = {Group{160,1}, Group{191,1}, Group{206,17},
+                                          Group{482,2}, Group{554,26}, Group{1000,9}, Group{1772,1}};
+  const auto read = [&]<size_t count>(const char* name,const std::array<Group,count>& groups) {
     const auto start = vm.find_symbol_by_name(name)->address();
-    std::array<std::vector<LiteralPlacement>,groups4.size()> rows;
+    std::array<std::vector<LiteralPlacement>,count> rows;
     for(size_t i=0;i<groups.size();++i) {
       auto pc = start+groups[i].offset;
       rows[i].reserve(groups[i].count);
@@ -324,17 +324,19 @@ void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
         insert(rows[0]);
       if(number("DJG_ANGAR_IS_ALIVE")==number("TRUE"))
         insert(rows[1]);
+      // The stock branch skips only Angar. The next seventeen rows are unconditional.
+      insert(rows[2]);
       if(guildIs("GIL_PAL"))
-        insert(rows[2]);
+        insert(rows[3]);
       (void)guildIs("GIL_DJG"); // Empty stock branch still evaluates the member read.
       if(guildIs("GIL_KDF")) {
-        insert(rows[3]);
+        insert(rows[4]);
         if(sekobAlive()) {
           giveObsessionBook("SEKOB");
           routine("SEKOB","$28495"); // Obsessed
           }
         }
-      insert(rows[4]);
+      insert(rows[5]);
       static constexpr const char* guards[] = {
         "SCHIFFSWACHE_212", "SCHIFFSWACHE_213", "PAL_220_SCHIFFSWACHE", "PAL_221_SCHIFFSWACHE", "PAL_222_SCHIFFSWACHE",
         "PAL_223_SCHIFFSWACHE", "PAL_224_SCHIFFSWACHE", "PAL_225_SCHIFFSWACHE", "PAL_226_SCHIFFSWACHE",
@@ -375,7 +377,7 @@ void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
       set("MIS_SHIPISFREE","TRUE");
       }
     if(number("BIFF_FOLLOWSTHROUGHPASS")==number("LOG_RUNNING")) {
-      insert(rows[5]);
+      insert(rows[6]);
       set("BIFF_FOLLOWSTHROUGHPASS","LOG_SUCCESS");
       }
     }},PlacementDefinitionRuntime::enabled);
