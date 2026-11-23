@@ -194,3 +194,151 @@ void GameScript::assessSleepTalk(Npc& npc) {
     npc.aiPush(AiQueue::aiUseMob(bed,-1));
   ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),0,"");
   }
+
+bool GameScript::runFearOrSleepSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const std::string_view name = symbol.name();
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  result = LOOP_CONTINUE;
+  if(name=="ZS_MAGICFLEE" || name=="ZS_MAGICSLEEP") {
+    const bool fear = name=="ZS_MAGICFLEE";
+    npc.setPerceptionEnable(PERC_ASSESSDAMAGE,findFunction(fear ? "B_STOPMAGICFLEE" : "B_STOPMAGICSLEEP").ptr);
+    npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction("B_ASSESSMAGIC").ptr);
+    if(!fear)
+      npc.setPerceptionEnable(PERC_ASSESSTALK,findFunction("B_ASSESSMAGICSLEEPTALK").ptr);
+
+    npc.handle().aivar[12] = 0; // AIV_GUARDPOINT = GP_NONE
+    npc_setrefusetalk(self,0);
+    const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+    npc_settempattitude(self,npc_getpermattitude(self,hero));
+    findSymbol("B_STOPLOOKAT.SLF")->set_instance(self);
+    const auto lookTarget = npc_getlookattarget(self);
+    findSymbol("B_STOPLOOKAT.TARGET")->set_instance(lookTarget);
+    if(hlp_isvalidnpc(lookTarget))
+      ai_stoplookat(self);
+    ai_stoppointat(self);
+    if(npc_hasbodyflag(self,int32_t(BS_FLAG_INTERRUPTABLE)))
+      ai_standupquick(self);
+    else
+      ai_standup(self);
+
+    if(!fear) {
+      npc.aiPush(AiQueue::aiPlayAnimBs("T_STAND_2_VICTIM_SLE",BS_LIE));
+      }
+    else if(npc.handle().guild<int32_t(GIL_SEPERATOR_HUM)) {
+      static constexpr std::string_view gestures[] = {
+        "T_STAND_2_FEAR_VICTIM1", "T_STAND_2_FEAR_VICTIM2", "T_STAND_2_FEAR_VICTIM3",
+        };
+      const auto roll = rollRandom(3,&npc,true);
+      findSymbol("ZS_MAGICFLEE.RANDY")->set_int(int32_t(roll));
+      npc.aiPush(AiQueue::aiPlayAnimBs(gestures[roll],BS_STAND));
+      }
+    }
+  else if(name=="ZS_MAGICFLEE_LOOP" && npc_getstatetime(self)>5) {
+    npc.clearAiQueue();
+    stopMagicFear(npc);
+    }
+  else if(name=="ZS_MAGICSLEEP_LOOP" && npc_getstatetime(self)>30) {
+    npc.clearAiQueue();
+    stopMagicSleep(npc);
+    result = LOOP_END;
+    }
+  return true;
+  }
+
+void GameScript::stopMagicFear(Npc& npc) {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  npc.setPerceptionDisable(PERC_ASSESSDAMAGE);
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  npc_settarget(self,other);
+  ai_startstate(self,int(findFunction("ZS_FLEE").ptr),0,"");
+  }
+
+void GameScript::stopMagicSleep(Npc& npc) {
+  npc.setPerceptionDisable(PERC_ASSESSDAMAGE);
+  sayMagicReaction(npc,"$WHATWASSTHAT",true);
+  npc.aiPush(AiQueue::aiPlayAnim("T_VICTIM_SLE_2_STAND"));
+  }
+
+void GameScript::sayMagicReaction(Npc& npc, std::string_view line, bool overlay) {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  if(overlay) {
+    findSymbol("B_SAY_OVERLAY.TEXT")->set_string(line);
+    findSymbol("B_SAY_OVERLAY.OTH")->set_instance(other);
+    findSymbol("B_SAY_OVERLAY.SLF")->set_instance(self);
+    ai_outputsvm_overlay(self,other,line);
+    }
+  else {
+    findSymbol("B_SAY.TEXT")->set_string(line);
+    findSymbol("B_SAY.OTH")->set_instance(other);
+    findSymbol("B_SAY.SLF")->set_instance(self);
+    ai_outputsvm(self,other,line);
+    }
+  }
+
+bool GameScript::runFreezeOrWhirlwindSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const std::string_view name = symbol.name();
+  const bool freeze = name.starts_with("ZS_MAGICFREEZE");
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  constexpr size_t freezeSecond=53, whirlwindSecond=76; // AIV_FREEZESTATETIME and AIV_WHIRLWINDSTATETIME
+  auto& lastSecond = npc.handle().aivar[freeze ? freezeSecond : whirlwindSecond];
+  result = LOOP_CONTINUE;
+  if(name=="ZS_MAGICFREEZE" || name=="ZS_WHIRLWIND") {
+    npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction(freeze ? "B_RESTARTFREEZE" : "B_RESTARTWHIRLWIND").ptr);
+    npc.stopAnim(freeze ? "S_FIRE_VICTIM" : "S_WHIRLWIND_VICTIM");
+    if(!freeze) {
+      npc.clearAiQueue();
+      npc.aiPush(AiQueue::aiStandup());
+      }
+    findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(int32_t(BS_UNCONSCIOUS));
+    findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self);
+    if(!inBodyState(npc,BS_UNCONSCIOUS)) {
+      const auto pose = freeze ? "T_STAND_2_FREEZE_VICTIM" : "T_STAND_2_WHIRLWIND_VICTIM";
+      npc.aiPush(AiQueue::aiPlayAnimBs(pose,BS_UNCONSCIOUS));
+      }
+    lastSecond = 0;
+    }
+  else if(name.ends_with("_LOOP")) {
+    const auto seconds = npc_getstatetime(self);
+    if(seconds>(freeze ? 19 : 10)) {
+      stopInterruptedSpell(npc);
+      result = LOOP_END;
+      return true;
+      }
+    if(seconds==lastSecond)
+      return true;
+    lastSecond = seconds;
+
+    int32_t damage = 0;
+    if(freeze) {
+      // The stock guard compares HP to HP minus the positive base damage.
+      constexpr int32_t freezeDamage=2, fireDragon=38, fireLizard=12, iceDragon=39;
+      const auto species = npc.handle().aivar[43]; // AIV_MM_REAL_ID
+      const auto guild = npc.handle().guild;
+      if(species==fireDragon || species==fireLizard || guild==GIL_FIREGOLEM)
+        damage = freezeDamage*2;
+      else if(species==iceDragon || guild==GIL_ICEGOLEM)
+        damage = freezeDamage/2;
+      else
+        damage = freezeDamage;
+      }
+    else if(const auto hp = npc.attribute(ATR_HITPOINTS); hp<=0) {
+      damage = hp-1;
+      }
+    // Whirlwind still invokes the damage helper when its damage is zero.
+    magicHurtNpc(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()),self,damage);
+    }
+  return true;
+  }
+
+void GameScript::stopInterruptedSpell(Npc& npc, bool resumeRoutine) {
+  npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction("B_ASSESSMAGIC").ptr);
+  npc.clearAiQueue();
+  npc.aiPush(AiQueue::aiStandup());
+  if(npc.handle().guild<int32_t(GIL_SEPERATOR_HUM))
+    vm.unsafe_call_bl(findSymbol("B_ASSESSDAMAGE"));
+  else
+    npc_settempattitude(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),int32_t(ATT_HOSTILE));
+  if(resumeRoutine)
+    ai_continueroutine(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
+  }

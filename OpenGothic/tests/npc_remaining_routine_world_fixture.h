@@ -118,6 +118,152 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
         require(events ? vmCalls["ZS_GUARD_PASSAGE_LOOP"]==0 : vmCalls["ZS_GUARD_PASSAGE_LOOP"]==3,
                 "ZS_GUARD_PASSAGE must use the expected Loop executor across the threshold");
       }
+      const std::string_view state=site.state;
+      if(state=="ZS_MAGICFLEE" || state=="ZS_MAGICSLEEP") {
+        auto* hero=world.player();
+        const bool fear=state=="ZS_MAGICFLEE";
+        const std::string loop=std::string(state)+"_LOOP";
+        const auto* loopSymbol=script.findSymbol(loop);
+        const auto* stopSymbol=script.findSymbol(fear ? "B_STOPMAGICFLEE" : "B_STOPMAGICSLEEP");
+        const auto* talkSymbol=script.findSymbol("B_ASSESSMAGICSLEEPTALK");
+        require(hero && loopSymbol && stopSymbol && talkSymbol && actor->handle().aivar[12]==0 &&
+                actor->hasPerc(PERC_ASSESSDAMAGE),"spell load must preserve the victim's state and damage callback");
+        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
+        actor->setExternalControl(false);
+        size_t calls=0;
+        vm.observe_instructions([&](const auto&) {
+          if(vm.pc()==loopSymbol->address() || vm.pc()==stopSymbol->address() || vm.pc()==talkSymbol->address())
+            ++calls;
+          });
+        actor->clearAiQueue();
+        if(!fear) {
+          require(actor->passPerception(*hero,nullptr,PERC_ASSESSTALK),
+                  "the sleeper's talk perception must be available after loading");
+          auto talk=Contract::queue(*actor);
+          require(talk.size()>0,"magic sleep talk must queue player observation");
+          while(talk.size()>1)
+            talk.pop();
+          const auto observe=talk.pop();
+          require(observe.act==AI_StartState && observe.i0==1 &&
+                  observe.func==ScriptFn(script.findSymbolIndex("ZS_OBSERVEPLAYER")),
+                  "magic sleep talk interrupts the pose to observe the hero");
+          witness.continuation=activityQueue(*actor);
+          actor->clearAiQueue();
+        }
+        const auto boundary=fear ? 6000 : 31000;
+        const auto loopId=ScriptFn(loopSymbol->index());
+        actor->aiPush(AiQueue::aiWait(1337));
+        actor->setStateTime(boundary-1);
+        require(script.invokeState(actor,hero,nullptr,loopId)==LOOP_CONTINUE &&
+                actor->aiQueueFront() && actor->aiQueueFront()->act==AI_Wait &&
+                actor->hasPerc(PERC_ASSESSDAMAGE),"the victim must keep its queue until the next whole second");
+        require(actor->passPerception(*hero,nullptr,PERC_ASSESSDAMAGE) && !actor->hasPerc(PERC_ASSESSDAMAGE),
+                "damage must use the restored spell release callback");
+        const auto releaseOnHit=activityQueue(*actor);
+        require(releaseOnHit.size()>1 && releaseOnHit.front().starts_with("Wait "),
+                "damage releases the victim after commands already in the queue");
+        witness.continuation.insert(witness.continuation.end(),releaseOnHit.begin(),releaseOnHit.end());
+        actor->setPerceptionEnable(PERC_ASSESSDAMAGE,stopSymbol->index());
+        actor->setStateTime(boundary);
+        const auto ended=script.invokeState(actor,hero,nullptr,loopId);
+        require(!actor->hasPerc(PERC_ASSESSDAMAGE) && ended==(fear ? LOOP_CONTINUE : LOOP_END),
+                "at expiry the spell clears its damage callback and returns the stock state result");
+        auto command=Contract::queue(*actor);
+        require(command.size()>0,"at expiry the victim must queue its release action");
+        while(command.size()>1)
+          command.pop();
+        const auto exit=command.pop();
+        if(fear) {
+          require(exit.act==AI_StartState && exit.func==ScriptFn(script.findSymbolIndex("ZS_FLEE")) &&
+                  actor->target()==hero,"fear expiry must set the hero as target and start the flee state");
+        } else {
+          require(exit.act==AI_PlayAnim && exit.s0=="T_VICTIM_SLE_2_STAND",
+                  "sleep expiry must request the get-up animation");
+        }
+        const auto queue=activityQueue(*actor);
+        witness.continuation.insert(witness.continuation.end(),queue.begin(),queue.end());
+        vm.observe_instructions({});
+        require(events ? calls==0 : calls>0,"the loaded spell must use the selected callback executor");
+      }
+      if(state=="ZS_MAGICFREEZE" || state=="ZS_WHIRLWIND") {
+        const bool freeze=state=="ZS_MAGICFREEZE";
+        auto* hero=world.player();
+        const auto* loop=script.findSymbol(std::string(state)+"_LOOP");
+        const auto* restart=script.findSymbol(freeze ? "B_RESTARTFREEZE" : "B_RESTARTWHIRLWIND");
+        const auto* stop=script.findSymbol(freeze ? "B_STOPMAGICFREEZE" : "B_STOPWHIRLWIND");
+        require(hero && loop && restart && stop &&
+                Contract::perceptionCallback(*actor,PERC_ASSESSMAGIC)==ScriptFn(restart->index()),
+                "ordinary load must preserve the spell's restart perception");
+        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
+        actor->setExternalControl(false);
+        size_t calls=0;
+        vm.observe_instructions([&](const auto&) {
+          if(vm.pc()==loop->address() || vm.pc()==restart->address() || vm.pc()==stop->address())
+            ++calls;
+          });
+        actor->clearAiQueue();
+        auto& lastSecond=actor->handle().aivar[freeze ? 53 : 76];
+        const auto hp=[&] { return actor->attribute(ATR_HITPOINTS); };
+        const auto pulse=[&](uint64_t time, int damage) {
+          const auto before=hp();
+          actor->setStateTime(time);
+          require(script.invokeState(actor,hero,nullptr,ScriptFn(loop->index()))==LOOP_CONTINUE &&
+                  lastSecond==int32_t(time/1000) && hp()==before-damage,
+                  "the spell must sample one damage pulse when its whole second changes");
+          };
+        pulse(1000,freeze ? 2 : 0);
+        pulse(1700,0);
+        actor->handle().guild=GIL_FIREGOLEM;
+        pulse(4000,freeze ? 4 : 0);
+        actor->handle().guild=GIL_ICEGOLEM;
+        pulse(5000,freeze ? 1 : 0);
+        Contract::lastHitSpell(*actor,freeze ? 71 : 33);
+        require(actor->passPerception(*hero,nullptr,PERC_ASSESSMAGIC) && actor->stateTime()==5000 && lastSecond==5,
+                "a different spell must not restart the current timer");
+        Contract::lastHitSpell(*actor,freeze ? 39 : 71);
+        require(actor->passPerception(*hero,nullptr,PERC_ASSESSMAGIC) && actor->stateTime()==0 && lastSecond==5,
+                "a matching spell must restart the clock and preserve the last damage sample");
+        pulse(freeze ? 19999 : 10999,freeze ? 1 : 0);
+        actor->aiPush(AiQueue::aiWait(1337));
+        actor->setTempAttitude(ATT_FRIENDLY);
+        actor->setStateTime(freeze ? 20000 : 11000);
+        require(script.invokeState(actor,hero,nullptr,ScriptFn(loop->index()))==LOOP_END &&
+                actor->aiQueueFront() && actor->aiQueueFront()->act==AI_StandUp && Contract::queue(*actor).size()==1 &&
+                actor->tempAttitude()==ATT_HOSTILE &&
+                Contract::perceptionCallback(*actor,PERC_ASSESSMAGIC)==ScriptFn(script.findSymbolIndex("B_ASSESSMAGIC")),
+                "the spell must restore normal magic perception and stand up at expiry");
+        vm.observe_instructions({});
+        require(events ? calls==0 : calls>0,"freeze and whirlwind must use the selected callback executor");
+        witness.continuation=activityQueue(*actor);
+      }
+      if(state=="ZS_PAL_ZOMBIE") {
+        auto* hero=world.player();
+        const auto* rise=script.findSymbol("B_PAL_ZOMBIE_RISE");
+        require(hero && rise && actor->handle().senses==int32_t(SensesBit::SENSE_SMELL) &&
+                actor->handle().senses_range==2000,"the loaded zombie must preserve its dormant senses");
+        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
+        actor->setExternalControl(false);
+        actor->clearAiQueue();
+        Contract::tickRoutine(*actor);
+        require(actor->handle().aivar[19]==0 && actor->aiQueueFront() && actor->aiQueueFront()->s0=="T_DOWN",
+                "the loaded zombie must queue its dormant pose once");
+        actor->clearAiQueue();
+        Contract::tickRoutine(*actor);
+        require(actor->isAiQueueEmpty(),"the zombie must keep the dormant pose on its next loop");
+        size_t calls=0;
+        vm.observe_instructions([&](const auto&) { if(vm.pc()==rise->address()) ++calls; });
+        hero->setPosition(actor->position()+Tempest::Vec3(1401,0,0));
+        require(actor->passPerception(*hero,nullptr,PERC_ASSESSPLAYER) && actor->isAiQueueEmpty(),
+                "a dormant zombie must wait when the hero is beyond 1400 cm");
+        hero->setPosition(actor->position()+Tempest::Vec3(1400,0,0));
+        require(actor->passPerception(*hero,nullptr,PERC_ASSESSPLAYER),"the loaded zombie must retain its wake callback");
+        vm.observe_instructions({});
+        require(actor->aiQueueFront() && actor->aiQueueFront()->s0=="T_RISE" &&
+                actor->handle().bodystate_interruptable_override==0 && actor->handle().aivar[32]==-1 &&
+                actor->handle().start_aistate==int32_t(script.findSymbolIndex(MonsterScheduler)) &&
+                (events ? calls==0 : calls==2),"the zombie must rise and queue the stock attack transition");
+        witness.continuation=activityQueue(*actor);
+      }
       if(std::string_view(site.state)=="ZS_BANDIT") {
         actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
         size_t instructions=0;
@@ -258,6 +404,10 @@ void remainingRoutineWitnesses(Gothic& gothic) {
     {"ZS_FOLLOW_PLAYER",       "BAU_931_TILL",                     "NW_BIGFARM_KITCHEN_02"},
     {"ZS_GUARD_PASSAGE",       "KDF_507_TALAMON",                  "NW_MONASTERY_CELLAR_15"},
     {"ZS_GUIDE_PLAYER",        "VLK_440_BARTOK",                    "NW_FARM1_CITYWALL_FOREST_07"},
+    {"ZS_MAGICFREEZE",         "VLK_408_JORA",                      "NW_CITY_MERCHANT_PATH_38"},
+    {"ZS_WHIRLWIND",           "VLK_413_BOSPER",                    "NW_CITY_MERCHANT_SHOP01_IN_02"},
+    {"ZS_MAGICFLEE",           "VLK_425_REGIS",                     "NW_CITY_REGIS"},
+    {"ZS_MAGICSLEEP",          "MIL_311_ANDRE",                     "NW_CITY_HABOUR_KASERN_MAIN_ENTRY"},
     {"ZS_PRACTICE_MAGIC",      "TA_TESTMODELL",                    "NW_CITY_PATH_HABOUR_03"},
     {"ZS_RUNTOWP",             "MIL_337_MIKA",                     "NW_FARM2_PATH_03"},
     {"ZS_SLEEP_DEEP",          "VLK_416_MATTEO",                   "NW_CITY_BED_MATTEO"},
@@ -272,6 +422,7 @@ void remainingRoutineWitnesses(Gothic& gothic) {
     {"ZS_COOK_PAN",       "PIR_1352_ADDON_ALLIGATORJACK", "AD_PIRATECAMP_AJ_03"},
     {"ZS_GHOST",          "NONE_ADDON_111_QUARHODRON",    "ADW_ANCIENTGHOST"},
     {"ZS_GHOSTWUSEL",      "NONE_ADDON_112_RHADEMES",      "ADW_ADANOSTEMPEL_RHADEMES_02"},
+    {"ZS_PAL_ZOMBIE",      "MAYAZOMBIE01",                "ADW_VALLEY_PATH_072"},
     {"ZS_PICK_ORE",       "BDT_10004_ADDON_FINN",         "ADW_MINE_PICK_06"},
     {"ZS_ROAST_SCAVENGER", "PIR_1364_ADDON_PIRAT",         "ADW_PIRATECAMP_SCAVENGER"},
     };

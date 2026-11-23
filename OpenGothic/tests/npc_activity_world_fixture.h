@@ -4067,37 +4067,6 @@ void bindNpcGlobals(World& world) {
   std::puts("NPC global bindings: all 310 aliases and chapter semantics match with zero script instructions");
   }
 
-void pointActivitiesInBothModes(Gothic& gothic) {
-  const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
-  const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
-  for(bool events:{false,true}) {
-    setenv("OPENGOTHIC_ACTIVITY_EVENTS",events ? "1" : "0",1);
-    gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
-    if(events && NpcSnapshot::load(baseProgramIndex().dir.parent_path()).sha256==
-                 "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
-      refreshAtInsert(*gothic.world());
-      if(NpcDefinitionRuntime::enabled())
-        transformNpcRecords(*gothic.world());
-      initializePerceptionRanges(*gothic.world());
-      bindNpcGlobals(*gothic.world());
-      }
-    const auto save=pointActivitiesWorld(gothic,events);
-    itemRoutinePhasesWorld(gothic,events);
-    ActivityEventsWorld paired(gothic);
-    pairedSmalltalkWorld(paired,events);
-    sleepRoutineWorld(gothic,events,false);
-    sleepRoutineWorld(gothic,events,true);
-    gothic.clearGame().reset();
-    seatedActivitiesWorld(gothic,events);
-    if(events) {
-      loadCampfireGroup(gothic,save);
-      gothic.clearGame().reset();
-      quietSoundAtPost(gothic);
-      npcRecoveryAfterActivityChecks(gothic);
-      }
-    }
-  if(previousEvents) setenv("OPENGOTHIC_ACTIVITY_EVENTS",previousEvents->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_EVENTS");
-  }
 // Rare rows use their authored actor and waypoint where the release worlds contain them.
 // The concert and the test model's three rows name points absent from the four release waynets.
 struct RoutineWitnessSite {
@@ -4924,3 +4893,5 @@ void ravenStoneGuardianRoutines(World& world) {
   }
 
 #include "npc_remaining_routine_world_fixture.h"
+
+#include "npc_spell_world_fixture.h"
