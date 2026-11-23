@@ -81,7 +81,7 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
           draw(1,"B_SAY_SMALLTALK.CHOICE");
           const auto guild = npc.trueGuild();
           auto line = 1+roll/5;
-          if(roll>=100) {
+          if(roll>=105) {
             if(guild==GIL_KDF || guild==GIL_PAL || guild==GIL_NOV)
               line = roll<110 ? 28 : roll<115 ? 29 : 30;
             else if(guild==GIL_PIR || guild==GIL_DJG || guild==GIL_SLD || guild==GIL_BDT)
