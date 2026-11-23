@@ -345,6 +345,7 @@ void GameScript::loadNativeHumanPerceptions() {
   drawWeaponCallback = findFunction("B_ASSESSDRAWWEAPON");
   threatCallback = findFunction("B_ASSESSTHREAT");
   warnCallback = findFunction("B_ASSESSWARN");
+  fightSoundCallback = findFunction("B_ASSESSFIGHTSOUND");
   damageCallback = findFunction("B_ASSESSDAMAGE");
   enemyCallback = findFunction("B_ASSESSENEMY");
   playerCallback = findFunction("B_ASSESSPLAYER");
@@ -354,6 +355,7 @@ void GameScript::loadNativeHumanPerceptions() {
   vm.override_function("B_ASSESSDAMAGE",std::function<void()>{[this] { runDamageReaction(); }},enabled);
   vm.override_function("B_ASSESSENEMY",std::function<int32_t()>{[this] { return runEnemyReaction(); }},enabled);
   vm.override_function("B_ASSESSPLAYER",std::function<void()>{[this] { runPlayerAssessment(); }},enabled);
+  vm.override_function("B_ASSESSFIGHTSOUND",std::function<void()>{[this] { runFightSoundReaction(); }},enabled);
   vm.override_function("B_VALIDATEOTHER",std::function<void()>{[this] {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
@@ -365,8 +367,8 @@ void GameScript::loadNativeHumanPerceptions() {
 
 bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase) {
   const bool stopShortZap = fn==stopShortZapCallback;
-  if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=warnCallback && fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !stopShortZap) ||
-     !nativeHumanPerceptionsEnabled())
+  if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=warnCallback && fn!=fightSoundCallback &&
+      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !stopShortZap) || !nativeHumanPerceptionsEnabled())
     return false;
   phase.fromRecord();
   if(fn==drawWeaponCallback)
@@ -379,6 +381,8 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
     runPlayerAssessment();
   else if(fn==warnCallback)
     runWarnReaction();
+  else if(fn==fightSoundCallback)
+    runFightSoundReaction();
   else if(stopShortZap)
     stopControlSpell(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()),true);
   else
@@ -453,6 +457,198 @@ void GameScript::runWarnReaction() {
   if((source!=nullptr && source->guild>int32_t(GIL_SEPERATOR_HUM)) || isGateGuard(self))
     return;
   startHumanWarning(self,observe);
+  }
+
+bool GameScript::hasAttackReasonToKill(const std::shared_ptr<daedalus::INpc>& npc) {
+  findSymbol("C_NPCHASATTACKREASONTOKILL.SLF")->set_instance(npc);
+  const auto reason = npc!=nullptr ? npc->aivar[9] : 0; // AIV_ATTACKREASON
+  return reason==findSymbol("AR_GUARDCALLEDTOKILL")->get_int() || reason==findSymbol("AR_GUARDSTOPSINTRUDER")->get_int() ||
+         reason==findSymbol("AR_HUMANMURDEREDHUMAN")->get_int() || reason==findSymbol("AR_GUILDENEMY")->get_int() ||
+         reason==findSymbol("AR_KILL")->get_int();
+  }
+
+bool GameScript::wantsToAttackSheepKiller(const std::shared_ptr<daedalus::INpc>& self,
+                                        const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("C_WANTTOATTACKSHEEPKILLER.OTH")->set_instance(other);
+  findSymbol("C_WANTTOATTACKSHEEPKILLER.SLF")->set_instance(self);
+  const auto guild = self->guild;
+  constexpr size_t dontAttackSheepKiller = 56;
+  if(guild==GIL_DJG || guild==GIL_BDT || guild==GIL_STRF || guild==GIL_DMT ||
+     self->aivar[dontAttackSheepKiller]==1 || (self->type==NpcType::G2_FRIEND && npc_isplayer(other)))
+    return false;
+  if(hasAttackReasonToKill(other))
+    return false;
+  const auto source = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  if(source!=nullptr && source->aivar[9]!=0 && source->guild<int32_t(GIL_SEPERATOR_HUM))
+    return false;
+  return !isGateGuard(self);
+  }
+
+bool GameScript::wantsToAttackThief(const std::shared_ptr<daedalus::INpc>& self,
+                                   const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("C_WANTTOATTACKTHIEF.OTH")->set_instance(other);
+  findSymbol("C_WANTTOATTACKTHIEF.SLF")->set_instance(self);
+  const auto guild = self->guild;
+  constexpr size_t dontAttackThief = 55;
+  if(guild==GIL_DJG || guild==GIL_STRF || guild==GIL_DMT ||
+     self->aivar[dontAttackThief]==1 || self->aivar[0]==findSymbol("FIGHT_LOST")->get_int() ||
+     (self->type==NpcType::G2_FRIEND && npc_isplayer(other)))
+    return false;
+  return !isGateGuard(self);
+  }
+
+void GameScript::runFightSoundReaction() {
+  using Actor = std::shared_ptr<daedalus::INpc>;
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto source = other();
+  const auto victim = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_victim()->get_instance());
+  if(self==nullptr || !hlp_isvalidnpc(victim))
+    return;
+
+  const auto value = [this](std::string_view name) { return findSymbol(name)->get_int(); };
+  const auto guild = [](const Actor& actor) { return actor!=nullptr ? actor->guild : int32_t(GIL_NONE); };
+  const auto aivar = [](const Actor& actor, size_t index) { return actor!=nullptr ? actor->aivar[index] : 0; };
+  constexpr size_t followsInWater = 28, tough = 57, enemyOverride = 61, attackReason = 9;
+  constexpr size_t storyBandit = 74, supportsEsteban = 75;
+  const auto witnessGuild = guild(self);
+  const auto sourceGuild = guild(source);
+  const auto victimGuild = guild(victim);
+  const auto range = value("PERC_DIST_INTERMEDIAT");
+  const bool outOfRange = npc_getdisttonpc(self,source)>range && npc_getdisttonpc(self,victim)>range;
+  if(outOfRange && !((witnessGuild==GIL_BDT || witnessGuild==GIL_OUT) &&
+                    (witnessGuild==sourceGuild || witnessGuild==victimGuild)))
+    return;
+  if(aivar(self,followsInWater)==0) {
+    const auto body = [&](const Actor& actor, BodyState state) {
+      findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(int32_t(state));
+      findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(actor);
+      return ActivityDefinitions::bodyStateContains(npc_getbodystate(actor),int32_t(state));
+      };
+    const bool victimDives = body(victim,BS_DIVE);
+    const bool victimSwims = body(victim,BS_SWIM);
+    const bool sourceDives = body(source,BS_DIVE);
+    const bool sourceSwims = body(source,BS_SWIM);
+    if(victimDives || victimSwims || sourceDives || sourceSwims)
+      return;
+    }
+  const auto nailed = value("FAI_NAILED");
+  if(victim->fight_tactic==nailed || (source!=nullptr && source->fight_tactic==nailed))
+    return;
+  const auto sourceHeight = npc_getheighttonpc(self,source);
+  const auto victimHeight = npc_getheighttonpc(self,victim);
+  const auto heightLimit = value("PERC_DIST_HEIGHT");
+  if((sourceHeight>heightLimit && victimHeight>heightLimit) ||
+     (npc_getdisttowp(self,"NW_MONASTERY_PLACE_04")<=3000 && sourceHeight>500))
+    return;
+  const auto ownId = hlp_getinstanceid(self);
+  if(ownId==hlp_getinstanceid(source) || ownId==hlp_getinstanceid(victim))
+    return;
+
+  const auto attack = [&](const Actor& target, std::string_view reason) {
+    startNpcAttack(self,target,value(reason),0);
+    };
+  if(victimGuild==GIL_SHEEP && aivar(victim,tough)==0) {
+    if(wantsToAttackSheepKiller(self,source))
+      attack(source,"AR_SHEEPKILLER");
+    else if(isGateGuard(self))
+      memorizePlayerCrime(self,source,value("CRIME_SHEEPKILLER"));
+    return;
+    }
+  if(isGateGuard(self))
+    return;
+
+  const bool monsterSource = sourceGuild>int32_t(GIL_SEPERATOR_HUM);
+  const bool monsterVictim = victimGuild>int32_t(GIL_SEPERATOR_HUM);
+  if(monsterSource && monsterVictim)
+    return;
+  if(npc_getattitude(self,victim)!=ATT_HOSTILE && monsterSource) {
+    attack(source,"AR_MONSTERVSHUMAN");
+    return;
+    }
+  if(!npc_isdead(victim) && npc_getattitude(self,source)!=ATT_HOSTILE && monsterVictim) {
+    attack(victim,"AR_MONSTERVSHUMAN");
+    return;
+    }
+
+  if(aivar(self,enemyOverride)==1) {
+    self->aivar[enemyOverride] = 0;
+    npc_perceiveall(self);
+    npc_getnexttarget(self); // Updates OTHER before the validation and queued target use.
+    const auto target = other();
+    findSymbol("C_NPCISDOWN.SLF")->set_instance(target);
+    const bool down = npc_isdead(target) || npc_isinstate(target,int(findFunction("ZS_MAGICSLEEP").ptr)) ||
+                      npc_isinstate(target,int(findFunction("ZS_UNCONSCIOUS").ptr));
+    if(!down && hlp_isvalidnpc(target))
+      attack(target,"AR_GUILDENEMY");
+    return;
+    }
+
+  const auto watch = [&] { startHumanWarning(self,findFunction("ZS_WATCHFIGHT")); };
+  const bool disguisedVictim = isPlayerFakeBandit(self,victim);
+  const bool disguisedSource = isPlayerFakeBandit(self,source);
+  if(witnessGuild==GIL_BDT && (sourceGuild==GIL_BDT || victimGuild==GIL_BDT) && (disguisedVictim || disguisedSource)) {
+    if(aivar(self,supportsEsteban)==1 && aivar(source,supportsEsteban)==1) {
+      attack(victim,"AR_NONE");
+      return;
+      }
+    if(aivar(self,supportsEsteban)==1 && aivar(victim,supportsEsteban)==1) {
+      attack(source,"AR_NONE");
+      return;
+      }
+    if((aivar(victim,attackReason)==0 && aivar(source,attackReason)==0) ||
+       aivar(victim,storyBandit)==1 || aivar(source,storyBandit)==1) {
+      watch();
+      return;
+      }
+    }
+
+  const auto hasReason = [&](const Actor& actor, std::initializer_list<std::string_view> reasons) {
+    return std::ranges::any_of(reasons,[&](std::string_view reason) { return aivar(actor,attackReason)==value(reason); });
+    };
+  const auto cooperativeGuild = [](int32_t guild) { return guild==GIL_NONE || guild==GIL_DJG || guild==GIL_SLD; };
+  const auto directions = std::array{std::pair{source,victim},std::pair{victim,source}};
+  const auto friendly = [&](const Actor& actor) { return npc_getattitude(self,actor)==ATT_FRIENDLY; };
+  for(const auto& [fighter,target] : directions) {
+    if(friendly(fighter) && hasReason(fighter,{"AR_GUARDCALLEDTOKILL","AR_GUILDENEMY","AR_HUMANMURDEREDHUMAN",
+                                             "AR_MONSTERCLOSETOGATE","AR_GUARDSTOPSINTRUDER"})) {
+      attack(target,"AR_GUARDCALLEDTOKILL");
+      return;
+      }
+    }
+  if(!(cooperativeGuild(sourceGuild) && cooperativeGuild(victimGuild)) &&
+     (npc_isplayer(source) || npc_isplayer(victim))) {
+    for(const auto& [fighter,target] : directions) {
+      if(friendly(fighter) && hasReason(fighter,{"AR_REACTTOWEAPON","AR_REACTTODAMAGE","AR_GUARDSTOPSFIGHT"})) {
+        attack(target,"AR_GUARDSTOPSFIGHT");
+        return;
+        }
+      }
+    }
+  if(witnessGuild==GIL_MIL && hasReason(victim,{"AR_KILL","AR_NONE"}) && hasReason(source,{"AR_KILL","AR_NONE"})) {
+    const bool sourceFriendly = friendly(source);
+    const bool victimFriendly = friendly(victim);
+    const bool helpSource = sourceFriendly!=victimFriendly ? sourceFriendly : npc_isplayer(source);
+    attack(helpSource ? victim : source,"AR_GUARDSTOPSFIGHT");
+    return;
+    }
+  for(const auto& [fighter,target] : directions) {
+    if(friendly(fighter) && hasReason(fighter,{"AR_LEFTPORTALROOM","AR_THEFT","AR_USEMOB"}) && wantsToAttackThief(self,target)) {
+      attack(target,"AR_GUARDCALLEDTOTHIEF");
+      return;
+      }
+    }
+  for(const auto& [fighter,target] : directions) {
+    if(friendly(fighter) && hasReason(fighter,{"AR_CLEARROOM"})) {
+      attack(target,"AR_GUARDCALLEDTOROOM");
+      return;
+      }
+    }
+  if(outOfRange || (witnessGuild!=GIL_BDT &&
+                    (npc_getattitude(self,victim)==ATT_HOSTILE || npc_getattitude(self,source)==ATT_HOSTILE)) ||
+     !npc_canseenpcfreelos(self,victim))
+    return;
+  watch();
   }
 
 void GameScript::runDamageReaction() {
@@ -1631,9 +1827,7 @@ void GameScript::startNpcAttack(const std::shared_ptr<daedalus::INpc>& attacker,
   bool changeReason = true;
   if(sameTarget && attacking) {
     const auto current = self()->aivar[attackReason];
-    findSymbol("C_NPCHASATTACKREASONTOKILL.SLF")->set_instance(self());
-    const bool wantsToKill = current==value("AR_GUARDCALLEDTOKILL") || current==value("AR_GUARDSTOPSINTRUDER") ||
-                             current==value("AR_HUMANMURDEREDHUMAN") || current==value("AR_GUILDENEMY") || current==value("AR_KILL");
+    const bool wantsToKill = hasAttackReasonToKill(self());
     changeReason = reasonSlot.get_int()>current && !wantsToKill;
     }
   if(changeReason) {
