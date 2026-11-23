@@ -3246,7 +3246,7 @@ void quietSoundAtPost(Gothic& gothic) {
   gothic.clearGame().reset();
   std::filesystem::remove_all(directory);
   }
-
+#include "npc_recovery_world_fixture.h"
 void seatedGestureAtObject(Npc& npc,uint32_t range) {
   using Contract=NpcDefinitionContract;
   auto& script=npc.world().script();
@@ -4093,11 +4093,11 @@ void pointActivitiesInBothModes(Gothic& gothic) {
       loadCampfireGroup(gothic,save);
       gothic.clearGame().reset();
       quietSoundAtPost(gothic);
+      npcRecoveryAfterActivityChecks(gothic);
       }
     }
   if(previousEvents) setenv("OPENGOTHIC_ACTIVITY_EVENTS",previousEvents->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_EVENTS");
   }
-
 // Rare rows use their authored actor and waypoint where the release worlds contain them.
 // The concert and the test model's three rows name points absent from the four release waynets.
 struct RoutineWitnessSite {
