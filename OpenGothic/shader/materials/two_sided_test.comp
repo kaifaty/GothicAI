@@ -1,0 +1,21 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_samplerless_texture_functions : enable
+#include "scene.glsl"
+
+// One column per material, with a card of each winding in the shadow map.
+layout(local_size_x = 1) in;
+layout(binding = 0, std430) readonly buffer Buckets { Bucket buckets[]; };
+layout(binding = 1) uniform texture2D shadowMap;
+layout(binding = 2, std430) writeonly buffer Results { uvec4 result[]; };
+layout(binding = 3, std430) readonly buffer Tasks { uvec4 tasks[]; };
+
+void main() {
+  uint col = gl_GlobalInvocationID.x;
+  uint flags = buckets[tasks[col].z].flags;
+  ivec2 size = textureSize(shadowMap, 0);
+  int x = (2*int(col)+1)*size.x/6;
+  result[col] = uvec4((flags & BK_TWO_SIDED)!=0u, (flags & BK_TWO_SIDED_FLIP)!=0u,
+                      texelFetch(shadowMap, ivec2(x,size.y/4), 0).r>0.0,
+                      texelFetch(shadowMap, ivec2(x,3*size.y/4), 0).r>0.0);
+  }
