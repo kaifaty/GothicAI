@@ -2055,6 +2055,116 @@ void stockItemRestoreCoverage(GameScript& script) {
           "stock restores: cover exactly all 29 health and 7 mana callbacks and no others");
   }
 
+auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& reserved, bool native) {
+  using Contract=NpcDefinitionContract;
+  auto& script=test.world().script();
+  auto& vm=script.getVm();
+  auto* spare=test.extra();
+  auto& actor=*(spare==&reserved ? test.extra() : spare);
+  test.stop(actor);
+  actor.setSimTier(NpcSimTier::Full);
+  actor.setProcessPolicy(NpcProcessPolicy::AiNormal);
+  actor.closeWeapon(true);
+  actor.clearInventory();
+  actor.handle().guild=GIL_BAU;
+  actor.handle().type=NpcType::G2_AMBIENT;
+  actor.handle().aivar[43]=0; // AIV_MM_REAL_ID
+  actor.handle().aivar[51]=0; // AIV_MAGICUSER
+  const auto self=std::static_pointer_cast<daedalus::INpc>(actor.handlePtr());
+  const auto other=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  const auto previousSelf=vm.global_self()->get_instance();
+  const auto previousItem=vm.global_item()->get_instance();
+  vm.global_self()->set_instance(self);
+  auto& create=*script.findSymbol("B_CREATEAMMO");
+  auto& select=*script.findSymbol("B_SELECTWEAPON");
+  size_t createBody=0,selectBody=0;
+  vm.observe_instructions([&](const auto&) {
+    createBody+=vm.pc()==create.address();
+    selectBody+=vm.pc()==select.address();
+    });
+  const auto locals=[&](std::string_view name) { return script.findSymbol(name)->get_instance(); };
+  auto refill=[&] {
+    vm.push_instance(self);
+    vm.unsafe_call_bl(&create);
+    require(locals("B_CREATEAMMO.SLF")==self,"equipment: ammo commits its saved NPC argument");
+    };
+  const auto arrows=script.findSymbolIndex("ITRW_ARROW"),bolts=script.findSymbolIndex("ITRW_BOLT");
+  const auto bow=script.findSymbolIndex("ITRW_BOW_L_01"),crossbow=script.findSymbolIndex("ITRW_CROSSBOW_L_01");
+  const auto sword=script.findSymbolIndex("ITMW_1H_BAU_AXE");
+  script.setSeed(73106);
+  auto random=Contract::random(script);
+  actor.setToBowMode(bow);
+  actor.closeWeapon(true);
+  actor.addItem(arrows,9);
+  const auto bowRef=std::static_pointer_cast<daedalus::IItem>(actor.getItem(bow)->handlePtr());
+  refill();
+  require(actor.itemCount(arrows)==19 && locals("B_CREATEAMMO.RANGEDWEAPON")==bowRef &&
+          vm.global_item()->get_instance()==std::static_pointer_cast<daedalus::IItem>(actor.getItem(arrows)->handlePtr()),
+          "equipment: an equipped bow below ten gains ten arrows and sets ITEM");
+  actor.unequipItem(bow);
+  refill();
+  require(actor.itemCount(arrows)==19 && locals("B_CREATEAMMO.RANGEDWEAPON")==bowRef,
+          "equipment: without a ranged weapon the previous saved weapon stays in place");
+  actor.setToBowMode(crossbow);
+  actor.addItem(bolts,10);
+  refill();
+  const auto crossbowRef=std::static_pointer_cast<daedalus::IItem>(actor.currentRangedWeapon()->handlePtr());
+  require(actor.itemCount(bolts)==10 && locals("B_CREATEAMMO.RANGEDWEAPON")==crossbowRef &&
+          vm.global_item()->get_instance()==crossbowRef && Contract::random(script)==random,
+          "equipment: exactly ten bolts stay unchanged and a readied weapon sets ITEM without RNG");
+  actor.delItem(bolts,1);
+  refill();
+  require(actor.itemCount(bolts)==19 &&
+          vm.global_item()->get_instance()==std::static_pointer_cast<daedalus::IItem>(actor.getItem(bolts)->handlePtr()),
+          "equipment: a readied crossbow below ten gains ten bolts and sets ITEM to the ammo");
+
+  const auto oldHeroPosition=hero.position();
+  actor.setPosition({1000,2000,3000});
+  actor.handle().aivar[9]=script.findSymbol("AR_KILL")->get_int();
+  auto choose=[&](int distance) {
+    hero.setPosition(hero.position()+actor.centerPosition()-hero.centerPosition()+Tempest::Vec3(float(distance),0,0));
+    actor.clearAiQueue();
+    vm.push_instance(self);
+    vm.push_instance(other);
+    vm.unsafe_call_bl(&select);
+    require(locals("B_SELECTWEAPON.SLF")==self && locals("B_SELECTWEAPON.OTH")==other &&
+            locals("C_BODYSTATECONTAINS.SLF")==self && script.findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->get_int()==BS_FALL,
+            "equipment: select preserves the original NPC and final body-check arguments");
+    return Contract::queue(actor);
+    };
+  actor.setToFightMode(sword);
+  actor.setToBowMode(crossbow);
+  auto close=choose(900);
+  require(close.size()==2 && close.pop().act==AI_RemoveWeapon && close.pop().act==AI_DrawWeaponMelee &&
+          choose(901).size()==0,"equipment: a drawn ranged weapon switches at 900 cm and stays drawn at 901 cm");
+  actor.setToFightMode(sword);
+  require(choose(1000).size()==0,"equipment: melee stays drawn at 1000 cm");
+  auto distant=choose(1001);
+  require(distant.size()==2 && distant.pop().act==AI_RemoveWeapon && distant.pop().act==AI_DrawWeaponRange &&
+          Contract::random(script)==random,"equipment: a lethal reason readies ranged beyond 1000 cm without RNG");
+
+  actor.closeWeapon(true);
+  actor.setAnim(Npc::Anim::Idle);
+  actor.handle().guild=GIL_DMT;
+  actor.handle().aivar[51]=script.findSymbol("MAGIC_ALWAYS")->get_int();
+  actor.handle().aivar[20]=0;
+  const auto expectedRoll=int32_t(random()%10);
+  choose(1500);
+  require(Contract::random(script)==random && script.findSymbol("B_SELECTSPELL.DK_RND")->get_int()==expectedRoll &&
+          actor.handle().aivar[20]==expectedRoll,
+          "equipment: the spell-selection branch preserves the original seeded draw and saved local");
+  require(createBody==(native ? 0u : 4u) && selectBody==(native ? 0u : 5u),
+          "equipment: the selected executor runs both helpers through their normal BL entry");
+  vm.observe_instructions({});
+  vm.global_self()->set_instance(previousSelf);
+  vm.global_item()->set_instance(previousItem);
+  hero.setPosition(oldHeroPosition);
+  std::vector<size_t> inventory;
+  for(auto item=actor.inventory().iterator(Inventory::T_Ransack);item.isValid();++item)
+    inventory.push_back(item->clsId());
+  return std::make_pair(std::move(inventory),activityQueue(actor));
+  }
+
 void npcUnconsciousLifecycle(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   constexpr auto* actor="BAU_951_HILDA";
@@ -2095,6 +2205,7 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     };
   std::vector<std::string> originalInit,originalEnd;
   std::vector<uint8_t> knockedOut,healing,pendingPotion;
+  std::pair<std::vector<size_t>,std::vector<std::string>> stockEquipment;
   int32_t originalXp=0;
   for(bool native:{false,true}) {
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
@@ -2111,9 +2222,12 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     npc->setAttitude(ATT_NEUTRAL);
     npc->setOther(&hero);
     npc->handle().aivar[16]=0; // AIV_VictoryXPGiven
-    script.setSeed(73106);
     Contract::activityEventsOn(script)=native;
     if(native) stockItemRestoreCoverage(script);
+    const auto equipment=stockEquipmentHelpers(test,hero,*npc,native);
+    if(native) require(equipment==stockEquipment,"equipment: spell preparation creates items and queues actions in stock order");
+    else stockEquipment=equipment;
+    script.setSeed(73106);
     const auto beforeXp=hero.experience();
     const auto wakeAt=int64_t(script.findSymbol("HAI_TIME_UNCONSCIOUS")->get_int())*1000;
     auto& vm=script.getVm();
@@ -2301,6 +2415,8 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   gothic.setGame(std::make_unique<GameSession>(potionIn));
   auto& potionWorld=*gothic.world();
   auto& potionScript=potionWorld.script();
+  require(potionScript.findSymbol("B_SELECTSPELL.DK_RND")->get_int()==int32_t(std::mt19937(73106)()%10),
+          "equipment: normal load keeps the original saved spell-selection draw");
   auto* drinker=activityNpc(potionWorld,actor);
   const auto potion=potionScript.findSymbolIndex("ITPO_HEALTH_03");
   require(drinker && Contract::pendingItemUse(*drinker)==potion && drinker->attribute(ATR_HITPOINTS)==125 &&

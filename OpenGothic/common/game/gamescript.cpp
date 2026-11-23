@@ -97,6 +97,7 @@ GameScript::GameScript(GameSession &owner)
   initCommon();
   loadNativeRoutines();
   loadNativeRoomReaction();
+  loadNativeEquipment();
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
   }

@@ -217,6 +217,86 @@ bool GameScript::runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symb
   return false;
   }
 
+void GameScript::loadNativeEquipment() {
+  if(!nativeRoutineProgram)
+    return;
+  using NpcRef = std::shared_ptr<daedalus::INpc>;
+  const auto enabled = [this] {
+    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+    };
+  vm.override_function("B_CREATEAMMO",std::function<void(NpcRef)>{[this](NpcRef self) {
+    createAmmo(self);
+    }},enabled);
+  vm.override_function("B_SELECTWEAPON",std::function<void(NpcRef,NpcRef)>{[this](NpcRef self,NpcRef other) {
+    selectWeapon(self,other);
+    }},enabled);
+  }
+
+void GameScript::createAmmo(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("B_CREATEAMMO.SLF")->set_instance(self);
+  std::shared_ptr<daedalus::IItem> weapon;
+  if(npc_isinfightmode(self,int32_t(FightMode::FMODE_FAR)))
+    weapon = npc_getreadiedweapon(self);
+  else if(npc_hasequippedrangedweapon(self))
+    weapon = npc_getequippedrangedweapon(self);
+  else
+    return;
+  findSymbol("B_CREATEAMMO.RANGEDWEAPON")->set_instance(weapon);
+  if(!weapon)
+    return;
+
+  const auto ammo = weapon->munition;
+  if((ammo==int32_t(findSymbolIndex("ITRW_ARROW")) || ammo==int32_t(findSymbolIndex("ITRW_BOLT"))) && npc_hasitems(self,ammo)<10)
+    createinvitems(self,ammo,10);
+  }
+
+void GameScript::selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("B_SELECTWEAPON.OTH")->set_instance(other);
+  findSymbol("B_SELECTWEAPON.SLF")->set_instance(self);
+  const auto body = npc_getbodystate(self);
+  // All three stock checks run before branching, leaving the last helper arguments in its symbols.
+  findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self);
+  findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(BS_FALL);
+  if(ActivityDefinitions::bodyStateContains(body,BS_DIVE) || ActivityDefinitions::bodyStateContains(body,BS_SWIM) ||
+     ActivityDefinitions::bodyStateContains(body,BS_FALL))
+    return;
+  if(vm.call_function<int32_t>("B_SELECTSPELL",self,other)!=0)
+    return;
+
+  const auto mode = [&](FightMode value) { return npc_isinfightmode(self,int32_t(value)); };
+  const auto ready = [&](bool ranged) {
+    if(!mode(FightMode::FMODE_NONE))
+      ai_removeweapon(self);
+    if(ranged)
+      ai_readyrangedweapon(self);
+    else
+      ai_readymeleeweapon(self);
+    };
+  if(mode(FightMode::FMODE_MAGIC)) {
+    ready(false);
+    return;
+    }
+  const auto distance = npc_getdisttonpc(self,other);
+  const auto inner = findSymbol("FIGHT_DIST_RANGED_INNER")->get_int();
+  const auto outer = findSymbol("FIGHT_DIST_RANGED_OUTER")->get_int();
+  const bool melee = npc_hasequippedmeleeweapon(self);
+  const bool ranged = npc_hasequippedrangedweapon(self);
+  if(mode(FightMode::FMODE_FAR) && (!melee || distance>inner))
+    return;
+  if(mode(FightMode::FMODE_MELEE) && (!ranged || distance<=outer))
+    return;
+  if(distance<=outer && melee) {
+    ready(false);
+    return;
+    }
+  if(vm.call_function<int32_t>("C_NPCHASATTACKREASONTOKILL",self)!=0 && distance>inner && ranged) {
+    ready(true);
+    return;
+    }
+  if(mode(FightMode::FMODE_NONE))
+    ready(!melee && ranged);
+  }
+
 bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   // These AIVAR slots belong to the verified NotR program.
   constexpr size_t sawCrime = 1;
