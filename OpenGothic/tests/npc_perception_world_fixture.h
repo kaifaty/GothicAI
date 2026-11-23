@@ -15,6 +15,7 @@ void assessTalkEntry(World& world,Npc& npc,Npc& player) {
   const auto savedState=Contract::aiState(npc);
   const auto savedDeadline=Contract::refusalDeadline(npc);
   const auto savedAttitude=npc.attitude();
+  const auto savedOutputOrder=Contract::outputOrder(script);
   auto* savedOther=npc.stateOther();
   const auto savedVictim=vm.global_victim()->get_instance();
   const auto* callback=vm.find_symbol_by_name("B_ASSESSTALK");
@@ -27,6 +28,7 @@ void assessTalkEntry(World& world,Npc& npc,Npc& player) {
     std::copy(savedPerceptions.begin(),savedPerceptions.end(),Contract::perceptions(npc));
     Contract::aiState(npc)=savedState;
     Contract::refusalDeadline(npc)=savedDeadline;
+    Contract::outputOrder(script)=savedOutputOrder;
     npc.setAttitude(savedAttitude);
     npc.setOther(savedOther);
     vm.global_victim()->set_instance(savedVictim);
@@ -70,7 +72,7 @@ void assessTalkEntry(World& world,Npc& npc,Npc& player) {
               "the selected executor must handle the entry and refusal rule");
       if(site.guardRefusal) {
         const auto* line=npc.aiQueueFront();
-        require(line && line->act==AI_OutputSvm && line->target==&player && line->s0=="$NOTNOW" &&
+        require(line && line->act==AI_OutputSvm && line->target==&player && line->s0=="$NOTNOW" && line->i0==savedOutputOrder &&
                 npc.hasPerc(PERC_ASSESSTALK),
                 "an unpassed gate guard on cooldown must decline without disabling talk perception");
         } else {
