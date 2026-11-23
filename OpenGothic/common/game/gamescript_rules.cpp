@@ -1983,6 +1983,12 @@ void GameScript::loadNativeEquipment() {
   vm.override_function("B_SELECTWEAPON",std::function<void(NpcRef,NpcRef)>{[this](NpcRef self,NpcRef other) {
     selectWeapon(self,other);
     }},enabled);
+  vm.override_function("B_READYSPELL",std::function<void(NpcRef,int32_t,int32_t)>{[this](NpcRef self,int32_t spell,int32_t mana) {
+    readySpell(self,spell,mana);
+    }},enabled);
+  vm.override_function("C_NPCHASATTACKREASONTOKILL",std::function<bool(NpcRef)>{[this](NpcRef self) {
+    return hasAttackReasonToKill(self);
+    }},enabled);
   }
 
 void GameScript::createAmmo(const std::shared_ptr<daedalus::INpc>& self) {
@@ -2042,12 +2048,30 @@ void GameScript::selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const
     ready(false);
     return;
     }
-  if(vm.call_function<int32_t>("C_NPCHASATTACKREASONTOKILL",self)!=0 && distance>inner && ranged) {
+  if(hasAttackReasonToKill(self) && distance>inner && ranged) {
     ready(true);
     return;
     }
   if(mode(FightMode::FMODE_NONE))
     ready(!melee && ranged);
+  }
+
+void GameScript::readySpell(const std::shared_ptr<daedalus::INpc>& self, int32_t spell, int32_t mana) {
+  findSymbol("B_READYSPELL.MANA")->set_int(mana);
+  findSymbol("B_READYSPELL.SPELL")->set_int(spell);
+  findSymbol("B_READYSPELL.SLF")->set_instance(self);
+  if(self) {
+    // The stock function adds the full cost whenever the corresponding attribute is too low.
+    if(self->attribute[NpcAttribute::mana_max]<mana)
+      npc_changeattribute(self,ATR_MANAMAX,mana);
+    if(self->attribute[NpcAttribute::mana]<mana)
+      npc_changeattribute(self,ATR_MANA,mana);
+    }
+  if(npc_isdrawingspell(self)==spell || npc_getactivespell(self)==spell)
+    return;
+  if(npc_getactivespell(self)!=-1)
+    ai_removeweapon(self);
+  ai_readyspell(self,spell,mana);
   }
 
 bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {

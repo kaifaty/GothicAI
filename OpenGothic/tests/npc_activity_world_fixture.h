@@ -3851,10 +3851,14 @@ auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& rese
   vm.global_self()->set_instance(self);
   auto& create=*script.findSymbol("B_CREATEAMMO");
   auto& select=*script.findSymbol("B_SELECTWEAPON");
-  size_t createBody=0,selectBody=0;
+  auto& ready=*script.findSymbol("B_READYSPELL");
+  auto& kill=*script.findSymbol("C_NPCHASATTACKREASONTOKILL");
+  size_t createBody=0,selectBody=0,readyBody=0,killBody=0;
   vm.observe_instructions([&](const auto&) {
     createBody+=vm.pc()==create.address();
     selectBody+=vm.pc()==select.address();
+    readyBody+=vm.pc()==ready.address();
+    killBody+=vm.pc()==kill.address();
     });
   const auto locals=[&](std::string_view name) { return script.findSymbol(name)->get_instance(); };
   auto refill=[&] {
@@ -3929,14 +3933,64 @@ auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& rese
           "equipment: the spell-selection branch preserves the original seeded draw and saved local");
   require(createBody==(native ? 0u : 4u) && selectBody==(native ? 0u : 5u),
           "equipment: the selected executor runs both helpers through their normal BL entry");
+  std::vector<size_t> inventory;
+  for(auto item=actor.inventory().iterator(Inventory::T_Ransack);item.isValid();++item)
+    inventory.push_back(item->clsId());
+  const auto darkMageQueue=activityQueue(actor);
+  require(native ? readyBody==0 : readyBody>0,"equipment: the spell selector reaches the selected ready-spell executor");
+
+  const auto previousReadyBody=readyBody,previousKillBody=killBody;
+  const auto fire=script.findSymbol("SPL_FIREBOLT")->get_int();
+  const auto ice=script.findSymbol("SPL_ICEBOLT")->get_int();
+  const auto useSpell=[&](int32_t spell,int32_t cost) {
+    actor.clearAiQueue();
+    vm.push_instance(self);
+    vm.push_int(spell);
+    vm.push_int(cost);
+    vm.unsafe_call_bl(&ready);
+    require(locals("B_READYSPELL.SLF")==self && script.findSymbol("B_READYSPELL.SPELL")->get_int()==spell &&
+            script.findSymbol("B_READYSPELL.MANA")->get_int()==cost,"equipment: ready spell saves all three parameters");
+    return Contract::queue(actor);
+    };
+  auto& attributes=actor.handle().attribute;
+  attributes[ATR_MANA]=3;
+  attributes[ATR_MANAMAX]=5;
+  auto first=useSpell(fire,20);
+  require(attributes[ATR_MANA]==23 && attributes[ATR_MANAMAX]==25 && first.size()==1,
+          "equipment: apply the full cost addends to both short mana attributes before queuing");
+  const auto draw=first.pop();
+  require(draw.act==AI_DrawSpell && draw.i0==fire && draw.i1==20,"equipment: ready command keeps spell and cost");
+
+  const auto scrollId=script.findSymbolIndex("ITSC_FIREBOLT");
+  auto* scroll=actor.addItem(scrollId,1);
+  require(scroll && actor.drawSpell(fire) && actor.activeWeapon()==scroll,"equipment: the actor has the stock scroll drawn");
+  const auto scrollRef=std::static_pointer_cast<daedalus::IItem>(scroll->handlePtr());
+  require(useSpell(int32_t(scrollId),26).size()==0 && attributes[ATR_MANA]==49 && attributes[ATR_MANAMAX]==51 &&
+          vm.global_item()->get_instance()==scrollRef,"equipment: refill before the drawing check and keep its ITEM");
+  require(useSpell(fire,20).size()==0 && vm.global_item()->get_instance()==scrollRef,
+          "equipment: the active spell is not queued twice");
+  auto next=useSpell(ice,20);
+  require(next.size()==2 && next.pop().act==AI_RemoveWeapon,"equipment: remove an active spell before switching");
+  const auto drawNext=next.pop();
+  require(drawNext.act==AI_DrawSpell && drawNext.i0==ice && drawNext.i1==20 && vm.global_item()->get_instance()==scrollRef,
+          "equipment: spell switch queues the replacement and preserves the active scroll in ITEM");
+
+  for(const auto* reason:{"AR_NONE","AR_KILL","AR_GUILDENEMY","AR_GUARDCALLEDTOKILL","AR_GUARDSTOPSINTRUDER","AR_HUMANMURDEREDHUMAN"}) {
+    actor.handle().aivar[9]=script.findSymbol(reason)->get_int();
+    vm.push_instance(self);
+    vm.unsafe_call_bl(&kill);
+    require(vm.pop_int()==int(std::string_view(reason)!="AR_NONE") && locals("C_NPCHASATTACKREASONTOKILL.SLF")==self,
+            "equipment: all five lethal reasons match the original and save the actor");
+    }
+  require(readyBody-previousReadyBody==(native ? 0u : 4u) && killBody-previousKillBody==(native ? 0u : 6u),
+          "equipment: both new helpers use the native or reference executor for their BL entry");
+  actor.closeWeapon(true);
+  actor.clearAiQueue();
   vm.observe_instructions({});
   vm.global_self()->set_instance(previousSelf);
   vm.global_item()->set_instance(previousItem);
   hero.setPosition(oldHeroPosition);
-  std::vector<size_t> inventory;
-  for(auto item=actor.inventory().iterator(Inventory::T_Ransack);item.isValid();++item)
-    inventory.push_back(item->clsId());
-  return std::make_pair(std::move(inventory),activityQueue(actor));
+  return std::make_pair(std::move(inventory),darkMageQueue);
   }
 
 void npcUnconsciousLifecycle(Gothic& gothic) {
@@ -4191,6 +4245,9 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   auto& potionScript=potionWorld.script();
   require(potionScript.findSymbol("B_SELECTSPELL.DK_RND")->get_int()==int32_t(std::mt19937(73106)()%10),
           "equipment: normal load keeps the original saved spell-selection draw");
+  require(potionScript.findSymbol("B_READYSPELL.SPELL")->get_int()==potionScript.findSymbol("SPL_ICEBOLT")->get_int() &&
+          potionScript.findSymbol("B_READYSPELL.MANA")->get_int()==20,
+          "equipment: normal load keeps the last spell and cost written by ready spell");
   auto* drinker=activityNpc(potionWorld,actor);
   const auto potion=potionScript.findSymbolIndex("ITPO_HEALTH_03");
   require(drinker && Contract::pendingItemUse(*drinker)==potion && drinker->attribute(ATR_HITPOINTS)==125 &&
