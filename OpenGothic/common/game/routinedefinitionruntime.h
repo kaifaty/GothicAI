@@ -15,6 +15,7 @@ struct Row {
 struct Definitions {
   std::unordered_map<uint32_t,std::vector<Row>> routines;
   };
+bool enabled();
 Definitions resolve(const RoutineDefinitions::Library& library, const daedalus::DaedalusScript& script);
 // Select the section by the verified program-record SHA and the game's environment switch.
 Definitions load(const std::filesystem::path& base, const daedalus::DaedalusScript& program,

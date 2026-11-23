@@ -1,5 +1,7 @@
 #pragma once
 
+#include "storygraph/eval.h"
+
 // Test-only access keeps the production creation entry point unchanged.
 struct NpcDefinitionContract {
   static auto& definitions(GameScript& script) { return script.npcDefinitions; }

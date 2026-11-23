@@ -1374,73 +1374,6 @@ void placementDefinitionsDisabled(World& world) {
   std::printf("Live placement switch: empty section; root VM executions %zu\n",instructions);
   }
 
-std::vector<std::string> placementFirstWorld(Gothic& gothic) {
-  const auto* configured=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
-  const bool configuredBefore=configured!=nullptr;
-  const std::string previous=configured ? configured : "";
-  auto state=[&] {
-    auto& world=*gothic.world();
-    auto result=placementSymbols(world.script(),false);
-    result["NPC count"]=std::to_string(world.npcCount());
-    uint32_t items=0;
-    while(world.itmById(items)) ++items;
-    result["item count"]=std::to_string(items);
-    result["random generator"]=world.script().randomState(nullptr);
-    auto entries=archiveEntries(placementSnapshot(world,false));
-    const auto item=itemState(world.script());
-    for(const auto& [name,payload]:item) entries.emplace("global-ITEM/"+name,payload);
-    for(const auto& [name,payload]:entries)
-      result["save/"+name]=std::to_string(payload.size())+":"+
-          Sha256::hash({reinterpret_cast<const char*>(payload.data()),payload.size()});
-    return result;
-    };
-  std::vector<std::string> differences;
-  try {
-    setenv("OPENGOTHIC_PLACEMENT_RECORDS","0",1);
-    gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
-    require(NpcDefinitionContract::placements(gothic.world()->script()).placements.empty(),
-            "disabled first-world placement must have no game definitions");
-    const auto expected=state();
-    const auto expectedLocals=placementSymbols(gothic.world()->script(),true);
-    gothic.clearGame().reset();
-    unsetenv("OPENGOTHIC_PLACEMENT_RECORDS");
-    gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
-    require(!NpcDefinitionContract::placements(gothic.world()->script()).placements.empty(),
-            "default first-world placement must load game definitions");
-    const auto actual=state();
-    for(const auto& [field,value]:expected) {
-      const auto found=actual.find(field);
-      if(found==actual.end() || value!=found->second)
-        differences.push_back(field+" expected="+value+" actual="+(found==actual.end() ? "<absent>" : found->second));
-      }
-    for(const auto& [field,value]:actual)
-      if(!expected.contains(field)) differences.push_back(field+" expected=<absent> actual="+value);
-    const auto actualLocals=placementSymbols(gothic.world()->script(),true);
-    for(const auto& [name,value]:expectedLocals) {
-      const auto found=actualLocals.find(name);
-      if(found==actualLocals.end() || value!=found->second)
-        differences.push_back("VM local "+name+" expected="+value+" actual="+(found==actualLocals.end() ? "<absent>" : found->second));
-      }
-    for(const auto& [name,value]:actualLocals)
-      if(!expectedLocals.contains(name)) differences.push_back("VM local "+name+" expected=<absent> actual="+value);
-    const auto* startup=gothic.world()->script().getVm().find_symbol_by_name("STARTUP_NEWWORLD");
-    require(startup && NpcDefinitionContract::placements(gothic.world()->script()).placements.contains(startup->index()),
-            "default NEWWORLD startup must replay a captured placement record");
-    std::printf("First-world NEWWORLD placement: %s NPCs, %s items; %zu saved/global state entries, %zu differences; STARTUP_NEWWORLD=%s\n",
-                actual.at("NPC count").c_str(),actual.at("item count").c_str(),expected.size(),differences.size(),
-                startup && NpcDefinitionContract::placements(gothic.world()->script()).placements.contains(startup->index()) ? "record" : "VM");
-    }
-  catch(...) {
-    if(configuredBefore) setenv("OPENGOTHIC_PLACEMENT_RECORDS",previous.c_str(),1);
-    else unsetenv("OPENGOTHIC_PLACEMENT_RECORDS");
-    throw;
-    }
-  if(configuredBefore) setenv("OPENGOTHIC_PLACEMENT_RECORDS",previous.c_str(),1);
-  else unsetenv("OPENGOTHIC_PLACEMENT_RECORDS");
-  for(const auto& value:differences) std::fprintf(stderr,"[placement-world-difference] %s\n",value.c_str());
-  return differences;
-  }
-
 // D4.1: a routine activity from its record against the VM, at the same positions. The stream
 // interleaves the engine calls (VM externals; the template's calls of a record phase, whose
 // perception helper still runs in the VM), the queued commands and the phase results.
@@ -1950,6 +1883,7 @@ const WayPoint* activityRow(Npc& npc,size_t init,std::string& name,gtime* start=
   }
 
 #include "npc_activity_world_fixture.h"
+#include "npc_placement_world_fixture.h"
 
 // Every position of one activity at its real object: at the object, far from the point, the object
 // taken by other NPCs, already at the object, both sides of a distance approach, and the engine's
@@ -3783,6 +3717,7 @@ void moverChildSave() {
   gothic.setupGlobalScripts();
   GameMusic music;
   pointActivitiesInBothModes(gothic);
+  dragonIslandPlacement(gothic);
   const auto placementWorldDifferences=placementFirstWorld(gothic);
   require(gothic.player()!=nullptr,"bench helper fixture has a player");
   routineTables(*gothic.player());
