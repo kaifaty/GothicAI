@@ -198,15 +198,51 @@ bool GameScript::runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol
   return true;
   }
 
+namespace {
+void refreshSmithWeaponDescriptions(daedalus::DaedalusVm& vm) {
+  struct Recipe {
+    std::string_view info, title, cost = {};
+    };
+  static constexpr Recipe recipes[] = {
+    {"PC_ITMW_1H_COMMON",       "NAME_ITMW_1H_COMMON_01"},
+    {"PC_ITMW_1H_SPECIAL_01",   "NAME_ITMW_1H_SPECIAL_01", "PRINT_SMITH_1H_SPECIAL_01"},
+    {"PC_ITMW_2H_SPECIAL_01",   "NAME_ITMW_2H_SPECIAL_01", "PRINT_SMITH_2H_SPECIAL_01"},
+    {"PC_ITMW_1H_SPECIAL_02",   "NAME_ITMW_1H_SPECIAL_02", "PRINT_SMITH_1H_SPECIAL_02"},
+    {"PC_ITMW_2H_SPECIAL_02",   "NAME_ITMW_2H_SPECIAL_02", "PRINT_SMITH_2H_SPECIAL_02"},
+    {"PC_ITMW_1H_SPECIAL_03",   "NAME_ITMW_1H_SPECIAL_03", "PRINT_SMITH_1H_SPECIAL_03"},
+    {"PC_ITMW_2H_SPECIAL_03",   "NAME_ITMW_2H_SPECIAL_03", "PRINT_SMITH_2H_SPECIAL_03"},
+    {"PC_ITMW_1H_SPECIAL_04",   "NAME_ITMW_1H_SPECIAL_04", "PRINT_SMITH_1H_SPECIAL_04"},
+    {"PC_ITMW_2H_SPECIAL_04",   "NAME_ITMW_2H_SPECIAL_04", "PRINT_SMITH_2H_SPECIAL_04"},
+    {"PC_WEAPON_1H_HARAD_01",   "NAME_ADDON_HARAD_01"},
+    {"PC_WEAPON_1H_HARAD_02",   "NAME_ADDON_HARAD_02"},
+    {"PC_WEAPON_1H_HARAD_03",   "NAME_ADDON_HARAD_03"},
+    {"PC_WEAPON_1H_HARAD_04",   "NAME_ADDON_HARAD_04"},
+    };
+  auto* description=vm.find_symbol_by_name("C_INFO.DESCRIPTION");
+  for(const auto& recipe:recipes) {
+    const auto info=vm.find_symbol_by_name(recipe.info)->get_instance();
+    const auto& title=vm.find_symbol_by_name(recipe.title)->get_string();
+    if(recipe.cost.empty()) {
+      vm.set_string(info,description,0,title);
+      } else {
+      std::string text=title;
+      text+=vm.find_symbol_by_name(recipe.cost)->get_string();
+      vm.set_string(info,description,0,text);
+      }
+    }
+  }
+}
+
 bool GameScript::invokeNativeMobState(const daedalus::DaedalusSymbol& symbol) {
   if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
      ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return false;
 
-  // These stock S1 callbacks only bind the hero for an ordinary NPC. Their player branches open
-  // documents or production menus. Sleep also checks the diagnostic Rockefeller instance.
+  // Ordinary NPCs bind the hero without opening documents or production menus.
+  // Sleep also checks the diagnostic Rockefeller instance. Smithing updates recipe captions.
   static constexpr std::string_view callbacks[] = {
     "SLEEPABIT_S1", "POTIONALCHEMY_S1", "MAKERUNE_S1", "GOLDHACKEN_S1", "PRAYIDOL_S1", "PRAYSHRINE_S1",
+    "SMITHWEAPON_S1",
     "USE_BOOKSTAND_01_S1", "USE_BOOKSTAND_ADDON_BL_S1", "USE_BOOKSTANDDEMENTOR_S1",
     "USE_BOOKSTANDALCHEMY1_S1", "USE_BOOKSTANDALCHEMY2_S1", "USE_BOOKSTANDALCHEMY3_S1",
     "USE_BOOKSTANDANIMALS1_S1", "USE_BOOKSTANDANIMALS2_S1", "USE_BOOKSTANDANIMALS3_S1",
@@ -231,5 +267,7 @@ bool GameScript::invokeNativeMobState(const daedalus::DaedalusSymbol& symbol) {
     } else {
     findSymbol(name+".HER")->set_instance(hero);
     }
+  if(name=="SMITHWEAPON_S1")
+    refreshSmithWeaponDescriptions(vm);
   return true;
   }
