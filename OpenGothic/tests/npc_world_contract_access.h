@@ -46,6 +46,7 @@ struct NpcDefinitionContract {
   static AiQueue& queue(Npc& npc) { return npc.aiQueue; }
   static uint64_t& refusalDeadline(Npc& npc) { return npc.refuseTalkMilis; }
   static auto& perceptions(Npc& npc) { return npc.perception; }
+  static const AiQueue& overlayQueue(const Npc& npc) { return npc.aiQueueOverlay; }
   static bool walking(const Npc& npc) { return !npc.go2.empty(); }
   static const auto& physicsPosition(const Npc& npc) { return npc.physic.position(); }
   // An action at the head of the queue, as an interruption ahead of the queued use.

@@ -2308,10 +2308,12 @@ void fleeAndWatchPhases(World& world,Npc& npc,Npc& hero) {
       return script.invokeState(&npc,other,victim,ScriptFn(phase));
       };
     invoke(flee.init,&hero);
-    const auto* first=npc.aiQueueFront();
-    require(npc.hasPerc(PERC_ASSESSMAGIC) && npc.hasOverlay(overlay) && aivar[65]==0 &&
-            first && first->act==AI_OutputSvmOverlay && first->s0=="$RUNAWAY" && first->target==&hero,
-            "flee: fresh Init applies the overlay, warns and keeps the active target");
+    require(npc.hasPerc(PERC_ASSESSMAGIC) && npc.hasOverlay(overlay) && aivar[65]==0 && npc.target()==&hero,
+            "flee: fresh Init applies the overlay and keeps the active target");
+    const auto* warning=Contract::overlayQueue(npc).front();
+    require(npc.aiQueueFront() && npc.aiQueueFront()->act==AI_RemoveWeapon && warning &&
+            warning->act==AI_OutputSvmOverlay && warning->s0=="$RUNAWAY" && warning->target==&hero,
+            "flee: fresh Init queues the warning alongside sheathing the weapon");
     npc.clearAiQueue();
     require(invoke(flee.loop,&hero)==LOOP_CONTINUE && npc.aiQueueFront() && npc.aiQueueFront()->act==AI_Flee,
             "flee: a nearby standing target keeps the old flee action");
@@ -2328,7 +2330,7 @@ void fleeAndWatchPhases(World& world,Npc& npc,Npc& hero) {
     aivar[7]=int32_t(hero.instanceSymbol());
     invoke(flee.init,nullptr);
     require(aivar[65]==1 && npc.target()==&hero && npc.hasOverlay(overlay) &&
-            npc.aiQueueFront() && npc.aiQueueFront()->act==AI_RemoveWeapon,
+            npc.aiQueueFront() && npc.aiQueueFront()->act==AI_RemoveWeapon && Contract::overlayQueue(npc).size()==0,
             "flee: re-entry with a saved target restores the chase context and skips the warning");
     invoke(flee.end,&hero);
     npc.clearAiQueue();
