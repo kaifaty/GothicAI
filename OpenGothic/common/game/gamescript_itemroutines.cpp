@@ -82,8 +82,8 @@ bool GameScript::runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol
       if(npc.itemCount(id)==0)
         storeItem(npc.addItem(id,1));
       };
-    NpcActivityHost host(world(),npc,[this](std::string_view perception) {
-      vm.call_function<void>(vm.find_symbol_by_name(perception));
+    NpcActivityHost host(world(),npc,[this](std::string_view) {
+      setPerceptionPreset(true);
       });
     ActivityDefinitions::resetForActivity(host,"PERCEPTION_SET_NORMAL");
     host.setWalkMode(1);

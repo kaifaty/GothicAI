@@ -1400,6 +1400,10 @@ void observePlayerPhases(World& world,Npc& npc,Npc& hero,bool seated) {
   const auto beforeState=Contract::previousState(npc);
   const auto beforeRoom=npc.handle().aivar[21];
   const auto beforeDelay=npc.handle().aivar[68];
+  const auto beforeSenses=npc.handle().senses;
+  const auto beforeRange=npc.handle().senses_range;
+  auto& vm=script.getVm();
+  auto& speech=*vm.find_symbol_by_name("B_SAY.TEXT");
   require(ActivityDefinitions::bodyStateContains(int32_t(npc.bodyState()),BS_SIT)==seated &&
           npc.qDistTo(hero)<1000.f*1000.f,"observation: the fixture holds the intended nearby pose");
   std::vector<std::string> original;
@@ -1408,8 +1412,34 @@ void observePlayerPhases(World& world,Npc& npc,Npc& hero,bool seated) {
     npc.clearAiQueue();
     npc.aiPush(AiQueue::aiStopLookAt());
     Contract::nextAiAction(npc);
-    Contract::previousState(npc)=ScriptFn();
+    Contract::previousState(npc)=script.findFunction("ZS_SLEEP");
     npc.handle().aivar[21]=0;
+    npc.handle().senses=0;
+    npc.handle().senses_range=0;
+    speech.set_string("");
+    size_t normalCalls=0,speechCalls=0,lookCalls=0,stopCalls=0,turnCalls=0;
+    const auto helperProbe=vm.add_call_observer([&](const auto& symbol) {
+      normalCalls+=symbol.name()=="PERCEPTION_SET_NORMAL";
+      speechCalls+=symbol.name()=="B_SAY";
+      lookCalls+=symbol.name()=="B_LOOKATNPC";
+      stopCalls+=symbol.name()=="B_STOPLOOKAT";
+      turnCalls+=symbol.name()=="B_TURNTONPC";
+      });
+    script.invokeState(&npc,&hero,nullptr,uint32_t(phases.init));
+    vm.remove_call_observer(helperProbe);
+    auto speechQueue=Contract::queue(npc);
+    require(speechQueue.size()==(seated ? 2u : 4u),"observation: waking adds one queued voice line");
+    for(size_t i=0;i<(seated ? 1u : 3u);++i)
+      speechQueue.pop();
+    const auto line=speechQueue.pop();
+    require(line.act==AI_OutputSvm && line.target==&hero && line.s0=="$YOUDISTURBEDMYSLUMBER" &&
+            speech.get_string()==line.s0 && npc.handle().senses==3 && npc.handle().senses_range==2000 &&
+            npc.hasPerc(PERC_ASSESSQUIETSOUND) &&
+            normalCalls==size_t(!native) && speechCalls==size_t(!native) && lookCalls==size_t(!native) &&
+            stopCalls==size_t(!native) && turnCalls==size_t(!native && !seated),
+            "observation: native and scripted helpers produce the same senses, look and speech without native VM calls");
+    npc.clearAiQueue();
+    Contract::previousState(npc)=ScriptFn();
     npc.setStateTime(0);
     script.setSeed(73106);
     auto expected=Contract::random(script);
@@ -1456,6 +1486,8 @@ void observePlayerPhases(World& world,Npc& npc,Npc& hero,bool seated) {
   enabled=wasEnabled;
   npc.handle().aivar[21]=beforeRoom;
   npc.handle().aivar[68]=beforeDelay;
+  npc.handle().senses=beforeSenses;
+  npc.handle().senses_range=beforeRange;
   Contract::previousState(npc)=beforeState;
   npc.setStateTime(int64_t(beforeTime));
   std::printf("D5.2 %s observation: Init, timed Loop, End and random stream match the VM\n",seated ? "seated" : "standing");
@@ -1601,7 +1633,7 @@ void quietSoundRooms(Gothic& gothic) {
         const auto* queued=npc->aiQueueFront();
         require(queued && queued->act==AI_StartState && queued->func==(site.privateRoom ? clear : observe) &&
                 queued->target==&hero && queued->i0==1 && !npc->hasPerc(PERC_ASSESSQUIETSOUND) &&
-                clearCalls==1 && fakeBanditCalls==(site.sameRoom ? 0u : 1u),
+                clearCalls==size_t(!native) && fakeBanditCalls==(site.sameRoom ? 0u : 1u),
                 "quiet sound: the room or unseen source queues its transition and clears perceptions");
         }
       if(site.friendly) {

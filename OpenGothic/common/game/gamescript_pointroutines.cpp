@@ -59,7 +59,7 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
     };
 
   if(phase==Phase::Init) {
-    vm.call_function<void>(findSymbol("PERCEPTION_SET_NORMAL"));
+    setPerceptionPreset(true);
     stopLookAt();
     npc.aiPush(AiQueue::aiRemoveWeapon());
     if(kind==PointRoutine::GuardPassage) {
