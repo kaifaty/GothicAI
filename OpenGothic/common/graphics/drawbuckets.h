@@ -70,6 +70,7 @@ class DrawBuckets {
     auto& morph()    const { return desc.morph;   }
 
     bool commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    bool textureBankRebuilt() const { return rebuiltTextureBank; }
 
   private:
     void updateBindlessArrays(bool updateBuffers, uint8_t fId);
@@ -159,6 +160,7 @@ class DrawBuckets {
     std::array<std::vector<const Tempest::Texture2d*>,3> textureSlots;
     std::unordered_map<const Tempest::Texture2d*,std::vector<TextureSlot>> textureUsers;
     uint8_t currentFrame = 0;
+    bool rebuiltTextureBank = false;
 
     // the fringes' maps (albedo, normal, ORM) in the bindless arrays after the buckets and their frames, one entry
     // per distinct set: BucketGpu::fringeTex is the first's index plus its place here. A meadow's two layers

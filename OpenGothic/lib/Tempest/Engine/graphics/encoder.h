@@ -60,6 +60,8 @@ class Encoder<Tempest::CommandBuffer> {
     void setScissor(const Rect& vp);
 
     void setDebugMarker(std::string_view tag);
+    // Hints that successive draws share descriptor arrays across other binding changes.
+    void setGraphicsDescriptorArrayReuse(bool enabled);
 
     // non-indexed + empty vbo
     void draw(std::nullptr_t vbo, size_t offset, size_t count) { implDraw({},0,offset,count,0,1); }

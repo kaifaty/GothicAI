@@ -1007,7 +1007,12 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   if(treeProbe==nullptr && !captureLandscapeDepth)
     wview.visibilityStats(cmd, fId);
   if(history) {
+    const bool rebuiltTextureBank = wview.drawBuckets().textureBankRebuilt();
+    if(rebuiltTextureBank)
+      cmd.setGraphicsDescriptorArrayReuse(true);
     drawTreeHistory(cmd, fId, wview, verify);
+    if(rebuiltTextureBank)
+      cmd.setGraphicsDescriptorArrayReuse(false);
     } else {
     if(historyView)
       treeHistory.valid = false;

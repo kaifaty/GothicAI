@@ -86,6 +86,7 @@ class VCommandBuffer:public AbstractGraphicsApi::CommandBuffer {
 
     void setPipeline(AbstractGraphicsApi::Pipeline& p) override;
     void setComputePipeline(AbstractGraphicsApi::CompPipeline& p) override;
+    void setGraphicsDescriptorArrayReuse(bool enabled) override;
 
     void setPushData(const void* data, size_t size) override;
     void setBinding (size_t id, AbstractGraphicsApi::Texture*   tex, uint32_t mipLevel, const ComponentMapping& m, const Sampler& smp) override;
@@ -201,6 +202,8 @@ class VCommandBuffer:public AbstractGraphicsApi::CommandBuffer {
     VkBuffer                                curVbo          = VK_NULL_HANDLE;
     size_t                                  vboStride       = 0;
     VkPipelineLayout                        pipelineLayout  = VK_NULL_HANDLE;
+    bool                                    reuseDescriptorArrays = false;
+    bool                                    splitDescriptors = false;
 
     bool                                    isDbgRegion = false;
   };

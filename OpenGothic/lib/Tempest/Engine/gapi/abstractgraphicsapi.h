@@ -632,6 +632,7 @@ namespace Tempest {
 
         virtual void setPipeline(Pipeline& p)=0;
         virtual void setComputePipeline(CompPipeline& p)=0;
+        virtual void setGraphicsDescriptorArrayReuse(bool enabled);
 
         virtual void setPushData(const void* data, size_t size);
         virtual void setBinding (size_t id, Texture *tex, uint32_t mipLevel, const ComponentMapping& m, const Sampler& smp) = 0;
