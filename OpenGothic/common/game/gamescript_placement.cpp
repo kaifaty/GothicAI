@@ -472,6 +472,124 @@ bool runDragonIslandCrewTrigger(daedalus::DaedalusVm& vm,const daedalus::Daedalu
   return true;
   }
 
+void runDragonIslandFirstEntry(daedalus::DaedalusVm& vm) {
+  struct RestoreContext {
+    daedalus::DaedalusVm& vm;
+    std::shared_ptr<daedalus::DaedalusInstance> caller;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+    } restore{vm,vm.unsafe_get_gi()};
+  const auto symbol = [&](std::string_view name) { return vm.find_symbol_by_name(name); };
+  const auto number = [&](const char* name) { return symbol(name)->get_int(); };
+  const auto reference = [&](const char* name) { vm.push_reference(symbol(name)); };
+  const auto instance = [&](const char* name) { vm.push_int(int32_t(symbol(name)->index())); };
+  const auto external = [&](const char* name) { return vm.unsafe_call_external(symbol(name)); };
+  const auto playerItems = [&](const char* name) {
+    vm.push_reference(vm.global_hero());
+    instance(name);
+    external("NPC_HASITEMS");
+    return vm.pop_int();
+    };
+  const auto itemAt = [&](const char* name,const char* point) {
+    instance(name);
+    reference(point);
+    external("WLD_INSERTITEM");
+    };
+  const auto giveItem = [&](const char* actor,const char* name) {
+    reference(actor);
+    instance(name);
+    vm.push_int(1);
+    external("CREATEINVITEMS");
+    };
+  const auto playerField = [&](const char* field,uint16_t index = 0) {
+    const auto hero = vm.global_hero()->get_instance();
+    vm.unsafe_set_gi(hero);
+    return vm.get_int(hero,symbol(field),index);
+    };
+
+  constexpr auto shipKey = "ITKE_SHIP_LEVELCHANGE_MIS";
+  bool keyResult = false;
+  if(playerItems(shipKey)!=0) {
+    vm.push_reference(vm.global_hero());
+    instance(shipKey);
+    vm.push_int(1);
+    keyResult = external("NPC_REMOVEINVITEMS");
+    }
+  if(playerField("C_NPC.ATTRIBUTE",ATR_DEXTERITY)<15)
+    itemAt("ITPO_PERM_DEX","$51980"); // FP_ITEM_DI_ENTER_05
+
+  const auto no = number("FALSE");
+  auto* entered = symbol("ENTERDI_KAPITEL6");
+  if(entered->get_int()==no) {
+    if(playerField("C_NPC.GUILD")==number("GIL_PAL"))
+      giveItem("ARCHOL","ITRU_PALDESTROYEVIL");
+    itemAt("ITMI_FLASK","$51981"); // FP_ITEM_SHIP_12
+    if(playerItems("ITMI_INNOSEYE_MIS")==no) {
+      if(playerItems("ITMI_INNOSEYE_DISCHARGED_MIS")==no) {
+        itemAt("ITSE_XARDASNOTFALLBEUTEL_MIS","$51982"); // FP_ITEM_SHIP_12
+        symbol("SC_INNOSEYEVERGESSEN_DI")->set_int(number("TRUE"));
+        reference("TOPIC_HALLENVONIRDORATH");
+        reference("$51983"); // The stock Xardas dream entry.
+        vm.unsafe_call_bl(symbol("B_LOGENTRY"));
+        }
+      itemAt("ITMI_FLASK","$51984"); // FP_ITEM_SHIP_06
+      bool carryingHeart = false;
+      for(const auto* heart : {"ITAT_SWAMPDRAGONHEART","ITAT_FIREDRAGONHEART","ITAT_ROCKDRAGONHEART","ITAT_ICEDRAGONHEART"}) {
+        if(playerItems(heart)>=1)
+          carryingHeart = true;
+        }
+      if(!carryingHeart)
+        giveItem("ORKELITE_ANTIPALADINORKOBERST_DI","ITAT_ROCKDRAGONHEART");
+      }
+
+    constexpr auto crewTopic = "TOPIC_MYCREW";
+    reference(crewTopic);
+    reference("LOG_MISSION");
+    external("LOG_CREATETOPIC");
+    reference(crewTopic);
+    reference("LOG_RUNNING");
+    external("LOG_SETTOPICSTATUS");
+    const auto journalEntry = [&](const char* message) {
+      reference(crewTopic);
+      reference(message);
+      external("LOG_ADDENTRY");
+      };
+    static constexpr std::pair<const char*,const char*> captains[] = {
+      {"JORGENISCAPTAIN","$51985"}, {"TORLOFISCAPTAIN","$51986"}, {"JACKISCAPTAIN","$51987"},
+      };
+    for(const auto& [flag,message] : captains)
+      if(number(flag)==number("TRUE"))
+        journalEntry(message);
+    const auto success = number("LOG_SUCCESS");
+    static constexpr struct CrewEntry {
+      const char* flag;
+      const char* message;
+      const char* extra = nullptr;
+      bool extraForMage = false;
+      } crew[] = {
+      {"LEE_ISONBOARD","$51988"}, {"MILTENNW_ISONBOARD","$51989","$51990",true},
+      {"LESTER_ISONBOARD","$51991"}, {"MARIO_ISONBOARD","$51992"}, {"WOLF_ISONBOARD","$51993"},
+      {"VATRAS_ISONBOARD","$51994","$51995",true}, {"BENNET_ISONBOARD","$51996"}, {"DIEGO_ISONBOARD","$51997"},
+      {"GORN_ISONBOARD","$51998","$51999"}, {"LARES_ISONBOARD","$52000"}, {"BIFF_ISONBOARD","$52001"},
+      {"ANGAR_ISONBOARD","$52002"}, {"GIRION_ISONBOARD","$52003"},
+      };
+    for(const auto& row : crew) {
+      if(number(row.flag)!=success)
+        continue;
+      journalEntry(row.message);
+      if(row.extra && (!row.extraForMage || playerField("C_NPC.GUILD")==number("GIL_KDF")))
+        journalEntry(row.extra);
+      }
+    for(const auto* value : {"KAPWECHSEL_6","KAPWECHSEL_6_TEXT","$52004","$52005"})
+      reference(value);
+    vm.push_int(6000);
+    external("INTRODUCECHAPTER");
+    entered->set_int(number("TRUE"));
+    }
+  // The stock void trigger drops the key-removal result only when it returns.
+  if(keyResult)
+    (void)vm.pop_int();
+  }
+
 PlacementDefinitionRuntime::Definitions dragonIslandPlacement(daedalus::DaedalusScript& vm) {
   using Value = PlacementDefinitions::Value;
   struct Captain {
@@ -800,6 +918,10 @@ void GameScript::invokeWorldTrigger(std::string_view fn) {
       return;
     if(symbol->name()=="ENTER_OLDWORLD_FIRSTTIME_TRIGGER" || symbol->name()=="ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC") {
       vm.unsafe_call_bl(symbol);
+      return;
+      }
+    if(symbol->name()=="ENTER_DI_FIRSTTIME_TRIGGER") {
+      runDragonIslandFirstEntry(vm);
       return;
       }
     if(runDragonIslandCrewTrigger(vm,*symbol))
