@@ -682,6 +682,7 @@ namespace daedalus {
 		///        return value is left there.
 		/// \note Local addition (OpenGothic ai_bridge), see lib/VENDORED.md.
 		void unsafe_call_bl(DaedalusSymbol const* sym);
+		[[nodiscard]] bool has_active_override(DaedalusSymbol const& sym) const;
 		std::shared_ptr<DaedalusInstance> unsafe_get_gi();
 		void unsafe_set_gi(std::shared_ptr<DaedalusInstance> i);
 
@@ -1049,6 +1050,7 @@ namespace daedalus {
 			std::function<void(DaedalusVm&)> call;
 			std::function<bool()> enabled;
 		};
+		[[nodiscard]] FunctionOverride const* active_override(DaedalusSymbol const& sym) const;
 		std::unordered_map<uint32_t, FunctionOverride> _m_function_overrides;
 		std::optional<std::function<void(DaedalusVm&, DaedalusSymbol&)>> _m_default_external {std::nullopt};
 		std::function<void(DaedalusSymbol&)> _m_access_trap;

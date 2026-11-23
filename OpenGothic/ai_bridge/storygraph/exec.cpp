@@ -3,6 +3,7 @@
 #include "daedalus/vm.h"
 
 #include <cstring>
+#include <utility>
 
 using namespace storygraph;
 using daedalus::DaedalusDataType;
@@ -45,41 +46,48 @@ bool isInt(const std::optional<Value>& v) { return v && v->type==Value::Int; }
 }
 
 Interpreter::Result Interpreter::run(const Program& p, const std::vector<Value>& args) {
+  auto state = execute(p, args, true);
   Result r;
-  if(!p.error.empty()) {
-    r.ok    = false;
-    r.error = "not a program: " + p.error;
-    return r;
-    }
-  // an engine function a program calls may run another program (Npc_CheckInfo checks the conditions)
-  auto outerParams   = params;
-  auto outerReturned = std::move(returned);
-  auto outerError    = std::move(error);
-  params   = &args;
-  returned = Value::integer(0);
-  error.clear();
-  Flow f = Flow::Fail;
+  r.ok = state.error.empty();
+  r.error = std::move(state.error);
+  if(r.ok && state.returned)
+    r.returned = std::move(state.returned->value);
+  return r;
+  }
+
+Interpreter::Frame Interpreter::execute(const Program& p, const std::vector<Value>& args, bool readReturn) {
+  if(!p.error.empty())
+    return {args, {}, "not a program: " + p.error};
+  if(depth==64)
+    return {args, {}, "program call depth exceeded"};
+
+  // An engine external can also reenter the Interpreter, for example to check dialog conditions.
+  Frame state{args, {}, {}};
+  struct Restore final {
+    Interpreter& self;
+    Frame*       parent;
+    ~Restore() {
+      self.frame = parent;
+      --self.depth;
+      }
+    } restore{*this, std::exchange(frame, &state)};
+  ++depth;
   try {
-    f = steps(p.steps);
+    if(steps(p.steps)==Flow::Fail && state.error.empty())
+      state.error = "failed";
+    if(readReturn && state.returned && state.error.empty())
+      if(auto value = read(*state.returned))
+        state.returned->value = std::move(*value);
     }
   catch(const std::exception& e) {
     fail(std::string("vm: ") + e.what());
     }
-  if(f==Flow::Fail) {
-    r.ok    = false;
-    r.error = error.empty() ? std::string("failed") : error;
-    } else {
-    r.returned = returned;
-    }
-  params   = outerParams;
-  returned = std::move(outerReturned);
-  error    = std::move(outerError);
-  return r;
+  return state;
   }
 
 std::optional<Value> Interpreter::fail(std::string why) {
-  if(error.empty())
-    error = std::move(why);
+  if(frame->error.empty())
+    frame->error = std::move(why);
   return std::nullopt;
   }
 
@@ -108,10 +116,9 @@ Interpreter::Flow Interpreter::steps(const std::vector<Step>& s) {
         }
       case Step::Return:
         if(st.value!=nullptr) {
-          auto v = eval(*st.value);
-          if(!v)
+          frame->returned = item(*st.value);
+          if(!frame->returned)
             return Flow::Fail;
-          returned = *v;
           }
         return Flow::Return;
       case Step::Say:
@@ -317,9 +324,9 @@ std::optional<Interpreter::Item> Interpreter::item(const Expr& e) {
       return it;
       }
     case Expr::Param:
-      if(params==nullptr || e.index<0 || size_t(e.index)>=params->size())
+      if(e.index<0 || size_t(e.index)>=frame->args.size())
         return failed("no argument " + std::to_string(e.index));
-      it.value = (*params)[size_t(e.index)];
+      it.value = frame->args[size_t(e.index)];
       return it;
     case Expr::Call:
     case Expr::Fn:
@@ -366,7 +373,26 @@ std::optional<Interpreter::Item> Interpreter::call(const Expr& e) {
     r.value = asReturned(fn->rtype(), ext.call(*fn, args));
     return r;
     }
-  // a script function runs in the VM; it may return a variable, read when the value is popped
+  if(resolveProgram && !fn->has_local_variables_enabled() && !vm.has_active_override(*fn)) {
+    if(const auto* p = resolveProgram(*fn); p!=nullptr && p->error.empty()) {
+      auto state = execute(*p, args, false);
+      if(!state.error.empty())
+        return failed(std::move(state.error));
+      if(!fn->has_return() || !state.returned) {
+        r.value = asReturned(fn->rtype(), Value{});
+        return r;
+        }
+      auto& returned = *state.returned;
+      if(returned.ref==nullptr && returned.field==nullptr) {
+        auto value = asParameter(fn->rtype(), returned.value);
+        if(!value)
+          return failed("wrong return type: " + ident(e.name));
+        returned.value = std::move(*value);
+        }
+      return std::move(returned);
+      }
+    }
+  // An enabled native override or a script function may return a variable, read when the value is popped.
   for(auto& a : args)
     switch(a.type) {
       case Value::Int:   vm.push_int(a.i);         break;

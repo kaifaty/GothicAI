@@ -1,5 +1,7 @@
 #include "game/gamescript_daystats.h"
 #include "programdata.h"
+#include "storygraph/bytecode.h"
+#include "storygraph/exec.h"
 #include "world/npcactivityprobe.h"
 #include <rapidjson/document.h>
 #include <iostream>
@@ -28,12 +30,15 @@ daedalus::DaedalusVm makeVm() {
   asset::ProgramRecord program;
   program.version=50;
   program.bytecode.push_back(std::byte(Op::RSR));
-  auto function=[&](const char* name,bool external=false) {
+  auto function=[&](const char* name,bool external=false,Type result=Type::VOID,uint32_t args=0) {
     asset::ProgramSymbol symbol;
     symbol.name=name;
     symbol.type=uint32_t(Type::FUNCTION);
     symbol.flags=daedalus::DaedalusSymbolFlag::CONST|(external ? daedalus::DaedalusSymbolFlag::EXTERNAL : 0);
-    symbol.return_type=uint32_t(Type::VOID);
+    if(result!=Type::VOID)
+      symbol.flags|=daedalus::DaedalusSymbolFlag::RETURN;
+    symbol.return_type=uint32_t(result);
+    symbol.count=args;
     program.symbols.push_back(std::move(symbol));
     return uint32_t(program.symbols.size()-1);
     };
@@ -48,6 +53,28 @@ daedalus::DaedalusVm makeVm() {
   const auto a=function("ZS_A_LOOP");begin(a);call(Op::BL,uint32_t(program.symbols[helper].address));op(Op::RSR);
   const auto b=function("ZS_B_LOOP");begin(b);call(Op::BL,uint32_t(program.symbols[helper].address));op(Op::RSR);
   const auto outside=function("OUTSIDE");begin(outside);call(Op::BL,uint32_t(program.symbols[helper].address));op(Op::RSR);
+
+  const auto remember=function("REMEMBER",false,Type::INT,2);
+  const auto state=uint32_t(program.symbols.size());
+  program.symbols.push_back({.name="REMEMBER.NUMBER",.type=uint32_t(Type::INT),.count=1,.int_values={0}});
+  const auto label=uint32_t(program.symbols.size());
+  program.symbols.push_back({.name="REMEMBER.LABEL",.type=uint32_t(Type::STRING),.count=1,.string_values={""}});
+  const auto left=uint32_t(program.symbols.size());
+  program.symbols.push_back({.name="LEFT_LABEL",.type=uint32_t(Type::STRING),.count=1,
+                            .flags=daedalus::DaedalusSymbolFlag::CONST,.string_values={"left"}});
+  const auto right=uint32_t(program.symbols.size());
+  program.symbols.push_back({.name="RIGHT_LABEL",.type=uint32_t(Type::STRING),.count=1,
+                            .flags=daedalus::DaedalusSymbolFlag::CONST,.string_values={"right"}});
+  begin(remember);
+  call(Op::PUSHV,label);op(Op::MOVS);
+  call(Op::PUSHV,state);op(Op::MOVI);
+  call(Op::BE,random);
+  call(Op::PUSHV,state);op(Op::RSR);
+  const auto story=function("STORY",false,Type::INT);begin(story);
+  const auto rememberAddress=uint32_t(program.symbols[remember].address);
+  call(Op::PUSHI,40);call(Op::PUSHV,right);call(Op::BL,rememberAddress);
+  call(Op::PUSHI,2);call(Op::PUSHV,left);call(Op::BL,rememberAddress);
+  op(Op::ADD);op(Op::RSR);
   return daedalus::DaedalusVm(daedalus::DaedalusScript::from_program(std::move(program)));
   }
 std::string measure(daedalus::DaedalusVm& vm, DayScriptStats& stats, const std::vector<std::string>& sources) {
@@ -119,6 +146,51 @@ void checkOverrides() {
         counters["instructions_by_symbol"]["OUTSIDE"]==2 && counters["unattributed_instructions"]==0,
         "overridden engine calls leave no executed bytecode for the helper");
   stats->stop(vm);
+  }
+
+void checkNestedStoryPrograms() {
+  auto vm=makeVm();
+  const auto* remember=vm.find_symbol_by_name("REMEMBER");
+  storygraph::Bytecode code(vm);
+  const auto root=storygraph::liftProgram(vm,code,vm.find_symbol_by_name("STORY")->index());
+  const auto nested=storygraph::liftProgram(vm,code,remember->index());
+  check(root.error.empty() && nested.error.empty(),"the dialog and its typed helper lift");
+  storygraph::VmExternals external(vm);
+  storygraph::Interpreter interpreter(vm,external);
+  storygraph::Program reentrant;
+  reentrant.steps.push_back({.kind=storygraph::Step::Return,.value=storygraph::ex::param(0)});
+  unsigned externals=0,instructions=0;
+  vm.register_external("HLP_RANDOM",[&] {
+    ++externals;
+    const auto value=interpreter.run(reentrant,{storygraph::Value::integer(99)});
+    check(value.ok && value.returned.i==99,"an external can reenter StoryGraph with independent arguments");
+    });
+  vm.observe_instructions([&](const auto&) { ++instructions; });
+  auto result=interpreter.run(root);
+  check(result.ok && result.returned.i==4 && instructions>0 && externals==2,
+        "without a resolver helpers take the existing VM route and return by reference");
+  interpreter.resolveProgram=[&](const auto& fn) { return &fn==remember ? &nested : nullptr; };
+  instructions=0;
+  result=interpreter.run(root);
+  check(result.ok && result.returned.i==4 && instructions==0 && externals==4 &&
+        vm.find_symbol_by_name("REMEMBER.LABEL")->get_string()=="left",
+        "resolved helpers preserve late reads, typed parameter storage and external order without VM instructions");
+
+  bool enabled=true;
+  unsigned overrides=0;
+  vm.override_function("REMEMBER",std::function<int32_t(int32_t,std::string_view)>{
+    [&](int32_t number,std::string_view) { ++overrides; return number+10; }},[&] { return enabled; });
+  result=interpreter.run(root);
+  check(result.ok && result.returned.i==62 && overrides==2 && externals==4 && instructions==0,
+        "an enabled native override takes precedence over a resolved graph program");
+  enabled=false;
+  interpreter.resolveProgram=[&](const auto&) { return &root; };
+  result=interpreter.run(root);
+  check(!result.ok && result.error=="program call depth exceeded" && instructions==0 && externals==4,
+        "a resolved call cycle stops without VM fallback after execution starts");
+  interpreter.resolveProgram={};
+  result=interpreter.run(root);
+  check(result.ok && result.returned.i==4 && externals==6,"the next dialog starts with a clean interpreter frame");
   }
 
 void checkNativePhaseAccounting() {
@@ -211,6 +283,7 @@ int main() {
     check(NpcActivityProbe::instance==nullptr,"engine hooks disabled by default");
     run();
     checkOverrides();
+    checkNestedStoryPrograms();
     checkNativePhaseAccounting();
     Sink sink;
     int actorToken=0;
