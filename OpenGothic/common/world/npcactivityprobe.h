@@ -4,10 +4,9 @@
 #include <string_view>
 
 class Interactive;
+namespace ActivityEvents { enum class Stage : uint8_t; }
 
-// Passive engine observations, installed only by an explicitly requested day probe.
-// This interface deliberately knows neither the VM nor the activity executor: the trace is the
-// same for a phase from the script and from a record.
+// Passive engine observations, installed only for a requested trace or day probe.
 class NpcActivityProbe {
   public:
     virtual ~NpcActivityProbe() = default;
@@ -20,6 +19,8 @@ class NpcActivityProbe {
     virtual void queued(const Npc* npc, const AiQueue::AiAction& action) = 0;
     virtual void point(const Npc& npc, const WayPoint* from, const WayPoint* to) = 0;
     virtual void mob(const Npc& npc, const Interactive& object, bool occupied) = 0;
+    virtual void activityTransition(const Npc&, uint16_t, ActivityEvents::Stage) {}
+    virtual void physicsNoise(const Npc&, const Npc*, bool) {}
 
     struct Phase {
       NpcActivityProbe* probe = instance;

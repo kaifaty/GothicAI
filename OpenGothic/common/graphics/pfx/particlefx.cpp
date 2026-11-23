@@ -210,6 +210,16 @@ float ParticleFx::ppsScale(uint64_t time) const {
   return v;
   }
 
+std::pair<uint64_t,uint64_t> ParticleFx::keySpan(bool looped, uint64_t born, uint64_t now, uint64_t dt, uint64_t blockTime) const {
+  if(!looped || !ppsIsLooping || prefferedTime==0)
+    return {blockTime, blockTime+dt};
+  // born within the step: its keys start at 0, the step is shorter
+  const uint64_t to   = now>born ? now-born : 0;
+  const uint64_t from = to>dt ? to-dt : 0;
+  const uint64_t base = from/prefferedTime*prefferedTime;
+  return {from-base, to-base};
+  }
+
 uint64_t ParticleFx::calcPrefferedTimeSingle() const {
   uint64_t ret = calcPrefferedTimeSingle(ppsScaleKeys,ppsFPS);
   //ret = std::max<uint64_t>(1,ret);

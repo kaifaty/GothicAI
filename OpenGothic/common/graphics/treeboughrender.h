@@ -46,10 +46,10 @@ class TreeBoughRender {
 
     struct Command {
       DrawCommands::DrawCmd draw;
-      uint32_t vertexCount = 0;
+      uint32_t unit = 0; // the vertex path: indices of a node's class; the mesh path: nodes of a workgroup
       };
 
-    uint32_t command(const Material& material, uint16_t bucket, uint32_t indices);
+    uint32_t command(const Material& material, uint16_t bucket, uint32_t unit);
     void registerAsset(const StaticMesh& mesh, Asset& asset);
     void uploadData();
     void uploadReference();

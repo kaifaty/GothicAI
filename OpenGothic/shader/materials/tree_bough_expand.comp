@@ -2,7 +2,6 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "scene.glsl"
-#include "materials/tree_bough_cut.glsl"
 
 layout(local_size_x = 64) in;
 layout(binding = 0, std140) uniform Scene        { SceneDesc scene;      };
@@ -21,8 +20,10 @@ layout(push_constant, std430) uniform Push {
   uint token;
   uint flags; // bit 0: CPU reference, bit 1: counters, bit 2: HiZ probe, bit 3: late history HiZ
   float nearZ;
-  uint init;
+  uint stage; // 0: cut of each crown, 1: reset of the counters, 2: whole meshlets of the mesh path
   } push;
+
+#include "materials/tree_bough_cut.glsl"
 
 // The state prefix matches TreeBoughRender::readStats. Height is a maximum; the other counters are sums.
 const uint BoughStatsSumCount = 7u;
@@ -74,12 +75,24 @@ vec3 transformColumn(uint offset) {
 
 void main() {
   const uint lane = gl_LocalInvocationIndex;
-  if(push.init!=0u) {
+  if(push.stage==1u) {
     uint i = gl_GlobalInvocationID.x;
     if(i<cmd.length())
       cmd[i].instanceCount = 0u;
     if(i<BoughStatsCount)
       state[i] = 0u;
+    return;
+    }
+  if(push.stage==2u) {
+    // A mesh workgroup draws cmd.vertexCount nodes: empty ones fill the last group.
+    uint i = gl_GlobalInvocationID.x;
+    if(i<cmd.length()) {
+      const uint size = cmd[i].vertexCount, count = cmd[i].instanceCount;
+      const uint groups = (count+size-1u)/size;
+      for(uint at=count; at<groups*size; ++at)
+        payload[cmd[i].writeOffset+at] = uvec4(0);
+      cmd[i].instanceCount = groups;
+      }
     return;
     }
 
@@ -114,9 +127,12 @@ void main() {
   const float scaleBound = sqrt(max(max(scale.x, scale.y), scale.z));
   BoughProjection projection = BoughProjection(vec3(dot(forward, x), dot(forward, y), dot(forward, z)),
                                                 dot(forward, origin)+scene.view[3][2], focal*scaleBound, push.nearZ);
-  const uint rootBase = data[asset], rootCount = data[asset+1u], nodeCount = data[asset+3u];
+  const uint nodeCount = data[asset+3u];
   nodeBase = data[asset+2u];
   rangeBase = data[asset+4u];
+  // Equal slices of the preorder array: one long bough no longer holds the whole workgroup.
+  const uint slice = (nodeCount+gl_WorkGroupSize.x-1u)/gl_WorkGroupSize.x;
+  const uint sliceFirst = min(lane*slice, nodeCount), sliceLast = min(sliceFirst+slice, nodeCount);
 
   const bool useReference = (push.flags & 1u)!=0u;
   if(lane==0u)
@@ -135,12 +151,8 @@ void main() {
     const float farDepth = projection.originDepth+dot(projection.forwardLocal,farthest);
     const float openScale = uintBitsToFloat(data[asset+7u]);
     if(farDepth>projection.nearZ && projection.focalScale<=farDepth*openScale) {
-      for(uint i=lane; i<rootCount; i+=gl_WorkGroupSize.x) {
-        if(boughWalk(data[rootBase+i], projection, false)) {
-          atomicOr(hasCompact, 1u);
-          break;
-          }
-        }
+      if(boughMerges(sliceFirst, sliceLast, projection))
+        atomicOr(hasCompact, 1u);
       }
     }
   barrier();
@@ -171,9 +183,9 @@ void main() {
       if(transition!=0xffffffffu)
         boughEmit(i, transition, uintBitsToFloat(reference[ref+2u+i*2u]));
       }
-    } else {
-    for(uint i=lane; i<rootCount; i+=gl_WorkGroupSize.x)
-      boughWalk(data[rootBase+i], projection, true);
+    }
+  else {
+    boughWalkSlice(sliceFirst, sliceLast, projection);
     }
 
   if((push.flags & 2u)!=0u) {

@@ -197,6 +197,11 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     float      simplifiedMoveSpeed() const;
     // The same in another walk mode (WM_Walk, WM_Run), cm per ms of world time: the society export.
     float      simplifiedMoveSpeed(WalkBit mode) const;
+    bool       canSuspendCampfireBody() const;
+    bool       campfireBodySuspended() const { return physic.bodySuspended(); }
+    bool       suspendCampfireBody();
+    void       resumeCampfireBody() { physic.resumeBody(); }
+
     void       tick(uint64_t dt);
     const NpcLogicalState& logicalBodyState() const { return logicalBody; }
     void       syncLogicalBodyState(bool rebuild=false);
@@ -830,10 +835,12 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      clearAiQueue();
 
     auto      currentWayPoint() const -> const WayPoint* { return currentFp; }
+    auto      lockedWayPoint() const -> const WayPoint* { return currentFpLock.point(); }
     auto      currentGoToPoint() const -> const WayPoint* { return go2.wp; }
     auto      navigationPath() const -> const WayPath& { return wayPath; }
     auto      currentTaPoint() const -> const WayPoint*;
     void      attachToPoint(const WayPoint* p);
+    bool      isOnFreePoint(std::string_view name) const;
     GoToHint  moveHint() const { return go2.flag; }
     // Passive navigation telemetry: reads the active destination or a ready go-to queue head.
     struct NavigationGoal final {
@@ -971,6 +978,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      updateWeaponSkeleton();
     void      tickTimedEvt(Animation::EvCount &ev);
     void      tickRegen(int32_t& v,const int32_t max,const int32_t chg, const uint64_t dt);
+    bool      implSetPosition(const Tempest::Vec3& pos, bool keepBodySuspended);
     void      setViewPosition(const Tempest::Vec3& pos);
     void      syncCharacterVirtualSupport(const Tempest::Vec3& pos);
     bool      tickCast(uint64_t dt);
@@ -1028,14 +1036,22 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     bool      isPlayerEnabledState(const ::AiState& st) const;
     void      tickRoutine();
+    void      finishState(bool noFinalize, uint16_t reason);
     void      runStateInit();
-    void      startActivityEvents(const ActivityDefinitions::MobActivity* activity);
-    bool      armActivityEvents();
-    void      tickActivityEvents();
+    void      startActivityEvents(const ActivityEvents::Record* activity);
+    void      restoreActivityEvents(const ActivityEvents::Record* activity);
+    void      tickActivityEvents(bool runLoop);
     void      tickActivityDeadline();
     void      fireActivityWatchdog();
     void      dropActivityCommand();
     void      stepActivityEvents(uint16_t wakes);
+    void      seekActivityPoint(uint16_t wakes);
+    bool      isActivityPoint(const WayPoint* point) const;
+    void      stopWaitingForPoints();
+    void      tickPointGesture();
+    void      tickSeatedGesture();
+    void      playActivityGesture();
+    void      pushActivityCommand(AiQueue::AiAction&& action);
     void      seekActivityPlace();
     int       invokeRoutine(ScriptFn function);
     void      nextAiAction(AiQueue& queue, uint64_t dt);

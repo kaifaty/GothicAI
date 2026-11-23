@@ -372,7 +372,13 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
     groups = GROUPS if groups is None else groups
     if level not in {"direct", "full"}:
         raise ValueError(f"Unsupported selection level: {level}")
-    changed = sorted(set(changed_files))
+    root = root.resolve()
+    changed = set(changed_files)
+    targets = {root / path for path in changed}
+    # Legacy tests may import or name a tracked symlink to a changed file.
+    staged = subprocess.check_output(["git", "ls-files", "-s", "-z"], cwd=root).decode().split("\0")
+    links = (entry.split("\t", 1)[1] for entry in staged if entry.startswith("120000 "))
+    changed = sorted(changed.union(link for link in links if (root / link).resolve() in targets))
     files = git_files(root, untracked=True)
     shared_names = Counter(PurePosixPath(path).name for path in {*files, *changed})
     deps = dependencies(root, groups)

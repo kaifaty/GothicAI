@@ -1,5 +1,6 @@
 #include "waypoint.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cctype>
@@ -29,6 +30,14 @@ WayPoint::WayPoint(const Vec3& pos, std::string_view name)
 
 WayPoint::WayPoint(const Vec3& pos, const Vec3& dir, std::string_view name, bool isFp)
   :pos(pos), dir(dir), freePoint(isFp), name(upcaseof(name)){
+  }
+
+void WayPoint::waitForFree(Npc& npc) const {
+  waiters.push_back(&npc);
+  }
+
+void WayPoint::stopWaiting(Npc& npc) const {
+  std::erase(waiters,&npc);
   }
 
 bool WayPoint::isFreePoint() const {

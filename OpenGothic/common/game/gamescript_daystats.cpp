@@ -32,18 +32,17 @@ std::shared_ptr<DayScriptStats> DayScriptStats::attach(daedalus::DaedalusVm& vm,
         if(const auto* fn=vm.find_symbol_by_index(uint32_t(function))) stats->dialogs.insert(fn->name());
       }
     }
-  vm.add_call_observer([stats,&vm](const auto& symbol) { if(stats->active) stats->call(symbol,vm); });
-  vm.observe_instructions([stats,&vm](const auto& instruction) { if(stats->active) stats->instruction(instruction,vm.pc()); });
-  vm.observe_externals([stats](const auto& symbol) { if(stats->active) stats->external(symbol); });
+  stats->callObserver=vm.add_call_observer([stats,&vm](const auto& symbol) { stats->call(symbol,vm); });
+  vm.observe_instructions([stats,&vm](const auto& instruction) { stats->instruction(instruction,vm.pc()); });
+  vm.observe_externals([stats](const auto& symbol) { stats->external(symbol); });
   return stats;
   }
 
 void DayScriptStats::stop(daedalus::DaedalusVm& vm) {
   active=false;
+  vm.remove_call_observer(callObserver);
   vm.observe_instructions({});
   vm.observe_externals({});
-  // add_call_observer preserves the startup probes. Its retained callback is inert
-  // after this interval; a later interval gets a new collector, never double counts.
   }
 
 std::pair<std::string,std::string> DayScriptStats::statePhase(std::string_view symbol) {

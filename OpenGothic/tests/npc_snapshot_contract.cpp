@@ -1230,9 +1230,213 @@ void activityDefinitions(const fs::path& dir) {
   std::cerr<<"expected activity difference follows:\n";
   check(NpcSnapshot::verifyActivities(program,file,routines)!=0,"a repeated parameter key in a ready base fails the comparison");
   std::ofstream(file,std::ios::binary)<<original;
+
+  // A point activity in an invented program, with a name unrelated to the installed guard.
+  NpcDefinitionFixture::Fixture f;
+  f.p=program.data;
+  using Op=DaedalusOpcode;
+  const auto self=f.find("SELF"),wp=f.find("C_NPC.WP"),aivar=f.find("C_NPC.AIVAR");
+  auto text=[&](const char* value) {
+    const auto id=f.symbol("$POINT_"+std::to_string(f.p.symbols.size()),Type::STRING,1,DaedalusSymbolFlag::CONST);
+    f.p.symbols[id].string_values[0]=value; return id;
+    };
+  auto jump=[&](Op op) { f.op(op,0u); return f.p.bytecode.size()-4; };
+  auto land=[&](size_t at) {
+    for(size_t i=0;i<4;++i) f.p.bytecode[at+i]=std::byte((uint32_t(f.p.bytecode.size())>>(8*i))&255);
+    };
+  auto stage=[&] { f.op(Op::GMOVI,self); f.op(Op::PUSHVV,aivar); f.p.bytecode.push_back(std::byte{19}); };
+  auto assign=[&](uint32_t value) { f.op(Op::PUSHI,value); stage(); f.op(Op::MOVI); };
+  auto question=[&](uint32_t value) { f.op(Op::PUSHI,value); stage(); f.op(Op::EQ); };
+  const auto isOn=f.fn("NPC_ISONFP",{Type::INSTANCE,Type::STRING},true,Type::INT);
+  const auto free=f.fn("WLD_ISFPAVAILABLE",{Type::INSTANCE,Type::STRING},true,Type::INT);
+  const auto go=f.fn("AI_GOTOFP",{Type::INSTANCE,Type::STRING},true);
+  const auto stand=f.fn("AI_STANDUP",{Type::INSTANCE},true);
+  const auto align=f.fn("AI_ALIGNTOFP",{Type::INSTANCE},true);
+  const auto alignWp=f.fn("AI_ALIGNTOWP",{Type::INSTANCE},true);
+  const auto play=f.fn("AI_PLAYANI",{Type::INSTANCE,Type::STRING},true);
+  const auto seconds=f.fn("NPC_GETSTATETIME",{Type::INSTANCE},true,Type::INT);
+  const auto reset=f.fn("NPC_SETSTATETIME",{Type::INSTANCE,Type::INT},true);
+  const auto random=f.find("HLP_RANDOM");
+  const auto point=text("STAND"),enter=text("T_STAND_2_HGUARD"),leave=text("T_HGUARD_2_STAND"),gesture=text("T_HGUARD_LOOKAROUND");
+  auto call=[&](uint32_t external) { f.op(Op::PUSHVI,self); f.op(Op::BE,external); };
+  auto named=[&](uint32_t external,uint32_t value) { f.op(Op::PUSHVI,self); f.op(Op::PUSHV,value); f.op(Op::BE,external); };
+  const auto init=f.fn("ZS_POINT_FIXTURE"); f.begin(init);
+  f.call(f.find("PERCEPTION_SET_NORMAL")); f.op(Op::PUSHVI,self); f.call(f.find("B_RESETALL"));
+  f.op(Op::PUSHVI,self); f.op(Op::PUSHI,1u); f.op(Op::BE,f.find("AI_SETWALKMODE"));
+  f.op(Op::PUSHI,500u); f.op(Op::PUSHVI,self); f.op(Op::GMOVI,self); f.op(Op::PUSHV,wp);
+  f.op(Op::BE,f.find("NPC_GETDISTTOWP")); f.op(Op::GT); const auto near=jump(Op::BZ);
+  f.op(Op::PUSHVI,self); f.op(Op::GMOVI,self); f.op(Op::PUSHV,wp); f.op(Op::BE,f.find("AI_GOTOWP"));
+  land(near); assign(1); f.op(Op::RSR);
+  const auto loop=f.fn("ZS_POINT_FIXTURE_LOOP",{},false,Type::INT); f.begin(loop);
+  named(isOn,point); const auto notOn=jump(Op::BZ);
+  call(align); question(2); const auto already=jump(Op::BZ); assign(1); land(already);
+  const auto doneOn=jump(Op::B); land(notOn);
+  named(free,point); const auto occupied=jump(Op::BZ);
+  named(go,point); call(stand); call(align); assign(2);
+  const auto doneFree=jump(Op::B); land(occupied);
+  call(alignWp); question(2); const auto waiting=jump(Op::BZ); assign(1); land(waiting);
+  land(doneOn); land(doneFree);
+  question(1); const auto posed=jump(Op::BZ); named(play,enter); assign(0); land(posed);
+  question(0); f.op(Op::PUSHI,5u); call(seconds); f.op(Op::GT); f.op(Op::AND); const auto early=jump(Op::BZ);
+  f.op(Op::PUSHI,0u); f.op(Op::PUSHI,10u); f.op(Op::BE,random); f.op(Op::EQ); const auto noGesture=jump(Op::BZ);
+  named(play,gesture); land(noGesture); f.op(Op::PUSHVI,self); f.op(Op::PUSHI,0u); f.op(Op::BE,reset);
+  land(early); f.op(Op::PUSHI,0u); f.op(Op::RSR);
+  const auto end=f.fn("ZS_POINT_FIXTURE_END"); f.begin(end); named(play,leave); f.op(Op::RSR);
+  NpcSnapshot::Program points;
+  points.data=std::move(f.p);
+  const auto encoded=ProgramData::encodeProgram(points.data); points.name=encoded.name; points.sha256=encoded.sha256;
+  const auto pointBase=dir/"point-activity",pointDir=pointBase/"definitions"/points.sha256;
+  fs::create_directories(pointDir);
+  std::ofstream(pointDir/"routines.json")<<"{\"program_sha256\":\""<<points.sha256
+    <<"\",\"records\":[{\"status\":\"captured\",\"rows\":[{\"state\":\"ZS_POINT_FIXTURE\"}]}]}";
+  const auto pointCounts=NpcSnapshot::writeActivities(points,pointDir/"activities.json",pointDir/"routines.json");
+  check(pointCounts.captured==1,"a point template is recognized without a state-name special case");
+  check(NpcSnapshot::verifyActivities(points,pointDir/"activities.json",pointDir/"routines.json")==0,"point phase streams verify");
+  const auto pointLibrary=ActivityDefinitions::read(pointBase,points.sha256);
+  const auto& guard=pointLibrary.points.at("ZS_POINT_FIXTURE");
+  check(guard.point=="STAND" && guard.enterAnimation=="T_STAND_2_HGUARD" && guard.leaveAnimation=="T_HGUARD_2_STAND" &&
+        guard.approachDistance==500 && guard.timerSeconds==5 && guard.rollRange==10 && guard.gestures.size()==10 &&
+        guard.initialStage==1 && guard.walkingStage==2 && guard.arrivedStage==1 && guard.poseStage==0,"point activity parameters");
+  for(size_t i=0;i<guard.gestures.size();++i)
+    check(guard.gestures[i].animation==(i==0 ? "T_HGUARD_LOOKAROUND" : "") && guard.gestures[i].resetTimer,"every draw outcome");
+
+  auto legacy=read(pointDir/"activities.json");
+  legacy["version"].SetInt(2);
+  legacy["records"][0]["parameters"].RemoveMember("form");
+  write(pointDir/"activities.json",legacy);
+  check(ActivityDefinitions::read(pointBase,points.sha256).points.at("ZS_POINT_FIXTURE")==guard,
+        "the session reader still loads the v2 guard");
   }
 
-void realActivities(const NpcSnapshot::Program& program,const fs::path& base,const fs::path& dir) {
+// Change the installed code, then import and verify those phases under their new program identity.
+void pointMutations(const NpcSnapshot::Program& program,const fs::path& dir,bool addon) {
+  const auto script=DaedalusScript::from_program(program.data);
+  constexpr auto arms="ZS_STAND_ARMSCROSSED";
+  constexpr auto loop="ZS_STAND_ARMSCROSSED_LOOP";
+  const auto* gesture=script.find_symbol_by_name("ZS_STAND_ARMSCROSSED_LOOP.RANDOM");
+  check(gesture!=nullptr,"the installed arms loop has a saved gesture local");
+  auto locate=[&](const char* phase,const auto& match) {
+    for(auto pc=script.find_symbol_by_name(phase)->address();;) {
+      const auto op=script.instruction_at(pc);
+      if(op.op==Op::RSR) throw std::runtime_error(std::string("missing instruction in ")+phase);
+      if(match(op,script.instruction_at(pc+op.size))) return pc;
+      pc+=op.size;
+      }
+    };
+  auto changed=program;
+  auto import=[&](std::initializer_list<const char*> states) {
+    const auto encoded=ProgramData::encodeProgram(changed.data);
+    changed.name=encoded.name; changed.sha256=encoded.sha256;
+    const auto base=dir/"point-mutations",defs=base/"definitions"/changed.sha256;
+    fs::create_directories(defs);
+    const auto routines=defs/"routines.json",file=defs/"activities.json";
+    std::ofstream rows(routines);
+    rows<<"{\"program_sha256\":\""<<changed.sha256<<"\",\"records\":[{\"status\":\"captured\",\"rows\":[";
+    for(auto state=states.begin();state!=states.end();++state)
+      rows<<(state!=states.begin() ? "," : "")<<"{\"state\":\""<<*state<<"\"}";
+    rows<<"]}]}"; rows.close();
+    NpcSnapshot::writeActivities(changed,file,routines);
+    check(NpcSnapshot::verifyActivities(changed,file,routines)==0,"mutated activities agree with a fresh VM");
+    return ActivityDefinitions::read(base,changed.sha256);
+    };
+  const auto* wpRoll=script.find_symbol_by_name("ZS_STAND_WP_LOOP.RANDOM");
+  check(wpRoll!=nullptr,"the installed waypoint loop has a saved gesture local");
+  auto& wpName=changed.data.symbols.at(wpRoll->index()).name;
+  wpName+="_SCRATCH";
+  check(import({"ZS_STAND_WP"}).uncaptured.at("ZS_STAND_WP").find("template RANDOM=0")!=std::string::npos,
+        "a waypoint gesture that writes another saved local stays in the VM");
+  wpName=program.data.symbols.at(wpRoll->index()).name;
+  auto operand=[&](size_t pc,uint32_t value) {
+    for(size_t i=0;i<4;++i) changed.data.bytecode[pc+1+i]=std::byte((value>>(8*i))&255);
+    };
+  auto replaceLocal=[&](uint32_t from,uint32_t to,bool swap=false) {
+    for(auto pc=script.find_symbol_by_name(loop)->address();;) {
+      const auto op=script.instruction_at(pc);
+      if(op.op==Op::RSR) break;
+      if(op.op==Op::PUSHV && op.symbol==from) operand(pc,to);
+      else if(swap && op.op==Op::PUSHV && op.symbol==to) operand(pc,from);
+      pc+=op.size;
+      }
+    };
+  if(!addon) {
+    // Keep the gesture and its reads, but use a different local for the result.
+    auto scratch=changed.data.symbols.at(gesture->index());
+    scratch.name+="_SCRATCH";
+    const auto scratchIndex=uint32_t(changed.data.symbols.size());
+    changed.data.symbols.push_back(std::move(scratch));
+    replaceLocal(gesture->index(),scratchIndex);
+    check(import({arms}).uncaptured.at(arms).find("template RANDOM=0")!=std::string::npos,
+          "Classic that no longer writes the saved gesture local stays in the VM");
+    return;
+    }
+
+  const auto* world=script.find_symbol_by_name("CURRENTLEVEL");
+  const auto* addonWorld=script.find_symbol_by_name("ADDONWORLD_ZEN");
+  const auto* roll=script.find_symbol_by_name("ZS_STAND_ARMSCROSSED_LOOP.EVENTRANDY");
+  const auto* portal=script.find_symbol_by_name("B_EVENT_PORTAL_EARTHQUAKE");
+  check(world && addonWorld && roll && portal,"the addon program has the portal condition and helper");
+
+  // Widen the world gate to 1..4 with a single CURRENTLEVEL read. The old test worlds 0, 4 and
+  // INT_MAX still give the original result; at a real world 1..3 the extra call exposes the change.
+  const auto pushAddon=locate(loop,[&](auto op,auto next) {
+    return op.op==Op::PUSHV && op.symbol==addonWorld->index() && next.op==Op::PUSHV && next.symbol==world->index();
+    });
+  const auto pushWorld=locate(loop,[&](auto op,auto next) {
+    return op.op==Op::PUSHV && op.symbol==world->index() && next.op==Op::EQ;
+    });
+  const auto afterWorld=pushWorld+script.instruction_at(pushWorld).size+1;
+  Fixture widerGate;
+  widerGate.p.bytecode.clear();
+  widerGate.op(Op::PUSHI,2); widerGate.op(Op::PUSHI,1); widerGate.op(Op::PUSHV,world->index());
+  widerGate.op(Op::SUB); widerGate.op(Op::LSR); widerGate.op(Op::NOT); widerGate.op(Op::B,afterWorld);
+  changed.data.bytecode[pushAddon]=std::byte(Op::B);
+  operand(pushAddon,uint32_t(changed.data.bytecode.size()));
+  changed.data.bytecode.insert(changed.data.bytecode.end(),widerGate.p.bytecode.begin(),widerGate.p.bytecode.end());
+  for(const auto* phase:{"ZS_SIT_CAMPFIRE_LOOP","ZS_PEE_LOOP"}) {
+    const auto both=locate(phase,[](auto op,auto) { return op.op==Op::AND; });
+    changed.data.bytecode[both]=std::byte(Op::ORR);
+    }
+  const auto* align=script.find_symbol_by_name("AI_ALIGNTOWP");
+  const auto alignWp=locate("ZS_STAND_WP",[&](auto op,auto next) {
+    return op.op==Op::PUSHVI && next.op==Op::BE && next.symbol==align->index();
+    });
+  const auto argument=script.instruction_at(alignWp).size;
+  std::fill_n(changed.data.bytecode.begin()+alignWp,argument+script.instruction_at(alignWp+argument).size,std::byte(Op::NOP));
+  auto rejected=import({arms,"ZS_SIT_CAMPFIRE","ZS_PEE","ZS_STAND_WP"});
+  check(rejected.uncaptured.size()==4 && rejected.points.empty(),"four changed point behaviours stay in the VM");
+  const auto& worldReason=rejected.uncaptured.at(arms);
+  check(worldReason.find("portal_roll=1 guild=0 raven_dead=0 world=1:")!=std::string::npos &&
+        worldReason.find("VM deferred B_EVENT_PORTAL_EARTHQUAKE")!=std::string::npos,
+        "the mismatching world exposes the spurious story call before the reset");
+
+  changed.data.bytecode=program.data.bytecode;
+  const auto call=locate(loop,[&](auto op,auto) { return op.op==Op::BL && op.address==portal->address(); });
+  std::fill_n(changed.data.bytecode.begin()+call,script.instruction_at(call).size,std::byte(Op::NOP));
+  check(import({arms}).uncaptured.at(arms).find("missing portal call")!=std::string::npos,
+        "the matching world, guild, Raven and draw distinguish a missing story call");
+
+  const auto portalDraw=locate(loop,[](auto op,auto next) {
+    return op.op==Op::PUSHI && op.immediate==200 && next.op==Op::BE;
+    });
+  std::fill(changed.data.bytecode.begin()+portalDraw,changed.data.bytecode.begin()+call+script.instruction_at(call).size,std::byte(Op::NOP));
+  check(import({arms}).uncaptured.at(arms).find("portal draw")!=std::string::npos,
+        "removing the entire portal branch from the addon cannot select Classic");
+
+  changed.data.bytecode=program.data.bytecode;
+  const auto trigger=locate(loop,[&](auto op,auto next) {
+    return op.op==Op::PUSHI && op.immediate==1 && next.op==Op::PUSHV && next.symbol==roll->index();
+    });
+  changed.data.bytecode[trigger+1]=std::byte{3};
+  check(import({arms}).points.at(arms).portal.value().triggerRoll==3,"the story outcome follows the changed bytecode");
+
+  changed.data.bytecode=program.data.bytecode;
+  // Swapping reads as well as writes preserves the gesture and portal branches.
+  replaceLocal(gesture->index(),roll->index(),true);
+  check(import({arms}).uncaptured.at(arms).find("VM EVENTRANDY=0, template RANDOM=0")!=std::string::npos,
+        "swapped saved locals stay in the VM even when the branches still agree");
+  }
+
+void realActivities(const NpcSnapshot::Program& program,const fs::path& base,const fs::path& dir,bool addon) {
   const auto routines=base/"definitions"/program.sha256/"routines.json";
   const auto fresh=dir/"activity-base",file=fresh/"definitions"/program.sha256/"activities.json";
   const auto start=std::chrono::steady_clock::now();
@@ -1241,28 +1445,110 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
   check(NpcSnapshot::verifyActivities(program,file,routines)==0,"real activities verify from disk against a fresh VM");
   const auto library=ActivityDefinitions::read(fresh,program.sha256);
   // The states come from the game's own routine reader, not from the import's corpus.
-  std::set<std::string> states,recorded;
+  std::set<std::string> states;
   for(const auto& [name,rows]:RoutineDefinitions::read(base,program.sha256).routines)
     for(const auto& row:rows) states.insert(row.state);
-  for(const auto& [name,activity]:library.activities) recorded.insert(name);
-  for(const auto& [name,reason]:library.uncaptured) recorded.insert(name);
-  check(states.size()==counts.total && recorded==states,"every state of the base's routines has one activity record");
+  auto symbols=[](const ActivityDefinitions::Library& records) {
+    std::set<std::string> result;
+    for(const auto& [name,activity]:records.activities) result.insert(name);
+    for(const auto& [name,reason]:records.uncaptured) result.insert(name);
+    for(const auto& [name,activity]:records.points) result.insert(name);
+    return result;
+    };
+  check(states.size()==counts.total && symbols(library)==states,"every state of the base's routines has one activity record");
   check(library.activities.contains("ZS_SMITH_ANVIL"),"the real ZS_SMITH_ANVIL is captured by the template");
   check(library.uncaptured.contains("ZS_SIT_THRONE") && library.uncaptured.at("ZS_SIT_THRONE").starts_with("template_mismatch: "),
         "the real ZS_SIT_THRONE, whose Init asks the body state first, is refused by the comparison");
+  const auto& guard=library.points.at("ZS_STAND_GUARDING");
+  using Form=ActivityDefinitions::PointActivity::Form;
+  const auto seatedCount=size_t(std::count_if(library.activities.begin(),library.activities.end(),[](const auto& entry) {
+    return entry.second.seated.has_value();
+    }));
+  check(library.points.size()==5 && guard.form==Form::Guard && library.activities.size()==8+seatedCount,
+        "five point forms and the original untimed mob records still import");
+  if(addon) {
+    check(seatedCount==2,"both seated forms import from Night of the Raven");
+    for(const auto& [state,scheme,range]:{std::tuple{"ZS_SIT_BENCH","BENCH",8},std::tuple{"ZS_SIT_CHAIR","CHAIR",10}}) {
+      const auto& mob=library.activities.at(state);
+      const auto& seated=mob.seated.value();
+      check(mob.scheme==scheme && mob.busyBodyState==65547 && mob.useState==1 && mob.leaveState==-1 &&
+            seated.timerSeconds==5 && seated.rollRange==range && seated.animations==
+            std::vector<std::string>{"R_CHAIR_RANDOM_1","R_CHAIR_RANDOM_2","R_CHAIR_RANDOM_3","R_CHAIR_RANDOM_4"},
+            std::string(state)+" matches the original seat and ordered gesture limits");
+      }
+    }
+  if(addon) check(library.uncaptured.contains("ZS_WASH_FP"),"the similar WASH free point stays outside the PEE form");
+  check(guard.point=="STAND" && guard.enterAnimation=="T_STAND_2_HGUARD" && guard.leaveAnimation=="T_HGUARD_2_STAND" &&
+        guard.timerSeconds==5 && guard.rollRange==10 && guard.gestures[0].animation=="T_HGUARD_LOOKAROUND" &&
+        guard.gestures[0].resetTimer,"real guard parameters match the bytecode study");
+  const auto& sit=library.points.at("ZS_SIT_CAMPFIRE");
+  const auto& pee=library.points.at("ZS_PEE");
+  const auto& wp=library.points.at("ZS_STAND_WP");
+  const auto& arms=library.points.at("ZS_STAND_ARMSCROSSED");
+  check(sit.form==Form::Campfire && sit.point=="CAMPFIRE" && sit.occupied()=="wait" && sit.approachDistance==500 &&
+        sit.enterAnimation=="T_STAND_2_SIT" && sit.enterBodyState==65547 && sit.leaveAnimation=="T_SIT_2_STAND" &&
+        sit.leaveBodyState==98304 && !sit.timed(),"campfire uses BS_SIT and BS_STAND and waits when occupied");
+  check(pee.form==Form::Pee && pee.point=="PEE" && pee.occupied()=="align_waypoint" && !pee.timed() &&
+        pee.enterAnimation=="T_STAND_2_PEE" && pee.leaveAnimation=="T_PEE_2_STAND","pee enters only on its FP");
+  check(wp.form==Form::Waypoint && wp.point.empty() && wp.initialStage==1 && wp.poseStage==0 && wp.rollRange==10,
+        "waypoint Init aligns unconditionally and the pose has no FP approach");
+  check(arms.form==Form::ArmsCrossed && arms.point=="STAND" && arms.rollRange==7,"arms draws one of seven gestures");
+  if(addon)
+    check(arms.portal && arms.portal->rollRange==200 && arms.portal->triggerRoll==1 && arms.portal->world==4 &&
+          arms.portal->ravenDead==0 && arms.portal->excludedGuild==13 && arms.portal->function=="B_EVENT_PORTAL_EARTHQUAKE",
+          "addon arms has a separate portal draw");
+  else check(!arms.portal,"Classic arms goes directly from the gesture to the timer reset");
+  for(const auto* a:{&arms,&pee})
+    check(a->initialStage==1 && a->walkingStage==2 && a->arrivedStage==1 && a->poseStage==0 && a->approachDistance==500,
+          "staged FP activities retain the original stage assignments");
+  for(const auto* a:{&arms,&wp}) {
+    check(a->enterAnimation=="T_STAND_2_LGUARD" && a->leaveAnimation=="T_LGUARD_2_STAND" && a->timerSeconds==5,
+          "light guard animations and strict five-second threshold");
+    constexpr std::array gestures={"T_LGUARD_SCRATCH","T_LGUARD_STRETCH","T_LGUARD_CHANGELEG"};
+    for(size_t i=0;i<a->gestures.size();++i)
+      check(a->gestures[i].animation==(i<gestures.size() ? gestures[i] : "") && a->gestures[i].resetTimer,
+            "distinct gestures in draw order, a timer reset also on silent outcomes");
+    }
   const auto& anvil=library.activities.at("ZS_SMITH_ANVIL");
   check(anvil.scheme=="BSANVIL" && anvil.perceptions=="PERCEPTION_SET_NORMAL" && anvil.walkMode==1 && anvil.useState==1 &&
         anvil.leaveState==-1 && anvil.busyBodyState==32784,"the real anvil parameters");
   std::string captured;
   for(const auto& [name,activity]:library.activities) captured+=(captured.empty() ? "" : ", ")+name+" ("+activity.scheme+")";
+  for(const auto& [name,activity]:library.points) captured+=", "+name+" (point "+activity.point+")";
   std::cout<<"Real activities: "<<counts.total<<" states, "<<counts.captured<<" captured, "<<counts.situations
-           <<" compared situations, "<<ms<<" ms: "<<captured<<"\n";
+           <<" compared situations, "<<ms<<" ms: "<<captured<<"\n"
+           <<"Real activities SHA-256: "<<BaseImport::sha256File(file)<<"\n";
   for(const auto& [name,reason]:library.uncaptured) std::cout<<"  VM: "<<name<<": "<<reason<<"\n";
   const auto section=base/"definitions"/program.sha256/"activities.json";
   if(fs::exists(section)) {
-    std::ifstream x(section,std::ios::binary),y(file,std::ios::binary);
-    check(std::string(std::istreambuf_iterator<char>(x),{})==std::string(std::istreambuf_iterator<char>(y),{}),
-          "the ready base's activities.json equals a fresh import");
+    const auto ready=ActivityDefinitions::read(base,program.sha256);
+    const auto version=read(section)["version"].GetInt();
+    if(version<ActivityDefinitions::FormatVersion) {
+      check(fs::is_regular_file(base/"base-files.json"),"an archived section requires its payload manifest");
+      const auto manifest=read(base/"base-files.json");
+      const auto files=manifest["files"].GetArray();
+      const auto path=section.lexically_relative(base).generic_string();
+      const auto entry=std::find_if(files.begin(),files.end(),[&](const auto& f) { return f["path"].GetString()==path; });
+      check(entry!=files.end() && (*entry)["sha256"].GetString()==BaseImport::sha256File(section),
+            "the archived section matches its payload manifest");
+      check(symbols(ready)==states,"the archived section covers the installed routines");
+      auto untimed=library.activities;
+      std::erase_if(untimed,[](const auto& entry) { return entry.second.seated.has_value(); });
+      check(ready.activities==untimed,"archived sections retain the original untimed mobs");
+      if(version==2) {
+        check(ready.points.size()==1 && ready.points.at("ZS_STAND_GUARDING")==guard,"v2 retains the guard");
+        for(auto name:{"ZS_SIT_CAMPFIRE","ZS_PEE","ZS_STAND_ARMSCROSSED","ZS_STAND_WP"})
+          check(ready.uncaptured.contains(name),"v2 keeps the original fallback for "+std::string(name));
+        }
+      else check(ready.points==library.points,"v3 retains all point forms");
+      std::cout<<"Ready v"<<version<<": "<<states.size()<<" routine state symbols, "<<ready.activities.size()
+               <<" mobs, "<<ready.points.size()<<" point forms, "<<ready.uncaptured.size()<<" on the VM\n";
+      }
+    else {
+      std::ifstream x(section,std::ios::binary),y(file,std::ios::binary);
+      check(std::string(std::istreambuf_iterator<char>(x),{})==std::string(std::istreambuf_iterator<char>(y),{}),
+            "the ready base's activities.json equals a fresh import");
+      }
     }
   }
 
@@ -1368,9 +1654,10 @@ fs::path readyBase() {
   return {};
   }
 }
-int main() {
+int main(int argc,char** argv) {
   auto dir=fs::temp_directory_path()/("gothic-npc-snapshot-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   try {
+    if(argc>2) throw std::runtime_error("usage: gothic-npc-snapshot-contract [classic-program-base]");
     fs::create_directories(dir);
     fixture(dir);
     auto base=readyBase();
@@ -1380,8 +1667,14 @@ int main() {
       NpcSnapshot::write(program,dir/"real");
       check(NpcSnapshot::verify(program,dir/"real")==0,"real corpus verifies");
       runtimeItems(program,base);
-      realActivities(program,base,dir);
+      realActivities(program,base,dir,true);
+      pointMutations(program,dir,true);
       realHelpers(program,base);
+      }
+    if(argc==2) {
+      const auto classic=NpcSnapshot::load(argv[1]);
+      realActivities(classic,argv[1],dir,false);
+      pointMutations(classic,dir,false);
       }
     fs::remove_all(dir);
     std::cout<<"NPC snapshot contract passed: "<<assertions<<" assertions\n";

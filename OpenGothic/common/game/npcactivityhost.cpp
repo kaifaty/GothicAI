@@ -22,7 +22,10 @@ std::string NpcEngineCalls::nearestWaypoint(World& world, const Npc& npc) {
 
 int32_t NpcEngineCalls::distanceToWaypoint(World& world, const Npc& npc, std::string_view name) {
   //NOTE: in CoM, some way-point and free-points share same name - need to be precise
-  auto* wp = world.findWayPoint(name);
+  return distanceToWaypoint(npc,world.findWayPoint(name));
+  }
+
+int32_t NpcEngineCalls::distanceToWaypoint(const Npc& npc, const WayPoint* wp) {
   if(wp==nullptr)
     return std::numeric_limits<int32_t>::max();
   float ret = std::sqrt(npc.qDistTo(wp));
@@ -31,15 +34,18 @@ int32_t NpcEngineCalls::distanceToWaypoint(World& world, const Npc& npc, std::st
   return std::numeric_limits<int32_t>::max();
   }
 
+int32_t NpcEngineCalls::heightDifference(const Npc& npc, const Npc& other) {
+  return int32_t(std::abs(npc.position().y-other.position().y));
+  }
+
+const WayPoint* NpcEngineCalls::resolveWaypoint(World& world, const Npc& npc, std::string_view name) {
+  if(const auto* to=world.findWayPoint(npc.position(),name))
+    return to;
+  return world.findPoint(name,false); // the original AI_GotoWP also accepts free-point names
+  }
+
 void NpcEngineCalls::gotoWaypoint(World& world, Npc& npc, std::string_view name) {
-  auto to = world.findWayPoint(npc.position(), name);
-  if(to!=nullptr) {
-    npc.aiPush(AiQueue::aiGoToPoint(*to));
-    return;
-    }
-  // in vanilla 'ai_gotowp' sometimes is used incorrectly, so we need to check all other points
-  to = world.findPoint(name, false);
-  if(to!=nullptr)
+  if(const auto* to=resolveWaypoint(world,npc,name))
     npc.aiPush(AiQueue::aiGoToPoint(*to));
   }
 

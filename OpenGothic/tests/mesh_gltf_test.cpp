@@ -10,6 +10,7 @@
 #include "graphics/shaders.h"
 #include "graphics/meshlevels.h"
 #include "graphics/treeboughasset.h"
+#include "graphics/treeboughgroups.h"
 #include "graphics/foliagetree.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/facerig.h"

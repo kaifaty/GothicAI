@@ -102,7 +102,8 @@ const WayHeights::Profile& WayHeights::profile(const Tempest::Vec3& from,const T
         break;
       const float difference=std::abs(hit.v.y-previousY);
       if(hit.n.y>0.f && hit.n.y>=slopeCos && difference<stepHeight+1.f)
-        return Profile::Sample{hit.v,hit.n};
+        // The cache reconstructs X/Z from the segment, while physics rounds them through metres.
+        return Profile::Sample{{at.x,hit.v.y,at.z},hit.n};
       begin=hit.v-Tempest::Vec3(0,.1f,0);
       }
     throw std::runtime_error("Simplified movement has no continuous ground support at "+

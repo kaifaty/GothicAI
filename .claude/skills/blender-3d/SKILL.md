@@ -1,11 +1,11 @@
 ---
 name: blender-3d
-description: 3D modelling in Blender for the Gothic AI project — building models (props, furniture, parts) from an image_gen concept, Blender Python scripts, UV, zones, glTF export, and renders that check a model. Claude does this work itself; it is never handed to Codex or the codex-worker skill, and no neural 3D generator (TRELLIS, Tripo and the like) is used. Use whenever a task touches Blender or 3D models for the game, also in Russian (3D-модель, моделирование, блендер, Blender, меш, сетка, развёртка, UV, ретопология, low-poly, бочка, ящик, сундук, стол, лавка, GLB, glTF).
+description: 3D modelling in Blender for the Gothic AI project — building models (props, furniture, parts) from a concept, Blender Python scripts, UV, zones, glTF export, and renders that check a model. Use whenever a task touches Blender or 3D models for the game, also in Russian (3D-модель, моделирование, блендер, Blender, меш, сетка, развёртка, UV, ретопология, low-poly, бочка, ящик, сундук, стол, лавка, GLB, glTF).
 ---
 
 # 3D-моделирование в Blender
 
-Модели строишь сам в Blender по концепту `image_gen`. Замысел предмета до концепта — по скиллу [`object-design`](../object-design/SKILL.md). Нейросети-генераторы 3D (TRELLIS, Tripo и подобные) не используются, Codex и `codex-worker` для моделирования — тоже: решения пользователя от 2026-10-20. С 2026-10-21 правило шире: всю визуальную работу, включая текстуры, цвет, обработку, съёмку и её код, делаешь сам. Codex только вызывает `image_gen` с твоим промптом (`AGENTS.md`). Код вне Blender, например загрузчик в движке, — по обычным правилам.
+Строй модели в Blender по концепту. Замысел предмета до концепта — по скиллу [`object-design`](../object-design/SKILL.md). Ограничения на нейросети-генераторы 3D и согласованные исключения перечислены в [AGENTS.md](../../../AGENTS.md).
 
 ## Где что лежит
 
@@ -16,10 +16,10 @@ description: 3D modelling in Blender for the Gothic AI project — building mode
 
 ## Путь предмета
 
-Оригинал → замысел (`object-design`) → концепт `image_gen` → модель в Blender → игра.
+Оригинал → замысел (`object-design`) → концепт → модель в Blender → игра.
 
 1. **Замысел.** По скиллу [`object-design`](../object-design/SKILL.md) составь карточку замысла: роль в игре, место и соседи, чем оригинал свой в сцене, происхождение и конструкция по частям, антиархетипы. Посмотри на оригинал сам и запиши части и их число: сколько обручей, досок, ножек, какие пропорции. Числа — bbox, точка привязки, треугольники — даёт `measure_targets.py`. Снимки, текстуры и вершины оригинала не попадают в `image_gen`. В Blender оригинальный меш можно положить подложкой (решение пользователя 2026-10-22, [граница с оригиналом](../../../docs/own-content.md)): полупрозрачный, без выбора и рендера, только для сверки габаритов, силуэта и положения деталей. Вершины не копируй, не обводи по одной и не правь; свою сетку и развёртку строишь сам, подложку удаляешь перед сохранением `.blend` и экспортом.
-2. **Концепт.** `image_gen` в свежем треде Codex, который не видел оригинал. В промпте только текст: предмет, части и их число, размеры в метрах и отношения сторон, стиль по `docs/content-style.md`, материал и цвет из карточки замысла относительно сцены, антиархетипы как запреты. Нужны три изображения:
+2. **Концепт.** Генерация изображений в свежем контексте по текстовому брифу. В промпте только текст: предмет, части и их число, размеры в метрах и отношения сторон, стиль по `docs/content-style.md`, материал и цвет из карточки замысла относительно сцены, антиархетипы как запреты. Нужны три изображения:
    - вид 3/4 чуть сверху — как предмет выглядит;
    - лист видов спереди, сбоку и сверху на прозрачном фоне — правкой первого изображения, чтобы предмет был тот же;
    - предмет на своём месте в сцене — проверить, что он туда вписывается.

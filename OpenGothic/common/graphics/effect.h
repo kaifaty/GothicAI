@@ -10,6 +10,7 @@
 #include "game/rpgvocabulary.h"
 
 #include <memory>
+#include <optional>
 
 class World;
 class Bullet;
@@ -22,6 +23,8 @@ class Effect final {
     Effect() = default;
     Effect(Effect&&) = default;
     Effect(PfxEmitter&& pfx, std::string_view node);
+    // an animation event's effect (World::animationPfx): its emitter on the node and its particles' own light
+    Effect(World& owner, const ParticleFx* decl, std::string_view node);
     Effect(const VisualFx& vfx, World& owner, const Npc& src,           SpellFxKey key = SpellFxKey::Count);
     Effect(const VisualFx& vfx, World& owner, const Tempest::Vec3& pos, SpellFxKey key = SpellFxKey::Count);
     ~Effect();
@@ -37,6 +40,15 @@ class Effect final {
     bool            isEmitting() const { return pfx.isActive(); }
     // the key it plays now (setKey), nullptr: its base
     const VisualFx::Key* currentKey() const { return key; }
+    // the light of its own particles (particles.d "light") as it gave it to the world's: the range, the colour and
+    // their keys, whether the keys go round and where it put the light last; false - it set up none. A headless world
+    // has no lights, the effect still keeps what it gave
+    struct OwnLight {
+      asset::LightPreset preset;
+      bool               loop = false;
+      Tempest::Vec3      at;
+      };
+    bool            ownLight(OwnLight& out) const;
 
     void     tick(uint64_t dt);
 
@@ -64,6 +76,10 @@ class Effect final {
     void               syncAttaches(const Tempest::Matrix4x4& pos);
     void               syncAttachesSingle(const Tempest::Matrix4x4& inPos);
     void               setupLight(World& owner);
+    bool               setupOwnLight(World& owner);
+    // the light's settings go through these, which keep what the own light got (ownLight)
+    void               giveKeysOnce(bool once);
+    void               givePosition(const Tempest::Vec3& at);
     void               setupPfx(World& owner);
     void               setupSfx(World& owner);
     void               setupCollision(World& owner);
@@ -91,6 +107,8 @@ class Effect final {
     const std::vector<Tempest::Matrix4x4>* meshSkin = nullptr;
     bool                  meshPfx   = false; // the particle effect is born on the mesh
     const ParticleFx* ownPfx = nullptr; // the particle effect of this one: its own light (particles.d "light")
+    Tempest::Vec3         lightPos;          // where its light stands: its node with the own light's "at"
+    std::optional<OwnLight> givenLight;      // what setupOwnLight and the settings since gave the own light
 
     Tempest::Matrix4x4    pos;
     Tempest::Vec3         selfRotation;

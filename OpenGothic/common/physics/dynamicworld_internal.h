@@ -184,9 +184,13 @@ struct DynamicWorld::BBoxShape {
 
 struct DynamicWorld::NpcBody {
   NpcBody(float radius, float height):radius(radius),cylinderHeight(height) {
+    createShape();
+    }
+
+  void createShape() {
     if(radius>0.f) {
-      if(height>0.f)
-        shape = new JPH::CapsuleShape(CollisionWorld::toMeters(height*0.5f), CollisionWorld::toMeters(radius));
+      if(cylinderHeight>0.f)
+        shape = new JPH::CapsuleShape(CollisionWorld::toMeters(cylinderHeight*0.5f), CollisionWorld::toMeters(radius));
       else
         shape = new JPH::SphereShape(CollisionWorld::toMeters(radius));
       }
@@ -204,6 +208,7 @@ struct DynamicWorld::NpcBody {
   float         gPadd    = 0.f;
   float         stepSz   = 0.f;
   bool          enable   = true;
+  bool          suspended = false;
   size_t        frozen   = size_t(-1);
   uint64_t      lastMove = 0;
 

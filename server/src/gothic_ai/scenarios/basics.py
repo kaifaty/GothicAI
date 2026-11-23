@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -998,22 +1000,52 @@ async def m5_turn_loop(
     return _logged(results)
 
 
+@asynccontextmanager
+async def _m5b_protect_hero(link: GameLink) -> AsyncIterator[None]:
+    # Rats can hit the observer behind the cave wall. Leave both fighters vulnerable.
+    flags = ["field", triggers.HERO, "FLAGS"]
+    mask = ["var", "NPC_FLAG_IMMORTAL"]
+    bit = ["&", flags, mask]
+    original, = await link.story_eval("PC_HERO", [bit])
+    guard = "DIR_M5B_PROTECT_HERO"
+    await link.patch_graph([{"op": "vars", "vars": {guard: 0}}])
+
+    async def set_immune(enabled: bool) -> None:
+        # Removing a one-shot trigger leaves its counter in the world.
+        await link.story_effect("PC_HERO", [{"do": "set", "var": guard, "value": 0}])
+        value = ["|", flags, mask] if enabled else ["&", flags, ["~", mask]]
+        try:
+            await link.patch_graph([triggers.trigger(guard, triggers.STATE, [
+                {"do": "set", "target": flags, "value": value},
+            ])])
+            if not await _until_async(lambda: link.story_eval("PC_HERO", [bit]),
+                                      lambda values: (values[0] > 0) == enabled, 5):
+                raise GameError(f"m5b: could not set hero immunity to {enabled}")
+        finally:
+            await link.patch_graph([triggers.removal(guard)])
+
+    try:
+        if not original:
+            await set_immune(True)
+        yield
+    finally:
+        await set_immune(bool(original))
+
+
+def _m5b_check_hero(snap: Snapshot, stage: str, full_hp: int) -> None:
+    player = snap.player
+    if player is None or player.hp != full_hp or player.hp_max != full_hp:
+        raise GameError(f"m5b {stage}: expected hero at {full_hp} HP, got {player}")
+    log.info("m5b hero %s hp=%d/%d", stage, player.hp, player.hp_max)
+
+
 async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, str]:
     """M5b on the game: threats from others reach the server, the player's drawn weapon is perceived,
     and the new body actions work for free and attached npc's. A wolf is spawned next to the npc."""
+    npc = npc.upper()
     await link.wait_world()
     await _m5b_player_weapon(link, "none")
-    events: list[NpcEvent] = []
-    link.listeners.append(lambda m: events.append(m) if isinstance(m, NpcEvent) else None)
     results: dict[str, str] = {}
-
-    async def event(kinds: set[str], timeout: float) -> NpcEvent | None:
-        for _ in range(int(timeout / 0.2)):
-            hit = next((e for e in events if e.kind in kinds), None)
-            if hit is not None:
-                return hit
-            await asyncio.sleep(0.2)
-        return None
 
     # 0. a free npc speaks a line, queued like its own (it waits for what the npc is busy with, e.g.
     # walking back to its routine spot: the engine does not take speech from the queue while walking)
@@ -1030,11 +1062,36 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
         f"{'done' if queued else 'failed'} (line started after {time.monotonic() - t0:.1f} s)"
     )
 
+    async with _m5b_protect_hero(link):
+        await _m5b_encounters(link, npc, started_lines, results)
+    for name, outcome in results.items():
+        log.info("%-24s %s", name, outcome)
+    return results
+
+
+async def _m5b_encounters(
+    link: GameLink, npc: str, started_lines: list[LineStarted], results: dict[str, str],
+) -> None:
+    events: list[NpcEvent] = []
+    link.listeners.append(lambda m: events.append(m) if isinstance(m, NpcEvent) else None)
+
+    async def event(kinds: set[str], other: str, timeout: float) -> NpcEvent | None:
+        for _ in range(int(timeout / 0.2)):
+            hit = next((e for e in events if e.npc == npc and e.other == other and e.kind in kinds), None)
+            if hit is not None:
+                return hit
+            await asyncio.sleep(0.2)
+        return None
+
+    initial = (await link.snapshot(npc, fresh=True)).player
+    if initial is None or initial.hp_max is None or initial.hp_max <= 0 or initial.hp != initial.hp_max:
+        raise GameError(f"m5b: expected a healthy hero at setup, got {initial}")
+
     # _091 puts Xardas beside a rock that blocks spells from his hand even when
     # the wolf is visible. Use _09's flat ground and its open southeast corridor.
     arena = "NW_XARDAS_TOWER_VALLEY_09"
-    # Clear both neighbourhoods: a relocation can retain the stock encounter's
-    # enemy, and animals by the new spot must not join either test fight.
+    # Clear visible beasts at both staging points: relocation can retain the stock
+    # encounter's enemy, and other wildlife can still approach during a fight.
     # debug kill drops victims by the hero; leave that food away from the wolves.
     async def clear_animals() -> None:
         around = (await link.snapshot(npc, fresh=True)).nearby_npcs
@@ -1052,7 +1109,6 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
         await link.debug("npc_goto", npc=npc, waypoint=clearing)
         await clear_animals()
     # npc_goto resolves script instances, so face needs PC_HERO, not the PLAYER alias.
-    # This position fixes the direction for both wolf spawns, away from the rocks.
     await link.debug("player_goto", pos=[23472, 1032, -10816])
     await link.debug("npc_goto", npc=npc, waypoint=arena, face="PC_HERO")
     await link.debug("teleport", near=npc, distance=300)
@@ -1088,17 +1144,37 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     await clear_animals()
     events.clear()
     await _m5b_player_weapon(link, "melee")
-    e = await event({"weapon_drawn"}, 5)
+    e = await event({"weapon_drawn"}, "PLAYER", 5)
     results["weapon_drawn"] = f"done ({e.npc}, {e.distance:.0f} cm)" if e else "failed (no weapon_drawn)"
     await _m5b_player_weapon(link, "none")
-    # Keep the hero beyond the 400/500 cm wolf spawns so he cannot intercept
-    # Xardas's projectiles. The weapon perception above still runs at 300 cm.
-    await link.debug("player_goto", pos=[23967, 1032, -11311])
+
+    # Two clear rays keep the first carcass out of the second spell lane. Both anchors
+    # have level ground and leave at least 4 m between the hero and the spawn point.
+    free_anchor = [23458, 963, -11533]
+    attached_anchor = [23911, 960, -12066]
+
+    async def place_fighters(anchor: list[int]) -> None:
+        await link.debug("player_goto", pos=anchor)
+        await link.debug("npc_goto", npc=npc, waypoint=arena, face="PC_HERO")
+
+    async def spawn_wolf(distance: int, encounter: str) -> Snapshot:
+        _m5b_check_hero(await link.snapshot(npc, fresh=True), f"before_{encounter}", initial.hp_max)
+        await link.debug("spawn", instance="WOLF", near=npc, distance=distance)
+        # The cave wall screens the hero while keeping both actors inside the 30 m AI radius.
+        await link.debug("player_goto", waypoint="NW_XARDAS_TOWER_SECRET_CAVE_02")
+        snap = await link.snapshot(npc, fresh=True)
+        living = [o.distance for o in snap.nearby_npcs if o.id == "WOLF" and not o.dead]
+        if len(living) != 1 or snap.player is None or not snap.player.hp:
+            raise GameError(f"m5b spawn {distance}: wolves={living}, player={snap.player}")
+        log.info("m5b spawn %d cm: mage=%s hero=%s hp=%s wolf=%.0f cm",
+                 distance, snap.npc.pos, snap.player.pos, snap.player.hp, living[0])
+        return snap
 
     # 2. a wolf next to the npc: the npc senses it or sees it attack
+    await place_fighters(free_anchor)
     events.clear()
-    await link.debug("spawn", instance="WOLF", near=npc, distance=400)
-    e = await event({"monster_near", "monster_attack", "hero_attacked"}, 20)
+    await spawn_wolf(400, "free_fight")
+    e = await event({"monster_near", "monster_attack", "hero_attacked"}, "WOLF", 20)
     results["monster_event"] = (
         f"done ({e.npc}: {e.kind} {e.other} '{e.other_name}' {e.distance or 0:.0f} cm {e.detail or ''})"
         if e
@@ -1123,15 +1199,21 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
 
     # 4. an attached npc: weapons, its own voiced line, and fight/flee handed to the scripts and back
     detached: list[str] = []
-    link.listeners.append(lambda m: detached.append(m.reason) if isinstance(m, Detached) else None)
-    await attach_when_free(link, npc)
+    link.listeners.append(
+        lambda m: detached.append(m.reason) if isinstance(m, Detached) and m.npc == npc else None
+    )
 
     def wolves(sn: Snapshot) -> str:
         return ", ".join(
             f"{o.name} {o.distance / 100:.0f} m{' dead' if o.dead else ''}" for o in sn.nearby_npcs
         )
 
-    results["after_free_fight"] = f"done (around: {wolves(await link.snapshot(npc, fresh=True)) or 'nobody'})"
+    snap = await link.snapshot(npc, fresh=True)
+    _m5b_check_hero(snap, "after_free_fight", initial.hp_max)
+    killed = any(o.id == "WOLF" and o.dead for o in snap.nearby_npcs)
+    results["after_free_fight"] = f"{'done' if killed else 'failed'} (around: {wolves(snap) or 'nobody'})"
+    await place_fighters(attached_anchor)
+    await link.attach(npc)
     for name, action, args in (
         ("attached_draw", "draw_weapon", {}),
         ("attached_remove", "remove_weapon", {}),
@@ -1139,21 +1221,30 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     ):
         res = await link.act(npc, action, **args)  # type: ignore[arg-type]
         results[name] = f"{res.status} {res.detail or ''}".strip()
-    await link.debug("spawn", instance="WOLF", near=npc, distance=500)
+    await spawn_wolf(500, "attached_fight")
     started = time.monotonic()
     res = await link.act(npc, "fight", npc="WOLF", timeout=90)
     took = time.monotonic() - started
     snap = await link.snapshot(npc, fresh=True)
+    _m5b_check_hero(snap, "after_attached_fight", initial.hp_max)
     results["attached_fight"] = (
-        f"{'done' if res.status == 'done' and not detached else 'failed'} "
+        f"{'done' if res.status == 'done' and res.detail == 'target is down' and not detached else 'failed'} "
         f"({res.status} {res.detail or ''} in {took:.1f} s, still attached: {not detached}, "
         f"hp {snap.npc.hp}/{snap.npc.hp_max}, around: {wolves(snap)})"
     )
-    await link.debug("spawn", instance="WOLF", near=npc, distance=800)
+    # npc_goto only places free actors. Start a fresh attachment for the independent flight.
+    await link.detach(npc)
+    await place_fighters(attached_anchor)
+    detached.clear()
+    await link.attach(npc)
+    before = await spawn_wolf(800, "attached_flee")
     res = await link.act(npc, "flee", npc="WOLF", timeout_ms=4000)
+    after = await link.snapshot(npc, fresh=True)
+    _m5b_check_hero(after, "after_attached_flee", initial.hp_max)
+    moved = math.dist(before.npc.pos[::2], after.npc.pos[::2])
     results["attached_flee"] = (
-        f"{'done' if res.status in ('done', 'timeout') and not detached else 'failed'} "
-        f"({res.status} {res.detail or ''}, still attached: {not detached})"
+        f"{'done' if res.status in ('done', 'timeout') and not detached and moved > 50 else 'failed'} "
+        f"({res.status} {res.detail or ''}, moved {moved:.0f} cm, still attached: {not detached})"
     )
     # The flee wolf may stay with the hero outside the fleeing NPC's snapshot.
     # Remove that encounter before restoring the routine, even if it is out of view.
@@ -1204,9 +1295,7 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
         now = (await link.routine(npc)).current
         back = now == info.entries[0].state or now != "ZS_SIT_CAMPFIRE"
         results["set_routine"] = f"{'done' if back else 'failed'} ({variant}: now {now})"
-    for name, outcome in results.items():
-        log.info("%-24s %s", name, outcome)
-    return results
+    _m5b_check_hero(await link.snapshot(npc, fresh=True), "final", initial.hp_max)
 
 
 async def m5c_free_npc(
@@ -1218,13 +1307,21 @@ async def m5c_free_npc(
     from ..brain.planner import PlannerConfig
 
     await link.wait_world()
-    current = (await link.routine(npc)).current
+    info = await link.routine(npc)
+    current = info.current
     # The native starting pose already is Xardas's only usual habit. The day menu correctly excludes
     # it, so give this fixed-decider fixture one distinct, executable option for its h1 choice.
     habit = Habit(
         "stand quietly and think", "ZS_STAND_WP" if current != "ZS_STAND_WP" else "ZS_STAND_ARMSCROSSED"
     )
+    scripted = Habit("sit on a throne", "ZS_SIT_THRONE")
     results: dict[str, str] = {}
+    catalog = set(info.event_activities or [])
+    missing = {habit.state, "ZS_SIT_BENCH", "ZS_SIT_CHAIR"} - catalog
+    results["event_catalog"] = (
+        f"{'done' if not missing and scripted.state not in catalog else 'failed'} "
+        f"({len(catalog)} event states, planned {habit.state}, missing {sorted(missing)})"
+    )
     started_lines: list[LineStarted] = []
     link.listeners.append(lambda m: started_lines.append(m) if isinstance(m, LineStarted) else None)
     held: list[PerceptionHeld] = []
@@ -1243,7 +1340,7 @@ async def m5c_free_npc(
         applier,
         config=PlannerConfig(ask_attitude=False, plan_period_s=3.0),
         routine_of=link.routine,
-        habits_of=lambda who: [habit] if who == npc else habits_of(who),
+        habits_of=lambda who: [scripted, habit] if who == npc else habits_of(who),
     )
     link.listeners.append(planner.on_message)
     runner = asyncio.create_task(planner.run())
@@ -1266,9 +1363,25 @@ async def m5c_free_npc(
             await asyncio.sleep(0.1)
         await asyncio.sleep(1.0)
         now = (await link.routine(npc)).current
+        chosen = plan is not None and plan.args is not None and plan.args.get("catalog_only") is True
         results["day_plan"] = (
-            f"{'done' if plan and plan.args and now == plan.args['state'] else 'failed'} "
+            f"{'done' if chosen and now == habit.state else 'failed'} "
             f"({plan.choice + ' ' + str(plan.args) if plan else 'no plan'}; now {now})"
+        )
+        receipt = asyncio.create_task(wait_message(
+            link, NpcActResult, lambda m: m.npc == npc and m.action == "start_activity", timeout=5
+        ))
+        await asyncio.sleep(0)  # arm the result listener before sending the command
+        requested = await link.npc_act(
+            npc, "start_activity", state=scripted.state, waypoint=info.entries[0].waypoint, catalog_only=True
+        )
+        rejected = await receipt
+        after = (await link.routine(npc)).current
+        blocked = rejected.id == requested and rejected.status == "rejected" and rejected.detail == (
+            f"activity is not in the event catalog: {scripted.state}"
+        )
+        results["scripted_activity_rejected"] = (
+            f"{'done' if blocked and after == habit.state else 'failed'} ({rejected.detail}; now {after})"
         )
         await link.npc_act(npc, "set_routine", name="START")
 

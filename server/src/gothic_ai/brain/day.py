@@ -19,7 +19,7 @@ keep and these.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -189,6 +189,7 @@ def _others(
     free: Free,
     here_only: bool,
     *,
+    catalog: Collection[str] | None = None,
     soonest: bool = False,
 ) -> tuple[list[Any], list[tuple[Habit, str]]]:
     """What else the npc may do now: the other entries of its routine (each state and waypoint once, in
@@ -209,6 +210,7 @@ def _others(
         return (
             not state.startswith(NOT_OFFERED)
             and state != current
+            and (catalog is None or state in catalog)
             and (not here_only or waypoint == here)
             and free(waypoint)
         )
@@ -232,6 +234,13 @@ def _others(
     return routine, found
 
 
+def _activity_args(state: str, waypoint: str, catalog_only: bool) -> dict[str, Any]:
+    args = {"state": state, "waypoint": waypoint, "minutes": OWN_MIN}
+    if catalog_only:
+        args["catalog_only"] = True
+    return args
+
+
 def plan_options(
     entries: list[Any],
     habits: list[Habit],
@@ -240,6 +249,8 @@ def plan_options(
     current_state: str = "",
     free: Free = lambda wp: True,
     here_only: bool = False,
+    *,
+    catalog: Collection[str] | None = None,
 ) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
     """The old menu (option id -> text) and what each option does (id -> start_activity args): the other
     activities of its routine (a1, a2...) and its habits (h<n>), each for an hour. What is left out: see
@@ -249,15 +260,15 @@ def plan_options(
         KEEP: f"keep to your usual routine now: {describe(now.state)}" if now else "keep to your routine"
     }
     args: dict[str, dict[str, Any]] = {}
-    routine, found = _others(entries, habits, hour, minute, current_state, free, here_only)
+    routine, found = _others(entries, habits, hour, minute, current_state, free, here_only, catalog=catalog)
     for e in routine:
         key = f"a{len(args) + 1}"
         texts[key] = f"{describe(e.state)} (you usually do it at {e.start}-{e.end})"
-        args[key] = {"state": e.state, "waypoint": e.waypoint, "minutes": OWN_MIN}
+        args[key] = _activity_args(e.state, e.waypoint, catalog is not None)
     for h, waypoint in found:
         key = f"h{len(args) + 1}"
         texts[key] = h.text
-        args[key] = {"state": h.state, "waypoint": waypoint, "minutes": OWN_MIN}
+        args[key] = _activity_args(h.state, waypoint, catalog is not None)
     return texts, args
 
 
@@ -270,6 +281,8 @@ def own_options(
     where: Where,
     free: Free = lambda wp: True,
     here_only: bool = False,
+    *,
+    catalog: Collection[str] | None = None,
 ) -> list[DayOption]:
     """The do menu's own part: keep first, then the other activities of its routine (a<n>, the soonest to
     start first) and its habits (h<n>, continuing the count), each for an hour, with where they are
@@ -278,17 +291,19 @@ def own_options(
     now = current_entry(entries, hour, minute)
     usual = f"keep to your usual routine: {_at(describe(now.state), now.waypoint, where)}" if now else None
     options = [DayOption(KEEP, KEEP, usual or "keep to your routine", None, "keep")]
-    routine, found = _others(entries, habits, hour, minute, current_state, free, here_only, soonest=True)
+    routine, found = _others(
+        entries, habits, hour, minute, current_state, free, here_only, catalog=catalog, soonest=True
+    )
     long = duration_text(OWN_MIN)
     for e in routine:
         text = f"{_at(describe(e.state), e.waypoint, where)} ({long}; usually {e.start}-{e.end})"
-        args = {"state": e.state, "waypoint": e.waypoint, "minutes": OWN_MIN}
+        args = _activity_args(e.state, e.waypoint, catalog is not None)
         options.append(
             DayOption(f"a{len(options)}", option_id("routine", e.state, e.waypoint), text, args, "routine")
         )
     for h, waypoint in found:
         text = f"{_at(h.text, waypoint, where)} ({long})"
-        args = {"state": h.state, "waypoint": waypoint, "minutes": OWN_MIN}
+        args = _activity_args(h.state, waypoint, catalog is not None)
         options.append(
             DayOption(f"h{len(options)}", option_id("habit", h.state, waypoint), text, args, "habit")
         )

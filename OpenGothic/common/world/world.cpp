@@ -1961,7 +1961,7 @@ const WayPoint* World::findWayPoint(const Tempest::Vec3& pos, std::string_view n
     });
   }
 
-const WayPoint* World::findFreePoint(const Npc &npc, std::string_view name) const {
+const WayPoint* World::findFreePoint(const Npc &npc, std::string_view name, std::vector<const WayPoint*>* occupied) const {
   if(auto p = npc.currentWayPoint()){
     if(p->isFreePoint() && p->checkName(name)) {
       return p;
@@ -1969,12 +1969,13 @@ const WayPoint* World::findFreePoint(const Npc &npc, std::string_view name) cons
     }
 
   const auto pos = npc.centerPosition();
-  return wmatrix->findFreePoint(pos,name,[&npc](const WayPoint& wp) -> bool {
-    if(wp.isLocked())
+  return wmatrix->findFreePoint(pos,name,[&](const WayPoint& wp) {
+    if(wp.isLocked()) {
+      if(occupied)
+        occupied->push_back(&wp);
       return false;
-    if(!npc.canRayHitPoint(Tempest::Vec3(wp.pos.x,wp.pos.y+10,wp.pos.z)))
-      return false;
-    return true;
+      }
+    return npc.canRayHitPoint(Tempest::Vec3(wp.pos.x,wp.pos.y+10,wp.pos.z));
     });
   }
 
@@ -2157,12 +2158,14 @@ void World::animationPfx(const Animation::MdsParticleEffect& p, MdlVisual& visua
       return;
     // a looped one (FIRE_HOT of the forge) emits and lives until its stop, its slot's next effect, its object's rest
     // or its visual's end; the others live their own time (docs/map/engine.md). Far a looped one starts too: it burns
-    // when the viewer comes, its emitter makes no particles out of range
+    // when the viewer comes, its emitter makes no particles out of range. Its particles' own light (particles.d
+    // "light") goes with it. Its particles' "node" puts it on that node of the object instead of the event's (a
+    // forge's fire on its still root, not on the bone the bellows toss)
     const auto* decl = GameServices::inst().loadParticleFx(p.name);
     const bool  loop = decl!=nullptr && decl->ppsIsLooping;
     if(!inPfxRange && !loop)
       return;
-    Effect e(PfxEmitter(*this,decl),p.position);
+    Effect e(*this,decl,decl!=nullptr && !decl->node.empty() ? std::string_view(decl->node) : std::string_view(p.position));
     e.setActive(true);
     e.setLooped(loop);
     visual.startEffect(*this,std::move(e),p.index,false,loop);

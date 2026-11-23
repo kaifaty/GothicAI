@@ -20,6 +20,9 @@ void WorldObjects::updateSimTiers(bool beforeTick) {
   const auto* pl        = owner.player();
   size_t   full = 0;
   uint64_t toFull = 0, toSimplified = 0;
+  campfireBodiesSuspended = false;
+  std::optional<AnimationLod::View> campfireView;
+  bool hasCampfireView = false;
   for(auto& ptr:npcArr) {
     auto&      npc   = *ptr;
     const auto pos   = npc.position();
@@ -44,6 +47,19 @@ void WorldObjects::updateSimTiers(bool beforeTick) {
       // Both participants are marked before anyone moves. Tier assignment cannot change the inputs
       // of refreshMeleeFighter; refreshing the unsorted array writes the same expiry to both actors.
       npc.refreshMeleeFighter();
+      }
+    bool suspend = false;
+    if(mode==NpcSimTiers::Mode::Auto && residency && next==NpcSimTier::Simplified && npc.canSuspendCampfireBody()) {
+      if(!campfireView) {
+        campfireView.emplace();
+        hasCampfireView = makeAnimationLodView(*campfireView);
+        }
+      suspend = hasCampfireView && !mustUpdateAnimation(npc,*campfireView) && !campfireView->visible(npc);
+      }
+    if(suspend) {
+      campfireBodiesSuspended |= npc.suspendCampfireBody();
+      } else if(npc.campfireBodySuspended()) {
+      npc.resumeCampfireBody();
       }
     }
   if(beforeTick && needSort) {

@@ -6,7 +6,7 @@
 
 namespace {
 constexpr std::array<std::string_view,ActivityEvents::WakeCount> wakeNames = {
-  "entered","loaded","queue","attached","attach_failed","detached","freed","row_end","interrupted","watchdog",
+  "entered","loaded","queue","attached","attach_failed","detached","freed","row_end","interrupted","watchdog","gesture","visibility",
   };
 }
 
@@ -34,6 +34,10 @@ void ActivityEvents::countWakes(std::string_view state, uint16_t wakes, bool ste
     ++it->second.steps;
   if(wakes & Watchdog)
     ++st.watchdog;
+  }
+
+std::string_view ActivityEvents::wakeName(size_t index) {
+  return wakeNames[index];
   }
 
 std::string ActivityEvents::json() {

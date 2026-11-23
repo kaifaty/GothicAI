@@ -171,9 +171,13 @@ class DynamicWorld final {
           return *this;
           }
 
-        void  setPosition(const Tempest::Vec3& pos);
+        // Graph movement can update the saved placement while its collision body is absent.
+        void  setPosition(const Tempest::Vec3& pos, bool keepSuspended = false);
         const Tempest::Vec3& position() const;
-        bool  hasBody() const { return obj!=nullptr; }
+        bool  hasBody() const;
+        bool  bodySuspended() const;
+        void  suspendBody();
+        void  resumeBody();
 
         void  setRotation(float a);
 

@@ -269,6 +269,7 @@ class WorldObjects final {
     std::vector<std::unique_ptr<Npc>>  npcRemoved; // removed, but may have a dangling references in game
     std::vector<Npc*>                  npcNear;
     NpcSimTiers::Stats                 simTiers;
+    bool                               campfireBodiesSuspended = false;
     static bool                       keepsFullSimulation(const Npc& npc);
     static bool                       keepsNearPolicy(const Npc& npc);
     void                              updateSimTiers(bool beforeTick);

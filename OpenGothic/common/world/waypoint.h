@@ -7,6 +7,7 @@
 
 class FpLock;
 class Interactive;
+class Npc;
 
 class WayPoint final {
   public:
@@ -19,9 +20,12 @@ class WayPoint final {
 
     WayPoint& operator = (WayPoint&&)=default;
     bool isLocked() const { return useCount!=0; }
+    bool isGuarded() const { return guardUsers!=0; }
     bool isFreePoint() const;
     bool isConnected() const;
 
+    void waitForFree(Npc& npc) const;
+    void stopWaiting(Npc& npc) const;
     uint32_t useCounter() const { return useCount; }
     bool checkName(std::string_view name, bool inexact = true) const;
 
@@ -52,6 +56,8 @@ class WayPoint final {
 
   private:
     mutable uint32_t useCount=0;
+    mutable uint32_t guardUsers=0;
+    mutable std::vector<Npc*> waiters;
 
     std::vector<Conn> conn;
 

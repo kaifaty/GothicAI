@@ -14,6 +14,7 @@
 #include <stack>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace daedalus {
 	struct IgnoreReturnValue {};
@@ -628,14 +629,11 @@ namespace daedalus {
 		void observe_member_writes(std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> callback) { _m_member_write_observer = std::move(callback); }
 		void observe_instructions(std::function<void(DaedalusInstruction const&)> callback) { _m_instruction_observer = std::move(callback); }
 		// Optional script-call instrumentation; includes functions reached through BL overrides.
-		void observe_calls(std::function<void(DaedalusSymbol const&)> callback) { _m_call_observer = std::move(callback); }
-		void add_call_observer(std::function<void(DaedalusSymbol const&)> callback) {
-			auto previous = std::move(_m_call_observer);
-			_m_call_observer = [previous = std::move(previous), callback = std::move(callback)](auto const& symbol) {
-				if (previous) previous(symbol);
-				callback(symbol);
-			};
-		}
+		using CallObserver = std::function<void(DaedalusSymbol const&)>;
+		size_t call_observer_count() const { return _m_call_observers.size(); }
+		void observe_calls(CallObserver callback);
+		uint64_t add_call_observer(CallObserver callback);
+		void remove_call_observer(uint64_t id);
 		// Both bytecode and record playback report externals before consuming their arguments.
 		void observe_externals(std::function<void(DaedalusSymbol const&)> callback) { _m_external_observer = std::move(callback); }
 		[[nodiscard]] DaedalusStackFrame const& stack_frame(uint16_t depth) const;
@@ -1050,7 +1048,9 @@ namespace daedalus {
 		std::function<void(DaedalusSymbol const&)> _m_write_observer;
 		std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> _m_member_write_observer;
 		std::function<void(DaedalusInstruction const&)> _m_instruction_observer;
-		std::function<void(DaedalusSymbol const&)> _m_call_observer;
+		void notify_call(DaedalusSymbol const* symbol) const;
+		uint64_t _m_next_call_observer = 0;
+		std::vector<std::pair<uint64_t, CallObserver>> _m_call_observers;
 		std::function<void(DaedalusSymbol const&)> _m_external_observer;
 		std::optional<std::function<
 		    DaedalusVmExceptionStrategy(DaedalusVm&, DaedalusScriptError const&, DaedalusInstruction const&)>>

@@ -55,12 +55,9 @@ vec2 rayPosition2d(uint rayId, ivec2 viewportSize, uint NumSlices) {
   return vec2(float(viewportSize.x-0.5)/float(viewportSize.x), (rayId+0.5)/float(vert));
   }
 
-vec2 rayOrigin(const SceneDesc scene, ivec2 fragCoord, ivec2 viewportSize) {
+vec2 rayOrigin(const SceneDesc scene, const vec2 ndc) {
   vec2 sun  = sunPosition2d(scene);
-  vec2 rpos = vec2(fragCoord)/vec2(viewportSize);
-  rpos  = rpos*2.0 - 1.0;
-
-  vec2 dv  = rpos - sun;
+  vec2 dv  = ndc - sun;
   vec2 ret = vec2(0);
   {
     float d = (dv.x<0 ? -1 : +1) - sun.x;
@@ -77,8 +74,8 @@ vec2 rayOrigin(const SceneDesc scene, ivec2 fragCoord, ivec2 viewportSize) {
   return vec2(-1);
   }
 
-uint sliceId(const SceneDesc scene, ivec2 fragCoord, ivec2 viewportSize, uint NumSlices) {
-  const vec2  src   = rayOrigin(scene, fragCoord, viewportSize);
+uint sliceId(const SceneDesc scene, const vec2 ndc, ivec2 viewportSize, uint NumSlices) {
+  const vec2  src   = rayOrigin(scene, ndc);
   const vec2  uv    = src*0.5+0.5;
   const float ratio = float(viewportSize.x)/float(viewportSize.x+viewportSize.y);
   const uint  hor   = int(0.5*ratio*NumSlices);

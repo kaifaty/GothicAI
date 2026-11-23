@@ -1,4 +1,5 @@
 #include "npc.h"
+#include "game/npcactivityhost.h"
 
 #include <Tempest/Log>
 
@@ -98,7 +99,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         break;
         }
       auto fp = act.point!=nullptr ? act.point : owner.findNextFreePoint(*this,act.s0);
-      if(fp!=nullptr) {
+      if(fp && (!fp->isGuarded() || currentFpLock.point()==fp)) {
         attachToPoint(fp);
         if(usesSimplifiedMovement()) {
           act.point=fp;
@@ -113,16 +114,35 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       break;
       }
     case AI_GoToPoint: {
+      if(act.point==nullptr)
+        break; // the saved waypoint is absent from this world
       if(isInAir() || !setInteraction(nullptr)) {
         queue.pushFront(std::move(act));
         break;
         }
+      if(act.point->isLocked() && currentFpLock.point()!=act.point) {
+        // An unmarked saved walk can be an external GotoWP. Only a guard lock excludes it.
+        const bool guarded=act.point->isGuarded();
+        const bool legacyAtGuard=guarded && (activityEvents.pending & ActivityEvents::Loaded) && act.i1==0;
+        const bool claim=isActivityPoint(act.point) && (!act.s0.empty() || legacyAtGuard);
+        if(claim) {
+          if(act.activity)
+            aiQueue.removeActivity();
+          wakeActivity(ActivityEvents::AttachFailed);
+          // A return behind the remaining commands also survives a save during an external walk.
+          if(act.activity && activityEvents.activity->point->form==ActivityDefinitions::PointActivity::Form::Guard &&
+             aiQueue.hasMovement()) {
+            if(const auto* row=NpcEngineCalls::resolveWaypoint(owner,*this,hnpc->wp))
+              pushActivityCommand(AiQueue::aiGoToPoint(*row));
+            }
+          }
+        if(claim || guarded)
+          break;
+        }
       if(usesSimplifiedMovement() && act.point->isFreePoint()) {
         act.i0=1;
         const auto* target=act.point;
-        const bool  own=act.activity;
         beginSimpleGoTo(std::move(act),*target);
-        go2.activity = own;
         break;
         }
       if(wayPath.last()!=act.point) {

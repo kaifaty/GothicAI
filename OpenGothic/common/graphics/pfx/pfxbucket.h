@@ -64,6 +64,7 @@ class PfxBucket {
 
       uint64_t      waitforNext = 0;
       std::unique_ptr<PfxSlot> next;
+      uint64_t      born        = 0; // the world's time it was born (PfxSlot::setBorn): a looped pulse counts from it
 
       PfxMotion::Flicker flicker;  // a layer emitter's flame signal (vobs.d "flicker"): the particles' brightness
       };

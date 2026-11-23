@@ -297,22 +297,13 @@ void GameScript::npc_changeattribute(std::shared_ptr<daedalus::INpc> npcRef, int
 
 bool GameScript::npc_isonfp(std::shared_ptr<daedalus::INpc> npcRef, std::string_view val) {
   auto npc = findNpc(npcRef);
-  if(npc==nullptr)
-    return false;
-
-  auto w = npc->currentWayPoint();
-  if(w==nullptr || !MoveAlgo::isClose(*npc,*w,MAX_AI_USE_DISTANCE) || !w->checkName(val))
-    return false;
-  return w->isFreePoint();
+  return npc!=nullptr && npc->isOnFreePoint(val);
   }
 
 int GameScript::npc_getheighttonpc(std::shared_ptr<daedalus::INpc> aRef, std::shared_ptr<daedalus::INpc> bRef) {
   auto a = findNpc(aRef);
   auto b = findNpc(bRef);
-  float ret = 0;
-  if(a!=nullptr && b!=nullptr)
-    ret = std::abs(a->position().y - b->position().y);
-  return int32_t(ret);
+  return a && b ? NpcEngineCalls::heightDifference(*a,*b) : 0;
   }
 
 std::shared_ptr<daedalus::IItem> GameScript::npc_getequippedmeleeweapon(std::shared_ptr<daedalus::INpc> npcRef) {

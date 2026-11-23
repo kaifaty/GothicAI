@@ -147,8 +147,9 @@ TASK=/remote/task
     assert environment.get("OPENGOTHIC_BASE_CACHE") == cache
 
 
-@pytest.mark.parametrize("frames_per_interval", (20, 21))
-def test_perf_stall_guard(tmp_path, frames_per_interval):
+@pytest.mark.parametrize("stalled_games", (0, 1, 2))
+def test_perf_stall_guard(tmp_path, stalled_games):
+    # The first `stalled_games` games make 20 frames in 10 s (2 FPS), the next one 21.
     source = (Path(__file__).parents[1] / "perf.sh").read_text()
     run_game = source[source.index("\nrun_game() {"):source.index("\n# The GPU clock journal runs")]
     scripts = tmp_path / "scripts"
@@ -163,7 +164,10 @@ import json, os, time
 from pathlib import Path
 
 leaf = Path(os.environ["OPENGOTHIC_BENCH_OUT"])
-step = int(os.environ["FAKE_FRAME_STEP"])
+games = Path(os.environ["FAKE_GAMES"])
+started = int(games.read_text()) if games.exists() else 0
+games.write_text(str(started + 1))
+step = 20 if started < int(os.environ["FAKE_STALLED_GAMES"]) else 21
 for interval in range(3):
     temp = leaf / "heartbeat.tmp"
     temp.write_text(json.dumps({"elapsed_seconds": 10 * interval, "frame": step * interval}))
@@ -172,21 +176,31 @@ for interval in range(3):
 ''')
     game.chmod(0o755)
     leaf = tmp_path / "repeat-1"
+    games = tmp_path / "games"
     environment = dict(os.environ, GAME_BIN=str(game), GOTHIC_DIR=str(tmp_path),
-                       PERF_GPU_STAMP=str(tmp_path / "stamp"), FAKE_FRAME_STEP=str(frames_per_interval),
-                       PERF_VID_RES="0", PERF_INI="")
+                       PERF_GPU_STAMP=str(tmp_path / "stamp"), FAKE_STALLED_GAMES=str(stalled_games),
+                       FAKE_GAMES=str(games), PERF_VID_RES="0", PERF_INI="")
     environment.pop("PERF_REMOTE", None)
     result = subprocess.run(
         ["bash", "-c", run_game + '\nOUT="$1"\nrun_game measure "$2" "$3" market 1',
          "bash", str(tmp_path), str(scenario), str(leaf)],
-        env=environment, capture_output=True, text=True, timeout=10)
+        env=environment, capture_output=True, text=True, timeout=20)
 
+    failure = "market stayed at or below 2 FPS for two heartbeat intervals"
+    # One restart at most: the stalled game's files move aside, the last game's stay in the run folder.
+    assert int(games.read_text()) == min(stalled_games, 1) + 1
     assert json.loads((leaf / "heartbeat.json").read_text())["elapsed_seconds"] == 20
-    if frames_per_interval == 20:
+    assert (leaf / "stalled-1/game.log").exists() == (stalled_games > 0)
+    assert (leaf / "stalled-1/run/Gothic.ini").exists() == (stalled_games > 0)
+    assert not (leaf / "stalled-2").exists()
+    assert (f"perf: stand stall: {failure}; restarting the game once" in result.stderr) == (stalled_games > 0)
+    if stalled_games == 2:
         assert result.returncode == 1
-        assert "stand failure: market stayed at or below 2 FPS for two heartbeat intervals" in result.stderr
+        assert f"stand failure: {failure}" in result.stderr
+        assert not (leaf / "metadata.json").exists()
     else:
         assert result.returncode == 0, result.stderr
+        assert json.loads((leaf / "metadata.json").read_text())["stall_restarts"] == stalled_games
 
 
 @pytest.mark.parametrize("converter", (True, False))

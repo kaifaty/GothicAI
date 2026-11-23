@@ -47,6 +47,8 @@ class PfxSlot final {
     void     setActive(bool act);
     bool     isActive() const;
     void     setLooped(bool loop);
+    // the world's time the emitter was born (by default the particles' last tick): a looped pulse counts from it
+    void     setBorn(uint64_t worldTime);
     void     setMesh(const MeshObjects::Mesh* mesh, const Pose* pose,
                      const std::vector<Tempest::Matrix4x4>* skin = nullptr);
     void     setTarget(const ParticleTarget* tg);

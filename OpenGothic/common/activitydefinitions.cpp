@@ -12,9 +12,9 @@ using DefinitionJson::at;
 using DefinitionJson::string;
 using DefinitionJson::bytes;
 using DefinitionJson::integer;
-ActivityDefinitions::MobActivity mob(const Json& json) {
+ActivityDefinitions::MobActivity mob(const Json& json,int version) {
   using namespace ActivityDefinitions;
-  require(json.IsObject() && json.MemberCount()==9,"unexpected parameter field");
+  require(json.IsObject(),"expected object parameters");
   MobActivity a;
   const auto& perceptions=at(json,"perceptions");
   require(perceptions.IsObject() && perceptions.MemberCount()==2 && at(perceptions,"deferred").IsBool() &&
@@ -32,6 +32,95 @@ ActivityDefinitions::MobActivity mob(const Json& json) {
   a.useState=integer(at(json,"use_state"));
   a.leaveState=integer(at(json,"leave_state"));
   a.loopResult=integer(at(json,"loop_result"));
+  if(version>=4 && json.HasMember("seated")) {
+    const auto& parameters=at(json,"seated");
+    DefinitionJson::object(parameters,{"timer_seconds","roll_range","animations"});
+    auto& seated=a.seated.emplace();
+    seated.timerSeconds=integer(at(parameters,"timer_seconds"));
+    seated.rollRange=integer(at(parameters,"roll_range"));
+    const auto& animations=at(parameters,"animations");
+    require(seated.timerSeconds>=0 && seated.rollRange>0 && animations.IsArray() &&
+            !animations.Empty() && animations.Size()<=uint32_t(seated.rollRange),"invalid seated gestures");
+    for(const auto& animation:animations.GetArray()) {
+      seated.animations.push_back(bytes(animation));
+      require(!seated.animations.back().empty(),"empty seated animation");
+      }
+    }
+  require(json.MemberCount()==(a.seated ? 10u : 9u),"unexpected parameter field");
+  return a;
+  }
+ActivityDefinitions::PointActivity point(const Json& json,int version) {
+  using namespace ActivityDefinitions;
+  using Form=PointActivity::Form;
+  PointActivity a;
+  unsigned fields=6;
+  if(version>=3) {
+    const auto name=string(at(json,"form"));
+    const auto& names=PointActivity::FormNames;
+    const auto form=std::find(names.begin(),names.end(),name);
+    require(form!=names.end(),"unsupported point form "+name);
+    a.form=Form(form-names.begin());
+    ++fields;
+    }
+  a.perceptions=string(at(json,"perceptions"));
+  require(!a.perceptions.empty(),"empty perception helper");
+  a.walkMode=integer(at(json,"walk_mode"));
+  const bool waypoint=a.form==Form::Waypoint;
+  require(string(at(json,"approach"))==(waypoint ? "goto_align_waypoint" : "distance"),"unsupported point approach");
+  if(!waypoint) {
+    a.approachDistance=integer(at(json,"approach_distance"));
+    a.point=bytes(at(json,"point"));
+    require(!a.point.empty() && string(at(json,"occupied"))==a.occupied(),"unsupported point approach");
+    fields+=3;
+    }
+  else a.approachDistance=0;
+  a.enterAnimation=bytes(at(json,"enter_animation"));
+  a.leaveAnimation=bytes(at(json,"leave_animation"));
+  a.loopResult=integer(at(json,"loop_result"));
+  if(a.form==Form::Campfire) {
+    a.enterBodyState=integer(at(json,"enter_body_state"));
+    a.leaveBodyState=integer(at(json,"leave_body_state"));
+    fields+=2;
+    }
+  else {
+    const auto& stages=at(json,"aivar_19");
+    require(stages.IsObject() && stages.MemberCount()==(waypoint ? 2u : 4u),"unexpected stage field");
+    a.initialStage=integer(at(stages,"initial"));
+    a.poseStage=integer(at(stages,"pose"));
+    if(!waypoint) {
+      a.walkingStage=integer(at(stages,"walking"));
+      a.arrivedStage=integer(at(stages,"arrived"));
+      }
+    ++fields;
+    }
+  if(a.timed()) {
+    a.timerSeconds=integer(at(json,"timer_seconds"));
+    a.rollRange=integer(at(json,"roll_range"));
+    const auto& gestures=at(json,"gestures");
+    require(a.rollRange>0 && gestures.IsArray() && gestures.Size()==uint32_t(a.rollRange),"invalid gesture range");
+    for(const auto& gesture:gestures.GetArray()) {
+      require(gesture.IsObject() && gesture.MemberCount()==2 && at(gesture,"reset_timer").IsBool(),"invalid gesture");
+      a.gestures.push_back({bytes(at(gesture,"animation")),at(gesture,"reset_timer").GetBool()});
+      }
+    fields+=3;
+    }
+  else { a.rollRange=0; a.timerSeconds=0; }
+  if(a.form==Form::ArmsCrossed) {
+    const auto& event=at(json,"portal_event");
+    if(!event.IsNull()) {
+      DefinitionJson::object(event,{"function","roll_range","trigger_roll","world","raven_dead","excluded_guild"});
+      auto& p=a.portal.emplace();
+      p.function=string(at(event,"function"));
+      p.rollRange=integer(at(event,"roll_range"));
+      p.triggerRoll=integer(at(event,"trigger_roll"));
+      p.world=integer(at(event,"world"));
+      p.ravenDead=integer(at(event,"raven_dead"));
+      p.excludedGuild=integer(at(event,"excluded_guild"));
+      require(!p.function.empty() && p.triggerRoll>=0 && p.triggerRoll<p.rollRange,"invalid portal event");
+      }
+    ++fields;
+    }
+  require(json.MemberCount()==fields,"unexpected point parameter field");
   return a;
   }
 }
@@ -47,7 +136,7 @@ ActivityDefinitions::Library ActivityDefinitions::read(const std::filesystem::pa
     require(!doc.HasParseError(),"invalid JSON");
     require(string(at(doc,"format"))=="gothic-activity-definitions","unsupported format");
     const auto& version=at(doc,"version");
-    require(version.IsInt() && version.GetInt()==1,"unsupported version");
+    require(version.IsInt() && version.GetInt()>=2 && version.GetInt()<=FormatVersion,"unsupported version");
     require(!string(at(doc,"program_name")).empty(),"empty program name");
     require(string(at(doc,"program_sha256"))==programSha256,"program SHA differs");
     require(string(at(doc,"string_encoding"))=="unicode-byte-mapping","unsupported string encoding");
@@ -58,7 +147,7 @@ ActivityDefinitions::Library ActivityDefinitions::read(const std::filesystem::pa
     for(const auto& record:records.GetArray()) {
       const auto name=string(at(record,"symbol"));
       try {
-        require(name.starts_with("ZS_") && !result.activities.contains(name) && !result.uncaptured.contains(name),
+        require(name.starts_with("ZS_") && !result.activities.contains(name) && !result.points.contains(name) && !result.uncaptured.contains(name),
                 "duplicate or invalid state symbol");
         const auto status=string(at(record,"status"));
         if(status=="uncaptured") {
@@ -68,8 +157,10 @@ ActivityDefinitions::Library ActivityDefinitions::read(const std::filesystem::pa
           }
         require(status=="captured","unsupported capture status");
         require(record.MemberCount()==4,"unexpected captured activity field");
-        require(string(at(record,"template"))=="mob","unsupported activity template");
-        result.activities.emplace(name,mob(at(record,"parameters")));
+        const auto type=string(at(record,"template"));
+        require(type=="mob" || type=="point","unsupported activity template");
+        if(type=="point") result.points.emplace(name,point(at(record,"parameters"),version.GetInt()));
+        else result.activities.emplace(name,mob(at(record,"parameters"),version.GetInt()));
         }
       catch(const std::exception& e) { throw std::runtime_error(name+": "+e.what()); }
       }

@@ -41,7 +41,9 @@ bool Npc::startState(ScriptFn id, std::string_view wp, gtime endTime, bool noFin
     }
 
   clearAiQueue();
-  clearState(noFinalize);
+  // The last point commands have drained. A new row at the same post inherits its lock.
+  if(aiState.funcIni.isValid() || !activityEvents.activity || aiPrevState!=id || wp!=hnpc->wp)
+    clearState(noFinalize);
   if(!wp.empty())
     hnpc->wp = wp;
 
@@ -86,8 +88,13 @@ void Npc::setBodyTrace(BodyTrace trace) {
   }
 
 void Npc::clearState(bool noFinalize) {
-  if(BodyController::deferNative(*this,[this,noFinalize] { clearState(noFinalize); })) return;
-  stopActivityEvents(ActivityEvents::Interrupted);
+  finishState(noFinalize,ActivityEvents::Interrupted);
+  }
+
+void Npc::finishState(bool noFinalize, uint16_t reason) {
+  if(BodyController::deferNative(*this,[this,noFinalize,reason] { finishState(noFinalize,reason); })) return;
+  resumeCampfireBody();
+  stopActivityEvents(reason);
   if(aiState.funcIni.isValid() && aiState.started) {
     if(!noFinalize)
       owner.rules().invokeState(this,currentOther,currentVictim,aiState.funcEnd);  // cleanup
@@ -139,6 +146,7 @@ void Npc::runStateInit() {
   perceptionNextTime   = owner.tickCount();
   // The commands of an activity by events' Init are its own: it can take them back (world/activityevents.h).
   const auto* activity = owner.rules().eventActivity(aiState.funcIni);
+  stopActivityEvents(0);
   activityCommands = activity!=nullptr;
   invokeRoutine(aiState.funcIni);
   activityCommands = false;
@@ -169,22 +177,24 @@ void Npc::tickRoutine() {
 
   // A routine activity run by events (world/activityevents.h) runs no Loop: its automaton wakes on events
   // below. The end of its row stays here, on the same perception clock as a polled Loop's.
-  const bool events = armActivityEvents();
-  const bool fastPath = (aiPolicy==NpcProcessPolicy::AiFar2 && routines.empty()); //HACK: don't process far away Npc
-  if(aiState.loopNextTime<=owner.tickCount()) {
+  if(activityEvents.init!=aiState.funcIni.ptr)
+    restoreActivityEvents(owner.rules().eventActivity(aiState.funcIni));
+  const bool events = activityEvents.activity!=nullptr;
+  const bool atPoint = events && activityEvents.activity->point;
+  const bool loopDue = aiState.loopNextTime<=owner.tickCount();
+  bool runLoop = false;
+  if(loopDue) {
     aiState.loopNextTime = owner.tickCount() + perceptionTimeClampt();
     int loop = LOOP_CONTINUE;
-    if(!events && aiState.funcLoop.isValid()) {
+    if(aiState.funcLoop.isValid()) {
       static const float MAX_DIST = 300;
-      if(fastPath && currentFp!=nullptr && qDistTo(currentFp) < MAX_DIST*MAX_DIST) {
-        loop = LOOP_CONTINUE;
-        }
-      else if(fastPath && currentFp!=nullptr) {
-        // for debugging
-        loop = invokeRoutine(aiState.funcLoop);
-        }
-      else {
-        loop = invokeRoutine(aiState.funcLoop);
+      const bool fastPath = aiPolicy==NpcProcessPolicy::AiFar2 && routines.empty();
+      runLoop = !(fastPath && currentFp!=nullptr && qDistTo(currentFp)<MAX_DIST*MAX_DIST);
+      if(runLoop) {
+        if(!events)
+          loop = invokeRoutine(aiState.funcLoop);
+        else if(!atPoint)
+          tickSeatedGesture(); // the seated Loop also draws before End on the final perception beat
         }
       }
     else if(!events) {
@@ -200,16 +210,18 @@ void Npc::tickRoutine() {
       }
 
     if(loop!=LOOP_CONTINUE) {
-      if(events)
-        stopActivityEvents(ActivityEvents::RowEnd);
-      clearState(false);
+      if(atPoint) {
+        wakeActivity(ActivityEvents::RowEnd);
+        tickActivityEvents(runLoop);
+        }
+      finishState(false,ActivityEvents::RowEnd);
       currentOther  = nullptr;
       currentVictim = nullptr;
       return;
       }
     }
   if(events)
-    tickActivityEvents();
+    tickActivityEvents(runLoop);
   }
 
 void Npc::forEachRoutine(const std::function<void(const RoutineInfo&)>& f) const {

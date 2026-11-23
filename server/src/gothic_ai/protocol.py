@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 64
+PROTOCOL_VERSION = 65
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -800,6 +800,7 @@ class RoutineInfo(_GameMessage):
     current: str = ""
     entries: list[RoutineEntry] = Field(default_factory=list)
     routines: list[str] = Field(default_factory=list)
+    event_activities: list[str] | None = None  # v65: missing on older bridges; empty when none are available
     error: str | None = None
 
 

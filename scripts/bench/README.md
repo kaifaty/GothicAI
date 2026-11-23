@@ -344,25 +344,32 @@ waits and four frames more once everything is loaded (also when it was loaded on
 TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with visibility in
 a canonical cluster order (sorted by sphere and meshlets, not by the ids streaming handed out)
 before `shot`; texture levels settle and stand still until the shot.
-Two runs of one binary then give byte-identical `perf-market` and `perf-harbour` PNGs, and
-`perf-forest` and `perf-island` PNGs in most pairs: at 1920x1080 on Ryzen, virtual shadow maps on,
-five runs gave 0 changed pixels at the market and the harbour in all ten pairs, 0 or 1 pixel in the
-forest and 0, 3 or 35–38 pixels (max 2 levels) on the island, the same pixels every time (issue
-#946). `perf-market-teleport` is shot without a streaming wait by design and still depends on
-loading. Accept a render change off ↔ on as two consecutive runs on one host and binary, toggled by
-the feature's own variable:
-`uv run --no-project --with pillow --with numpy python
-reports/engine/2026-11-03-streaming-optimisation/shots_diff.py off=<dir> on=<dir>` must report 0
-changed pixels at the four waited points (`--all-pairs` compares every pair of several runs). If a
-point differs, run off and on once more: the change is accepted when every one of the four points
-gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
+With probe GI active, the wait also restarts the probe pool, its frame clock, fog sky visibility and
+eye adaptation. During the fixed steps, a probe's grid position determines its offscreen relight phase.
+Ray hits vote by cell before the renderer selects up to 512 requests. Each bounce propagates the
+source probe's use stamp from the start of the relight.
+`perf-market-teleport` captures the first frame after the return jump and still depends on loading.
 
-The virtual shadow maps stay on for the comparison on Ryzen: their GPU passes no longer depend on
-the order of shader invocations.
-[Report](../../reports/engine/2026-11-10-still-shots-repeat/README.md): the SSAO cycle's phase that
-was not reset, the two shader bugs behind the VSM noise (an uninitialised depth in
-`fog_epipolar.comp`, a page lost in `vsm_mark_pages.comp`), the second state of a still (whether the
-wait had to wait) and what is left.
+Compare consecutive runs on one host with one binary. For an off ↔ on render check, toggle the
+feature's own variable between runs. Each acceptance pair must report zero changed RGBA pixels
+at all four waited points in the same comparison. Set `first` and `second` to the output directories
+and use `--host mac` for Metal.
+
+```sh
+uv run --no-project --with pillow --with numpy python \
+  reports/engine/2026-11-03-streaming-optimisation/shots_diff.py \
+  --host ryzen --shots perf-market,perf-harbour,perf-forest,perf-island a="$first" b="$second"
+```
+
+On `8cfe16dc4`, one Ryzen RTX 3080 pair at 1920×1080 with VSM and probe GI and three Metal pairs
+at 800×600 matched at all four points. On `95f9dfdea`, the Ryzen pair had 0, 0, 5 and 1 changed
+RGBA pixels in market, harbour, forest and island respectively. The maximum channel differences were
+0, 0, 1 and 1. Issue #946 remains open. [Measurements](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#пара-ryzen-после-ревью).
+
+The regular VSM fog pass uses one NDC from the top-left depth pixel for both epipolar ray selection and the shadow threshold.
+It supplies zero depth for a missing ray or texel and keeps all 32 threshold comparisons.
+Replaying the FGT2 inputs on the CPU removes the divergence reproduced by contracting the old NDC expression.
+Two standard RTX 3080 runs on `01fdf2a6b` differed in 0, 62, 0 and 1 RGBA pixels respectively across the four waited shots, with a maximum channel difference of 1. [Replay and control](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#контроль-ryzen-после-исправления-тумана).
 
 `motion-vectors` and `motion-vectors-clips` check the motion vectors of objects (graphics plan 1b,
 [report](../../reports/render-features/2026-11-10-motion-vectors/step-1b.md)). `motion-vectors` takes stills: a still
@@ -397,6 +404,8 @@ and its landscape BLAS is freed) run as a copy named `streaming-flythrough` for 
 
 ## План и журнал
 
+- 2026-11-22: a deterministic wait starts probe GI from an empty pool and phase zero. Its fixed
+  steps give the same offscreen turn, hit request selection and use stamp under a permutation of probe slots.
 - 2026-11-11: `deterministic on` walks visibility clusters in a canonical order (sorted by sphere and meshlets,
   not by the ids streaming handed out). On the Mac it removed the dependence on the id order; on Ryzen four
   runs still give the discrete states of issue #946 (0–32 px), so the acceptance rule stays as it is.
@@ -992,7 +1001,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `rec <name> [novideo]`, `stop [shadow]` | record a segment (video and metrics, or metrics only); `stop shadow` also copies both rolling melee shadow journals into segment files (filter cumulative rows by fight game-time interval) |
 | `shot <name>` | one PNG |
 | `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
-| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the world stands four frames more, the renderer drops the TAA history and jitter phase, then 16 fixed steps run before the next command, and visibility appends clusters in a canonical order (sorted on the CPU by sphere and meshlets; one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
+| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the world stands four frames more, the renderer resets TAA, SSAO and active probe GI, then 16 fixed steps run before the next command, and visibility appends clusters in a canonical order (sorted on the CPU by sphere and meshlets; one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
 | `npctier <npc> full\|simplified\|auto` | Override one NPC tier until reset or reload. Hero, training and arena actors stay Full. |
 | `npctier-test <npc> <start waypoint> <end waypoint>` | Verify 20 switches in each direction during movement and turns, unchanged remaining path/destination and every arrival. `npc-tier-transitions` runs the fixture on a fresh NEWWORLD. |
 | `npcspeed <start waypoint>` | Compare Sequence speed with Full and Simplified movement on one authored edge for human/orc/wolf in walk/run/sneak; appended to `npc-tier-transitions`. Removes ambient NPCs for calibration. |
@@ -1903,11 +1912,11 @@ explain the bounds and remaining combat/body work. `npcday` files:
 | File | Contents |
 |---|---|
 | `npc-day.json` | Tier mode, seed, private random streams, period, start time and hero; at the end the sample/event counts, wall time and the NPC tick time per tier |
-| `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag |
+| `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag; appended `fp,fp_x,fp_y,fp_z,on_fp,aivar_19,fp_available,on_routine_wp` |
 | `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
 | `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
 | `npc-day-script.json` | Opt-in `probe`: deterministic script calls by symbol/family, per-state engine Init/Loop/End entries, nested calls, inclusive VM instruction counts, externals and RNG sources. Header records `npc` or `shared` random streams. |
-| `npc-day-activity.jsonl` | Opt-in `trace=ID,SYMBOL,display-name`: phase entry/result, engine queue commands with raw action arguments, RNG bound/result/source, FP and MOB occupancy, observed body-state changes. Numeric IDs are world-array NPC IDs; symbols select all matching instances. |
+| `npc-day-activity.jsonl` | Opt-in `trace=ID,SYMBOL,display-name`: phase entry/result, queue commands, RNG, FP and MOB occupancy, and body changes. `activity_transition` records the wake reasons, stages, place, owner NPC ID and queue head after the step. `physics_noise` identifies the culprit and whether the quiet-sound reaction entered the VM. Numeric IDs are world-array NPC IDs; symbols select all matching instances. |
 | `npc-day-arrivals.csv` | Audit-only exact terminal arrivals, observed movement start, final goal identity, actor/target position, ZS, queue and executor; it adds no records to the strict samples/events files. |
 
 The society stand's core is checked against the same journal: `scripts/society_parity.py` compares its marks
@@ -1920,8 +1929,10 @@ stops, so commands after `npcday` use the shared stream again. Do not combine `n
 in one scenario: the arena isolates its actors and clears all streams on reset. `std::rand` (sound variants, gestures, parry variant) is not reseeded.
 States that start and end within one world tick are not seen by the event poll.
 
-`probe` and `trace=...` install measurement only for that journal interval; both are off by default.
-The original journal fields and event thresholds are unchanged. `trace=` implies `probe`.
+`trace=...` records selected NPCs independently of the Daedalus observer. Its JSONL header carries
+`trace_version: 2`, with RNG sources labeled
+`engine` or `script`. Add `probe` for the VM counters and detailed RNG attribution. Both options
+apply only during the journal interval and are off by default.
 The instruction metric includes helpers and reentrant script work during the engine phase; it is
 not wall time. `engine` counts entries through `invokeState`, while `nested` excludes that entry.
 `records` counts the entries that ran from an activity record (D4.1) instead of the script; such a phase has no
@@ -1960,8 +1971,9 @@ actual engine queue observation on a synthetic program, without game data. The s
 `gothic-placed-items-contract` additionally exercises `invokeState` through the real `Hlp_Random`,
 `GameScript::rand` and measurement probe, and verifies JSONL commands from both regular and overlay
 `Npc::aiPush` queues. The day contract also checks that merged `LookAtNpc` commands are both traced.
-Repeated probe intervals in one VM retain inactive call observer links and their collectors;
-removable VM observers are tracked in [#1550](https://github.com/kaifaty/GothicAI/issues/1550).
+At the end of each interval the probe removes its call observer and releases its collector.
+Call observers must leave the VM's call-observer list unchanged during notification.
+The day contract runs two intervals on one VM and checks that other call observers still run in registration order.
 
 
 `scripts/npc_day_parity.py` matches samples by time and key and leaves the hero out, with his events
@@ -2024,6 +2036,80 @@ python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
   --tolerances scripts/bench/npc-day-parity.tolerances-activity.json \
   --out /absolute/activity.md --json /absolute/activity.json
 ```
+
+Point activities use `npc-day-parity.tolerances-points.json`. The lead accepted E2.1 preparation
+for strict E2.2 acceptance against control 73106 **with the same seed 73106**. All thresholds stay
+unchanged: the candidate must have **zero missed shifts and zero stuck NPCs**, with no NPC-specific exceptions.
+The complete shared-stream days 73106 and 73107 were recalculated with the verified HUMANS center
+offset and active-TA waypoint; all eight combinations of three rounded boundary bits give identical metrics.
+The current result is 31585 samples, 341 arrivals, p95 0 / maximum 5 game minutes, no collisions,
+but three missing fallback-only shifts of PAL_227 on SHIP_DECK_29 (one NPC in the tool's stuck counter).
+This is a cross-seed observation of the original, not an allowance of three or proof of an actual hang
+between samples. Both self-comparisons pass 12/12 (341 arrivals for 73106, 342 for 73107).
+The unchanged zero limits fail on the cross-seed pair:
+pooled and guarding checks pass 10/12; the other four forms pass 12/12. Historical 12/12 on
+`bd6391ddc` does not validate the corrected metric. Replay evidence is in `npc-events-e2/review-f1-f4/`.
+The cancelled prefix is excluded. The profile covers the five measured forms, pooled and individually:
+held FP agreement >=94%, pose time 0.99..1.01, arrival p95 <=5 / maximum <=10 game minutes,
+zero missed segments, stuck NPCs and double occupancy. The FP allowance reflects two seated campfire
+NPCs exchanging points. Use `--activity-states` for the states being changed and inspect their margins.
+[Measurements, causes and headroom](../../reports/engine/2026-11-14-npc-data/e2-tolerance.md).
+
+The derived controls are `/mnt/shared/gothic-ai/npc-events-e2/accepted-calibration/seed-73106/`
+and `seed-73107/`; primary CSVs and their SHA-256 hashes are unchanged. The folder also contains
+the reproduction recipe, three rounded boundary bits, and unknown visibility lookups.
+Guarding has no metric-sensitive unknowns (fallback A/B 5084/5080). Four ARMSCROSSED visibility
+bits per seed remain unknown; the 256-pair proof of identical gated values applies to `bd6391ddc`. Before comparing
+a future candidate across all five forms, run the archived `variants.py REPO CANDIDATE` to retain
+all 16 alternatives of control 73106. Archive-pair invariance does not prove candidate invariance.
+
+```sh
+python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
+  --activity-states ZS_STAND_GUARDING \
+  --tolerances scripts/bench/npc-day-parity.tolerances-points.json \
+  --out /absolute/points.md --json /absolute/points.json
+```
+
+The new sample columns follow every old column, in its original order:
+
+| Column | Meaning |
+|---|---|
+| `fp`, `fp_x`, `fp_y`, `fp_z` | Held free point name and coordinates in cm (`-`, zeros without one); repeated names do not identify a point |
+| `on_fp` | `Npc_IsOnFP(self, held_name)`: current point is free, its name matches, and it is close by `MoveAlgo::isClose(..., MAX_AI_USE_DISTANCE)`; the comparer also checks its activity name |
+| `aivar_19` | Raw script stage; 2 walking, 1 ready to enter, 0 pose for guarding, arms crossed, STAND_WP and PEE |
+| `fp_available` | The script's point lookup for STAND / CAMPFIRE / PEE finds a point (1) or none (0); -1 outside these four forms |
+| `on_routine_wp` | Distance <=500 cm to the active TA row's waypoint, using the existing `Npc_GetDistToWP` engine call; independent of the nearest waypoint and the lagging `self.wp` |
+
+`points.total` and `points.by_state` report held-coordinate agreement (raw and with legal fallback in either run
+excluded), pose sample time B/A, signed first arrival p95/max, missed reference TA segments and
+double occupancy in B. Point samples use the scheduled TA state; the activity table keeps actual active-ZS
+counts. A state present only in TA has an empty active-ZS row (undefined ratios), while its point misses
+still contribute to per-state and total stuck counts. The collision search includes occupants outside the state filter. Campfire
+pose uses body state 11 (`BS_SIT`); the other four forms require standing body state 0 and `aivar_19 == 0`. Physical arrival
+does not require an active ZS: End/Init can leave it empty while the NPC stays on point. Pose accepts
+the reference ZS or this transient empty ZS, but not a known different ZS. Physical arrival at any
+FP, STAND_WP arrival and legal fallback require the row's target waypoint to match A's.
+STAND_WP has no held free point: arrival/pose use `on_routine_wp`, and held-point agreement is not applicable.
+When TA changes the target waypoint, the initial uninterrupted hold of the previous free point
+outside the new approach radius is excluded from arrivals, independently in A and B. A newly acquired
+hold near the preceding target waypoint is also excluded. A suitable
+point already in that radius fulfils the new routine without leaving and reclaiming it.
+
+A legal fallback is a standing NPC near its routine waypoint with no suitable available free point.
+It has a separate A/B row. Raw pose time is reported (waiting for a campfire is not sitting); acceptance
+excludes a legal wait from both pose populations and held-point agreement only if the other run
+is also in the activity pose or legally waiting. An inactive candidate cannot hide behind A's wait.
+Observed legal B waiting intervals are subtracted from a later arrival's delay.
+An entirely waiting segment is allowed only if **every reference on-point sample** has legal fallback
+in B. Waiting once cannot hide losing an otherwise empty point for the rest of the segment.
+If A's entire shift has only legal waiting, B must fulfil it at least once (on-point or legal wait);
+otherwise it counts as a missing segment, with no invented physical arrival time for A.
+Missing point columns fail enabled point checks and never add point misses to legacy stuck counts.
+MOB checks are **not applicable** when the selected reference samples have no objects; Extra MOB
+still reports objects added only in B. An empty state selection still fails numeric checks. The shared
+`max_activity_stuck` gate includes unique NPCs from missed point segments as well as missing MOBs.
+TA-only point samples also make MOB checks inapplicable. Pose time 0/0 is inapplicable, while losing
+an observed reference pose gives ratio 0. Nonempty TA strings must have the four fields of `routineText`.
 
 ## Engine side
 

@@ -1,5 +1,6 @@
 // Included by mesh_gltf_test.cpp.
 
+#include "tree_bough_groups_test.h"
 #include "tree_level_band_test.h"
 
 void treeBoughRasterCases(Tempest::Device& device) {
@@ -15,8 +16,20 @@ void treeBoughRasterCases(Tempest::Device& device) {
     {{ 0.8f,-0.8f,0.4f},{0.f,0.f,1.f},{1.f,0.f},0xffffffffu},
     {{ 0.8f, 0.8f,0.4f},{0.f,0.f,1.f},{1.f,1.f},0xffffffffu},
     {{-0.8f, 0.8f,0.4f},{0.f,0.f,1.f},{0.f,1.f},0xffffffffu},
+    // three more nodes of a packed mesh workgroup: two cards and a triangle that do not overlap
+    {{-0.9f,-0.9f,0.4f},{0.f,0.f,1.f},{0.f,0.f},0xffffffffu},
+    {{-0.1f,-0.9f,0.4f},{0.f,0.f,1.f},{1.f,0.f},0xffffffffu},
+    {{-0.1f, 0.9f,0.4f},{0.f,0.f,1.f},{1.f,1.f},0xffffffffu},
+    {{-0.9f, 0.9f,0.4f},{0.f,0.f,1.f},{0.f,1.f},0xffffffffu},
+    {{ 0.1f,-0.9f,0.4f},{0.f,0.f,1.f},{0.f,0.f},0xffffffffu},
+    {{ 0.9f,-0.9f,0.4f},{0.f,0.f,1.f},{1.f,0.f},0xffffffffu},
+    {{ 0.9f, 0.3f,0.4f},{0.f,0.f,1.f},{1.f,1.f},0xffffffffu},
+    {{ 0.1f, 0.3f,0.4f},{0.f,0.f,1.f},{0.f,1.f},0xffffffffu},
+    {{ 0.1f, 0.4f,0.4f},{0.f,0.f,1.f},{0.f,0.f},0xffffffffu},
+    {{ 0.9f, 0.4f,0.4f},{0.f,0.f,1.f},{1.f,0.f},0xffffffffu},
+    {{ 0.5f,0.95f,0.4f},{0.f,0.f,1.f},{1.f,1.f},0xffffffffu},
     };
-  const uint32_t compact[] = {4,0,1,2,0,2,3};
+  std::vector<uint32_t> compact = {4,0,1,2,0,2,3, (4u<<16)|4u,4,5,6,4,6,7, (8u<<16)|4u,8,9,10,8,10,11, (12u<<16)|3u,12,13,14};
   uint32_t packed[PackedMesh::MaxPrim] = {0x020100u,0x030200u};
   packed[PackedMesh::MaxPrim-1] = 0x04020000u; // two triangles and four vertices
   const uint32_t tasks[][4] = {
@@ -24,6 +37,25 @@ void treeBoughRasterCases(Tempest::Device& device) {
     {0,0,1u << 16,(indicesPerCard << 24) | 0x800000u},
     {0,0,(1u | TreeBough::DescendantSide) << 16,(indicesPerCard << 24) | 0x800000u},
     };
+  // The mesh path keeps the vertex count of a node above its first index. After the three tasks above come a steady
+  // card, the parent side of a band, the child side of another one and the empty node that pads a workgroup.
+  const auto meshTask = [](uint32_t first, uint32_t vertices, uint32_t band, uint32_t indices, uint32_t weight) {
+    return std::array<uint32_t,4>{0,first | (vertices << TreeBough::FirstIndexBits),band << 16,(indices << 24) | weight};
+    };
+  std::vector<std::array<uint32_t,4>> meshTasks = {
+    meshTask(0,4,0,indicesPerCard,0), meshTask(0,4,1,indicesPerCard,0x800000u),
+    meshTask(0,4,1u | TreeBough::DescendantSide,indicesPerCard,0x800000u),
+    meshTask(7,4,0,indicesPerCard,0), meshTask(14,4,2,indicesPerCard,0xc00000u),
+    meshTask(21,3,4u | TreeBough::DescendantSide,3,0x400000u), {},
+    };
+  // Eight cards and two nodes of 32 vertices follow: workgroups above 32 vertices. A card and a wide node are in a band.
+  constexpr uint32_t wideCards = 7, wideNode = wideCards+8;
+  std::vector<Resources::Vertex> vertices(std::begin(quad), std::end(quad));
+  for(const auto [first,count,indices] : treeBoughWideNodes(vertices,compact)) {
+    const bool wide = meshTasks.size()==wideNode, banded = meshTasks.size()==wideCards+3;
+    meshTasks.push_back(meshTask(first,count,wide ? 4u | TreeBough::DescendantSide : banded ? 2u : 0u,indices,
+                                 wide ? 0x400000u : banded ? 0xc00000u : 0u));
+    }
   const float instance[16] = {1.f,0.f,0.f, 0.f,1.f,0.f, 0.f,0.f,1.f, 0.f,0.f,0.f};
   uint32_t bucket[36] = {};
   bucket[12] = bucket[15] = std::bit_cast<uint32_t>(1.f); // alphaWeight and uvScale
@@ -40,14 +72,15 @@ void treeBoughRasterCases(Tempest::Device& device) {
 
   const auto scene = device.ssbo(&globals, sizeof(globals));
   const auto payload = device.ssbo(tasks, sizeof(tasks));
+  const auto meshPayload = device.ssbo(meshTasks);
   const auto instances = device.ssbo(instance, sizeof(instance));
   float jointInstance[16];
   std::ranges::copy(instance, jointInstance);
   jointInstance[13] = std::bit_cast<float>(TreeBough::impostorJointFade(0.8f)); // static draw's animation slot
   const auto jointInstances = device.ssbo(jointInstance, sizeof(jointInstance));
   const auto buckets = device.ssbo(bucket, sizeof(bucket));
-  const auto vbo = device.ssbo(quad, sizeof(quad));
-  const auto compactIbo = device.ssbo(compact, sizeof(compact));
+  const auto vbo = device.ssbo(vertices);
+  const auto compactIbo = device.ssbo(compact);
   const auto packedIbo = device.ssbo(packed, sizeof(packed));
   Pixmap albedo(1,1,TextureFormat::RGBA8);
   const uint8_t texel[] = {255,255,255,191};
@@ -71,14 +104,15 @@ void treeBoughRasterCases(Tempest::Device& device) {
     const auto bough = pipeline("main_bough_g_slot.vert.sprv", "main_bough_g_slot.mesh.sprv", "main_bough_g_at_slot.frag.sprv");
     const auto legacy = pipeline("main_obj_g_slot.vert.sprv", "main_obj_g_slot.mesh.sprv", "main_obj_g_at_slot.frag.sprv");
     const auto jointGeometry = pipeline("main_joint_g_slot.vert.sprv", "main_joint_g_slot.mesh.sprv", "main_joint_g_at_slot.frag.sprv");
-    const auto render = [&](const RenderPipeline& pso, const StorageBuffer& ibo, uint32_t index,
-                            const StorageBuffer& instanceData) {
+    // Draws `count` workgroups of `size` nodes each, or one node of the vertex path.
+    const auto renderGroups = [&](const RenderPipeline& pso, const StorageBuffer& ibo, uint32_t index,
+                                  const StorageBuffer& instanceData, uint32_t size, uint32_t count) {
       auto command = device.commandBuffer();
       {
         auto enc = command.startEncoding(device);
         enc.setFramebuffer({{diffuse,Vec4(),Preserve},{normal,Vec4(),Preserve},{motion,Vec4(),Preserve}});
         enc.setBinding(0,scene);
-        enc.setBinding(1,payload);
+        enc.setBinding(1,mesh && &pso==&bough ? meshPayload : payload);
         enc.setBinding(2,instanceData);
         enc.setBinding(3,buckets);
         enc.setBinding(4,ibo);
@@ -86,16 +120,22 @@ void treeBoughRasterCases(Tempest::Device& device) {
         enc.setBinding(6,texture);
         enc.setBinding(7,Sampler::nearest(ClampMode::ClampToEdge));
         enc.setBinding(21,instances);
-        const uint32_t push[] = {index,1};
-        enc.setPushData(push);
         enc.setPipeline(pso);
-        if(mesh)
-          enc.dispatchMesh(1);
-        else
-          enc.draw(nullptr,0,indicesPerCard);
+        for(uint32_t i=0; i<count; ++i) {
+          const uint32_t push[] = {index+i*size,size};
+          enc.setPushData(push);
+          if(mesh)
+            enc.dispatchMesh(1);
+          else
+            enc.draw(nullptr,0,indicesPerCard);
+          }
         }
       device.submit(command).wait();
       return device.readPixels(diffuse);
+      };
+    const auto render = [&](const RenderPipeline& pso, const StorageBuffer& ibo, uint32_t index,
+                            const StorageBuffer& instanceData) {
+      return renderGroups(pso,ibo,index,instanceData,1,1);
       };
     const auto full = render(bough,compactIbo,0,instances);
     const auto parent = render(bough,compactIbo,1,instances);
@@ -120,6 +160,47 @@ void treeBoughRasterCases(Tempest::Device& device) {
       }
     require(draws[0]>0 && draws[1]>0 && draws[0]+draws[1]<side*side,"bough raster fixture missed a side or the background");
     require(jointPixels>0 && jointPixels<draws[0]+draws[1],"impostor mask has no fractional 3D coverage");
+    if(mesh) {
+      // One workgroup of four nodes covers what the same nodes cover one by one, with their own bands.
+      const auto single = renderGroups(bough,compactIbo,3,instances,1,4);
+      const auto packedGroup = renderGroups(bough,compactIbo,3,instances,4,1);
+      size_t groupPixels = 0;
+      for(size_t i=0; i<side*side; ++i)
+        groupPixels += size_t(covered(packedGroup,i));
+      require(std::memcmp(single.data(),packedGroup.data(),single.dataSize())==0,
+              "a packed bough workgroup differs from its nodes drawn one by one");
+      for(uint32_t node=3; node<6; ++node) {
+        const auto alone = render(bough,compactIbo,node,instances);
+        size_t pixels = 0;
+        for(size_t i=0; i<side*side; ++i)
+          pixels += size_t(covered(alone,i));
+        require(pixels>0 && pixels<groupPixels, "bough packing fixture missed a node");
+        }
+      std::cout << "tree bough mesh packing: " << groupPixels << " pixels of four nodes in one workgroup\n";
+      // The lanes above 32: eight cards with a node of 32 vertices, then the two nodes of 32 of one command.
+      for(const auto [first,size] : {std::pair(wideCards,9u), std::pair(wideNode,2u)}) {
+        uint32_t groupVertices = 0, groupTriangles = 0;
+        for(uint32_t i=first; i<first+size; ++i) {
+          groupVertices += meshTasks[i][1] >> TreeBough::FirstIndexBits;
+          groupTriangles += (meshTasks[i][3] >> 24)/3u;
+          }
+        require(groupVertices==uint32_t(PackedMesh::MaxVert) && groupTriangles==uint32_t(PackedMesh::MaxPrim)/2u,
+                "bough packing fixture does not fill the vertices of a workgroup");
+        const auto apart = renderGroups(bough,compactIbo,first,instances,1,size);
+        const auto together = renderGroups(bough,compactIbo,first,instances,size,1);
+        require(std::memcmp(apart.data(),together.data(),apart.dataSize())==0,
+                "a bough workgroup above 32 vertices differs from its nodes drawn one by one");
+        const auto last = render(bough,compactIbo,first+size-1u,instances);
+        size_t pixels = 0, upper = 0;
+        for(size_t i=0; i<side*side; ++i) {
+          pixels += size_t(covered(together,i));
+          upper += size_t(covered(last,i));
+          }
+        require(upper>0 && upper<pixels, "bough packing fixture missed the node in the lanes above 32");
+        std::cout << "tree bough mesh packing: " << pixels << " pixels of " << size << " nodes and "
+                  << groupVertices << " vertices in one workgroup\n";
+        }
+      }
     treeLevelBandRaster(device, render, covered, jointGeometry, packedIbo, instance, jointInstance, baseline, jointWood, mesh);
     std::cout << "tree bough " << (mesh ? "mesh" : "vertex") << " coverage: " << draws[0] << " parent and " << draws[1]
               << " child pixels, " << jointPixels << " 3D pixels in the impostor joint\n";
@@ -193,7 +274,6 @@ void treeBoughCutCases() {
   std::vector<std::array<uint32_t, 4>> cuts(stride * views.size());
   const auto nodes = device.ssbo(asset.nodes);
   const auto projections = device.ssbo(views);
-  const auto roots = device.ssbo(asset.roots);
   const auto joints = device.ssbo(jointWeights);
   auto output = device.ssbo(Uninitialized, cuts.size() * sizeof(cuts.front()));
   auto command = device.commandBuffer();
@@ -202,7 +282,6 @@ void treeBoughCutCases() {
     encoder.setPipeline(pipeline);
     encoder.setBinding(0, nodes);
     encoder.setBinding(1, projections);
-    encoder.setBinding(2, roots);
     encoder.setBinding(3, output);
     encoder.setBinding(4, joints);
     encoder.dispatchThreads(1);
@@ -310,5 +389,6 @@ void treeBoughCutCases() {
   std::cout << "tree bough impostor joint: " << activeJointSamples << " fractional CPU/GPU samples\n";
   treeLevelBandPicks();
   treeLevelBandMasks(device);
+  treeBoughGroupCases(device);
   treeBoughRasterCases(device);
   }
