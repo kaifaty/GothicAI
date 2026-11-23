@@ -131,7 +131,9 @@ bool GameScript::invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::P
                                              phase->record.mob->skipApproachWhenBusy)))
     return false;
   probe.fromRecord();
-  probe.result = ActivityDefinitionRuntime::run(vm,world(),npc,*phase);
+  probe.result = ActivityDefinitionRuntime::run(vm,world(),npc,*phase,[this,&npc](int32_t item) {
+    createinvitem(npc.handlePtr(),item);
+    });
   return true;
   }
 

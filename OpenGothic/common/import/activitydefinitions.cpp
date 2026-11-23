@@ -49,13 +49,13 @@ struct Situation {
   bool        available = true;
   int32_t     body = 0;
   bool        onPoint = false;
-  int32_t     stage = 0, seconds = 0, roll = 0;
+  int32_t     stage = 0, seconds = 0, roll = 0, itemCount = 0;
   int32_t     portalRoll = 0, guild = 0, ravenDead = 0, world = 0;
   std::string text() const {
     return "wp="+Recorder::text(waypoint)+" look_at="+std::to_string(lookAt)+" nearest="+Recorder::text(nearest)+
            " distance="+std::to_string(distance)+" available="+std::to_string(available)+" body="+std::to_string(body)+
            " on_point="+std::to_string(onPoint)+" stage="+std::to_string(stage)+" seconds="+std::to_string(seconds)+" roll="+std::to_string(roll)+
-           " portal_roll="+std::to_string(portalRoll)+" guild="+std::to_string(guild)+" raven_dead="+std::to_string(ravenDead)+" world="+std::to_string(world);
+           " item_count="+std::to_string(itemCount)+" portal_roll="+std::to_string(portalRoll)+" guild="+std::to_string(guild)+" raven_dead="+std::to_string(ravenDead)+" world="+std::to_string(world);
     }
   };
 
@@ -76,6 +76,11 @@ class StubHost final : public Host {
     bool        isMobAvailable(std::string_view) override { return s.available; }
     int32_t     bodyState() override { return s.body; }
     void        useMob(std::string_view, int32_t) override {}
+    int32_t     itemCount(int32_t) override { return s.itemCount; }
+    void        createItem(int32_t) override {}
+    void        equipItem(int32_t) override {}
+    void        useItem(int32_t) override {}
+    void        removeItem(int32_t) override {}
   private:
     const Situation& s;
     int              token = 0;
@@ -253,7 +258,8 @@ class ScriptRun {
     void external(DaedalusSymbol& function) {
       static const std::set<std::string> known={
         "NPC_GETLOOKATTARGET","HLP_ISVALIDNPC","AI_STOPLOOKAT","AI_REMOVEWEAPON","AI_SETWALKMODE","NPC_GETNEARESTWP",
-        "HLP_STRCMP","NPC_GETDISTTOWP","AI_GOTOWP","WLD_ISMOBAVAILABLE","NPC_GETBODYSTATE","AI_USEMOB"};
+        "HLP_STRCMP","NPC_GETDISTTOWP","AI_GOTOWP","WLD_ISMOBAVAILABLE","NPC_GETBODYSTATE","AI_USEMOB",
+        "NPC_HASITEMS","CREATEINVITEM","EQUIPITEM","AI_USEITEM","NPC_REMOVEINVITEMS"};
       const auto& name=function.name();
       static const std::set<std::string> pointCalls={"NPC_ISONFP","WLD_ISFPAVAILABLE","AI_GOTOFP","AI_STANDUP",
         "AI_ALIGNTOFP","AI_ALIGNTOWP","AI_PLAYANI"};
@@ -291,6 +297,7 @@ class ScriptRun {
       else if(name=="NPC_GETDISTTOWP") { vm.push_int(s.distance); result=std::to_string(s.distance); }
       else if(name=="WLD_ISMOBAVAILABLE") { vm.push_int(s.available); result=std::to_string(s.available); }
       else if(name=="NPC_GETBODYSTATE") { vm.push_int(s.body); result=std::to_string(s.body); }
+      else if(name=="NPC_HASITEMS") { vm.push_int(s.itemCount); result=std::to_string(s.itemCount); }
       else if(name=="NPC_ISONFP") { vm.push_int(s.onPoint); result=std::to_string(s.onPoint); }
       else if(name=="WLD_ISFPAVAILABLE") { vm.push_int(s.available); result=std::to_string(s.available); }
       else if(name=="NPC_GETSTATETIME") { vm.push_int(s.seconds); result=std::to_string(s.seconds); }
@@ -746,6 +753,31 @@ class Recognizer {
       const auto* leave=firstEvent(end,"AI_USEMOB");
       if(leave==nullptr || leave->args.size()!=2) throw Stop("no_mob_leave",state);
       activity.leaveState=std::get<int32_t>(leave->args.at(1));
+      if(const auto* item=firstEvent(init,"CREATEINVITEM")) {
+        using End=MobActivity::Item::End;
+        auto& effects=activity.item.emplace();
+        effects.required=std::get<int32_t>(item->args.at(0));
+        effects.equip=firstEvent(init,"EQUIPITEM")!=nullptr;
+        if(const auto* useItem=firstEvent(end,"AI_USEITEM")) {
+          effects.endAction=End::Use;
+          effects.endItem=std::get<int32_t>(useItem->args.at(0));
+          }
+        Situation hasItem=probe;
+        hasItem.itemCount=1;
+        const auto endWithItem=script.run(*phases.end,hasItem);
+        if(const auto* remove=firstEvent(endWithItem,"NPC_REMOVEINVITEMS")) {
+          effects.endAction=End::Remove;
+          effects.endItem=std::get<int32_t>(remove->args.at(0));
+          }
+        const auto checkItem=[&script](int32_t id) {
+          const auto* symbol=id>0 ? script.script().find_symbol_by_index(uint32_t(id)) : nullptr;
+          if(!symbol || symbol->type()!=Type::INSTANCE)
+            throw Stop("unsupported_item",std::to_string(id));
+          };
+        checkItem(effects.required);
+        if(effects.endAction!=End::None)
+          checkItem(effects.endItem);
+        }
       activity.skipApproachWhenBusy=mobInitChecksBody(state);
       if(timedMobState(state))
         activity.timer=extractMobTimer(script,*phases.loop,activity.busyBodyState);
@@ -826,6 +858,13 @@ class Recognizer {
               Situation s;
               s.waypoint=waypoint; s.lookAt=lookAt; s.nearest=nearest; s.distance=distance;
               situations.emplace_back(Phase::Init,s);
+              if(activity.item) {
+                s.itemCount=1;
+                situations.emplace_back(Phase::Init,s);
+                s.itemCount=2;
+                situations.emplace_back(Phase::Init,s);
+                s.itemCount=0;
+                }
               if(activity.skipApproachWhenBusy) {
                 s.body=busy;
                 situations.emplace_back(Phase::Init,s);
@@ -848,6 +887,13 @@ class Recognizer {
             }
           }
       situations.emplace_back(Phase::End,Situation{});
+      if(activity.item) {
+        Situation s;
+        s.itemCount=1;
+        situations.emplace_back(Phase::End,s);
+        s.itemCount=2;
+        situations.emplace_back(Phase::End,s);
+        }
       for(const auto& [phase,situation]:situations) {
         const auto* function=phase==Phase::Init ? phases.init : phase==Phase::Loop ? phases.loop : phases.end;
         const auto vm=script.run(*function,situation);
@@ -987,6 +1033,17 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
       }
     put(timer,"gestures",std::move(gestures),allocator);
     put(parameters,"timer",std::move(timer),allocator);
+    }
+  if(a.item) {
+    using End=MobActivity::Item::End;
+    const auto action=a.item->endAction;
+    Json item(rapidjson::kObjectType);
+    put(item,"required",Json(a.item->required),allocator);
+    put(item,"equip",Json(a.item->equip),allocator);
+    put(item,"end_action",text(action==End::Use ? "use" : action==End::Remove ? "remove" : "none",allocator),allocator);
+    put(item,"end_item",Json(a.item->endItem),allocator);
+    put(parameters,"item",std::move(item),allocator);
+    }
     }
   put(json,"template",text("mob",allocator),allocator);
   put(json,"parameters",std::move(parameters),allocator);

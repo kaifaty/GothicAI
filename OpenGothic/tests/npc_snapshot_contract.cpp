@@ -1484,6 +1484,24 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
           repair.timer==ActivityDefinitions::MobActivity::Timer{5,100,".ZUFALL",{{"T_REPAIR_RANDOM_1",49}}},
           "repair loops draw one saved roll, with a strict 50/100 gesture cutoff");
     }
+  if(addon) {
+    using End=ActivityDefinitions::MobActivity::Item::End;
+    const auto script=daedalus::DaedalusScript::from_program(program.data);
+    for(const auto& [state,scheme,required,equip,end,endItem] : {
+        std::tuple{"ZS_COOK_CAULDRON","CAULDRON","ITMI_SCOOP",false,End::None,""},
+        std::tuple{"ZS_COOK_PAN","PAN","ITFOMUTTONRAW",false,End::Use,"ITFOMUTTON"},
+        std::tuple{"ZS_COOK_STOVE","STOVE","ITFOMUTTONRAW",false,End::Remove,"ITFOMUTTON"},
+        std::tuple{"ZS_PICK_ORE","ORE","ITMW_2H_AXE_L_01",true,End::None,""},
+        std::tuple{"ZS_POTION_ALCHEMY","LAB","ITMI_FLASK",false,End::None,""}}) {
+      const auto& mob=library.activities.at(state);
+      const auto& item=mob.item.value();
+      const auto* startSymbol=script.find_symbol_by_name(required);
+      const auto* endSymbol=script.find_symbol_by_name(endItem);
+      check(startSymbol && mob.scheme==scheme && item.required==int32_t(startSymbol->index()) &&
+            item.equip==equip && item.endAction==end && item.endItem==(endSymbol ? int32_t(endSymbol->index()) : 0),
+            std::string(state)+" retains its entrance and exit inventory effects");
+      }
+    }
   if(addon) check(library.uncaptured.contains("ZS_WASH_FP"),"the similar WASH free point stays outside the PEE form");
   check(guard.point=="STAND" && guard.enterAnimation=="T_STAND_2_HGUARD" && guard.leaveAnimation=="T_HGUARD_2_STAND" &&
         guard.timerSeconds==5 && guard.rollRange==10 && guard.gestures[0].animation=="T_HGUARD_LOOKAROUND" &&

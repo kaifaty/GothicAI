@@ -12,7 +12,7 @@ namespace {
 using Type = daedalus::DaedalusDataType;
 
 // Accepted untimed states.
-constexpr std::array<std::string_view,8> acceptedStates = {
+constexpr std::array<std::string_view,13> acceptedStates = {
   "ZS_SMITH_ANVIL",
   "ZS_SMITH_COOL",
   "ZS_SMITH_FIRE",
@@ -21,6 +21,11 @@ constexpr std::array<std::string_view,8> acceptedStates = {
   "ZS_STOMP_HERB",
   "ZS_SMOKE_WATERPIPE",
   "ZS_ROAST_SCAVENGER",
+  "ZS_COOK_CAULDRON",
+  "ZS_COOK_PAN",
+  "ZS_COOK_STOVE",
+  "ZS_PICK_ORE",
+  "ZS_POTION_ALCHEMY",
   };
 
 const daedalus::DaedalusSymbol* function(const daedalus::DaedalusScript& script, const std::string& name, bool result) {
@@ -114,10 +119,11 @@ const ActivityDefinitionRuntime::Phase* ActivityDefinitionRuntime::find(const De
   return found==definitions.phases.end() ? nullptr : &found->second;
   }
 
-int ActivityDefinitionRuntime::run(daedalus::DaedalusVm& vm, World& world, Npc& npc, const Phase& entry) {
+int ActivityDefinitionRuntime::run(daedalus::DaedalusVm& vm, World& world, Npc& npc, const Phase& entry,
+                                   const std::function<void(int32_t)>& createItem) {
   NpcActivityHost host(world,npc,[&vm,&entry](std::string_view) {
     vm.call_function<void>(vm.find_symbol_by_index(entry.helper));
-    });
+    },createItem);
   if(const auto* point=entry.record.point) {
     using Form = ActivityDefinitions::PointActivity::Form;
     if(entry.phase==ActivityDefinitions::Phase::End) {

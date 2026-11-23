@@ -47,5 +47,6 @@ inline std::function<void(const Npc&, std::string_view)> observer;
 const Phase* find(const Definitions& definitions, uint32_t function);
 // Runs a record phase of `npc` and returns the phase result. SELF, OTHER and VICTIM are set by
 // the caller, as for the VM.
-int run(daedalus::DaedalusVm& vm, World& world, Npc& npc, const Phase& phase);
+int run(daedalus::DaedalusVm& vm, World& world, Npc& npc, const Phase& phase,
+        const std::function<void(int32_t)>& createItem);
 }

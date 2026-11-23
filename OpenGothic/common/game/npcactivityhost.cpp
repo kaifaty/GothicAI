@@ -1,6 +1,7 @@
 #include "npcactivityhost.h"
 
 #include "world/objects/npc.h"
+#include "world/objects/item.h"
 #include "world/world.h"
 
 #include <cmath>
@@ -49,8 +50,14 @@ void NpcEngineCalls::gotoWaypoint(World& world, Npc& npc, std::string_view name)
     npc.aiPush(AiQueue::aiGoToPoint(*to));
   }
 
-NpcActivityHost::NpcActivityHost(World& world, Npc& npc, Helper helper)
-  :world(world), npc(npc), helper(std::move(helper)) {
+void NpcEngineCalls::equipItem(Npc& npc, uint32_t item) {
+  if(npc.itemCount(item)==0)
+    npc.addItem(item,1);
+  npc.useItem(item,Item::NSLOT,true);
+  }
+
+NpcActivityHost::NpcActivityHost(World& world, Npc& npc, Helper helper, ItemCreator itemCreator)
+  :world(world), npc(npc), helper(std::move(helper)), itemCreator(std::move(itemCreator)) {
   }
 
 void NpcActivityHost::deferred(std::string_view name) {
@@ -107,4 +114,24 @@ int32_t NpcActivityHost::bodyState() {
 
 void NpcActivityHost::useMob(std::string_view scheme, int32_t state) {
   npc.aiPush(AiQueue::aiUseMob(scheme,state));
+  }
+
+int32_t NpcActivityHost::itemCount(int32_t item) {
+  return int32_t(npc.itemCount(uint32_t(item)));
+  }
+
+void NpcActivityHost::createItem(int32_t item) {
+  itemCreator(item);
+  }
+
+void NpcActivityHost::equipItem(int32_t item) {
+  NpcEngineCalls::equipItem(npc,uint32_t(item));
+  }
+
+void NpcActivityHost::useItem(int32_t item) {
+  npc.aiPush(AiQueue::aiUseItem(item));
+  }
+
+void NpcActivityHost::removeItem(int32_t item) {
+  npc.delItem(uint32_t(item),1);
   }

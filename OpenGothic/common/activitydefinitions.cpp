@@ -77,6 +77,22 @@ ActivityDefinitions::MobActivity mob(const Json& json,int version) {
       }
     ++fields;
     }
+  if(version>=5 && json.HasMember("item")) {
+    using End=MobActivity::Item::End;
+    const auto& parameters=at(json,"item");
+    DefinitionJson::object(parameters,{"required","equip","end_action","end_item"});
+    auto& item=a.item.emplace();
+    item.required=integer(at(parameters,"required"));
+    const auto& equip=at(parameters,"equip");
+    require(equip.IsBool(),"expected equip flag");
+    item.equip=equip.GetBool();
+    const auto end=string(at(parameters,"end_action"));
+    require(end=="none" || end=="use" || end=="remove","unsupported item end action");
+    item.endAction=end=="use" ? End::Use : end=="remove" ? End::Remove : End::None;
+    item.endItem=integer(at(parameters,"end_item"));
+    require(item.required>0 && (item.endAction==End::None ? item.endItem==0 : item.endItem>0),"invalid activity item");
+    ++fields;
+    }
   require(json.MemberCount()==fields,"unexpected parameter field");
   return a;
   }
