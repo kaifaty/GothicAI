@@ -2127,8 +2127,9 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
       require(point!=nullptr,(std::string(site.state)+": fixture waypoint is missing").c_str());
       auto* actor=activityNpc(world,site.actor);
       if(actor==nullptr)
-        actor=world.addNpc(site.actor,site.point);
+        actor=world.addNpc(script.findSymbolIndex(site.actor),point->position());
       require(actor!=nullptr && !actor->isDead(),(std::string(site.state)+": fixture actor is missing or dead").c_str());
+      require(activityNpc(world,site.actor)==actor,(std::string(site.state)+": fixture actor must be in the live world").c_str());
       const auto state=script.findSymbolIndex(site.state);
       require(state!=0,(std::string(site.state)+": routine script symbol is missing").c_str());
       test.stop(*actor);
@@ -2155,9 +2156,10 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
     std::memset(preview.data(),0,4);
     gothic.gameSession()->save(out,"human routine entries",preview);
     for(size_t i=0;i<sites.size();++i) {
-      const auto& actor=*activityNpc(world,sites[i].actor);
-      result[i].position=actor.position();
-      result[i].pose=actor.bodyStateMasked();
+      const auto* actor=activityNpc(world,sites[i].actor);
+      require(actor!=nullptr,(std::string(sites[i].state)+": fixture actor must survive until the save").c_str());
+      result[i].position=actor->position();
+      result[i].pose=actor->bodyStateMasked();
     }
   }
   gothic.clearGame().reset();
