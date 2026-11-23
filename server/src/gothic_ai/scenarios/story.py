@@ -358,19 +358,20 @@ async def graph_programs(
     deeper = [c["text"] for c in await link.dialog_choices(npc, "DIR_CHOICE_TEST.2")]
     check("choice_offers_more", deeper == ["Опыт"], str(deeper))
 
-    # the same in the dialog window, as the player has it: the dialog, after its line its choices, one that
-    # offers another, then the dialogs again
-    async def menu(ok: Callable[[list[str]], bool], timeout: float = 30) -> list[str]:
+    # A streamed line can hold the window for over 45 wall seconds at one frame per second.
+    # Opening, choosing and closing share a single budget within the 240-second scenario.
+    await link.debug("teleport", near=npc, distance=150)
+    window_deadline = time.monotonic() + 90
+
+    async def menu(ok: Callable[[list[str]], bool]) -> list[str]:
         seen: list[str] = []
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        while time.monotonic() < window_deadline:
             seen = await link.dialog_menu()
             if ok(seen):
                 break
             await asyncio.sleep(0.3)
         return seen
 
-    await link.debug("teleport", near=npc, distance=150)
     await link.start_talk(npc)
     window: list[list[str]] = [await menu(lambda m: ask["description"] in m)]
     exp_before = (await hero())[1]
@@ -378,17 +379,24 @@ async def graph_programs(
         if pick not in window[-1]:
             break
         await link.pick_in_menu(pick)
-        # after the last choice the window offers the dialogs again
         window.append(await menu(lambda m, then=then: m == then if then else ask["description"] in m))
     gained = (await hero())[1] - exp_before
+    at_topics = ask["description"] in window[-1]
+    closed = False
+    if at_topics:
+        await link.pick_in_menu(window[-1][-1])  # the last topic ends the talk
+        closed = await _until_async(
+            link.story_state,
+            lambda state: state.get("dialog") is False and state.get("cutscene") is False,
+            max(0, window_deadline - time.monotonic()),
+        )
     check(
         "window",
-        window[1:3] == [["Золото", "Дальше"], ["Опыт"]] and gained == 3 and ask["description"] in window[-1],
-        f"{' -> '.join(map(str, window))}; exp +{gained}",
+        window[1:3] == [["Золото", "Дальше"], ["Опыт"]] and gained == 3 and closed,
+        f"{' -> '.join(map(str, window))}; exp +{gained}; closed={closed}",
     )
-    if window[-1]:
-        await link.pick_in_menu(window[-1][-1])  # the last one ends the talk
-        await menu(lambda m: not m, 15)
+    if not closed:
+        return _logged(results)
 
     # A relationship written by a director program is read by the original NPC query before and after loading.
     attitude = ["call", "NPC_GETATTITUDE", ["inst", "SELF"], ["inst", "OTHER"]]
