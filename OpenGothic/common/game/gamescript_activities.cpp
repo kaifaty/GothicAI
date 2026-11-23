@@ -44,6 +44,9 @@ void GameScript::loadNativeRoutines() {
     {"ZS_STAND_RANGERMEETING",&GameScript::runSocialRoutine},
     {"ZS_OBSERVEPLAYER",      &GameScript::runObservePlayer},
     {"ZS_CLEARROOM",          &GameScript::runClearRoom},
+    {"ZS_MAGICFLEE",          &GameScript::runFearOrSleepSpell},
+    {"ZS_MAGICSLEEP",         &GameScript::runFearOrSleepSpell},
+    {"ZS_PAL_ZOMBIE",         &GameScript::runMonsterRoutine},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
     {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_REST",        &GameScript::runMonsterRoutine},
@@ -151,6 +154,26 @@ bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& s
   const auto& phase = it->second;
   probe.fromRecord();
   ActivityEvents::countWakes(phase.state,phase.enters ? ActivityEvents::Entered : 0,true);
+  return true;
+  }
+
+bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol,
+                                              NpcActivityProbe::Phase& phase) {
+  const std::string_view name = symbol.name();
+  if((name!="B_STOPMAGICFLEE" && name!="B_STOPMAGICSLEEP" && name!="B_ASSESSMAGICSLEEPTALK" &&
+      name!="B_PAL_ZOMBIE_RISE") || !nativeRoomReactionsEnabled())
+    return false;
+  phase.fromRecord();
+  if(name=="B_STOPMAGICFLEE")
+    stopMagicFear(npc);
+  else if(name=="B_STOPMAGICSLEEP")
+    stopMagicSleep(npc);
+  else if(name=="B_ASSESSMAGICSLEEPTALK") {
+    sayMagicReaction(npc,"$YOUDISTURBEDMYSLUMBER",false);
+    ai_startstate(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),int(findFunction("ZS_OBSERVEPLAYER").ptr),1,"");
+    }
+  else
+    raisePaladinZombie(npc);
   return true;
   }
 

@@ -20,6 +20,28 @@ bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   auto& position = npc.handle().aivar[routinePosition];
 
+  if(name=="ZS_PAL_ZOMBIE") {
+    npc.handle().senses = int32_t(SensesBit::SENSE_SMELL);
+    npc.handle().senses_range = 2000;
+    npc.setPerceptionTime(1000);
+    npc.setPerceptionEnable(PERC_ASSESSPLAYER,findFunction("B_PAL_ZOMBIE_RISE").ptr);
+    position = 1;
+    result = 0;
+    return true;
+    }
+  if(name=="ZS_PAL_ZOMBIE_LOOP") {
+    if(position==1) {
+      npc.aiPush(AiQueue::aiPlayAnim("T_DOWN"));
+      position = 0;
+      }
+    result = LOOP_CONTINUE;
+    return true;
+    }
+  if(name=="ZS_PAL_ZOMBIE_END") {
+    result = 0;
+    return true;
+    }
+
   if(name=="ZS_MM_RTN_SLEEP") {
     auto enable = [&](PercType perception, std::string_view callback) {
       npc.setPerceptionEnable(perception,findFunction(callback).ptr);
@@ -321,4 +343,17 @@ void GameScript::magicHurtNpc(const std::shared_ptr<daedalus::INpc>& attacker,
     if(credited)
       credited->aivar[16]=1;
     }
+  }
+
+void GameScript::raisePaladinZombie(Npc& npc) {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+  if(npc_getdisttonpc(self,hero)>1400)
+    return;
+  npc.aiPush(AiQueue::aiPlayAnim("T_RISE"));
+  ai_startstate(self,int(findFunction("ZS_MM_ATTACK").ptr),0,"");
+  auto& body = npc.handle();
+  body.bodystate_interruptable_override = 0;
+  body.start_aistate = int32_t(findFunction(monsterScheduler).ptr);
+  body.aivar[32] = -1; // AIV_MM_RESTSTART = ONLYROUTINE
   }

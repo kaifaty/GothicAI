@@ -246,6 +246,12 @@ class GameScript final : public GameRules {
     bool invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe);
     bool invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);
     bool runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runFearOrSleepSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool invokeNativeStatusPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
+    void stopMagicFear(Npc& npc);
+    void stopMagicSleep(Npc& npc);
+    void sayMagicReaction(Npc& npc, std::string_view line, bool overlay);
+    void raisePaladinZombie(Npc& npc);
     bool runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
