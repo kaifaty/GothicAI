@@ -74,3 +74,58 @@ bool ItemDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::shar
   vm.init_instance(item,symbol);
   return false;
   }
+
+void ItemDefinitionRuntime::registerStockRestoreEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
+  // Each callback changes one of SELF's current attributes and returns.
+  struct StockRestore {
+    std::string_view callback;
+    Attribute attribute;
+    std::string_view amount;
+    };
+  static constexpr StockRestore stock[] = {
+    {"USE_SHELLFLESH",       ATR_HITPOINTS,  "HP_SHELLFLESH"},
+    {"USERUM",               ATR_MANA,       "MANA_RUM"},
+    {"USEGROG",              ATR_HITPOINTS,  "HP_GROG"},
+    {"USE_CHEESE",           ATR_HITPOINTS,  "HP_CHEESE"},
+    {"USE_BACON",            ATR_HITPOINTS,  "HP_BACON"},
+    {"USE_BREAD",            ATR_HITPOINTS,  "HP_BREAD"},
+    {"USE_FISH",             ATR_HITPOINTS,  "HP_FISH"},
+    {"USE_RAWMEAT",          ATR_HITPOINTS,  "HP_RAWMEAT"},
+    {"USE_MEAT",             ATR_HITPOINTS,  "HP_MEAT"},
+    {"USE_STEW",             ATR_HITPOINTS,  "HP_STEW"},
+    {"USE_FISHSOUP",         ATR_HITPOINTS,  "HP_FISHSOUP"},
+    {"USE_SAUSAGE",          ATR_HITPOINTS,  "HP_SAUSAGE"},
+    {"USE_HONEY",            ATR_HITPOINTS,  "HP_HONEY"},
+    {"USE_WATER",            ATR_HITPOINTS,  "HP_WATER"},
+    {"USE_BEET",             ATR_HITPOINTS,  "HP_BEET"},
+    {"USE_MANA_HERB_01",     ATR_MANA,       "MANA_MANA_HERB_01"},
+    {"USE_MANA_HERB_02",     ATR_MANA,       "MANA_MANA_HERB_02"},
+    {"USE_MANA_HERB_03",     ATR_MANA,       "MANA_MANA_HERB_03"},
+    {"USE_HEALTH_HERB_01",   ATR_HITPOINTS,  "HP_HEALTH_HERB_01"},
+    {"USE_HEALTH_HERB_02",   ATR_HITPOINTS,  "HP_HEALTH_HERB_02"},
+    {"USE_HEALTH_HERB_03",   ATR_HITPOINTS,  "HP_HEALTH_HERB_03"},
+    {"USE_MUSHROOM_02",      ATR_HITPOINTS,  "HP_MUSHROOM_02"},
+    {"USE_FORESTBERRY",      ATR_HITPOINTS,  "HP_FORESTBERRY"},
+    {"USE_PLANEBERRY",       ATR_HITPOINTS,  "HP_PLANEBERRY"},
+    {"USE_TEMP_HERB",        ATR_HITPOINTS,  "HP_TEMP_HERB"},
+    {"USE_PERM_HERB",        ATR_HITPOINTS,  "HP_PERM_HERB"},
+    {"USEITPO_MANA_01",      ATR_MANA,       "MANA_ESSENZ"},
+    {"USEITPO_MANA_02",      ATR_MANA,       "MANA_EXTRAKT"},
+    {"USEITPO_MANA_03",      ATR_MANA,       "MANA_ELIXIER"},
+    {"USEITPO_HEALTH_01",    ATR_HITPOINTS,  "HP_ESSENZ"},
+    {"USEITPO_HEALTH_02",    ATR_HITPOINTS,  "HP_EXTRAKT"},
+    {"USEITPO_HEALTH_03",    ATR_HITPOINTS,  "HP_ELIXIER"},
+    {"USE_SMELLYFISH",       ATR_HITPOINTS,  "HP_HERING"},
+    {"USE_SCHAFSWURST",      ATR_HITPOINTS,  "HP_SAUSAGE"},
+    {"USE_HEALHILDA",        ATR_HITPOINTS,  "HP_ESSENZ"},
+    {"USE_HEALRANDOLPH",     ATR_HITPOINTS,  "HP_ESSENZ"},
+    };
+  for(const auto& [callback,attribute,amount] : stock) {
+    const auto* function = program.find_symbol_by_name(callback);
+    const auto* value = program.find_symbol_by_name(amount);
+    if(function==nullptr || value==nullptr)
+      throw std::runtime_error("stock item restore: missing symbol for "+std::string(callback));
+    if(!definitions.restoreEffects.emplace(function->index(),RestoreEffect{attribute,value->index()}).second)
+      throw std::runtime_error("stock item restore: duplicate callback "+std::string(callback));
+    }
+  }

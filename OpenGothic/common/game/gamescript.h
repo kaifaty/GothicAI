@@ -252,6 +252,9 @@ class GameScript final : public GameRules {
     bool runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runHealSelf(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -381,6 +384,9 @@ class GameScript final : public GameRules {
     bool nativeRoomReactionsEnabled() const;
     bool invokeNativeRoomPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
     void loadNativeRoomReaction();
+    void loadNativeEquipment();
+    void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
+    void selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void loadNativeHumanPerceptions();
     bool nativeHumanPerceptionsEnabled() const;
     bool invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase);
