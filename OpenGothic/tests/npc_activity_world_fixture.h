@@ -1853,6 +1853,42 @@ void sleepRoutineWorld(Gothic& gothic,bool events) {
               int(events),vmLoops);
   }
 
+// The switch and the accepted list through the loader the game calls.
+void activitySwitch(GameScript& script,const std::vector<std::string>& accepted,const char* other,size_t pointPhases) {
+  const auto base=baseProgramIndex().dir.parent_path();
+  std::string sha;
+  loadBaseProgram(Gothic::inst().defaultGameDatFile(),Settings::getI("GAME","language"),&sha);
+  const auto* configured=std::getenv("OPENGOTHIC_ACTIVITY_RECORDS");
+  const std::optional<std::string> previous=configured ? std::optional<std::string>(configured) : std::nullopt;
+  struct Restore {
+    const std::optional<std::string>& previous;
+    ~Restore() { if(previous) setenv("OPENGOTHIC_ACTIVITY_RECORDS",previous->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_RECORDS"); }
+    } restore{previous};
+  // The phase lookup the game's dispatcher uses, for all three phases.
+  auto runs=[&](const ActivityDefinitionRuntime::Definitions& definitions,const char* state) {
+    if(state==nullptr) return false;
+    const auto& st=script.aiState(script.findSymbolIndex(state));
+    return ActivityDefinitionRuntime::find(definitions,uint32_t(st.funcIni))!=nullptr &&
+           ActivityDefinitionRuntime::find(definitions,uint32_t(st.funcLoop))!=nullptr &&
+           ActivityDefinitionRuntime::find(definitions,uint32_t(st.funcEnd))!=nullptr;
+    };
+  auto loaded=[&](const char* value) {
+    if(value) setenv("OPENGOTHIC_ACTIVITY_RECORDS",value,1); else unsetenv("OPENGOTHIC_ACTIVITY_RECORDS");
+    const auto definitions=ActivityDefinitionRuntime::load(base,script.getVm(),sha);
+    size_t acceptedRuns=0;
+    for(const auto& state:accepted)
+      acceptedRuns+=runs(definitions,state.c_str()) ? 1 : 0;
+    return std::tuple{acceptedRuns,runs(definitions,other),definitions.phases.size()};
+    };
+  const auto all=accepted.size(),captured=all+(other!=nullptr ? 1 : 0);
+  require(loaded(nullptr)==std::tuple{all,false,3*all+pointPhases},"by default every accepted activity, and only those, runs from its record");
+  require(loaded("1")==std::tuple{all,false,3*all+pointPhases},"another switch value keeps the accepted list");
+  require(loaded("0")==std::tuple{size_t(0),false,size_t(0)},"OPENGOTHIC_ACTIVITY_RECORDS=0 must run every activity in the VM");
+  require(loaded("all")==std::tuple{all,other!=nullptr,3*captured+pointPhases},
+          "OPENGOTHIC_ACTIVITY_RECORDS=all must run every captured activity from its record");
+  std::printf("Activity switch: default and 1 run the %zu accepted states only, 0 none, all every captured state\n",all);
+  }
+
 void pairedSmalltalkWorld(ActivityEventsWorld& test,bool events) {
   using Contract=NpcDefinitionContract;
   auto& world=test.world();
