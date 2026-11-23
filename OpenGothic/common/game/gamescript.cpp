@@ -84,7 +84,7 @@ bool GameScript::GlobalOutput::isFinished() {
 
 GameScript::GameScript(GameSession &owner)
     :owner(owner), vm(createVm(Gothic::inst(),itemDefinitions,routineDefinitions,npcDefinitions,placementDefinitions,
-                              activityDefinitions,quietSoundHeight,nativeRoutineProgram)) {
+                              activityDefinitions,quietSound,nativeRoutineProgram)) {
   if (vm.global_self() == nullptr || vm.global_other() == nullptr || vm.global_item() == nullptr ||
       vm.global_victim() == nullptr || vm.global_hero() == nullptr)
     throw std::runtime_error("Cannot find script symbol SELF, OTHER, ITEM, VICTIM, or HERO! Cannot proceed!");
@@ -1081,7 +1081,11 @@ void GameScript::invokeState(const std::shared_ptr<NpcRecord>& hnpc, const std::
   ScopeVar other(*vm.global_other(), oth);
   auto* npc = findNpc(hnpc.get());
   NpcActivityProbe::Phase phase(npc,id->name());
-  if(npc==nullptr || !invokeNativeRoutine(*npc,*id,phase))
+  if(npc!=nullptr && usesNativeQuietSound(ScriptFn(id->index()))) {
+    phase.fromRecord();
+    runQuietSoundReaction(*npc);
+    }
+  else if(npc==nullptr || !invokeNativeRoutine(*npc,*id,phase))
     vm.call_function<void>(id);
   }
 
@@ -1114,6 +1118,10 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
     }
   else if(sym!=nullptr && npc!=nullptr && (invokeActivity(*npc,sym->index(),phase) || invokeNativeRoutine(*npc,*sym,phase))) {
     // The routine phase ran in the engine.
+    }
+  else if(npc!=nullptr && usesNativeQuietSound(fn)) {
+    phase.fromRecord();
+    runQuietSoundReaction(*npc);
     }
   else if(sym!=nullptr && sym->rtype() == daedalus::DaedalusDataType::INT) {
     ret = vm.call_function<int>(sym);

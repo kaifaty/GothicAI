@@ -2,9 +2,11 @@
 
 #include "damagecalculator.h"
 #include "definitions/fightaidefinitions.h"
+#include "npcactivityhost.h"
 #include "gothic.h"
 
 #include "world/bodytraces.h"
+#include "world/objects/npc.h"
 
 #include <algorithm>
 
@@ -21,10 +23,47 @@ ScriptFn GameScript::findFunction(std::string_view name) {
   return ScriptFn(symbol->index());
   }
 
-std::optional<int32_t> GameScript::quietSoundHeightLimit(ScriptFn callback) const {
-  if(callback.isValid() && callback==quietSoundHeight.callback)
-    return quietSoundHeight.limit;
-  return {};
+bool GameScript::usesNativeQuietSound(ScriptFn callback) const {
+  return callback.isValid() && callback==quietSound.callback && activityEvents && !floorDefer.active() &&
+         ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+  }
+
+void GameScript::runQuietSoundReaction(Npc& listener) {
+  const auto* source = findNpc(vm.global_other());
+  if(source==nullptr)
+    return;
+  const auto height = NpcEngineCalls::heightDifference(listener,*source);
+  if(height>quietSound.heightLimit ||
+     (height>quietSound.indoorHeightLimit && wld_getplayerportalguild()>=GIL_NONE))
+    return;
+
+  // The room helper also handles trespass and is shared with the other perceptions.
+  if(vm.call_function<int32_t>("B_ASSESSENTERROOM")!=0 || listener.isInState(findFunction("ZS_GUARD_PASSAGE")))
+    return;
+
+  const auto self = std::static_pointer_cast<daedalus::INpc>(listener.handlePtr());
+  const auto hostileToSource = [&] {
+    const auto* other = findNpc(vm.global_other());
+    return other!=nullptr && personAttitude(listener,*other)==ATT_HOSTILE;
+    };
+  const bool importantInfo = npc_checkinfo(self,1);
+  const bool hostile = hostileToSource();
+  if(!importantInfo && !hostile)
+    return;
+
+  constexpr size_t enemyOverride = 61; // AIV_ENEMYOVERRIDE in the verified program
+  const bool bandit = listener.handle().guild==GIL_BDT;
+  const auto fakeBandit = vm.call_function<int32_t>("C_PLAYERISFAKEBANDIT",vm.global_self()->get_instance(),vm.global_other()->get_instance())!=0;
+  const bool overrideEnemy = listener.handle().aivar[enemyOverride]==1;
+  const bool stillHostile = hostileToSource();
+  if(((bandit && fakeBandit) || overrideEnemy) && stillHostile)
+    return;
+  if(listener.canSeeSource())
+    return;
+
+  listener.clearAiQueue();
+  vm.call_function<void>("B_CLEARPERCEPTIONS",vm.global_self()->get_instance());
+  ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),1,"");
   }
 
 int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {
