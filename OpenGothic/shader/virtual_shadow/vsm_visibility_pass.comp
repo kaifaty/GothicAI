@@ -265,16 +265,20 @@ void runCluster(const uint clusterId, const uint mip) {
   const uint shadowSunLod = 1u << 19; // DrawClusters::ShadowSunLod
   const bool hasSunCaster = (cluster.shadowCommandId & shadowSunLod)!=0u;
   const uint tail = (cluster.instanceId+1u)*16u; // SunCaster immediately after the 64-byte instance
-  if((mip==7u || mip==8u) && hasSunCaster) {
-    const float cmPerTexel = uintBitsToFloat(instanceMem[tail+3u]) * clusterLodScale(pullInstance(cluster.instanceId).mat);
+  const bool coarseMip = mip==7u || mip==8u;
+  if((mip==3u || coarseMip) && hasSunCaster) {
     // Orthographic NDC per cm, independent of the tree's position and the page rectangle.
     const float ndcPerCm = length(vec3(scene.viewProject[0].x, scene.viewProject[1].x, scene.viewProject[2].x));
+    const float scale = clusterLodScale(pullInstance(cluster.instanceId).mat);
     const float texelsPerCm = ndcPerCm * (0.5*VSM_CLIPMAP_SIZE / float(1u << mip));
-    if(cmPerTexel * texelsPerCm <= 1.0) {
+    if(coarseMip && (uintBitsToFloat(instanceMem[tail+3u])*scale)*texelsPerCm<=1.0) {
       if(instanceMem[tail+1u]==0u)
         return; // the other side of the band submits the same tree whole
       sunCaster = tail;
       }
+    if(!coarseMip && instanceMem[tail+6u]!=0u && (uintBitsToFloat(instanceMem[tail+7u])*scale)*texelsPerCm<=1.0 &&
+       shadowCluster(cluster).firstMeshlet==instanceMem[tail+4u])
+      sunCaster = tail | VSM_SUN_LOD1;
     }
 
   aabb = vsmPageTableBox(aabb, mip);

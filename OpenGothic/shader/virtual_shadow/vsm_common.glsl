@@ -55,8 +55,11 @@ const uint VSM_GEOMETRY_CLASSES = 3u;
 const uint VSM_GEOMETRY_ROWS    = VSM_GEOMETRY_CLASSES*(VSM_PAGE_MIPS+1);
 const uint VSM_GEOMETRY_MASK    = 0x70000u;
 const uint VSM_GEOMETRY_PROBE   = 0x40000u;
+const uint VSM_GEOMETRY_COARSE  = 0x20000u;
 // No sphere of an object's meshlets (Bucket::meshletSpheres): its cluster is taken whole
 const uint VSM_NO_SPHERES = 0xFFFFFFFFu;
+// In the candidate's SunCaster word, the top bit selects L1 and the low bits hold the instance word offset.
+const uint VSM_SUN_LOD1 = 1u << 31;
 // const int VSM_CUBE_TBL_SIZE = 2;
 
 struct VsmHeader {
