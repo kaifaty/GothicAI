@@ -1199,7 +1199,14 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
     if(permanent!=itemDefinitions.permanentAttributeEffects.end()) {
       const auto actor = std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
       const auto& effect = permanent->second;
-      raisePermanentItemAttribute(actor,effect.increase.attribute,amount(effect.increase));
+      vm.push_reference(vm.global_self());
+      vm.push_int(effect.increase.attribute);
+      const auto* dose = std::get_if<uint32_t>(&effect.increase.amount);
+      if(dose)
+        vm.push_reference(vm.find_symbol_by_index(*dose));
+      else
+        vm.push_int(std::get<int32_t>(effect.increase.amount));
+      vm.unsafe_call_bl(findSymbol("B_RAISEATTRIBUTE"));
       if(effect.refill)
         npc_changeattribute(actor,*effect.refill,amount(effect.increase));
       return;

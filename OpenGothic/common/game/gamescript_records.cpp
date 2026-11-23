@@ -76,6 +76,129 @@ int32_t fixedTalentLearnCost(int32_t talent, int32_t skill) {
     }
   }
 
+bool hasStockAttributeRaiseArguments(daedalus::DaedalusVm& vm) {
+  using Type = daedalus::DaedalusDataType;
+  try {
+    // The stock BL sites pass global integer references or immediate integer values.
+    for(uint16_t depth : {uint16_t(0),uint16_t(1)}) {
+      const auto& frame = vm.stack_frame(depth);
+      if(frame.reference) {
+        const auto* symbol = std::get<daedalus::DaedalusSymbol*>(frame.value);
+        if(symbol->type()!=Type::INT || symbol->is_member() || frame.index>=symbol->count())
+          return false;
+        } else if(!std::holds_alternative<int32_t>(frame.value)) {
+        return false;
+        }
+      }
+    const auto& frame = vm.stack_frame(2);
+    if(frame.reference) {
+      auto* symbol = std::get<daedalus::DaedalusSymbol*>(frame.value);
+      return symbol->type()==Type::INSTANCE &&
+             (symbol->get_instance()==nullptr || symbol->is_instance_of<daedalus::INpc>());
+      }
+    const auto* instance = std::get_if<std::shared_ptr<daedalus::DaedalusInstance>>(&frame.value);
+    return instance && (!*instance || (*instance)->instance_type()==&typeid(daedalus::INpc));
+    } catch (const daedalus::DaedalusVmException&) {
+    // Keep the original frames for the VM's opcode-level error recovery.
+    return false;
+    }
+  }
+
+static constexpr struct AttributeRaise {
+  int32_t attribute;
+  const char* caption;
+  std::optional<uint8_t> trainingSlot;
+  } attributeRaises[] = {
+  {ATR_STRENGTH,     "PRINT_LEARNSTR",           81},
+  {ATR_DEXTERITY,    "PRINT_LEARNDEX",           82},
+  {ATR_MANAMAX,      "PRINT_LEARNMANA_MAX",      83},
+  {ATR_HITPOINTSMAX, "PRINT_LEARNHITPOINTS_MAX", {}},
+  };
+
+std::span<daedalus::DaedalusSymbol> bindAttributeRaise(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
+  auto args = vm.find_parameters_for_function(&helper);
+  const auto caller = vm.unsafe_get_gi();
+  vm.set_int(caller,&args[2],0,vm.pop_int());
+  vm.set_int(caller,&args[1],0,vm.pop_int());
+  args[0].set_instance(vm.pop_instance());
+  return args;
+  }
+
+void increaseAttribute(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& learner,
+                       daedalus::DaedalusSymbol& points, const char* field, uint16_t index) {
+  const auto npc = learner.get_instance();
+  vm.unsafe_set_gi(npc);
+  auto* member = vm.find_symbol_by_name(field);
+  const auto value = vm.get_int(npc,member,index);
+  const auto delta = vm.get_int(npc,&points,0);
+  vm.set_int(npc,member,index,std::bit_cast<int32_t>(uint32_t(value)+uint32_t(delta)));
+  }
+
+void raiseRealAttributeLearnCounter(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
+  const auto args = bindAttributeRaise(vm,helper);
+  const auto row = std::ranges::find(attributeRaises,args[1].get_int(),&AttributeRaise::attribute);
+  if(row!=std::end(attributeRaises) && row->trainingSlot) {
+    RestoreContext restore{vm,vm.unsafe_get_gi()};
+    increaseAttribute(vm,args[0],args[2],"C_NPC.AIVAR",*row->trainingSlot);
+    }
+  }
+
+void raiseAttribute(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper,
+                    const daedalus::DaedalusSymbol& counter) {
+  const auto args = bindAttributeRaise(vm,helper);
+  const auto id = args[1].get_int();
+  const auto row = std::ranges::find(attributeRaises,id,&AttributeRaise::attribute);
+  RestoreContext restore{vm,vm.unsafe_get_gi()};
+  int32_t printResults = 0;
+  if(row!=std::end(attributeRaises)) {
+    const auto symbol = [&](std::string_view name) { return vm.find_symbol_by_name(name); };
+    auto& learner = args[0];
+    increaseAttribute(vm,learner,args[2],"C_NPC.ATTRIBUTE",uint16_t(id));
+    const auto print = [&](daedalus::DaedalusSymbol* text,int32_t y) {
+      vm.push_reference(text);
+      vm.push_int(-1);
+      vm.push_int(y);
+      vm.push_reference(symbol("FONT_SCREEN"));
+      vm.push_int(2);
+      printResults += vm.unsafe_call_external(symbol("PRINTSCREEN"));
+      };
+    if(id==ATR_DEXTERITY) {
+      auto* acrobat = symbol("NPC_TALENT_ACROBAT");
+      vm.push_reference(&learner);
+      vm.push_reference(acrobat);
+      vm.unsafe_call_external(symbol("NPC_GETTALENTSKILL"));
+      const auto skill = vm.pop_int();
+      const auto npc = learner.get_instance();
+      vm.unsafe_set_gi(npc);
+      const auto dexterity = vm.get_int(npc,symbol("C_NPC.ATTRIBUTE"),uint16_t(id));
+      if(skill==0 && dexterity>=90) {
+        vm.push_reference(&learner);
+        vm.push_reference(acrobat);
+        vm.push_int(1);
+        vm.unsafe_call_external(symbol("NPC_SETTALENTSKILL"));
+        print(symbol("PRINT_ADDON_ACROBATBONUS"),55);
+        }
+      }
+
+    // Formatting updates the same temporary strings even if the message is hidden.
+    vm.push_reference(symbol(row->caption));
+    vm.push_reference(&args[2]);
+    vm.unsafe_call_external(symbol("INTTOSTRING"));
+    vm.unsafe_call_external(symbol("CONCATSTRINGS"));
+    auto* text = symbol("B_RAISEATTRIBUTE.CONCATTEXT");
+    vm.set_string(vm.unsafe_get_gi(),text,0,vm.pop_string());
+    print(text,-1);
+    }
+
+  // The original calls the counter for every id and leaves its three arguments in saved slots.
+  for(auto& arg:args)
+    vm.push_reference(&arg);
+  vm.unsafe_call_bl(&counter);
+  // The stock void frame discards the screen calls' integer results on return.
+  for(int32_t i=0; i<printResults; ++i)
+    (void)vm.pop_int();
+  }
+
 void teachAttributePoints(daedalus::DaedalusVm& vm) {
   const auto symbol = [&](std::string_view name) { return vm.find_symbol_by_name(name); };
   const auto caller = vm.unsafe_get_gi();
@@ -290,6 +413,21 @@ void GameScript::loadNativeTrainingHelpers() {
       return {};
       }
     },enabled);
+  auto* raise = findSymbol("B_RAISEATTRIBUTE");
+  auto* counter = findSymbol("B_RAISEREALATTRIBUTELEARNCOUNTER");
+  const auto canRaise = [this,enabled] { return enabled() && hasStockAttributeRaiseArguments(vm); };
+  vm.override_function(raise->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [raise,counter](auto& machine) -> daedalus::DaedalusNakedCall {
+      raiseAttribute(machine,*raise,*counter);
+      return {};
+      }
+    },canRaise);
+  vm.override_function(counter->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [counter](auto& machine) -> daedalus::DaedalusNakedCall {
+      raiseRealAttributeLearnCounter(machine,*counter);
+      return {};
+      }
+    },canRaise);
   vm.override_function("B_TEACHATTRIBUTEPOINTS",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
     [](auto& machine) -> daedalus::DaedalusNakedCall {
       teachAttributePoints(machine);

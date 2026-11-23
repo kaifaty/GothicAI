@@ -493,7 +493,6 @@ class GameScript final : public GameRules {
     void startHumanWarning(const std::shared_ptr<daedalus::INpc>& self, ScriptFn state);
     int32_t botheredByWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void loadNativeEquipment();
-    void raisePermanentItemAttribute(const std::shared_ptr<daedalus::INpc>& npc, Attribute attribute, int32_t points);
     bool applyArmorSetEffect(Npc& npc, uint32_t callback);
     bool applyFightSkillItemEffect(Npc& npc, uint32_t callback);
     void createAmmo(const std::shared_ptr<daedalus::INpc>& self);

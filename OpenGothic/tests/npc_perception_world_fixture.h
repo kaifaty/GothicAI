@@ -291,6 +291,8 @@ void stockTeachAttribute(GameScript& script, Npc& npc, Npc& player) {
   const auto savedRealStrength=student->aivar[81];
   const auto savedLp=student->lp;
   auto* helper=vm.find_symbol_by_name("B_TEACHATTRIBUTEPOINTS");
+  auto* raise=vm.find_symbol_by_name("B_RAISEATTRIBUTE");
+  auto* counter=vm.find_symbol_by_name("B_RAISEREALATTRIBUTELEARNCOUNTER");
   static constexpr struct {
     int32_t current,trained,points,lp,price;
     bool accepted;
@@ -311,8 +313,11 @@ void stockTeachAttribute(GameScript& script, Npc& npc, Npc& player) {
       student->attribute[ATR_STRENGTH]=current;
       student->aivar[81]=trained;
       student->lp=lp;
-      size_t instructions=0, notices=0;
-      vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==helper->address(); });
+      size_t instructions=0, innerInstructions=0, notices=0;
+      vm.observe_instructions([&](const auto&) {
+        instructions+=vm.pc()==helper->address();
+        innerInstructions+=vm.pc()==raise->address() || vm.pc()==counter->address();
+        });
       vm.observe_externals([&](const auto& function) { notices+=function.name()=="PRINTSCREEN"; });
       using storygraph::Value;
       std::string error;
@@ -320,7 +325,8 @@ void stockTeachAttribute(GameScript& script, Npc& npc, Npc& player) {
           Value::integer(ATR_STRENGTH),Value::integer(points),Value::integer(40)},error);
       vm.observe_instructions({});
       vm.observe_externals({});
-      require(trainedResult && trainedResult->i==int32_t(accepted) && instructions==(native ? 0u : 1u) && notices==1,
+      require(trainedResult && trainedResult->i==int32_t(accepted) && instructions==(native ? 0u : 1u) &&
+              innerInstructions==(!native && accepted ? 2u : 0u) && notices==1,
               "attribute lesson: preserve selected execution, teacher refusals and training notices");
       require(Contract::queue(npc).size()==savedQueue.size()+size_t(!accepted) &&
               Contract::outputOrder(script)==savedOrder+int(!accepted),
@@ -330,6 +336,25 @@ void stockTeachAttribute(GameScript& script, Npc& npc, Npc& player) {
               student->aivar[81]==trained+(accepted ? points : 0),
               "attribute lesson: debit LP only for a successful lesson and update both saved attributes");
       }
+    const auto context=vm.unsafe_get_gi();
+    const auto previousText=script.findSymbol("B_RAISEATTRIBUTE.CONCATTEXT")->get_string();
+    const auto strength=student->attribute[ATR_STRENGTH];
+    const auto trained=student->aivar[81];
+    size_t counterCalls=0;
+    const auto observer=vm.add_call_observer([&](const auto& fn) { counterCalls+=fn.index()==counter->index(); });
+    vm.push_instance(student);
+    vm.push_int(260); // Unsupported as a raw INT, even though its low byte is ATR_STRENGTH.
+    vm.push_int(-3);
+    vm.unsafe_call_bl(raise);
+    vm.remove_call_observer(observer);
+    for(auto* fn:{raise,counter}) {
+      const auto args=vm.find_parameters_for_function(fn);
+      require(args[0].get_instance()==student && args[1].get_int()==260 && args[2].get_int()==-3,
+              "attribute raise: both void BL calls preserve the raw arguments");
+      }
+    require(counterCalls==1 && student->attribute[ATR_STRENGTH]==strength && student->aivar[81]==trained &&
+            script.findSymbol("B_RAISEATTRIBUTE.CONCATTEXT")->get_string()==previousText && vm.unsafe_get_gi()==context,
+            "attribute raise: an unsupported attribute still invokes the counter and preserves state");
     }
   Contract::queue(npc)=savedQueue;
   Contract::outputOrder(script)=savedOrder;
