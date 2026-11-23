@@ -335,6 +335,111 @@ void GameScript::runQuietSoundReaction(Npc& listener) {
   ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),1,"");
   }
 
+bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  constexpr size_t lastFightAgainstPlayer = 0; // AIV_LASTFIGHTAGAINSTPLAYER
+  constexpr size_t repeatedWarning = 19; // AIV_TAPOSITION
+  constexpr size_t lastPlayerAttackReason = 47; // AIV_LASTPLAYERAR
+  constexpr size_t turnTime = 68; // AIV_STATETIME
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return vm.global_other()->get_instance(); };
+  const auto otherNpc = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(other()); };
+  const auto say = [&](std::string_view line) {
+    vm.call_function<void>("B_SAY",self,other(),line);
+    };
+  const auto turnToOther = [&] {
+    vm.call_function<void>("B_TURNTONPC",self,other());
+    };
+  const auto stopLook = [&] {
+    vm.call_function<void>("B_STOPLOOKAT",self);
+    };
+  const auto inFightMode = [&](FightMode mode) {
+    return npc_isinfightmode(otherNpc(),int(mode));
+    };
+
+  const std::string_view name = symbol.name();
+  const bool weapon = name.starts_with("ZS_REACTTOWEAPON");
+  auto& aivar = self->aivar;
+  if(name=="ZS_REACTTODAMAGE" || name=="ZS_REACTTOWEAPON") {
+    result = 0;
+    if(weapon) {
+      vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+      npc_percenable(self,PERC_ASSESSFIGHTSOUND,int(findFunction("B_ASSESSFIGHTSOUND").ptr));
+      if(vm.call_function<int32_t>("B_ASSESSENEMY")!=0)
+        return true;
+      ai_standup(self);
+      } else {
+      vm.call_function<void>("PERCEPTION_SET_NORMAL");
+      }
+    vm.call_function<void>("B_LOOKATNPC",self,other());
+    vm.call_function<void>("B_SELECTWEAPON",self,other());
+    turnToOther();
+    if(weapon) {
+      auto& comment = *findSymbol("PLAYER_DRAWWEAPONCOMMENT");
+      if(npc_isplayer(otherNpc()) && aivar[lastPlayerAttackReason]!=findSymbol("AR_NONE")->get_int() &&
+         aivar[lastFightAgainstPlayer]==findSymbol("FIGHT_WON")->get_int()) {
+        say("$LOOKINGFORTROUBLEAGAIN");
+        }
+      else if(comment.get_int()==0) {
+        say(inFightMode(FightMode::FMODE_MAGIC) ? "$STOPMAGIC" : "$WEAPONDOWN");
+        comment.set_int(1);
+        }
+      npc_sendpassiveperc(self,PERC_ASSESSWARN,self,otherNpc());
+      aivar[repeatedWarning] = 0;
+      } else {
+      say("$WHATAREYOUDOING");
+      }
+    aivar[turnTime] = 0;
+    return true;
+    }
+
+  if(name=="ZS_REACTTODAMAGE_LOOP" || name=="ZS_REACTTOWEAPON_LOOP") {
+    if(weapon) {
+      const bool farAway = npc_getdisttonpc(self,otherNpc())>findSymbol("PERC_DIST_INTERMEDIAT")->get_int();
+      if(farAway || inFightMode(FightMode::FMODE_NONE)) {
+        npc_clearaiqueue(self);
+        if(!farAway)
+          say("$WISEMOVE");
+        ai_removeweapon(self);
+        stopLook();
+        result = LOOP_END;
+        return true;
+        }
+      }
+    if(npc_getstatetime(self)>aivar[turnTime]) {
+      if(!npc_canseenpc(self,otherNpc())) {
+        if(weapon)
+          turnToOther();
+        else
+          ai_turntonpc(self,otherNpc());
+        }
+      ++aivar[turnTime];
+      }
+    if(weapon) {
+      if(npc_getstatetime(self)>5 && aivar[repeatedWarning]==0) {
+        say(inFightMode(FightMode::FMODE_MAGIC) ? "$ISAIDSTOPMAGIC" : "$ISAIDWEAPONDOWN");
+        aivar[repeatedWarning] = 1;
+        }
+      if(npc_getstatetime(self)>10)
+        vm.call_function<void>("B_ATTACK",self,other(),findSymbol("AR_REACTTOWEAPON")->get_int(),0);
+      result = LOOP_CONTINUE;
+      } else {
+      result = npc_getstatetime(self)>10 ? LOOP_END : LOOP_CONTINUE;
+      }
+    return true;
+    }
+
+  if(name=="ZS_REACTTODAMAGE_END" || name=="ZS_REACTTOWEAPON_END") {
+    if(!weapon)
+      ai_removeweapon(self);
+    stopLook();
+    if(weapon)
+      ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),1,"");
+    result = 0;
+    return true;
+    }
+  return false;
+  }
+
 bool GameScript::runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   constexpr size_t seenLeftRoom = 21; // AIV_SEENLEFTROOM in the verified program
   constexpr size_t turnInterval = 68; // AIV_STATETIME in the verified program

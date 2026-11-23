@@ -1493,6 +1493,109 @@ void observePlayerPhases(World& world,Npc& npc,Npc& hero,bool seated) {
   std::printf("D5.2 %s observation: Init, timed Loop, End and random stream match the VM\n",seated ? "seated" : "standing");
   }
 
+void humanReactionPhases(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  const auto damage=activityPhases(script,"ZS_REACTTODAMAGE");
+  const auto weapon=activityPhases(script,"ZS_REACTTOWEAPON");
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  auto& comment=*vm.find_symbol_by_name("PLAYER_DRAWWEAPONCOMMENT");
+  const auto weaponReason=vm.find_symbol_by_name("AR_REACTTOWEAPON")->get_int();
+  const auto attackCrime=vm.find_symbol_by_name("CRIME_ATTACK")->get_int();
+  const auto savedAivar=std::to_array(npc.handle().aivar);
+  const int order=Contract::outputOrder(script);
+  std::vector<std::string> original;
+  auto originalRandom=Contract::random(script);
+  const auto expectLine=[&](std::string_view line) {
+    auto queue=Contract::queue(npc);
+    while(queue.size()>0) {
+      const auto action=queue.pop();
+      if(action.act==AI_OutputSvm && action.target==&hero && action.s0==line) return true;
+      }
+    return false;
+    };
+  require(npc.qDistTo(hero)<1000.f*1000.f,"human reactions: the player is in warning range");
+  npc.setAttitude(ATT_NEUTRAL);
+  for(bool native:{false,true}) {
+    enabled=native;
+    npc.clearAiQueue();
+    npc.setTarget(nullptr);
+    auto& aivar=npc.handle().aivar;
+    std::copy(savedAivar.begin(),savedAivar.end(),aivar);
+    aivar[1]=0;
+    aivar[47]=0;
+    comment.set_int(0);
+    Contract::outputOrder(script)=order;
+    script.setSeed(73106);
+    ActivityStream stream(world,npc);
+    size_t calls=0,attacks=0,invocations=0;
+    const auto countVm=vm.add_call_observer([&](const auto& symbol) {
+      calls+=symbol.name().starts_with("ZS_REACTTODAMAGE") || symbol.name().starts_with("ZS_REACTTOWEAPON");
+      attacks+=symbol.name()=="B_ATTACK";
+      });
+    const auto invoke=[&](size_t phase,int time=0) {
+      ++invocations;
+      npc.setStateTime(time);
+      return script.invokeState(&npc,&hero,nullptr,uint32_t(phase));
+      };
+
+    invoke(damage.init);
+    require(aivar[68]==0 && npc.hasPerc(PERC_ASSESSTHEFT) && expectLine("$WHATAREYOUDOING"),
+            "human reactions: damage restores perceptions and addresses the attacker");
+    require(invoke(damage.loop,999)==LOOP_CONTINUE && aivar[68]==0 &&
+            invoke(damage.loop,10999)==LOOP_CONTINUE && aivar[68]==1 &&
+            invoke(damage.loop,11000)==LOOP_END && aivar[68]==2,
+            "human reactions: damage counts whole seconds and ends above ten");
+    npc.clearAiQueue();
+    npc.aiPush(AiQueue::aiLookAtNpc(&hero));
+    Contract::nextAiAction(npc);
+    invoke(damage.end);
+    auto queue=Contract::queue(npc);
+    require(queue.size()==2 && queue.pop().act==AI_RemoveWeapon && queue.pop().act==AI_StopLookAt,
+            "human reactions: damage End removes the weapon and stops looking at the attacker");
+
+    npc.clearAiQueue();
+    hero.setToFistMode();
+    invoke(weapon.init);
+    require(npc.hasPerc(PERC_ASSESSFIGHTSOUND) && comment.get_int()==1 && aivar[19]==0 && aivar[68]==0 &&
+            expectLine("$WEAPONDOWN"),"human reactions: weapon Init warns and enables fight sound");
+    require(invoke(weapon.loop,5999)==LOOP_CONTINUE && aivar[19]==0 &&
+            invoke(weapon.loop,6000)==LOOP_CONTINUE && aivar[19]==1 && expectLine("$ISAIDWEAPONDOWN") &&
+            invoke(weapon.loop,10999)==LOOP_CONTINUE && attacks==0,
+            "human reactions: the warning first repeats above five and escalation waits past ten");
+    require(hero.closeWeapon(true) && invoke(weapon.loop,10999)==LOOP_END && expectLine("$WISEMOVE"),
+            "human reactions: sheathing ends the warning with the original reply");
+    npc.clearAiQueue();
+    invoke(weapon.end);
+    const auto* next=npc.aiQueueFront();
+    require(next && next->act==AI_StartState && next->func==script.findFunction("ZS_OBSERVEPLAYER") &&
+            next->i0==1 && next->target==&hero,"human reactions: weapon End queues observation of the same player");
+    hero.setToFistMode();
+    require(invoke(weapon.loop,11000)==LOOP_CONTINUE && attacks==1 && npc.target()==&hero &&
+            aivar[9]==weaponReason && aivar[1]==attackCrime,
+            "human reactions: escalation enters the shared attack policy and records the crime");
+    hero.closeWeapon(true);
+    vm.remove_call_observer(countVm);
+    require(calls==(native ? 0u : invocations) && stream.records==(native ? invocations : 0u),
+            "human reactions: the selected executor owns every phase");
+    std::erase_if(stream.events,[](const auto& event) {
+      return !(event.starts_with("phase ") || event.starts_with("result ") ||
+               event.starts_with("queue ") || event.starts_with("random "));
+      });
+    if(!native) {
+      original=std::move(stream.events);
+      originalRandom=Contract::random(script);
+      } else {
+      require(original==stream.events && originalRandom==Contract::random(script),
+              "human reactions: original and native queue, phase results and RNG match");
+      }
+    }
+  enabled=wasEnabled;
+  std::puts("Human reactions: six damage and weapon phases match the VM");
+  }
+
 void quietSoundRooms(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -1948,6 +2051,7 @@ void quietSoundRooms(Gothic& gothic) {
           "observation: the seated witness can enter the stock sitting pose");
   loaded.stepUntil(120,[&] { return listener->animProgress("S_SIT")>=0; },"observation: the seated witness settles");
   observePlayerPhases(restored,*listener,guest,true);
+  humanReactionPhases(restored,*listener,guest);
 
   gothic.clearGame().reset();
   {
