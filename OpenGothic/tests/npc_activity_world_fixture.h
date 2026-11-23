@@ -1667,6 +1667,111 @@ void quietSoundRooms(Gothic& gothic) {
     std::printf("D5.3 %s entry: perception, action queue and room comment match the VM\n",privateRoom ? "private" : "public");
     }
 
+  const auto roomPhases=activityPhases(script,"ZS_CLEARROOM");
+  const auto roomExit=script.findFunction("B_EXITIFROOMLEFT");
+  const auto attack=script.findFunction("ZS_ATTACK");
+  const auto attackReason=vm.find_symbol_by_name("AR_CLEARROOM")->get_int();
+  const auto roomCode=std::array{vm.find_symbol_by_index(roomPhases.init)->address(),
+                                 vm.find_symbol_by_index(roomPhases.loop)->address(),
+                                 vm.find_symbol_by_index(roomPhases.end)->address(),
+                                 vm.find_symbol_by_index(roomExit.ptr)->address()};
+  std::vector<uint8_t> roomSave;
+  std::vector<std::string> roomPending;
+  const auto saysTo=[](const Npc& speaker,const Npc& target,std::string_view line) {
+    auto queue=Contract::queue(speaker);
+    while(queue.size()!=0) {
+      const auto action=queue.pop();
+      if(action.act==AI_OutputSvm && action.target==&target && action.s0==line) return true;
+      }
+    return false;
+    };
+  const auto depart=otherRoom->groundPos;
+  for(bool hostile:{false,true}) {
+    std::vector<std::string> originalInit,originalAttack;
+    for(bool native:{false,true}) {
+      prepare(true);
+      const auto guild=npc->handle().guild;
+  const auto aivar=std::to_array(npc->handle().aivar);
+      if(hostile) npc->handle().guild=GIL_MIL;
+      setPrivateRoom(true);
+      events=native;
+      npc->setPerceptionEnable(PERC_ASSESSENTERROOM,portalCollision.ptr);
+      require(npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSENTERROOM) &&
+              npc->aiQueueFront() && npc->aiQueueFront()->func==clear,
+              "clear room: the stock portal event starts the private-room reaction");
+      std::array<size_t,4> vmEntries{};
+      vm.observe_instructions([&](const auto&) {
+        for(size_t i=0;i<roomCode.size();++i)
+          vmEntries[i]+=vm.pc()==roomCode[i];
+        });
+      Contract::nextAiAction(*npc);
+      Contract::tickRoutine(*npc);
+      require(npc->isInState(clear) && Contract::aiState(*npc).started && npc->stateOther()==&hero &&
+              npc->handle().aivar[19]==1 && npc->hasPerc(PERC_ASSESSENTERROOM) &&
+              npc->hasPerc(PERC_MOVEMOB) && npc->hasPerc(PERC_ASSESSTALK),
+              "clear room: Init keeps the guest and installs the stock perceptions");
+      if(native) require(activityQueue(*npc)==originalInit,"clear room: the initial commands match the VM");
+      else originalInit=activityQueue(*npc);
+
+      const auto loop=[&] { return script.invokeState(npc,&hero,&hero,ScriptFn(roomPhases.loop)); };
+      npc->clearAiQueue();
+      npc->setStateTime(2600);
+      require(loop()==LOOP_CONTINUE && npc->handle().aivar[19]==0 && npc->stateTime()==0 &&
+              saysTo(*npc,hero,hostile ? "$GETOUTOFHERE" : "$WHYAREYOUINHERE"),
+              "clear room: the first Loop warns and resets the timer once");
+      if(hostile) {
+        npc->clearAiQueue();
+        npc->setStateTime(5999);
+        require(loop()==LOOP_CONTINUE && npc->isAiQueueEmpty() && npc->stateTime()==5999,
+                "clear room: the fifth whole second still allows the guest to leave");
+        npc->setStateTime(6000);
+        require(loop()==LOOP_END && npc->handle().aivar[9]==attackReason && npc->aiQueueFront() &&
+                npc->aiQueueFront()->act==AI_StartState && npc->aiQueueFront()->func==attack &&
+                npc->aiQueueFront()->target==&hero,"clear room: the sixth second queues the original attack reason");
+        if(native) require(activityQueue(*npc)==originalAttack,"clear room: the escalation queue matches the VM");
+        else originalAttack=activityQueue(*npc);
+        }
+      else {
+        npc->setStateTime(1250);
+        if(native) {
+          roomPending=activityQueue(*npc);
+          Tempest::MemWriter writer(roomSave);
+          Serialize out(writer);
+          Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+          std::memset(preview.data(),0,4);
+          gothic.gameSession()->save(out,"guest warned in private room",preview);
+          }
+        test.only({&hero});
+        test.moveHero(depart,hero.rotation());
+        test.stepUntil(120,[&] { return world.guildOfRoom(hero.portalName())!=int32_t(npc->handle().guild); },
+                       "clear room: the guest moves from the private room to another portal");
+        test.only({npc,&hero});
+        require(npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSENTERROOM) &&
+                saysTo(*npc,hero,"$WISEMOVE") && !saysTo(*npc,hero,"$WHYAREYOUINHERE"),
+                "clear room: the registered departure callback replaces the warning with the exit line");
+        auto queue=Contract::queue(*npc);
+        require(queue.size()==3 && queue.pop().act==AI_StandUp && queue.pop().act==AI_OutputSvm &&
+                queue.pop().act==AI_ContinueRoutine,"clear room: the departure queue resumes the routine after the exit line");
+        }
+      npc->clearAiQueue();
+      npc->aiPush(AiQueue::aiLookAtNpc(&hero));
+      Contract::nextAiAction(*npc);
+      npc->clearState(false);
+      require(npc->aiQueueFront() && npc->aiQueueFront()->act==AI_StopLookAt,
+              "clear room: End stops the current look");
+      vm.observe_instructions({});
+      const auto expected=hostile ? std::array<size_t,4>{1,3,1,3} : std::array<size_t,4>{1,1,1,2};
+      require(vmEntries==(native ? std::array<size_t,4>{} : expected),
+              "clear room: Init, Loop, End and the exit callback use the selected executor");
+      npc->handle().guild=guild;
+      std::ranges::copy(aivar,std::begin(npc->handle().aivar));
+      npc->setTarget(nullptr);
+      setPrivateRoom(false);
+      events=enabled;
+      }
+    std::printf("D5.4 %s clear-room warning and response match the VM\n",hostile ? "hostile" : "neutral");
+    }
+
   prepare(true);
   PhysicsNoise impact;
   impact.culprit=&hero;
@@ -1726,6 +1831,39 @@ void quietSoundRooms(Gothic& gothic) {
           "observation: the seated witness can enter the stock sitting pose");
   loaded.stepUntil(120,[&] { return listener->animProgress("S_SIT")>=0; },"observation: the seated witness settles");
   observePlayerPhases(restored,*listener,guest,true);
+
+  gothic.clearGame().reset();
+  {
+    Tempest::MemReader reader(roomSave);
+    Serialize in(reader);
+    gothic.setGame(std::make_unique<GameSession>(in));
+  }
+  ActivityEventsWorld roomLoaded(gothic);
+  auto& roomWorld=roomLoaded.world();
+  auto* owner=activityNpc(roomWorld,"BAU_951_HILDA");
+  auto& intruder=*roomWorld.player();
+  require(owner && owner->isInState(clear) && Contract::aiState(*owner).started && owner->stateOther()==&intruder &&
+          owner->stateTime()==1250 && owner->handle().aivar[19]==0 && owner->hasPerc(PERC_ASSESSENTERROOM) &&
+          roomWorld.guildOfRoom(intruder.portalName())==int32_t(owner->handle().guild) && activityQueue(*owner)==roomPending,
+          "clear room: ordinary load restores the private room, guest, timer and pending warning");
+  roomLoaded.only({owner,&intruder});
+  auto& roomVm=roomWorld.script().getVm();
+  size_t roomVmCalls=0,initCalls=0,endCalls=0;
+  {
+    ActivityStream stream(roomWorld,*owner);
+    const auto count=roomVm.add_call_observer([&](const auto& symbol) {
+      roomVmCalls+=symbol.name().starts_with("ZS_CLEARROOM");
+      });
+    roomLoaded.moveHero(depart,intruder.rotation());
+    roomLoaded.stepUntil(360,[&] { return owner->isInState(stand) && Contract::aiState(*owner).started; },
+                         "clear room: the loaded listener returns to the standing routine after the guest leaves");
+    roomVm.remove_call_observer(count);
+    initCalls=activityCount(stream.events,"phase ZS_CLEARROOM");
+    endCalls=activityCount(stream.events,"phase ZS_CLEARROOM_END");
+  }
+  require(roomVmCalls==0 && initCalls==0 && endCalls==1,
+          "clear room: the loaded reaction ends through the engine without repeating Init");
+  std::puts("D5.4 ordinary load restored the warning and finished the reaction after departure");
   }
 
 void quietSoundAtPost(Gothic& gothic) {

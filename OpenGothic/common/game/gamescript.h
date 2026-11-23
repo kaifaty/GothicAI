@@ -250,6 +250,7 @@ class GameScript final : public GameRules {
     bool runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -347,8 +348,11 @@ class GameScript final : public GameRules {
       int32_t heightLimit = 0;
       int32_t indoorHeightLimit = 0;
       };
+    bool nativeRoomReactionsEnabled() const;
+    bool invokeNativeRoomPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
     void loadNativeRoomReaction();
     int32_t runEnterRoomReaction();
+    int32_t runExitIfRoomLeft();
     void runQuietSoundReaction(Npc& listener);
     static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                        RoutineDefinitionRuntime::Definitions& routines,

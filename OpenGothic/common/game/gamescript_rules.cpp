@@ -28,11 +28,24 @@ bool GameScript::usesNativeQuietSound(ScriptFn callback) const {
          ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
   }
 
+bool GameScript::nativeRoomReactionsEnabled() const {
+  return nativeRoutineProgram && activityEvents && !floorDefer.active() &&
+         ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+  }
+
+bool GameScript::invokeNativeRoomPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase) {
+  if(symbol.name()!="B_EXITIFROOMLEFT" || !nativeRoomReactionsEnabled())
+    return false;
+  phase.fromRecord();
+  phase.result = runExitIfRoomLeft();
+  return true;
+  }
+
 void GameScript::loadNativeRoomReaction() {
   if(!nativeRoutineProgram)
     return;
   vm.override_function("B_ASSESSENTERROOM",std::function<int32_t()>{[this] { return runEnterRoomReaction(); }},[this] {
-    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+    return nativeRoomReactionsEnabled();
     });
   }
 
@@ -210,6 +223,98 @@ bool GameScript::runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symb
     }
 
   if(name=="ZS_OBSERVEPLAYER_END") {
+    vm.call_function<void>("B_STOPLOOKAT",self);
+    result = 0;
+    return true;
+    }
+  return false;
+  }
+
+int32_t GameScript::runExitIfRoomLeft() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto guild = wld_getplayerportalguild();
+  findSymbol("B_EXITIFROOMLEFT.PORTALGUILD")->set_int(guild);
+  const bool bothered = vm.call_function<int32_t>("C_NPCISBOTHEREDBYPLAYERROOMGUILD",self)!=0;
+  if(guild!=int32_t(GIL_PUBLIC) && bothered)
+    return 0;
+
+  npc_clearaiqueue(self);
+  ai_standup(self);
+  vm.call_function<void>("B_STOPLOOKAT",self);
+  const bool wantsAttack = vm.call_function<int32_t>("C_WANTTOATTACKROOMINTRUDER",self)!=0;
+  vm.call_function<void>("B_SAY",self,vm.global_other()->get_instance(),
+                         wantsAttack ? std::string_view{"$YESGOOUTOFHERE"} : std::string_view{"$WISEMOVE"});
+  ai_continueroutine(self);
+  return 1;
+  }
+
+bool GameScript::runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  if(!nativeRoomReactionsEnabled())
+    return false;
+  constexpr size_t routinePosition = 19; // AIV_TAPOSITION in the verified program
+  constexpr int32_t notInPosition = 1;
+  constexpr int32_t inPosition = 0;
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return vm.global_other()->get_instance(); };
+  const auto otherNpc = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(other()); };
+  const auto gotoOther = [&] { ai_gotowp(self,npc_getnearestwp(otherNpc())); };
+  const auto turnToOther = [&] { vm.call_function<void>("B_TURNTONPC",self,other()); };
+  const auto say = [&](std::string_view line) { vm.call_function<void>("B_SAY",self,other(),line); };
+  const auto wantsAttack = [&] { return vm.call_function<int32_t>("C_WANTTOATTACKROOMINTRUDER",self)!=0; };
+
+  const std::string_view name = symbol.name();
+  if(name=="ZS_CLEARROOM") {
+    vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+    npc_percenable(self,PERC_ASSESSENTERROOM,int(findFunction("B_EXITIFROOMLEFT").ptr));
+    npc_percenable(self,PERC_MOVEMOB,int(findFunction("B_MOVEMOB").ptr));
+    npc_percenable(self,PERC_ASSESSTALK,int(findFunction("B_CLEARROOMTALK").ptr));
+    ai_standup(self);
+    vm.call_function<void>("B_LOOKATNPC",self,other());
+    ai_setwalkmode(self,int(WalkBit::WM_Run));
+    if(!npc_isinplayersroom(self))
+      gotoOther();
+    self->aivar[routinePosition] = notInPosition;
+    result = 0;
+    return true;
+    }
+
+  if(name=="ZS_CLEARROOM_LOOP") {
+    if(self->aivar[routinePosition]==notInPosition) {
+      turnToOther();
+      if(wantsAttack()) {
+        vm.call_function<void>("B_SELECTWEAPON",self,other());
+        say("$GETOUTOFHERE");
+        } else if(npc_getattitude(otherNpc(),self)!=ATT_FRIENDLY) {
+        say("$WHYAREYOUINHERE");
+        }
+      npc_setstatetime(self,0);
+      self->aivar[routinePosition] = inPosition;
+      }
+    if(runExitIfRoomLeft()!=0) {
+      result = LOOP_END;
+      return true;
+      }
+    if(wantsAttack()) {
+      if(npc_getstatetime(self)>5) {
+        const auto reason = findSymbol("AR_CLEARROOM")->get_int();
+        vm.call_function<void>("B_ATTACK",self,other(),reason,0);
+        result = LOOP_END;
+        return true;
+        }
+      } else if(npc_getstatetime(self)>=2) {
+      if(!npc_canseenpcfreelos(self,otherNpc())) {
+        gotoOther();
+        turnToOther();
+        } else if(!npc_canseenpc(self,otherNpc())) {
+        turnToOther();
+        }
+      npc_setstatetime(self,0);
+      }
+    result = LOOP_CONTINUE;
+    return true;
+    }
+
+  if(name=="ZS_CLEARROOM_END") {
     vm.call_function<void>("B_STOPLOOKAT",self);
     result = 0;
     return true;
