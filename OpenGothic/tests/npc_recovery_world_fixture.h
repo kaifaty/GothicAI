@@ -618,8 +618,15 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     require(npc->isUnconscious() && !npc->isDead() && npc->attribute(ATR_HITPOINTS)==1,
             "unconscious: nonlethal HP loss enters the engine knockout path");
     {
+      auto* checkedBody=script.findSymbol("C_BODYSTATECONTAINS.BODYSTATE");
+      auto* checkedActor=script.findSymbol("C_BODYSTATECONTAINS.SLF");
+      checkedBody->set_int(BS_STAND);
+      checkedActor->set_instance(std::static_pointer_cast<daedalus::INpc>(hero.handlePtr()));
       ActivityStream stream(world,*npc);
       Contract::tickRoutine(*npc);
+      require(checkedBody->get_int()==BS_SWIM &&
+              checkedActor->get_instance()==std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()),
+              "unconscious: Init leaves the last body check arguments in the saved VM symbols");
       require(npc->hasPerc(PERC_ASSESSMAGIC) && npc->handle().aivar[0]==1 && npc->handle().aivar[16]==1 &&
               npc->handle().aivar[66]==1 && rewards==1 && hero.experience()>beforeXp,
               "unconscious: Init restores magic perception, records a loss and awards victory XP once");
