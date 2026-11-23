@@ -328,6 +328,7 @@ class GameScript final : public GameRules {
     void closeQuestTopic(std::string_view topic, int32_t mission, int32_t common, int32_t endChapter);
     bool monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window);
     void enableMonsterRoutinePerceptions(Npc& npc);
+    bool isMonsterMage(const std::shared_ptr<daedalus::INpc>& npc);
     void beginMonsterRoutine(Npc& npc, bool desynchronize = true, WalkBit mode = WalkBit::WM_Walk);
     bool endMonsterRoutine(Npc& npc, MonsterRoutine routine);
     void removeRavensStoneGuardians(Npc& npc);

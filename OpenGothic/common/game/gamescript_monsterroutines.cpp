@@ -163,17 +163,21 @@ bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
   return true;
   }
 
+bool GameScript::isMonsterMage(const std::shared_ptr<daedalus::INpc>& npc) {
+  findSymbol("C_NPCISMONSTERMAGE.SLF")->set_instance(npc);
+  return npc && (npc->guild==GIL_DRAGON || npc->guild==GIL_ICEGOLEM ||
+                 npc->guild==GIL_FIREGOLEM || npc->guild==GIL_SKELETON_MAGE);
+  }
+
 bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   auto& ai = self->aivar;
   auto& otherSymbol = *vm.global_other();
   const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(otherSymbol.get_instance()); };
   const auto needsWeapon = [&] {
-    // These script parameters are serialized as static instance locals.
-    findSymbol("C_NPCISMONSTERMAGE.SLF")->set_instance(self);
     const auto guild = self->guild;
-    return guild>orcGuildSeparator || guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON ||
-           guild==GIL_DRAGON || guild==GIL_ICEGOLEM || guild==GIL_FIREGOLEM || guild==GIL_SKELETON_MAGE;
+    const bool mage = isMonsterMage(self); // The stock OR also writes the predicate's parameter for orcs and skeletons.
+    return guild>orcGuildSeparator || guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON || mage;
     };
 
   const std::string_view phase = symbol.name();
