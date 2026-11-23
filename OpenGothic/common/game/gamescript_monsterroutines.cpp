@@ -204,11 +204,6 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     const bool running = monsterTargetHasBodyState(target,BS_RUN);
     return running || jumping;
     };
-  const auto targetIsDown = [&](const std::shared_ptr<daedalus::INpc>& target) {
-    findSymbol("C_NPCISDOWN.SLF")->set_instance(target);
-    return npc_isdead(target) || npc_isinstate(target,int(findFunction("ZS_MAGICSLEEP").ptr)) ||
-           npc_isinstate(target,int(ZS_Unconscious));
-    };
   const auto distanceToTarget = [&] { return npc_getdisttonpc(self,other()); };
   const auto stop = [&] {
     npc_clearaiqueue(self);
@@ -296,7 +291,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     vm.call_function<void>("B_SELECTWEAPON",self,other());
     }
   const auto target = other();
-  if(!targetIsDown(target) && hlp_isvalidnpc(target)) {
+  if(!isNpcDownInScript(target) && hlp_isvalidnpc(target)) {
     if(target->aivar[invincible]==0)
       ai_attack(self);
     else
@@ -315,7 +310,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
   npc_getnexttarget(self);
   const auto next = other();
   const bool closeOrPlayer = npc_isplayer(next) || distanceToTarget()<findSymbol("PERC_DIST_INTERMEDIAT")->get_int();
-  const bool down = targetIsDown(next);
+  const bool down = isNpcDownInScript(next);
   if(next!=nullptr && next->aivar[invincible]==0 && closeOrPlayer && !down && hlp_isvalidnpc(next)) {
     ai[lastTarget] = hlp_getinstanceid(next);
     result = LOOP_CONTINUE;

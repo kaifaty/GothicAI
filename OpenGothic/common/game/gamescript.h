@@ -385,6 +385,9 @@ class GameScript final : public GameRules {
     bool hasAttackReasonToKill(const std::shared_ptr<daedalus::INpc>& npc);
     bool wantsToAttackSheepKiller(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     bool wantsToAttackThief(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool wantsToAttackMurderer(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool belongsToBanditCamp(const std::shared_ptr<daedalus::INpc>& npc);
+    bool isNpcDownInScript(const std::shared_ptr<daedalus::INpc>& npc);
     void runDamageReaction();
     int32_t runEnemyReaction();
     void runPlayerAssessment();

@@ -1,5 +1,78 @@
 #pragma once
 
+void murderRulePredicates(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto actor=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto player=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  auto& state=Contract::aiState(npc).funcIni;
+  const auto savedState=state;
+  const auto savedType=npc.handle().type;
+  const auto savedReason=hero.handle().aivar[9];
+  const auto savedIgnore=npc.handle().aivar[54];
+  auto& murderSelf=*vm.find_symbol_by_name("C_WANTTOATTACKMURDER.SLF");
+  auto& murderOther=*vm.find_symbol_by_name("C_WANTTOATTACKMURDER.OTH");
+  auto& banditSelf=*vm.find_symbol_by_name("C_NPCBELONGSTOBL.SLF");
+  auto& downSelf=*vm.find_symbol_by_name("C_NPCISDOWN.SLF");
+  const auto savedMurderSelf=murderSelf.get_instance();
+  const auto savedMurderOther=murderOther.get_instance();
+  const auto savedBanditSelf=banditSelf.get_instance();
+  const auto savedDownSelf=downSelf.get_instance();
+  const auto invoke=[&](std::string_view name,int expected,bool native,const auto&... args) {
+    auto* function=vm.find_symbol_by_name(name);
+    size_t bytecode=0;
+    vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==function->address(); });
+    (vm.push_instance(args),...);
+    vm.unsafe_call_bl(function);
+    const auto actual=vm.pop_int();
+    vm.observe_instructions({});
+    require(actual==expected && bytecode==(native ? 0u : 1u),
+            "murder rules: the stock BL route preserves the predicate and selected executor");
+    };
+  for(bool native:{false,true}) {
+    enabled=native;
+    npc.handle().aivar[54]=0;
+    hero.handle().aivar[9]=0;
+    murderSelf.set_instance(nullptr);
+    murderOther.set_instance(nullptr);
+    invoke("C_WANTTOATTACKMURDER",1,native,actor,player);
+    require(murderSelf.get_instance()==actor && murderOther.get_instance()==player,
+            "murder rules: the original witness and culprit scratch slots are written");
+    hero.handle().aivar[9]=script.intSymbol("AR_KILL",-1);
+    invoke("C_WANTTOATTACKMURDER",0,native,actor,player);
+
+    banditSelf.set_instance(nullptr);
+    invoke("C_NPCBELONGSTOBL",0,native,actor);
+    require(banditSelf.get_instance()==actor,"murder rules: the bandit predicate retains its actor reference");
+    npc.handle().type=NpcType::G2_BL_MAIN;
+    invoke("C_NPCBELONGSTOBL",1,native,actor);
+    npc.handle().type=NpcType::G2_BL_AMBIENT;
+    invoke("C_NPCBELONGSTOBL",1,native,actor);
+    npc.handle().type=savedType;
+
+    downSelf.set_instance(nullptr);
+    invoke("C_NPCISDOWN",0,native,actor);
+    require(downSelf.get_instance()==actor,"murder rules: the down predicate retains its actor reference");
+    for(const auto name:{"ZS_MAGICSLEEP","ZS_UNCONSCIOUS","ZS_DEAD"}) {
+      state=script.findFunction(name);
+      invoke("C_NPCISDOWN",1,native,actor);
+      }
+    state=savedState;
+    invoke("C_NPCISDOWN",1,native,std::shared_ptr<daedalus::INpc>());
+    require(!downSelf.get_instance(),"murder rules: an absent actor is down and clears the old argument");
+    }
+  enabled=wasEnabled;
+  hero.handle().aivar[9]=savedReason;
+  npc.handle().aivar[54]=savedIgnore;
+  murderSelf.set_instance(savedMurderSelf);
+  murderOther.set_instance(savedMurderOther);
+  banditSelf.set_instance(savedBanditSelf);
+  downSelf.set_instance(savedDownSelf);
+  }
+
 void murderPerceptions(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -104,5 +177,6 @@ void murderPerceptions(World& world,Npc& npc,Npc& hero) {
   hero.handle().aivar[52]=savedHeroQuest;
   lobart->setPosition(savedPosition);
   lobart->updateTransform();
+  murderRulePredicates(world,npc,hero);
   std::puts("Murder perception: witness, quest exemptions and four attack reasons match the VM");
   }
