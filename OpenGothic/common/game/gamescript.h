@@ -248,7 +248,7 @@ class GameScript final : public GameRules {
     bool runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runFearOrSleepSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runFreezeOrWhirlwindSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
-    void stopFreezeOrWhirlwindSpell(Npc& npc);
+    void stopInterruptedSpell(Npc& npc, bool resumeRoutine = false);
     bool invokeNativeStatusPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
     void stopMagicFear(Npc& npc);
     void stopMagicSleep(Npc& npc);
