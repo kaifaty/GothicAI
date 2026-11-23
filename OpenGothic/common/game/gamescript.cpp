@@ -1,4 +1,5 @@
 #include "gamescript.h"
+#include "gamescript_daystats.h"
 #include "world/npcactivityprobe.h"
 
 #include <Tempest/Log>
@@ -93,6 +94,7 @@ GameScript::GameScript(GameSession &owner)
   vm.register_exception_handler(daedalus::lenient_vm_exception_handler);
   Gothic::inst().setupCommonScriptClasses(vm);
   Gothic::inst().setupVmCommonApi(vm);
+  DayScriptStats::trace(vm,"GOTHIC.DAT");
   aiDefaultPipe.reset(new GlobalOutput(*this));
   initCommon();
   loadNativeNpcDeath();
