@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <initializer_list>
 #include <stdexcept>
 #include <variant>
@@ -126,6 +127,74 @@ bool runKhorinisNpcTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymb
     }
   if(once)
     vm.set_int(nullptr,once,0,value("TRUE"));
+  return true;
+  }
+
+void insertLiteralNpcs(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol& trigger,uint32_t offset,uint32_t count) {
+  auto pc = trigger.address()+offset;
+  for(uint32_t i=0;i<count;++i) {
+    const auto spawn = readLiteralPlacement(vm,pc,trigger.name());
+    if(spawn.external->name()!="WLD_INSERTNPC")
+      throw std::runtime_error("Stock NPC spawn trigger: expected NPC placement");
+    vm.push_int(int32_t(spawn.instance->index()));
+    vm.push_reference(spawn.point);
+    vm.unsafe_call_external(spawn.external);
+    }
+  }
+
+bool runIslandSpawnTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol& trigger) {
+  struct Spawn {
+    std::string_view name;
+    int32_t          limit = 9;
+    uint32_t         npcs = 1;
+    };
+  static constexpr Spawn rooms[] = {
+    {"EVT_KEYMASTER_01",1}, {"EVT_KEYMASTER_02",1}, {"EVT_KEYMASTER_03",1}, {"EVT_KEYMASTER_04",1},
+    {"EVT_LEFT_UP_01_SPAWNNEW",3,3},
+    {"EVT_LEFT_DOWN_01_SKEL_01"}, {"EVT_LEFT_DOWN_01_SKEL_02"}, {"EVT_LEFT_DOWN_01_SKEL_03"},
+    {"EVT_LEFT_ROOM_02_SKEL_01"}, {"EVT_LEFT_ROOM_02_SKEL_02"}, {"EVT_LEFT_ROOM_02_SKEL_03"},
+    {"EVT_LEFT_ROOM_02_SKEL_04"}, {"EVT_LEFT_ROOM_02_SKEL_05"},
+    {"EVT_RIGHT_DOWN_01_SKEL_01"}, {"EVT_RIGHT_DOWN_01_SKEL_02"}, {"EVT_RIGHT_DOWN_01_SKEL_03"},
+    {"EVT_RIGHT_DOWN_01_SKEL_04"},
+    {"EVT_RIGHT_ROOM_01_SKEL_01"}, {"EVT_RIGHT_ROOM_01_SKEL_02"},
+    {"EVT_RIGHT_ROOM_02_SKEL_01"}, {"EVT_RIGHT_ROOM_02_SKEL_02"},
+    {"EVT_RIGHT_UP_01_SKEL_01"}, {"EVT_RIGHT_UP_01_SKEL_02"},
+    {"EVT_RIGHT_UP_02_SKEL_01"}, {"EVT_RIGHT_UP_02_SKEL_02"}, {"EVT_RIGHT_UP_02_SKEL_03"},
+    };
+  static constexpr std::string_view traps[] = {
+    "EVT_UNDEADDRAGON_TRAP_01_FUNC", "EVT_UNDEADDRAGON_TRAP_02_FUNC", "EVT_UNDEADDRAGON_TRAP_03_FUNC",
+    };
+  const auto read = [&vm](daedalus::DaedalusSymbol* field) { return vm.get_int(nullptr,field,0); };
+  const auto increment = [&vm,&read](daedalus::DaedalusSymbol* field) {
+    vm.set_int(nullptr,field,0,std::bit_cast<int32_t>(uint32_t(read(field))+1u));
+    };
+  const auto& name = trigger.name();
+  const auto room = std::ranges::find(rooms,name,&Spawn::name);
+  if(room!=std::end(rooms)) {
+    auto* attempts = vm.find_symbol_by_name(name+"_ANTIEXPLOID");
+    if(read(attempts)<room->limit) {
+      // Each room's initial counter comparison and jump occupy 16 bytes.
+      insertLiteralNpcs(vm,trigger,16,room->npcs);
+      increment(attempts);
+      }
+    return true;
+    }
+  if(std::ranges::find(traps,name)==std::end(traps))
+    return false;
+
+  auto* activations = vm.find_symbol_by_name(name+"_COUNT_NOMORE");
+  if(read(activations)<10) {
+    auto* count = vm.find_symbol_by_name(name+"_COUNT");
+    const auto before = read(count);
+    if(before!=0 && before<2) {
+      // The two count tests precede the trap's one literal placement.
+      insertLiteralNpcs(vm,trigger,44,1);
+      }
+    increment(count);
+    if(read(count)>2)
+      vm.set_int(nullptr,count,0,1);
+    increment(activations);
+    }
   return true;
   }
 
@@ -505,19 +574,13 @@ void GameScript::invokeWorldTrigger(std::string_view fn) {
       auto* once = findSymbol(symbol->name()+"_ONETIME");
       if(vm.get_int(nullptr,once,0)==findSymbol("FALSE")->get_int()) {
         // The stock comparison and conditional jump precede the literal spawn calls.
-        auto pc = symbol->address()+16u;
-        for(uint32_t i=0;i<room->spawnCount;++i) {
-          const auto spawn = readLiteralPlacement(vm,pc,symbol->name());
-          if(spawn.external->name()!="WLD_INSERTNPC")
-            throw std::runtime_error("Stock crypt trigger: expected NPC placement");
-          vm.push_int(int32_t(spawn.instance->index()));
-          vm.push_reference(spawn.point);
-          vm.unsafe_call_external(spawn.external);
-          }
+        insertLiteralNpcs(vm,*symbol,16,room->spawnCount);
         vm.set_int(nullptr,once,0,findSymbol("TRUE")->get_int());
         }
       return;
       }
+    if(runIslandSpawnTrigger(vm,*symbol))
+      return;
     }
   vm.call_function(symbol);
   }
