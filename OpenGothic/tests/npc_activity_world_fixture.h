@@ -972,14 +972,14 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
     if(fp) test.freePoint(fp);
     const auto loop=a.state+"_LOOP";
     const auto loopPc=symbol(loop).address();
-    size_t vmLoops=0,quakes=0;
+    size_t vmLoops=0,quakeVmEntries=0,quakes=0;
     struct Unobserve {
       daedalus::DaedalusVm& vm;
       ~Unobserve() { vm.observe_instructions({}); }
       } unobserve{vm};
     vm.observe_instructions([&](const auto&) {
       if(vm.pc()==loopPc && vm.global_self()->get_instance()==std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())) ++vmLoops;
-      if(vm.pc()==quakePc) ++quakes;
+      if(vm.pc()==quakePc) ++quakeVmEntries;
       });
     auto drain=[&] { test.stepUntil(900,[&]{ return npc.isAiQueueEmpty(); },a.state+" finishes its commands"); };
     auto awaitPerception=[&] {
@@ -1088,11 +1088,13 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
       const auto early=Contract::random(script);
       gesture.set_int(-1);
       event.set_int(-1);
+      sound.set_int(-1);
       awaitPerception();
       npc.setStateTime(5999);
       Contract::tickScheduledRoutine(npc);
       check(Contract::random(script)==early && npc.stateTime()==5999 && gesture.get_int()==-1 &&
-            event.get_int()==-1 && quakes==0,"no gesture or story draw before the sixth whole second");
+            event.get_int()==-1 && sound.get_int()==-1 && quakeVmEntries==0,
+            "no gesture or story draw before the sixth whole second");
       checkPointClip(npc,"");
       drain();
       const auto due=Contract::aiState(npc).loopNextTime;
@@ -1112,7 +1114,7 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
       test.stepUntil(600,[&]{ return world.tickCount()>=due; },a.state+" reaches perception in the normal NPC tick");
       test.only({});
       check(Contract::aiState(npc).loopNextTime>world.tickCount() && npc.stateTime()==0 &&
-            gesture.get_int()==nativeRoll && event.get_int()==nativeStory && quakes==0 &&
+            gesture.get_int()==nativeRoll && event.get_int()==nativeStory && sound.get_int()==-1 && quakeVmEntries==0 &&
             Contract::random(script)==expected && vmLoops==nativeLoops+size_t(!events),
             "the first real perception tick performs one gesture decision in either mode");
       auto draw=[&](uint32_t seed,int map,int dead,int faction,bool quake,bool hasPortal=true) {
@@ -1122,7 +1124,7 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
         gesture.set_int(-1);
         event.set_int(-1);
         sound.set_int(-1);
-        const auto before=quakes;
+        const auto before=quakeVmEntries;
         script.setSeed(seed);
         auto expected=Contract::random(script);
         const auto roll=int(expected()%(folded ? 7u : 10u));
@@ -1131,9 +1133,10 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
         awaitPerception();
         npc.setStateTime(6000);
         Contract::tickScheduledRoutine(npc);
-        check(gesture.get_int()==roll && event.get_int()==eventRoll && quakes==before+quake &&
+        check(gesture.get_int()==roll && event.get_int()==eventRoll && quakeVmEntries==before+size_t(quake && !events) &&
               sound.get_int()==soundRoll && Contract::random(script)==expected && npc.stateTime()==0,
-              "the due gesture, story draw and earthquake's own sound draw must follow the script order");
+              "the original earthquake draws come in order and the native reaction runs no bytecode");
+        quakes+=sound.get_int()>=0;
         const char* clips[]={"T_LGUARD_SCRATCH","T_LGUARD_STRETCH","T_LGUARD_CHANGELEG"};
         checkPointClip(npc,roll<3 ? clips[roll] : "");
         drain();
@@ -3518,14 +3521,20 @@ void seatedActivitiesWorld(Gothic& gothic,bool events) {
   if(!output) std::filesystem::remove_all(directory);
   }
 
-void sleepRoutineWorld(Gothic& gothic,bool events) {
+void sleepRoutineWorld(Gothic& gothic,bool events,bool deep) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
   auto& world=test.world();
   auto* matteo=activityNpc(world,"VLK_416_MATTEO");
   require(matteo!=nullptr,"sleep routine: the authored bed user must exist");
   auto bedtime=test.actor("ZS_GOTOBED","BEDHIGH",matteo);
-  const auto sleep=activityPhases(world.script(),"ZS_SLEEP");
+  if(deep) {
+    bedtime.state="ZS_GOTOBED_DEEP";
+    bedtime.phases=activityPhases(world.script(),bedtime.state.c_str());
+    }
+  const std::string sleepState=deep ? "ZS_SLEEP_DEEP" : "ZS_SLEEP";
+  const auto sleep=activityPhases(world.script(),sleepState.c_str());
+  const auto loopName=sleepState+"_LOOP";
   const auto* approach=test.awayFrom(*bedtime.point,200.f);
   test.only({matteo});
   test.moveHero(bedtime.point->position()+Tempest::Vec3(150,0,0),0);
@@ -3543,6 +3552,7 @@ void sleepRoutineWorld(Gothic& gothic,bool events) {
   const auto deadline=Contract::aiState(*matteo).eTime;
   Contract::tickRoutine(*matteo);
   matteo->setPerceptionDisable(PERC_ASSESSPLAYER);
+  matteo->setPerceptionDisable(PERC_ASSESSQUIETSOUND);
   const auto approaches=activityQueue(*matteo);
   require(approaches.size()>=2 && approaches.back().starts_with("StartState "),
           "sleep routine: the approach queues the sleep transition last");
@@ -3550,7 +3560,7 @@ void sleepRoutineWorld(Gothic& gothic,bool events) {
   auto& vm=world.script().getVm();
   size_t vmLoops=0;
   const auto observer=vm.add_call_observer([&](const auto& function) {
-    vmLoops+=function.name()=="ZS_SLEEP_LOOP";
+    vmLoops+=function.name()==loopName;
     });
   const auto settled=[&] {
     const auto* object=matteo->interactive();
@@ -3560,9 +3570,27 @@ void sleepRoutineWorld(Gothic& gothic,bool events) {
     };
   test.stepUntil(1200,settled,"Matteo sleeps in a bed after approaching his routine waypoint");
   require(Contract::aiState(*matteo).eTime==deadline,"sleep routine: the transition preserves the row's end time");
+  require(matteo->hasPerc(PERC_ASSESSQUIETSOUND)==!deep,
+          "only ordinary sleep registers the quiet sound callback during Init");
   test.step(90);
   require(settled() && (vmLoops==0)==events,"sleep routine: a held bed remains settled with the selected executor");
   vm.remove_call_observer(observer);
+
+  if(deep) {
+    size_t instructions=0;
+    vm.observe_instructions([&](const auto&) { ++instructions; });
+    const auto perceived=matteo->passPerception(*world.player(),nullptr,PERC_ASSESSTALK);
+    vm.observe_instructions({});
+    auto commands=Contract::queue(*matteo);
+    require(perceived && commands.size()==2 && (events ? instructions==0 : instructions>0),
+            "sleep talk: a sleeping NPC accepts the hero's request through the chosen executor");
+    const auto release=commands.pop();
+    const auto talk=commands.pop();
+    require(release.act==AI_UseMob && release.s0=="BEDHIGH" && release.i0==-1 &&
+            talk.act==AI_StartState && talk.func==ScriptFn(world.script().findSymbolIndex("ZS_OBSERVEPLAYER")),
+            "sleep talk: release the bed before watching the hero");
+    matteo->clearAiQueue();
+    }
 
   Contract::aiState(*matteo).eTime=world.time();
   Contract::aiState(*matteo).loopNextTime=world.tickCount();
@@ -3575,8 +3603,8 @@ void sleepRoutineWorld(Gothic& gothic,bool events) {
   require(release.act==AI_UseMob && release.s0=="BEDHIGH" && release.i0==-1,
           "sleep routine: the end requests the normal get-up animation");
   test.stepUntil(600,[&] { return matteo->interactive()==nullptr; },"Matteo leaves his bed");
-  std::printf("Sleep routine (events=%d): %zu VM Loop calls; approach, handoff, held bed and release verified\n",
-              int(events),vmLoops);
+  std::printf("%s (events=%d): %zu VM Loop calls; approach, handoff, held bed and release verified\n",
+              sleepState.c_str(),int(events),vmLoops);
   }
 
 // The switch and the accepted list through the loader the game calls.
@@ -4057,7 +4085,8 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     itemRoutinePhasesWorld(gothic,events);
     ActivityEventsWorld paired(gothic);
     pairedSmalltalkWorld(paired,events);
-    sleepRoutineWorld(gothic,events);
+    sleepRoutineWorld(gothic,events,false);
+    sleepRoutineWorld(gothic,events,true);
     gothic.clearGame().reset();
     seatedActivitiesWorld(gothic,events);
     if(events) {
@@ -4078,12 +4107,13 @@ struct RoutineWitnessSite {
   };
 
 struct RoutineWitness {
-  std::vector<std::string> entry, departure;
+  std::vector<std::string> entry, departure, continuation;
   Tempest::Vec3            position;
   uint32_t                 pose = 0;
   int32_t                  stage = 0;
   bool                     operator==(const RoutineWitness& other) const {
-    return entry==other.entry && departure==other.departure && pose==other.pose && stage==other.stage &&
+    return entry==other.entry && departure==other.departure && continuation==other.continuation &&
+           pose==other.pose && stage==other.stage &&
            (position-other.position).length()<1.f;
     }
   };
@@ -4893,181 +4923,4 @@ void ravenStoneGuardianRoutines(World& world) {
   std::puts("Raven's stone guardians: script, nested native dispatch and native routines match");
   }
 
-std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* worldName,
-                                                std::span<const RoutineWitnessSite> sites,bool events) {
-  using Contract=NpcDefinitionContract;
-  gothic.setGame(std::make_unique<GameSession>(worldName));
-  std::vector<RoutineWitness> result(sites.size());
-  std::vector<uint8_t> save;
-  std::optional<std::array<MonsterRoutineSave,2>> monster;
-  {
-    ActivityEventsWorld test(gothic);
-    auto& world=test.world();
-    auto& script=world.script();
-    auto& vm=script.getVm();
-    test.only({});
-    ActivityEvents::reset();
-    std::map<std::string,size_t> vmCalls;
-    const auto observer=vm.add_call_observer([&](const auto& function) { ++vmCalls[function.name()]; });
-    for(size_t i=0;i<sites.size();++i) {
-      const auto& site=sites[i];
-      const auto* point=world.findWayPoint(site.point);
-      require(point!=nullptr,(std::string(site.state)+": fixture waypoint is missing").c_str());
-      auto* actor=activityNpc(world,site.actor);
-      if(actor==nullptr)
-        actor=world.addNpc(script.findSymbolIndex(site.actor),point->position());
-      require(actor!=nullptr && !actor->isDead(),(std::string(site.state)+": fixture actor is missing or dead").c_str());
-      require(activityNpc(world,site.actor)==actor,(std::string(site.state)+": fixture actor must be in the live world").c_str());
-      const auto state=script.findSymbolIndex(site.state);
-      require(state!=0,(std::string(site.state)+": routine script symbol is missing").c_str());
-      test.stop(*actor);
-      test.moveHero(point->position()+Tempest::Vec3(650,0,0),0);
-      script.setSeed(73106);
-      actor->setPosition(point->position());
-      require(actor->startState(ScriptFn(state),site.point),(std::string(site.state)+": cannot start the fixture state").c_str());
-      const auto vmBefore=vmCalls[site.state];
-      const auto eventsBefore=test.stats(site.state).wakes[0];
-      Contract::tickRoutine(*actor);
-      auto& witness=result[i];
-      witness.entry=activityQueue(*actor);
-      witness.stage=actor->handle().aivar[19];
-      require(actor->isInState(ScriptFn(state)) && Contract::aiState(*actor).started,
-              (std::string(site.state)+": Init must run through the NPC lifecycle").c_str());
-      require(vmCalls[site.state]-vmBefore==(events ? 0u : 1u) &&
-              test.stats(site.state).wakes[0]-eventsBefore==(events ? 1u : 0u),
-              (std::string(site.state)+": Init did not run through the expected executor").c_str());
-    }
-    vm.remove_call_observer(observer);
-    if(events && std::string_view(worldName)=="NEWWORLD.ZEN")
-      monster=monsterRoutinesWorld(gothic);
-    Tempest::MemWriter writer(save);
-    Serialize out(writer);
-    Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
-    std::memset(preview.data(),0,4);
-    gothic.gameSession()->save(out,"human routine entries",preview);
-    for(size_t i=0;i<sites.size();++i) {
-      const auto* actor=activityNpc(world,sites[i].actor);
-      require(actor!=nullptr,(std::string(sites[i].state)+": fixture actor must survive until the save").c_str());
-      result[i].position=actor->position();
-      result[i].pose=actor->bodyStateMasked();
-    }
-  }
-  gothic.clearGame().reset();
-  {
-    Tempest::MemReader reader(save);
-    Serialize in(reader);
-    gothic.setGame(std::make_unique<GameSession>(in));
-    auto& world=*gothic.world();
-    auto& script=world.script();
-    auto& vm=script.getVm();
-    std::map<std::string,size_t> vmCalls;
-    const auto observer=vm.add_call_observer([&](const auto& function) { ++vmCalls[function.name()]; });
-    if(monster) {
-      for(const auto& saved:*monster) {
-        auto* actor=world.npcById(saved.npc);
-        const auto state=script.findFunction(saved.state);
-        const auto loop=std::string(saved.state)+"_LOOP";
-        require(actor && actor->isInState(state) && Contract::aiState(*actor).started &&
-                activityQueue(*actor)==saved.queue && actor->stateTime()==saved.stateTime &&
-                actor->handle().aivar[19]==saved.stage && world.npcId(actor->target())==saved.target &&
-                world.npcId(actor->stateOther())==saved.other,
-                "ordinary load must restore the monster's state, timer, stage, target and pending commands");
-        actor->clearAiQueue();
-        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
-        ActivityStream stream(world,*actor);
-        Contract::tickRoutine(*actor);
-        require(actor->isInState(state) && stream.records==1 && vmCalls[loop]==0 &&
-                activityCount(stream.events,"phase "+loop)==1,
-                "the loaded monster must resume in its native loop without rerunning Init");
-        std::printf("Monster state %s: ordinary load restored the pending commands and resumed native Loop\n",saved.state);
-        }
-      }
-    for(size_t i=0;i<sites.size();++i) {
-      const auto& site=sites[i];
-      auto* actor=activityNpc(world,site.actor);
-      auto& witness=result[i];
-      const auto id=ScriptFn(script.findSymbolIndex(site.state));
-      require(actor!=nullptr && actor->isInState(id) && Contract::aiState(*actor).started &&
-              activityQueue(*actor)==witness.entry && actor->handle().aivar[19]==witness.stage &&
-              actor->bodyStateMasked()==witness.pose && (actor->position()-witness.position).length()<1.f,
-              (std::string(site.state)+": ordinary reload must restore the entry before its pending commands run").c_str());
-      if(std::string_view(site.state)=="ZS_GUARD_PASSAGE") {
-        const auto aligned=[](const Npc& npc) {
-          const auto queue=activityQueue(npc);
-          return queue.size()==1 && queue.front().starts_with("AlignToWp ");
-          };
-        ActivityEventsWorld test(gothic);
-        const auto guard=actor->position();
-        for(const auto [distance,time,expect] : {std::tuple{650.f,2999,false},std::tuple{450.f,3000,false},
-                                                std::tuple{650.f,3000,true}}) {
-          test.moveHero(guard+Tempest::Vec3(distance,0,0),0);
-          actor->clearAiQueue();
-          actor->setStateTime(time);
-          Contract::aiState(*actor).loopNextTime=world.tickCount();
-          Contract::tickRoutine(*actor);
-          require(aligned(*actor)==expect && actor->stateTime()==(expect ? 0u : uint64_t(time)),
-                  "ZS_GUARD_PASSAGE: align and reset only at three seconds with the hero outside 500 cm");
-        }
-        require(events ? vmCalls["ZS_GUARD_PASSAGE_LOOP"]==0 : vmCalls["ZS_GUARD_PASSAGE_LOOP"]==3,
-                "ZS_GUARD_PASSAGE must use the expected Loop executor across the threshold");
-      }
-      actor->clearAiQueue();
-      const std::string end=std::string(site.state)+"_END";
-      const auto vmBefore=vmCalls[end];
-      actor->clearState(false);
-      witness.departure=activityQueue(*actor);
-      require(!actor->isInState(id) && vmCalls[end]-vmBefore==(events || !vm.find_symbol_by_name(end) ? 0u : 1u),
-              (std::string(site.state)+": End did not run through the expected executor").c_str());
-    }
-    vm.remove_call_observer(observer);
-    if(monster)
-      ravenStoneGuardianRoutines(world);
-  }
-  gothic.clearGame().reset();
-  return result;
-  }
-
-void remainingRoutineWitnesses(Gothic& gothic) {
-  static constexpr RoutineWitnessSite khorinis[] = {
-    {"ZS_CIRCLE",              "KDW_1400_ADDON_SATURAS_NW",        "NW_TROLLAREA_PORTALTEMPEL_RITUAL_01"},
-    {"ZS_CONCERT",             "PIR_1390_ADDON_INEXTREMO_DRPYMONTE","NW_CITY_PATH_HABOUR_03"},
-    {"ZS_FLEETOWP",            "BDT_1013_BANDIT_L",                "NW_XARDAS_MONSTER_INSERT_01"},
-    {"ZS_FOLLOW_PLAYER",       "BAU_931_TILL",                     "NW_BIGFARM_KITCHEN_02"},
-    {"ZS_GUARD_PASSAGE",       "KDF_507_TALAMON",                  "NW_MONASTERY_CELLAR_15"},
-    {"ZS_GUIDE_PLAYER",        "VLK_440_BARTOK",                    "NW_FARM1_CITYWALL_FOREST_07"},
-    {"ZS_PRACTICE_MAGIC",      "TA_TESTMODELL",                    "NW_CITY_PATH_HABOUR_03"},
-    {"ZS_RUNTOWP",             "MIL_337_MIKA",                     "NW_FARM2_PATH_03"},
-    {"ZS_SPIT_FIRE",           "VLK_468_CANTHAR",                  "NW_CITY_PATH_HABOUR_03"},
-    {"ZS_STAND_DEMENTOR",      "DMT_1202_DEMENTOR",                "NW_XARDAS_VALLEY_03"},
-    {"ZS_STAND_RANGERMEETING", "MIL_350_ADDON_MARTIN",             "NW_TAVERNE_07"},
-    {"ZS_WASH_FP",             "MIL_313_BOLTAN",                   "NW_CITY_PATH_HABOUR_03"},
-    };
-  static constexpr RoutineWitnessSite jharkendar[] = {
-    {"ZS_COOK_PAN",       "PIR_1352_ADDON_ALLIGATORJACK", "AD_PIRATECAMP_AJ_03"},
-    {"ZS_GHOST",          "NONE_ADDON_111_QUARHODRON",    "ADW_ANCIENTGHOST"},
-    {"ZS_GHOSTWUSEL",      "NONE_ADDON_112_RHADEMES",      "ADW_ADANOSTEMPEL_RHADEMES_02"},
-    {"ZS_PICK_ORE",       "BDT_10004_ADDON_FINN",         "ADW_MINE_PICK_06"},
-    {"ZS_ROAST_SCAVENGER", "PIR_1364_ADDON_PIRAT",         "ADW_PIRATECAMP_SCAVENGER"},
-    };
-  struct Setting {
-    const char* key;
-    std::optional<std::string> previous;
-    explicit Setting(const char* name):key(name) { if(const auto* value=std::getenv(key)) previous=value; }
-    ~Setting() { if(previous) setenv(key,previous->c_str(),1); else unsetenv(key); }
-    } records("OPENGOTHIC_ACTIVITY_RECORDS"), events("OPENGOTHIC_ACTIVITY_EVENTS");
-  for(const auto& [world,sites] : {std::pair{"NEWWORLD.ZEN",std::span<const RoutineWitnessSite>(khorinis)},
-                                  std::pair{"ADDONWORLD.ZEN",std::span<const RoutineWitnessSite>(jharkendar)}}) {
-    setenv(records.key,"0",1);
-    setenv(events.key,"0",1);
-    const auto original=remainingRoutineRun(gothic,world,sites,false);
-    setenv(records.key,"1",1);
-    setenv(events.key,"1",1);
-    const auto native=remainingRoutineRun(gothic,world,sites,true);
-    for(size_t i=0;i<sites.size();++i) {
-      const auto& site=sites[i];
-      require(native[i]==original[i],(std::string(site.state)+": queue, pose or stage differs against the original").c_str());
-      std::printf("Routine witness %s in %s with %s: Init, normal load and End agree in both executors\n",
-                  site.state,world,site.actor);
-    }
-  }
-  }
+#include "npc_remaining_routine_world_fixture.h"

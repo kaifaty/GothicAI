@@ -9,7 +9,7 @@
 namespace {
 using ActivityDefinitions::Phase;
 
-enum class PointRoutine { GuardPassage, Pick, PracticeMagic, PracticeSword, Pray, Study, Unknown };
+enum class PointRoutine { GuardPassage, Pick, PracticeMagic, PracticeSword, Pray, PrayIdol, PraySleeper, Study, Unknown };
 
 PointRoutine pointRoutine(std::string_view name) {
   if(name=="ZS_GUARD_PASSAGE")  return PointRoutine::GuardPassage;
@@ -17,6 +17,8 @@ PointRoutine pointRoutine(std::string_view name) {
   if(name=="ZS_PRACTICE_MAGIC") return PointRoutine::PracticeMagic;
   if(name=="ZS_PRACTICE_SWORD") return PointRoutine::PracticeSword;
   if(name=="ZS_PRAY_INNOS_FP")  return PointRoutine::Pray;
+  if(name=="ZS_PRAY_SLEEPER")   return PointRoutine::PrayIdol;
+  if(name=="ZS_PRAY_SLEEPER_FP") return PointRoutine::PraySleeper;
   if(name=="ZS_STUDY_WP")       return PointRoutine::Study;
   return PointRoutine::Unknown;
   }
@@ -60,14 +62,14 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
 
   if(phase==Phase::Init) {
     setPerceptionPreset(true);
-    stopLookAt();
-    npc.aiPush(AiQueue::aiRemoveWeapon());
+    resetRoutineNpc(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
     if(kind==PointRoutine::GuardPassage) {
       npc.setPerceptionTime(100);
       npc.aiPush(AiQueue::aiStandup());
       }
     NpcEngineCalls::setWalkMode(npc,1);
-    const bool walk = kind==PointRoutine::GuardPassage || kind==PointRoutine::Study || awayFromWaypoint();
+    const bool walk = kind==PointRoutine::PrayIdol ? NpcEngineCalls::nearestWaypoint(world(),npc)!=npc.handle().wp
+                     : kind==PointRoutine::GuardPassage || kind==PointRoutine::Study || awayFromWaypoint();
     if(walk)
       gotoWaypoint();
     if(kind==PointRoutine::Study || (kind==PointRoutine::PracticeSword && walk) ||
@@ -85,9 +87,13 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
       npc.aiPush(AiQueue::aiStandup());
       npc.aiPush(AiQueue::aiRemoveWeapon());
       }
-    else if(kind==PointRoutine::Pray) {
-      npc.stopAnim("T_PRAY_RANDOM");
+    else if(kind==PointRoutine::Pray || kind==PointRoutine::PraySleeper) {
+      if(kind==PointRoutine::Pray)
+        npc.stopAnim("T_PRAY_RANDOM");
       npc.aiPush(AiQueue::aiPlayAnim("T_PRAY_2_STAND"));
+      }
+    else if(kind==PointRoutine::PrayIdol) {
+      npc.aiPush(AiQueue::aiUseMob("IDOL",-1));
       }
     else if(kind==PointRoutine::Study) {
       const auto scroll = findSymbol("FAKESCROLL_ADDON")->index();
@@ -182,12 +188,21 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
       gotoWaypoint();
       npc.aiPush(AiQueue::aiAlignToWp());
       break;
+    case PointRoutine::PrayIdol: {
+      const auto available = world().availableMob(npc,"IDOL")!=nullptr;
+      const auto occupied = npcBodyStateContains(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),BS_MOBINTERACT_INTERRUPT);
+      if(available && !occupied)
+        npc.aiPush(AiQueue::aiUseMob("IDOL",1));
+      break;
+      }
     case PointRoutine::Pray:
+    case PointRoutine::PraySleeper:
       if(npc.isOnFreePoint("PRAY")) {
-        if(seated())
+        if(npcBodyStateContains(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),BS_SIT))
           npc.aiPush(AiQueue::aiPlayAnimBs("T_PRAY_RANDOM",BS_SIT));
         else {
-          npc.aiPush(AiQueue::aiAlignToFp());
+          if(kind==PointRoutine::Pray)
+            npc.aiPush(AiQueue::aiAlignToFp());
           npc.aiPush(AiQueue::aiPlayAnimBs("T_STAND_2_PRAY",BS_SIT));
           }
         }
@@ -236,7 +251,7 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
           const auto level = findSymbol("CURRENTLEVEL")->get_int();
           if(findSymbol("RAVENISDEAD")->get_int()==0 && npc.handle().guild==GIL_KDW &&
              ((level==4 && eventRoll==1) || (level==1 && eventRoll<5)))
-            vm.call_function<void>(findSymbol("B_EVENT_PORTAL_EARTHQUAKE"));
+            runPortalEarthquake(npc);
           }
         }
       if(stage==NeedsPose) {
@@ -249,4 +264,76 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
       return false;
     }
   return true;
+  }
+
+bool GameScript::runBanditCamp(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const std::string_view name = symbol.name();
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  auto& stage = npc.handle().aivar[PositionStage];
+  result = LOOP_CONTINUE;
+
+  if(name=="ZS_BANDIT") {
+    setPerceptionPreset(true);
+    resetRoutineNpc(self);
+    NpcEngineCalls::setWalkMode(npc,1);
+    const auto& waypoint = npc.handle().wp;
+    if(NpcEngineCalls::distanceToWaypoint(world(),npc,waypoint)>ApproachDistance)
+      NpcEngineCalls::gotoWaypoint(world(),npc,waypoint);
+    stage = NeedsPose;
+    return true;
+    }
+
+  if(name=="ZS_BANDIT_LOOP" && stage==NeedsPose) {
+    const auto* fire = world().findFreePoint(npc,"CAMPFIRE");
+    if(fire!=nullptr && !npc.isOnFreePoint("CAMPFIRE")) {
+      npc.aiPush(AiQueue::aiGoToPoint(*fire));
+      npc.aiPush(AiQueue::aiAlignToFp());
+      npc.aiPush(AiQueue::aiPlayAnimBs("T_STAND_2_SIT",BS_SIT));
+      }
+    else if(const auto* stand = world().findFreePoint(npc,"STAND"); stand!=nullptr && !npc.isOnFreePoint("STAND")) {
+      npc.aiPush(AiQueue::aiGoToPoint(*stand));
+      npc.aiPush(AiQueue::aiAlignToFp());
+      npc.aiPush(AiQueue::aiPlayAnim("T_STAND_2_HGUARD"));
+      }
+    else {
+      npc.aiPush(AiQueue::aiAlignToWp());
+      npc.aiPush(AiQueue::aiPlayAnim("T_STAND_2_HGUARD"));
+      }
+    stage = InPose;
+    }
+  const auto seated = npcBodyStateContains(self,BS_SIT);
+
+  if(name=="ZS_BANDIT_END") {
+    if(seated)
+      npc.aiPush(AiQueue::aiPlayAnimBs("T_SIT_2_STAND",BS_STAND));
+    else
+      npc.aiPush(AiQueue::aiPlayAnim("T_HGUARD_2_STAND"));
+    return true;
+    }
+
+  if(!seated && stage==InPose && npc_getstatetime(self)>5) {
+    const auto roll = int32_t(rollRandom(3,&npc,true));
+    findSymbol("ZS_BANDIT_LOOP.RANDOM")->set_int(roll);
+    if(roll==0)
+      npc.aiPush(AiQueue::aiPlayAnim("T_HGUARD_LOOKAROUND"));
+    npc_setstatetime(self,0);
+    }
+  return true;
+  }
+
+void GameScript::runPortalEarthquake(Npc& npc) {
+  const auto hero = vm.global_hero()->get_instance();
+  wld_playeffect("FX_EarthQuake",hero,hero,0,0,0,0);
+  const auto roll = rollRandom(4,&npc,true);
+  findSymbol("B_EVENT_PORTAL_EARTHQUAKE.RANDY")->set_int(int32_t(roll));
+  static constexpr std::string_view cues[4][2] = {
+    {"Ravens_Earthquake4", {}},
+    {"Ravens_Earthquake4", "Ravens_Earthquake2"},
+    {"Ravens_Earthquake3", "Ravens_Earthquake1"},
+    {"Ravens_Earthquake3", {}},
+    };
+  for(const auto cue : cues[roll]) {
+    if(!cue.empty())
+      snd_play(cue);
+    }
   }
