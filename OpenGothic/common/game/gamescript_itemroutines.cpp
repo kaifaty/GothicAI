@@ -77,6 +77,11 @@ bool GameScript::runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol
     npc.aiPush(AiQueue::aiUseItemToState(int32_t(findSymbolIndex(item)),state));
     };
   if(phase==Phase::Init) {
+    const auto ensureItem=[&](std::string_view item) {
+      const auto id=uint32_t(findSymbolIndex(item));
+      if(npc.itemCount(id)==0)
+        storeItem(npc.addItem(id,1));
+      };
     NpcActivityHost host(world(),npc,[this](std::string_view perception) {
       vm.call_function<void>(vm.find_symbol_by_name(perception));
       });
@@ -85,14 +90,17 @@ bool GameScript::runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol
     const auto& wp=npc.handle().wp;
     if(a.kind==Kind::Brush ? host.nearestWaypoint()!=wp : host.distanceToWaypoint(wp)>500)
       host.gotoWaypoint(wp);
-    if(a.kind!=Kind::Brush && a.kind!=Kind::Spit)
+    if(a.kind==Kind::Eat) {
       stage=enter;
-    if(a.kind==Kind::Eat)
-      foodChoice=int32_t(roll(food.size()));
-    if(const auto item=itemName(); !item.empty()) {
-      const auto id=int32_t(findSymbolIndex(item));
-      if(npc.itemCount(uint32_t(id))==0)
-        storeItem(npc.addItem(uint32_t(id),1));
+      const auto choice=roll(uint32_t(food.size()));
+      ensureItem(food[choice]);
+      foodChoice=int32_t(choice);
+      }
+    else {
+      if(!a.item.empty())
+        ensureItem(a.item);
+      if(a.kind!=Kind::Brush && a.kind!=Kind::Spit)
+        stage=enter;
       }
     return true;
     }
@@ -117,11 +125,11 @@ bool GameScript::runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol
     }
   else if(const auto* point=world().findFreePoint(npc,a.point)) {
     npc.aiPush(AiQueue::aiGoToPoint(*point));
-    if(a.kind!=Kind::Spit) {
+    if(a.kind!=Kind::Spit)
       npc.aiPush(AiQueue::aiStandup());
-      stage=walking;
-      }
     npc.aiPush(AiQueue::aiAlignToFp());
+    if(a.kind!=Kind::Spit)
+      stage=walking;
     }
   else {
     npc.aiPush(AiQueue::aiAlignToWp());
