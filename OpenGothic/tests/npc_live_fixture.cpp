@@ -32,6 +32,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -392,6 +393,7 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
   std::vector<std::pair<daedalus::DaedalusSymbol*,std::shared_ptr<daedalus::DaedalusInstance>>> references;
   for(const char* name : {"B_ADDPETZCRIME.SLF","B_DELETEPETZCRIME.SLF","B_GETPLAYERCRIME.SLF",
                           "B_GETCURRENTABSOLUTIONLEVEL.SLF","B_MEMORIZEPLAYERCRIME.SLF","B_MEMORIZEPLAYERCRIME.TAETER",
+                          "B_GETGREATESTPETZCRIME.SLF","B_GETTOTALPETZCOUNTER.SLF",
                           "C_NPCBELONGSTOOLDCAMP.SLF","C_NPCBELONGSTOCITY.SLF","C_NPCBELONGSTOMONASTERY.SLF",
                           "C_NPCBELONGSTOFARM.SLF","C_NPCBELONGSTOBL.SLF"}) {
     auto& ref=symbol(name);
@@ -457,6 +459,44 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
         else if(original[i]!=value) throw std::runtime_error("Crime memory: saved witness references differ from stock");
         }
       }
+    }
+  record.guild=GIL_VLK;
+  record.type=NpcType::G2_BL_AMBIENT;
+  for(const bool native : {false,true}) {
+    enabled=native;
+    counters.fill(0);
+    symbol("PETZCOUNTER_CITY_MURDER").set_int(-1);
+    symbol("PETZCOUNTER_BL_MURDER").set_int(2);
+    const auto query=[&](const char* name,const char* result=nullptr) {
+      auto& function=symbol(name);
+      auto* expected=result ? &symbol(result) : nullptr;
+      const auto context=vm.unsafe_get_gi();
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==function.address(); });
+      vm.push_int(0x5a5a);
+      vm.push_instance(witnessHandle);
+      vm.unsafe_call_bl(&function);
+      vm.observe_instructions({});
+      const auto frame=vm.stack_frame(0);
+      if(instructions!=size_t(!native) || vm.unsafe_get_gi()!=context ||
+         frame.reference!=(expected!=nullptr) ||
+         (expected && (std::get<daedalus::DaedalusSymbol*>(frame.value)!=expected || frame.context!=context)))
+        throw std::runtime_error("Crime report: executor and VM result frame must match stock");
+      if(result && std::string_view(result)=="ABSOLUTIONLEVEL_CITY")
+        expected->set_int(13);
+      const auto value=vm.pop_int();
+      if(vm.pop_int()!=0x5a5a) throw std::runtime_error("Crime report: callback must preserve the caller stack");
+      return value;
+      };
+    if(query("B_GETGREATESTPETZCRIME","CRIME_MURDER")!=murder || query("B_GETTOTALPETZCOUNTER")!=-1)
+      throw std::runtime_error("Crime report: an empty city report can fall through only when selecting the greatest crime");
+    symbol("PETZCOUNTER_CITY_THEFT").set_int(std::numeric_limits<int32_t>::max());
+    symbol("PETZCOUNTER_CITY_SHEEPKILLER").set_int(2);
+    symbol("ABSOLUTIONLEVEL_CITY").set_int(11);
+    if(query("B_GETGREATESTPETZCRIME","CRIME_THEFT")!=theft ||
+       query("B_GETTOTALPETZCOUNTER")!=std::numeric_limits<int32_t>::min() ||
+       query("B_GETCURRENTABSOLUTIONLEVEL","ABSOLUTIONLEVEL_CITY")!=13)
+      throw std::runtime_error("Crime report: region priority, wrapped totals and live absolution references must match stock");
     }
   enabled=wasEnabled;
   record.guild=savedGuild;

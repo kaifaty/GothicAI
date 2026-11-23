@@ -614,6 +614,7 @@ void GameScript::loadNativeHumanPerceptions() {
   vm.override_function("B_DELETEPETZCRIME",std::function<void(Actor)>{[this](const Actor& witness) {
     adjustPetzCrime(witness,std::nullopt);
     }},enabled);
+  loadNativeCrimeReports(enabled);
   vm.override_function("C_NPCISBOTHEREDBYWEAPON",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     return botheredByWeapon(self,other);
     }},enabled);
@@ -2529,6 +2530,10 @@ void GameScript::memorizePlayerCrime(const std::shared_ptr<daedalus::INpc>& witn
 
 namespace {
 
+constexpr std::array<std::string_view,4> petzCrimeKinds={
+  "CRIME_MURDER","CRIME_THEFT","CRIME_ATTACK","CRIME_SHEEPKILLER",
+  };
+
 constexpr struct {
   std::string_view witnessSlot;
   std::string_view absolution;
@@ -2556,6 +2561,57 @@ std::array<bool,std::size(crimeJurisdictions)> crimeJurisdictionMembership(const
   }
 
 }
+
+void GameScript::loadNativeCrimeReports(const std::function<bool()>& enabled) {
+  using Callback=std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>;
+  enum class Query { Greatest, Total, Absolution };
+  static constexpr struct Report {
+    const char* function;
+    const char* witnessSlot;
+    Query query;
+    } reports[]={
+    {"B_GETGREATESTPETZCRIME","B_GETGREATESTPETZCRIME.SLF",Query::Greatest},
+    {"B_GETTOTALPETZCOUNTER","B_GETTOTALPETZCOUNTER.SLF",Query::Total},
+    {"B_GETCURRENTABSOLUTIONLEVEL","B_GETCURRENTABSOLUTIONLEVEL.SLF",Query::Absolution},
+    };
+  for(const auto& report:reports) {
+    auto* witnessSlot=findSymbol(report.witnessSlot);
+    vm.override_function(report.function,Callback{
+      [this,witnessSlot,query=report.query](auto& machine) -> daedalus::DaedalusNakedCall {
+        const auto witness=machine.pop_instance();
+        witnessSlot->set_instance(witness);
+        const auto membership=crimeJurisdictionMembership(dynamic_cast<daedalus::INpc*>(witness.get()));
+        for(size_t i=0;i<std::size(crimeJurisdictions);++i) {
+          const auto& jurisdiction=crimeJurisdictions[i];
+          findSymbol(jurisdiction.witnessSlot)->set_instance(witness);
+          if(!membership[i])
+            continue;
+          if(query==Query::Absolution) {
+            machine.push_reference(findSymbol(jurisdiction.absolution));
+            return {};
+            }
+          uint32_t total=0;
+          for(size_t j=0;j<jurisdiction.counters.size() && !jurisdiction.counters[j].empty();++j) {
+            const auto count=petzCrimeCounters[i*jurisdiction.counters.size()+j];
+            if(query==Query::Greatest && count>0) {
+              machine.push_reference(findSymbol(petzCrimeKinds[j]));
+              return {};
+              }
+            total+=uint32_t(count);
+            }
+          if(query==Query::Total) {
+            machine.push_int(std::bit_cast<int32_t>(total));
+            return {};
+            }
+          }
+        if(query==Query::Greatest)
+          machine.push_reference(findSymbol("CRIME_NONE"));
+        else
+          machine.push_int(0);
+        return {};
+        }},enabled);
+    }
+  }
 
 void GameScript::bindCrimeGlobals() {
   for(size_t i=0; i<std::size(crimeJurisdictions); ++i) {
@@ -2587,7 +2643,6 @@ void GameScript::adjustPetzCrime(const std::shared_ptr<daedalus::INpc>& witness,
     } else {
     findSymbol("B_DELETEPETZCRIME.SLF")->set_instance(witness);
     }
-  static constexpr std::array<std::string_view,4> crimes = {"CRIME_MURDER","CRIME_THEFT","CRIME_ATTACK","CRIME_SHEEPKILLER"};
   const auto membership = crimeJurisdictionMembership(witness.get());
   for(size_t i=0; i<std::size(crimeJurisdictions); ++i) {
     const auto& jurisdiction = crimeJurisdictions[i];
@@ -2595,8 +2650,8 @@ void GameScript::adjustPetzCrime(const std::shared_ptr<daedalus::INpc>& witness,
     if(!membership[i])
       continue;
     const auto crime = newCrime ? *newCrime : playerCrime(witness);
-    for(size_t j=0; j<crimes.size(); ++j) {
-      if(jurisdiction.counters[j].empty() || crime!=findSymbol(crimes[j])->get_int())
+    for(size_t j=0; j<petzCrimeKinds.size(); ++j) {
+      if(jurisdiction.counters[j].empty() || crime!=findSymbol(petzCrimeKinds[j])->get_int())
         continue;
       auto& counter = petzCrimeCounters[i*jurisdiction.counters.size()+j];
       counter += newCrime ? 1 : -1;

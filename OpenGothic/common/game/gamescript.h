@@ -469,6 +469,7 @@ class GameScript final : public GameRules {
     void loadNativeRoomReaction();
     void loadNativeHumanPerceptions();
     void bindCrimeGlobals();
+    void loadNativeCrimeReports(const std::function<bool()>& enabled);
     bool nativeHumanPerceptionsEnabled() const;
     bool invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase);
     int32_t runDrawWeaponReaction();
