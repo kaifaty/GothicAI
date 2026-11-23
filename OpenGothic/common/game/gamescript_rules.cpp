@@ -183,6 +183,18 @@ void GameScript::stopLookAtNpc(const std::shared_ptr<daedalus::INpc>& self) {
     ai_stoplookat(self);
   }
 
+void GameScript::resetRoutineNpc(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("B_RESETALL.SLF")->set_instance(self);
+  stopLookAtNpc(self);
+  ai_removeweapon(self);
+  }
+
+bool GameScript::npcBodyStateContains(const std::shared_ptr<daedalus::INpc>& self, BodyState state) {
+  findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(int32_t(state));
+  findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self);
+  return ActivityDefinitions::bodyStateContains(npc_getbodystate(self),int32_t(state));
+  }
+
 int32_t GameScript::runEnterRoomReaction() {
   const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };

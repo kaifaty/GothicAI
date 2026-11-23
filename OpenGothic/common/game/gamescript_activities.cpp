@@ -15,7 +15,9 @@ void GameScript::loadNativeRoutines() {
 
   static constexpr NativeRoutinePhase routines[] = {
     {"ZS_GOTOBED",            &GameScript::runMovementRoutine},
+    {"ZS_GOTOBED_DEEP",       &GameScript::runMovementRoutine},
     {"ZS_SLEEP",              &GameScript::runMovementRoutine, 0, RoutineWake::Sleep},
+    {"ZS_SLEEP_DEEP",         &GameScript::runMovementRoutine, 0, RoutineWake::Sleep},
     {"ZS_FLEETOWP",           &GameScript::runMovementRoutine, 6000},
     {"ZS_RUNTOWP",            &GameScript::runMovementRoutine, 6000},
     {"ZS_FOLLOW_PLAYER",      &GameScript::runMovementRoutine},
@@ -35,6 +37,8 @@ void GameScript::loadNativeRoutines() {
     {"ZS_PRACTICE_MAGIC",     &GameScript::runPointRoutine},
     {"ZS_PRACTICE_SWORD",     &GameScript::runPointRoutine},
     {"ZS_PRAY_INNOS_FP",      &GameScript::runPointRoutine},
+    {"ZS_PRAY_SLEEPER",       &GameScript::runPointRoutine},
+    {"ZS_PRAY_SLEEPER_FP",    &GameScript::runPointRoutine},
     {"ZS_STUDY_WP",           &GameScript::runPointRoutine},
     {"ZS_ANNOUNCE_HEROLD",    &GameScript::runSocialRoutine, 70000, RoutineWake::Herald},
     {"ZS_CIRCLE",             &GameScript::runSocialRoutine},
@@ -48,6 +52,8 @@ void GameScript::loadNativeRoutines() {
     {"ZS_STAND_RANGERMEETING",&GameScript::runSocialRoutine},
     {"ZS_OBSERVEPLAYER",      &GameScript::runObservePlayer},
     {"ZS_CLEARROOM",          &GameScript::runClearRoom},
+    {"ZS_BANDIT",             &GameScript::runBanditCamp},
+    {"ZS_GOLEMDOWN",          &GameScript::runDormantGolem},
     {"ZS_DEAD",               &GameScript::runDeadState},
     {"ZS_UNCONSCIOUS",        &GameScript::runUnconsciousState},
     {"ZS_HEALSELF",           &GameScript::runHealSelf},
@@ -240,6 +246,22 @@ bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::Daedalus
     if(matches)
       npc.setStateTime(0);
     }
+  return true;
+  }
+
+bool GameScript::invokeNativeRoutineReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol,
+                                               NpcActivityProbe::Phase& phase) {
+  const std::string_view name = symbol.name();
+  if((name!="B_GOLEMRISE" && name!="B_ASSESSSLEEPTALK" && name!="B_EVENT_PORTAL_EARTHQUAKE") ||
+     !nativeRoomReactionsEnabled())
+    return false;
+  phase.fromRecord();
+  if(name=="B_GOLEMRISE")
+    wakeDormantGolem(npc);
+  else if(name=="B_ASSESSSLEEPTALK")
+    assessSleepTalk(npc);
+  else
+    runPortalEarthquake(npc);
   return true;
   }
 
