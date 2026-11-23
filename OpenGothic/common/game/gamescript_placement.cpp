@@ -155,6 +155,19 @@ void GameScript::loadNativeWorldEntry() {
     return;
 
   findSymbol("CURRENTLEVEL")->bind_global_int(currentStoryWorld);
+  static constexpr std::pair<std::string_view,int32_t GhostProgress::*> ghostFlags[]={
+    {"GHOST_SCKNOWSHOW2GETINADANOSTEMPEL",&GhostProgress::knowsTempleEntrance},
+    {"SC_SUMMONEDANCIENTGHOST",&GhostProgress::summonedAncientGhost},
+    {"B_REMOVEQUARHODRON_ONETIME",&GhostProgress::removedQuarhodron},
+    {"ADW_ADANOSTEMPEL_STONEGRD_TRIGG_FUNC_01_ONETIME",&GhostProgress::stoneGuardianTrigger},
+    {"SC_TOOKRHADEMESTRAP",&GhostProgress::tookRhademesTrap},
+    {"SC_TALKEDTORHADEMAFTER",&GhostProgress::talkedToRhademesAfter},
+    {"B_REMOVERHADEMES_ONETIME",&GhostProgress::removedRhademes},
+    {"GHOSTATTACKWARN",&GhostProgress::attackWarn},
+    };
+  for(const auto& [name,field]:ghostFlags)
+    findSymbol(name)->bind_global_int(ghostProgress.*field);
+
   static constexpr std::pair<const char*,ChapterWorld> worlds[]={
     {"B_ENTER_NEWWORLD",ChapterWorld::New}, {"B_ENTER_OLDWORLD",ChapterWorld::Old}, {"B_ENTER_ADDONWORLD",ChapterWorld::Addon},
     };

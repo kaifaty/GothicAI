@@ -12,6 +12,35 @@ std::string numberedLine(std::string_view prefix, int number) {
   }
 }
 
+void GameScript::removeFinishedGhosts() {
+  const auto remove = [&](std::string_view name) {
+    auto* symbol = findSymbol(name);
+    ai_teleport(std::dynamic_pointer_cast<daedalus::INpc>(symbol->get_instance()),"TOT");
+    vm.push_int(int32_t(symbol->index()));
+    vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
+    };
+  const auto playRemoval = [&] {
+    snd_play("MFX_GhostVoice");
+    snd_play("MFX_Firestorm_Cast");
+    };
+
+  if(ghostProgress.knowsTempleEntrance==1 && ghostProgress.removedQuarhodron==0 &&
+     ghostProgress.summonedAncientGhost==1) {
+    remove("NONE_ADDON_111_QUARHODRON");
+    playRemoval();
+    ghostProgress.removedQuarhodron=1;
+    ghostProgress.attackWarn=0;
+    }
+  if(ghostProgress.stoneGuardianTrigger==1 && ghostProgress.removedRhademes==0 &&
+     ghostProgress.tookRhademesTrap==1) {
+    remove("NONE_ADDON_112_RHADEMES");
+    if(ghostProgress.talkedToRhademesAfter==1)
+      playRemoval();
+    ghostProgress.removedRhademes=1;
+    ghostProgress.attackWarn=0;
+    }
+  }
+
 bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   const auto name = std::string_view(symbol.name());
   const bool loop = name.ends_with("_LOOP");
@@ -219,7 +248,7 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
       const auto spirit = hlp_getnpc(id("NONE_ADDON_111_QUARHODRON"));
       vm.find_symbol_by_name("ZS_GHOST.QUARHO")->set_instance(spirit);
       if(hlp_getinstanceid(spirit)==int(npc.instanceSymbol())) {
-        if(read("GHOST_SCKNOWSHOW2GETINADANOSTEMPEL")==0)
+        if(ghostProgress.knowsTempleEntrance==0)
           perception(PERC_ASSESSTALK,"B_ASSESSTALK");
         }
       else {
@@ -238,8 +267,7 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
         ai_aligntowp(self);
         npc.setStateTime(0);
         }
-      // This helper implements the quest's one-shot removal and sound effects.
-      vm.call_function<void>("B_REMOVEGHOST");
+      removeFinishedGhosts();
       }
     }
   else if(state=="ZS_GHOSTWUSEL") {

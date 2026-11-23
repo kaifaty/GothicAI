@@ -315,6 +315,7 @@ class GameScript final : public GameRules {
     void runMonsterAssessSurprise();
     void runMonsterAssessQuietSoundSleep();
     void runMonsterSummonedAssessTalk();
+    void awakenStoneGuardian(const std::shared_ptr<daedalus::INpc>& actor);
     bool monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monster, const std::shared_ptr<daedalus::INpc>& body);
     bool monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -361,6 +362,7 @@ class GameScript final : public GameRules {
     void loadNativeNpcGlobals();
     void loadNativeMonsterAttitudes();
     void loadNativeWorldEntry();
+    void removeFinishedGhosts();
     enum class ChapterWorld : uint8_t { New, Old, Addon };
     void enterChapterWorld(ChapterWorld world);
     void changeChapter(int32_t chapter, int32_t level);
@@ -814,6 +816,11 @@ class GameScript final : public GameRules {
       int32_t ravenDead=0, dragonsKilled=0, allDragonsDead=0, undeadDragonDead=0, biffSurvived=0;
       std::array<int32_t,4> dragonDeaths{};
       } deathProgress;
+    struct GhostProgress {
+      int32_t knowsTempleEntrance=0, summonedAncientGhost=0, removedQuarhodron=0;
+      int32_t stoneGuardianTrigger=0, tookRhademesTrap=0, talkedToRhademesAfter=0, removedRhademes=0;
+      int32_t attackWarn=0;
+      } ghostProgress;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};

@@ -732,6 +732,16 @@ void GameScript::runMonsterAssessBody() {
   ai_startstate(self,int(findFunction("ZS_MM_EATBODY").ptr),0,"");
   }
 
+void GameScript::awakenStoneGuardian(const std::shared_ptr<daedalus::INpc>& actor) {
+  findSymbol("B_AWAKE_STONEGUARDIAN.SLF")->set_instance(actor);
+  if(!actor || actor->aivar[enemyOverride]!=1)
+    return;
+
+  wld_playeffect("spellFX_INCOVATION_WHITE",actor,actor,0,0,0,0);
+  wld_playeffect("spellFX_LIGHTSTAR_RingRitual",actor,actor,0,0,0,0);
+  actor->aivar[enemyOverride] = 0;
+  }
+
 void GameScript::runMonsterAssessDamage() {
   const auto self = std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const auto other = [&] { return std::static_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
@@ -753,7 +763,7 @@ void GameScript::runMonsterAssessDamage() {
       }
     }
   if(ai[enemyOverride]==1 && self->guild==GIL_Stoneguardian)
-    vm.call_function<void>("B_AWAKE_STONEGUARDIAN",self);
+    awakenStoneGuardian(self);
 
   const auto source = other();
   const auto attack = int(findFunction("ZS_MM_ATTACK").ptr);
@@ -810,7 +820,7 @@ void GameScript::runMonsterAssessOthersDamage() {
     return;
     }
   if(self->aivar[enemyOverride]==1 && self->guild==GIL_Stoneguardian && victim->guild==GIL_Stoneguardian)
-    vm.call_function<void>("B_AWAKE_STONEGUARDIAN",self);
+    awakenStoneGuardian(self);
 
   const bool friendlyToSource = wld_getguildattitude(self->guild,other->guild)==ATT_FRIENDLY;
   const bool friendlyToVictim = wld_getguildattitude(self->guild,victim->guild)==ATT_FRIENDLY;
