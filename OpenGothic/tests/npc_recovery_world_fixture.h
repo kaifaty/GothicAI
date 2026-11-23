@@ -932,7 +932,8 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
                     symbol.name()=="USEITPO_PERM_DEX" || symbol.name()=="USEITPO_LITTLEMANA" ||
                     symbol.name()=="USE_APPLE" || symbol.name()=="USE_MUSHROOM_01" ||
                     symbol.name()=="USE_MEATSOUP" || symbol.name()=="USEITPO_GEIST_01" ||
-                    symbol.name()=="USEITPO_MEGADRINK" || symbol.name()=="USELOUHAMMER";
+                    symbol.name()=="USEITPO_MEGADRINK" || symbol.name()=="USELOUHAMMER" ||
+                    symbol.name()=="USEITPO_STORY" || symbol.name()=="USE_TESTTRIGGER";
       });
 
     require(Settings::physicsFlags().meleeHealInterrupt,"health potions: the fixture uses deferred potion effects");
@@ -1071,7 +1072,23 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     script.invokeItem(npc,script.findFunction("USEITPO_GEIST_01"));
     require(npc->attribute(ATR_HITPOINTS)==-980 && Contract::aiState(*npc).started==isStarted,
             "special potion: the first spirit potion writes raw negative HP without an immediate health transition");
-    require(restoreCalls==(native ? 0u : potionUse.size()+permanentUse.size()+foodUse.size()+7),
+    size_t repeatedEffects=0;
+    vm.observe_externals([&](const auto&) { ++repeatedEffects; });
+    const std::array oneTimeItems={
+      std::pair{"USEITPO_STORY","B_RAVENSESCAPEINTOTEMPELAVI_ONETIME"},
+      std::pair{"USE_TESTTRIGGER","ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_ONETIME"},
+      };
+    for(const auto& [callback,flagName]:oneTimeItems) {
+      auto* flag=script.findSymbol(flagName);
+      const auto prior=flag->get_int();
+      flag->set_int(1);
+      script.invokeItem(npc,script.findFunction(callback));
+      require(flag->get_int()==1,"story consumable: a saved completed flag persists");
+      flag->set_int(prior);
+      }
+    vm.observe_externals({});
+    require(repeatedEffects==0,"story consumables: completed events do not replay their engine effects");
+    require(restoreCalls==(native ? 0u : potionUse.size()+permanentUse.size()+foodUse.size()+9),
             "item restores: only fallback executes the callback bodies");
     vm.global_self()->set_instance(previousSelf);
     std::copy(attributes.begin(),attributes.end(),npc->handle().attribute);

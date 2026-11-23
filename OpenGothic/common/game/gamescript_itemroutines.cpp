@@ -88,20 +88,30 @@ bool GameScript::applyStockItemUseEffect(std::string_view callback) {
     external("CONCATSTRINGS");
     vm.set_string(vm.unsafe_get_gi(),findSymbol(scratch),0,vm.pop_string());
     };
-  const auto print = [&](const char* message, int32_t x, int32_t y, const char* font) {
+  const auto print = [&](const char* message, int32_t x, int32_t y, const char* font, int32_t seconds = 2) {
     reference(message);
     vm.push_int(x);
     vm.push_int(y);
     reference(font);
-    vm.push_int(2);
+    vm.push_int(seconds);
     if(external("PRINTSCREEN"))
       (void)vm.pop_int();
     };
   const auto read = [&](const char* name) {
     return vm.get_int(vm.unsafe_get_gi(),findSymbol(name),0);
     };
-  const auto setFlag = [&](const char* flag) {
-    vm.set_int(vm.unsafe_get_gi(),findSymbol(flag),0,read("TRUE"));
+  const auto set = [&](const char* name,int32_t value) {
+    vm.set_int(vm.unsafe_get_gi(),findSymbol(name),0,value);
+    };
+  const auto setFlag = [&](const char* flag) { set(flag,read("TRUE")); };
+  const auto sameInstance = [&](daedalus::DaedalusSymbol* first, daedalus::DaedalusSymbol* second) {
+    vm.push_reference(first);
+    external("HLP_GETINSTANCEID");
+    vm.push_reference(second);
+    external("HLP_GETINSTANCEID");
+    const auto secondId = vm.pop_int();
+    const auto firstId = vm.pop_int();
+    return firstId==secondId;
     };
   struct RestoreContext {
     daedalus::DaedalusVm& vm;
@@ -185,13 +195,7 @@ bool GameScript::applyStockItemUseEffect(std::string_view callback) {
     external("HLP_GETNPC");
     auto* hero = findSymbol("USESCHNELLERHERING.HER");
     hero->set_instance(vm.pop_instance());
-    vm.push_reference(hero);
-    external("HLP_GETINSTANCEID");
-    vm.push_reference(self);
-    external("HLP_GETINSTANCEID");
-    const auto actorId = vm.pop_int();
-    const auto heroId = vm.pop_int();
-    if(actorId==heroId) {
+    if(sameInstance(hero,self)) {
       vm.push_reference(self);
       reference("$13165"); // Stock HUMANS_SPRINT.MDS for this food.
       vm.push_int(120000);
@@ -224,6 +228,73 @@ bool GameScript::applyStockItemUseEffect(std::string_view callback) {
     reference("$16012"); // Stock DEM_Warn sound.
     external("SND_PLAY");
     setFlag("NEORAS_SCUSEDDRAGONEGGDRINK");
+    return true;
+    }
+
+  if(callback=="USE_HEALOBSESSION") {
+    change("ATR_HITPOINTS","HP_ESSENZ");
+    const auto used = read("SC_OBSESSIONTIMES");
+    set("SC_OBSESSIONTIMES",std::bit_cast<int32_t>(uint32_t(used)+1u));
+    auto* healer = findSymbol("B_CLEARSCOBSESSION.HEILER");
+    auto* hero = vm.global_hero();
+    healer->set_instance(self->get_instance());
+    if(!sameInstance(hero,healer)) {
+      vm.push_reference(healer);
+      external("AI_STOPPROCESSINFOS");
+      }
+    set("SC_ISOBSESSED",read("FALSE"));
+    set("SC_OBSESSIONCOUNTER",0);
+    print("PRINT_CLEARSCOBSESSION",-1,-1,"FONT_SCREEN",3);
+
+    reference("$15858"); // Stock spellFX_LIGHTSTAR_VIOLET.
+    vm.push_reference(hero);
+    vm.push_reference(hero);
+    vm.push_int(0);
+    vm.push_int(0);
+    vm.push_int(0);
+    reference("FALSE");
+    external("WLD_PLAYEFFECT");
+    reference("$15859"); // Stock SFX_HealObsession.
+    external("SND_PLAY");
+    return true;
+    }
+  if(callback=="USEITPO_STORY") {
+    const auto ran = read("B_RAVENSESCAPEINTOTEMPELAVI_ONETIME");
+    if(ran==read("FALSE")) {
+      reference("$51974"); // Stock PORTAL_RAVEN.BIK.
+      reference("TRUE");
+      reference("FALSE");
+      const bool videoResult = external("PLAYVIDEOEX");
+      setFlag("RAVENISINTEMPEL");
+      reference("TOPIC_ADDON_RAVENKDW");
+      reference("LOG_MISSION");
+      external("LOG_CREATETOPIC");
+      reference("TOPIC_ADDON_RAVENKDW");
+      reference("LOG_RUNNING");
+      external("LOG_SETTOPICSTATUS");
+      reference("TOPIC_ADDON_RAVENKDW");
+      reference("$51975"); // Stock journal entry about Raven's escape.
+      vm.unsafe_call_bl(findSymbol("B_LOGENTRY"));
+      setFlag("B_RAVENSESCAPEINTOTEMPELAVI_ONETIME");
+      if(videoResult)
+        (void)vm.pop_int();
+      }
+    return true;
+    }
+  if(callback=="USE_TESTTRIGGER") {
+    const auto ran = read("ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_ONETIME");
+    if(ran==read("FALSE")) {
+      static constexpr std::string_view targets[] = {
+        "PIR_1370_ADDON_ANGUS", "PIR_1371_ADDON_HANK", "VLK_4304_ADDON_WILLIAM", "NONE_ADDON_114_LANCE_ADW",
+        "STRF_1131_ADDON_SKLAVE", "STRF_1132_ADDON_SKLAVE", "STRF_1133_ADDON_SKLAVE", "STRF_1134_ADDON_SKLAVE",
+        "STRF_1135_ADDON_SKLAVE", "STRF_1141_ADDON_SKLAVE", "STRF_1142_ADDON_SKLAVE", "STRF_1143_ADDON_SKLAVE",
+        "STRF_1144_ADDON_SKLAVE", "BDT_10400_ADDON_DEADBANDIT", "BDT_10401_ADDON_DEADBANDIT",
+        "STONEGUARDIAN_MINEDEAD1", "STONEGUARDIAN_MINEDEAD2", "STONEGUARDIAN_MINEDEAD3", "STONEGUARDIAN_MINEDEAD4",
+        };
+      for(const auto target:targets)
+        invokeKillNpc(int32_t(findSymbolIndex(target)));
+      setFlag("ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_ONETIME");
+      }
     return true;
     }
 
