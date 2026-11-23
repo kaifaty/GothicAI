@@ -312,6 +312,97 @@ void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
     }},PlacementDefinitionRuntime::enabled);
   }
 
+bool runDragonIslandCrewTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol& trigger) {
+  const bool orcAttack = trigger.name()=="EVT_ORKOBERST";
+  if(!orcAttack && trigger.name()!="EVT_UNDEADDRAGONDEAD_ENDSITUATION")
+    return false;
+
+  struct RestoreContext {
+    daedalus::DaedalusVm& vm;
+    std::shared_ptr<daedalus::DaedalusInstance> caller;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+    } restore{vm,vm.unsafe_get_gi()};
+  const auto symbol = [&](std::string_view name) { return vm.find_symbol_by_name(name); };
+  const auto no = symbol("FALSE")->get_int();
+  const auto yes = symbol("TRUE")->get_int();
+  auto* once = symbol(trigger.name()+"_ONETIME");
+  const auto dead = [&](const char* actor) {
+    vm.push_reference(symbol(actor));
+    vm.unsafe_call_external(symbol("NPC_ISDEAD"));
+    return vm.pop_int();
+    };
+  const auto routine = [&](const char* actor,const char* name) {
+    vm.push_reference(symbol(actor));
+    vm.push_reference(symbol(name));
+    vm.unsafe_call_bl(symbol("B_STARTOTHERROUTINE"));
+    };
+  if(!orcAttack) {
+    if(dead("DRAGON_UNDEAD")!=0 && once->get_int()==no) {
+      symbol("ANGAR_DI_PARTY")->set_int(symbol("LOG_SUCCESS")->get_int());
+      routine("ANGAR_DI","$52181"); // FireDragonIsland
+      routine("LEE_DI","$52182"); // UNDEADDRAGONDEAD
+      routine("DIEGO_DI","$52183");
+      routine("MILTEN_DI","$52184");
+      routine("GORN_DI","$52185");
+      routine("LESTER_DI","$52186");
+      once->set_int(yes);
+      }
+    return true;
+    }
+
+  if(once->get_int()==no) {
+    auto* aivar = symbol("C_NPC.AIVAR");
+    const auto enemyOverride = uint16_t(symbol("AIV_ENEMYOVERRIDE")->get_int());
+    for(const char* name : {"ORKELITE_ANTIPALADINORKOBERST_DI","ORCELITE_DIOBERST1_REST",
+                           "ORCELITE_DIOBERST2_REST","ORCELITE_DIOBERST3_REST"}) {
+      const auto actor = symbol(name)->get_instance();
+      vm.unsafe_set_gi(actor);
+      vm.set_int(actor,aivar,enemyOverride,no);
+      }
+
+    // Offsets and lengths of the verified stock trigger's literal NPC placements.
+    const auto insert = [&](uint32_t offset,uint32_t count) {
+      auto pc = trigger.address()+offset;
+      for(uint32_t i=0;i<count;++i) {
+        const auto spawn = readLiteralPlacement(vm,pc,trigger.name());
+        if(spawn.external->name()!="WLD_INSERTNPC")
+          throw std::runtime_error("Stock orc attack trigger: expected NPC placement");
+        vm.push_int(int32_t(spawn.instance->index()));
+        vm.push_reference(spawn.point);
+        vm.unsafe_call_external(spawn.external);
+        }
+      };
+    insert(84,4); // On and near the ship.
+    if(symbol("TORLOFISCAPTAIN")->get_int()==yes)
+      insert(160,1);
+    insert(175,2); // Island patrol.
+
+    routine("BIFF_DI","$52137"); // OrkSturmDI
+    routine("JACK_DI","$52138");
+    routine("TORLOF_DI","$52139");
+    routine("MARIO_DI","$52140");
+    if(dead("MARIO_DI")==no)
+      insert(286,4); // Mario's skeletons.
+    else
+      insert(351,4); // Undead orcs at the same points.
+
+    symbol("ORKSTURMDI")->set_int(yes);
+    vm.push_reference(symbol("TOPIC_HALLENVONIRDORATH"));
+    vm.push_reference(symbol("$52149"));
+    vm.unsafe_call_bl(symbol("B_LOGENTRY"));
+    once->set_int(yes);
+    }
+  // Re-entering a spent trigger still clears the stock screen message.
+  vm.push_reference(symbol("$52150"));
+  vm.push_int(-1);
+  vm.push_int(-1);
+  vm.push_reference(symbol("FONT_SCREEN"));
+  vm.push_int(0);
+  if(vm.unsafe_call_external(symbol("PRINTSCREEN")))
+    (void)vm.pop_int();
+  return true;
+  }
+
 PlacementDefinitionRuntime::Definitions dragonIslandPlacement(daedalus::DaedalusScript& vm) {
   using Value = PlacementDefinitions::Value;
   struct Captain {
@@ -401,6 +492,8 @@ void GameScript::invokeWorldTrigger(std::string_view fn) {
       vm.unsafe_call_bl(symbol);
       return;
       }
+    if(runDragonIslandCrewTrigger(vm,*symbol))
+      return;
     struct Room {
       std::string_view trigger;
       uint32_t         spawnCount;
