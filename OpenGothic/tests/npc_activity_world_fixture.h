@@ -3782,9 +3782,11 @@ void npcDeathLifecycle(Gothic& gothic) {
     npc->setOther(&hero);
     require(npc->isDead() && npc->isInState(dead) && !Contract::aiState(*npc).started,
             "death: the engine enters the original death state");
+    vm.push_int(0x12345678);
     Contract::tickRoutine(*npc);
     Contract::tickRoutine(*npc);
     Contract::tickRoutine(*npc);
+    require(vm.pop_int()==0x12345678,"death: the first Loop discards the dragon helper result and preserves the caller stack");
     vm.observe_instructions({});
     vm.remove_call_observer(calls);
     require(initVm==(native ? 0u : 1u) && loopVm==(native ? 0u : 2u) && deathLoot==1 && dragonChecks==1,
