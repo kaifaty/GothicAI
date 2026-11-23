@@ -45,6 +45,7 @@ void GameScript::loadNativeRoutines() {
     {"ZS_OBSERVEPLAYER",      &GameScript::runObservePlayer},
     {"ZS_CLEARROOM",          &GameScript::runClearRoom},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
+    {"ZS_MM_ATTACK",         &GameScript::runMonsterAttack},
     {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_REST",        &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_ROAM",        &GameScript::runRoamingRoutine},

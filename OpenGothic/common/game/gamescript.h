@@ -253,6 +253,7 @@ class GameScript final : public GameRules {
     bool runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window);
     void enableMonsterRoutinePerceptions(Npc& npc);

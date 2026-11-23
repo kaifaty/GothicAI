@@ -2699,15 +2699,85 @@ struct RoutineWitness {
   };
 
 struct MonsterRoutineSave {
+  uint32_t                 npc;
+  const char*              state;
   std::vector<std::string> queue;
   uint64_t                 stateTime;
   int32_t                  stage;
+  uint32_t                 target;
+  uint32_t                 other;
   };
 
 constexpr const char* MonsterSaveActor = "BALTHASAR_SHEEP1";
 constexpr const char* MonsterScheduler = "ZS_MM_ALLSCHEDULER";
 
-MonsterRoutineSave monsterRoutinesWorld(Gothic& gothic) {
+void monsterAttackPhases(World& world, Npc& monster, Npc& hero) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto originalVars=std::to_array(monster.handle().aivar);
+  const auto phases=activityPhases(script,"ZS_MM_ATTACK");
+  std::vector<std::vector<std::string>> original;
+  const auto previousEvents=events;
+  auto& invincible=hero.handle().aivar[4];
+  const auto previousInvincible=invincible;
+  invincible=0;
+  for(bool native:{false,true}) {
+    events=native;
+    std::copy(originalVars.begin(),originalVars.end(),monster.handle().aivar);
+    monster.setTarget(&hero);
+    monster.handle().aivar[23]=0;
+    monster.handle().aivar[27]=2;
+    monster.handle().aivar[28]=0;
+    size_t step=0;
+    for(const auto& [function,time] : {std::pair{phases.init,0u},std::pair{phases.loop,2000u},
+                                     std::pair{phases.loop,3000u},std::pair{phases.loop,4000u},std::pair{phases.end,4000u}}) {
+      monster.clearAiQueue();
+      monster.setStateTime(time);
+      size_t instructions=0,phaseEntries=0;
+      const auto phaseAddress=vm.find_symbol_by_index(uint32_t(function))->address();
+      vm.observe_instructions([&](const auto&) {
+        ++instructions;
+        phaseEntries+=vm.pc()==phaseAddress;
+        });
+      const auto result=script.invokeState(&monster,&hero,nullptr,ScriptFn(function));
+      vm.observe_instructions({});
+      require(phaseEntries==(native ? 0u : 1u),"monster attack: only the VM branch executes the original phase");
+      if(native && function!=phases.end)
+        require(instructions==0,"monster attack: Init and the active pursuit run no bytecode in this wolf encounter");
+
+      auto witness=activityQueue(monster);
+      witness.push_back(std::to_string(result));
+      witness.push_back(std::to_string(monster.stateTime()));
+      for(size_t slot:{7,8,19,20,22,23,65,68,69})
+        witness.push_back(std::to_string(monster.handle().aivar[slot]));
+      if(native)
+        require(witness==original[step],"monster attack: queue, result and pursuit state must match the VM");
+      else
+        original.push_back(std::move(witness));
+
+      if(step==0)
+        require(monster.target()==&hero && monster.hasPerc(PERC_ASSESSSURPRISE),"monster attack: Init keeps the target and enables surprise perception");
+      if(step==1)
+        require(result==LOOP_CONTINUE && monster.aiQueueFront() && monster.aiQueueFront()->act==AI_Attack,
+                "monster attack: the wolf still attacks at the exact pursuit limit");
+      if(step==2)
+        require(result==LOOP_CONTINUE && monster.handle().aivar[8]==1 && monster.handle().aivar[68]==3,
+                "monster attack: pursuing past the limit enters the warning state");
+      if(step==3)
+        require(result==LOOP_CONTINUE && monster.handle().aivar[8]==0 && monster.stateTime()==0,
+                "monster attack: a stationary target ends the warning on the next second");
+      ++step;
+      }
+    }
+  events=previousEvents;
+  invincible=previousInvincible;
+  std::copy(originalVars.begin(),originalVars.end(),monster.handle().aivar);
+  monster.clearAiQueue();
+  std::puts("Monster attack: original and native Init, attack, warning, resumed pursuit and End agree");
+  }
+
+std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
   auto& world=test.world();
@@ -2851,11 +2921,32 @@ MonsterRoutineSave monsterRoutinesWorld(Gothic& gothic) {
   std::copy(vars.begin(),vars.end(),sheep.handle().aivar);
   sheep.handle().aivar[34]=-1;
   session.setTime(originalTime);
+  auto* wolf=activityNpc(world,"WOLF");
+  const auto* site=world.findWayPoint("NW_FARM4_BALTHASAR");
+  require(wolf && site && world.player(),"monster attack: the fixture needs the wolf, hero and way point");
+  auto& hero=*world.player();
+  test.stop(*wolf);
+  wolf->setProcessPolicy(NpcProcessPolicy::AiNormal);
+  wolf->setPosition(site->position());
+  test.moveHero(site->position()+Tempest::Vec3(450,0,0),0);
+  monsterAttackPhases(world,*wolf,hero);
+  const auto attack=script.findFunction("ZS_MM_ATTACK");
+  require(wolf->startState(attack,site->name),"the wolf must enter attack before saving");
+  wolf->setTarget(&hero);
+  wolf->setOther(&hero);
+  wolf->handle().aivar[27]=2;
+  Contract::tickRoutine(*wolf);
+  wolf->setStateTime(1500);
+  require(Contract::aiState(*wolf).started && !wolf->isAiQueueEmpty(),"the fixture must save an active attack with pending commands");
   require(sheep.startState(roam,"NW_FARM4_BALTHASAR"),"the fixture sheep must enter roam before saving");
   Contract::tickRoutine(sheep);
   sheep.setStateTime(1500);
   require(!sheep.isAiQueueEmpty(),"the fixture must save a pending monster command");
-  return {activityQueue(sheep),sheep.stateTime(),sheep.handle().aivar[19]};
+  const auto snapshot=[&](Npc& actor,const char* state) {
+    return MonsterRoutineSave{world.npcId(&actor),state,activityQueue(actor),actor.stateTime(),actor.handle().aivar[19],
+                              world.npcId(actor.target()),world.npcId(actor.stateOther())};
+    };
+  return {snapshot(sheep,"ZS_MM_RTN_ROAM"),snapshot(*wolf,"ZS_MM_ATTACK")};
   }
 
 void ravenStoneGuardianRoutines(World& world) {
@@ -2904,7 +2995,7 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
   gothic.setGame(std::make_unique<GameSession>(worldName));
   std::vector<RoutineWitness> result(sites.size());
   std::vector<uint8_t> save;
-  std::optional<MonsterRoutineSave> monster;
+  std::optional<std::array<MonsterRoutineSave,2>> monster;
   {
     ActivityEventsWorld test(gothic);
     auto& world=test.world();
@@ -2968,20 +3059,25 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
     std::map<std::string,size_t> vmCalls;
     const auto observer=vm.add_call_observer([&](const auto& function) { ++vmCalls[function.name()]; });
     if(monster) {
-      auto* sheep=activityNpc(world,MonsterSaveActor);
-      const auto roam=ScriptFn(script.findSymbolIndex("ZS_MM_RTN_ROAM"));
-      require(sheep && sheep->isInState(roam) && Contract::aiState(*sheep).started &&
-              activityQueue(*sheep)==monster->queue && sheep->stateTime()==monster->stateTime &&
-              sheep->handle().aivar[19]==monster->stage,
-              "ordinary load must restore the monster's state, timer, stage and pending commands");
-      sheep->clearAiQueue();
-      sheep->setProcessPolicy(NpcProcessPolicy::AiNormal);
-      ActivityStream stream(world,*sheep);
-      Contract::tickRoutine(*sheep);
-      require(sheep->isInState(roam) && stream.records==1 && vmCalls["ZS_MM_RTN_ROAM_LOOP"]==0,
-              "the loaded monster must resume in its native loop without rerunning Init");
-      std::puts("Monster routine ZS_MM_RTN_ROAM: ordinary load restored the pending commands and resumed native Loop");
-    }
+      for(const auto& saved:*monster) {
+        auto* actor=world.npcById(saved.npc);
+        const auto state=script.findFunction(saved.state);
+        const auto loop=std::string(saved.state)+"_LOOP";
+        require(actor && actor->isInState(state) && Contract::aiState(*actor).started &&
+                activityQueue(*actor)==saved.queue && actor->stateTime()==saved.stateTime &&
+                actor->handle().aivar[19]==saved.stage && world.npcId(actor->target())==saved.target &&
+                world.npcId(actor->stateOther())==saved.other,
+                "ordinary load must restore the monster's state, timer, stage, target and pending commands");
+        actor->clearAiQueue();
+        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
+        ActivityStream stream(world,*actor);
+        Contract::tickRoutine(*actor);
+        require(actor->isInState(state) && stream.records==1 && vmCalls[loop]==0 &&
+                activityCount(stream.events,"phase "+loop)==1,
+                "the loaded monster must resume in its native loop without rerunning Init");
+        std::printf("Monster state %s: ordinary load restored the pending commands and resumed native Loop\n",saved.state);
+        }
+      }
     for(size_t i=0;i<sites.size();++i) {
       const auto& site=sites[i];
       auto* actor=activityNpc(world,site.actor);
