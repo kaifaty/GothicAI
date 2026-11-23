@@ -18,6 +18,7 @@ struct NpcDefinitionContract {
   static AiQueue& queue(Npc& npc) { return npc.aiQueue; }
   static uint64_t& refusalDeadline(Npc& npc) { return npc.refuseTalkMilis; }
   static auto& perceptions(Npc& npc) { return npc.perception; }
+  static const AiQueue& overlayQueue(const Npc& npc) { return npc.aiQueueOverlay; }
   static bool walking(const Npc& npc) { return !npc.go2.empty(); }
   static const auto& physicsPosition(const Npc& npc) { return npc.physic.position(); }
   // An action at the head of the queue, as an interruption ahead of the queued use.
@@ -25,6 +26,7 @@ struct NpcDefinitionContract {
   static const auto& items(GameScript& script) { return script.itemDefinitions; }
   static const auto& routines(GameScript& script) { return script.routineDefinitions; }
   static auto& random(GameScript& script) { return script.randGen; }
+  static int& outputOrder(GameScript& script) { return script.aiOutOrderId; }
   // the views of items (graphics/itemview): the sword and the bow on a body, a lying item's
   static const ItemView& sword(const Npc& npc) { return npc.visual.sword.view; }
   static const ItemView& bow(const Npc& npc) { return npc.visual.bow.view; }
@@ -76,3 +78,14 @@ struct NpcDefinitionContract {
   static size_t bone(const MdlVisual& view, std::string_view name) { return view.skeleton->findNode(name); }
   static const AnimationSolver& solver(const MdlVisual& view) { return view.solver; }
   };
+
+inline const WayPoint* activityRow(Npc& npc,size_t init,std::string& name,gtime* start=nullptr) {
+  const WayPoint* point=nullptr;
+  npc.forEachRoutine([&](const Npc::RoutineInfo& row) {
+    if(point==nullptr && row.state.ptr==init && row.waypoint!=nullptr) {
+      point=row.waypoint; name=std::string(row.point);
+      if(start) *start=row.start;
+      }
+    });
+  return point;
+  }

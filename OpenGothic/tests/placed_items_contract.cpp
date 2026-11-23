@@ -49,6 +49,8 @@
 #include "graphics/pfx/particlefx.h"
 #include "world/bullet.h"
 #include "game/physicssave.h"
+#include "storyruntime.h"
+#include "storygraph/exec.h"
 
 #include <rapidjson/document.h>
 #include <Tempest/MemReader>
@@ -1938,11 +1940,8 @@ struct WorldActivity {
 
 std::string npcName(World& world,const Npc& npc) { return std::string(world.script().symbolName(npc.instanceSymbol())); }
 
-}
-
 #include "npc_activity_world_fixture.h"
-
-namespace {
+#include "npc_story_effects_world_fixture.h"
 
 // Every position of one activity at its real object: at the object, far from the point, the object
 // taken by other NPCs, already at the object, both sides of a distance approach, and the engine's
