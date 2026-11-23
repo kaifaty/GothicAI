@@ -390,12 +390,22 @@ async def graph_programs(
             lambda state: state.get("dialog") is False and state.get("cutscene") is False,
             max(0, window_deadline - time.monotonic()),
         )
+    resumed = False
+    if closed:
+        # Xardas's first exit opens a six-second chapter screen after the dialog closes.
+        # The bridge handles this application-level ping on the next unpaused world tick.
+        try:
+            await link.ping(timeout=max(0, window_deadline - time.monotonic()))
+        except TimeoutError:
+            pass
+        else:
+            resumed = True
     check(
         "window",
-        window[1:3] == [["Золото", "Дальше"], ["Опыт"]] and gained == 3 and closed,
-        f"{' -> '.join(map(str, window))}; exp +{gained}; closed={closed}",
+        window[1:3] == [["Золото", "Дальше"], ["Опыт"]] and gained == 3 and resumed,
+        f"{' -> '.join(map(str, window))}; exp +{gained}; closed={closed}; resumed={resumed}",
     )
-    if not closed:
+    if not resumed:
         return _logged(results)
 
     # A relationship written by a director program is read by the original NPC query before and after loading.

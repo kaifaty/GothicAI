@@ -102,7 +102,7 @@ async def test_the_freed_npcs_dialogs_are_off_on_every_branch_and_never_recorded
         assert fake.graph[-1]["replace"] is True and fake.graph[-1]["ops"] == [*static, HIDE]
         assert story.ops() == [HIDE]
 
-async def test_programs_saves_after_the_slow_dialog_window_closes(monkeypatch):
+async def test_programs_wait_for_the_world_to_resume_after_the_slow_dialog(monkeypatch):
     link = Mock(spec=GameLink)
     link.session = object()
     info, condition = "DIA_TEST_START", "DIA_TEST_OTHER"
@@ -145,7 +145,23 @@ async def test_programs_saves_after_the_slow_dialog_window_closes(monkeypatch):
         {"dialog": False, "cutscene": True},
         {"dialog": False, "cutscene": False},
     ]
-    link.story_eval.side_effect = [[2, 3, 2], [3], [1, 0, 12], [3], [1, 0, 1], [0, 3], [1, 0, 12], [1, 3]]
+
+    async def ping(*, timeout):
+        nonlocal wall
+        assert link.story_state.await_count == 3
+        assert timeout == 110 - wall
+        assert timeout >= 6
+        wall += 6  # the chapter screen keeps the world paused after both flags clear
+        return 6
+
+    evaluations = iter([[2, 3, 2], [3], [1, 0, 12], [3], [1, 0, 1], [0, 3], [1, 0, 12], [1, 3]])
+
+    async def evaluate(_npc, _expressions):
+        assert wall == 100
+        return next(evaluations)
+
+    link.ping.side_effect = ping
+    link.story_eval.side_effect = evaluate
     link.routine.return_value = SimpleNamespace(current="ZS_STAND_WP", entries=[])
     link.check_conditions.return_value = {"programs": {"replaced": 1, "failed": 0}}
 
@@ -171,6 +187,7 @@ async def test_programs_saves_after_the_slow_dialog_window_closes(monkeypatch):
     monkeypatch.setattr(story_scenarios, "wait_message", message)
     monkeypatch.setattr(story_scenarios, "_save_or_fail", saver)
     results = await story_scenarios.graph_programs(link, SimpleNamespace(apply=apply))
+    link.ping.assert_awaited_once_with(timeout=16)
     saver.assert_awaited_once_with(link, 8)
     link.debug.assert_any_await("load", 8)
     for name in ("window", "after_load", "attitude", "npc_state_conditions", "npc_conditions", "refuse_talk"):
