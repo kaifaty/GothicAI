@@ -1196,7 +1196,7 @@ void activityDefinitions(const fs::path& dir) {
         anvil.approach==ActivityDefinitions::Approach::NearestWaypoint && anvil.scheme=="BSANVIL" &&
         anvil.busyBodyState==32784 && anvil.useState==1 && anvil.leaveState==-1 && anvil.loopResult==0,
         "the anvil record holds the parameters its script passes");
-  check(library.activities.at("ZS_ROAST_SCAVENGER").scheme=="BARBQ","the same template captures another object");
+  check(library.activities.at("ZS_TEST_ROAST").scheme=="BARBQ","the same template captures another object");
   const auto& pipe=library.activities.at("ZS_SMOKE_WATERPIPE");
   check(pipe.scheme=="SMOKE" && pipe.approach==ActivityDefinitions::Approach::Distance && pipe.approachDistance==500,
         "the distance approach is captured with its threshold");
@@ -1457,24 +1457,49 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
     };
   check(states.size()==counts.total && symbols(library)==states,"every state of the base's routines has one activity record");
   check(library.activities.contains("ZS_SMITH_ANVIL"),"the real ZS_SMITH_ANVIL is captured by the template");
-  check(library.uncaptured.contains("ZS_SIT_THRONE") && library.uncaptured.at("ZS_SIT_THRONE").starts_with("template_mismatch: "),
-        "the real ZS_SIT_THRONE, whose Init asks the body state first, is refused by the comparison");
   const auto& guard=library.points.at("ZS_STAND_GUARDING");
   using Form=ActivityDefinitions::PointActivity::Form;
-  const auto seatedCount=size_t(std::count_if(library.activities.begin(),library.activities.end(),[](const auto& entry) {
-    return entry.second.seated.has_value();
-    }));
-  check(library.points.size()==5 && guard.form==Form::Guard && library.activities.size()==8+seatedCount,
-        "five point forms and the original untimed mob records still import");
+  check(library.points.size()==5 && guard.form==Form::Guard,"five point forms still import");
   if(addon) {
-    check(seatedCount==2,"both seated forms import from Night of the Raven");
     for(const auto& [state,scheme,range]:{std::tuple{"ZS_SIT_BENCH","BENCH",8},std::tuple{"ZS_SIT_CHAIR","CHAIR",10}}) {
       const auto& mob=library.activities.at(state);
-      const auto& seated=mob.seated.value();
+      const auto& timer=mob.timer.value();
       check(mob.scheme==scheme && mob.busyBodyState==65547 && mob.useState==1 && mob.leaveState==-1 &&
-            seated.timerSeconds==5 && seated.rollRange==range && seated.animations==
-            std::vector<std::string>{"R_CHAIR_RANDOM_1","R_CHAIR_RANDOM_2","R_CHAIR_RANDOM_3","R_CHAIR_RANDOM_4"},
+            mob.skipApproachWhenBusy && timer.timerSeconds==5 && timer.rollRange==range && timer.rollVariable==".RANDOM" &&
+            timer.gestures==std::vector<ActivityDefinitions::MobActivity::Timer::Gesture>{
+              {"R_CHAIR_RANDOM_1",0},{"R_CHAIR_RANDOM_2",1},{"R_CHAIR_RANDOM_3",2},{"R_CHAIR_RANDOM_4",3}},
             std::string(state)+" matches the original seat and ordered gesture limits");
+      }
+    const auto& throne=library.activities.at("ZS_SIT_THRONE");
+    check(throne.scheme=="THRONE" && throne.busyBodyState==65547 && throne.skipApproachWhenBusy && !throne.timer,
+          "throne keeps the same Init body guard without a timer");
+    for(const auto& [state,scheme,seconds]:{std::tuple{"ZS_SAW","BAUMSAEGE",15},std::tuple{"ZS_PRAY_INNOS","INNOS",5}}) {
+      const auto& mob=library.activities.at(state);
+      check(mob.scheme==scheme && mob.busyBodyState==32784 && !mob.skipApproachWhenBusy &&
+            mob.timer==ActivityDefinitions::MobActivity::Timer{.timerSeconds=seconds},
+            std::string(state)+" matches the original silent timer reset");
+      }
+    const auto& repair=library.activities.at("ZS_REPAIR_HUT");
+    check(repair.scheme=="REPAIR" && repair.busyBodyState==32784 &&
+          repair.timer==ActivityDefinitions::MobActivity::Timer{5,100,".ZUFALL",{{"T_REPAIR_RANDOM_1",49}}},
+          "repair loops draw one saved roll, with a strict 50/100 gesture cutoff");
+    }
+  if(addon) {
+    using End=ActivityDefinitions::MobActivity::Item::End;
+    const auto script=daedalus::DaedalusScript::from_program(program.data);
+    for(const auto& [state,scheme,required,equip,end,endItem] : {
+        std::tuple{"ZS_COOK_CAULDRON","CAULDRON","ITMI_SCOOP",false,End::None,""},
+        std::tuple{"ZS_COOK_PAN","PAN","ITFOMUTTONRAW",false,End::Use,"ITFOMUTTON"},
+        std::tuple{"ZS_COOK_STOVE","STOVE","ITFOMUTTONRAW",false,End::Remove,"ITFOMUTTON"},
+        std::tuple{"ZS_PICK_ORE","ORE","ITMW_2H_AXE_L_01",true,End::None,""},
+        std::tuple{"ZS_POTION_ALCHEMY","LAB","ITMI_FLASK",false,End::None,""}}) {
+      const auto& mob=library.activities.at(state);
+      const auto& item=mob.item.value();
+      const auto* startSymbol=script.find_symbol_by_name(required);
+      const auto* endSymbol=script.find_symbol_by_name(endItem);
+      check(startSymbol && mob.scheme==scheme && item.required==int32_t(startSymbol->index()) &&
+            item.equip==equip && item.endAction==end && item.endItem==(endSymbol ? int32_t(endSymbol->index()) : 0),
+            std::string(state)+" retains its entrance and exit inventory effects");
       }
     }
   if(addon) check(library.uncaptured.contains("ZS_WASH_FP"),"the similar WASH free point stays outside the PEE form");
@@ -1532,9 +1557,15 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
       check(entry!=files.end() && (*entry)["sha256"].GetString()==BaseImport::sha256File(section),
             "the archived section matches its payload manifest");
       check(symbols(ready)==states,"the archived section covers the installed routines");
-      auto untimed=library.activities;
-      std::erase_if(untimed,[](const auto& entry) { return entry.second.seated.has_value(); });
-      check(ready.activities==untimed,"archived sections retain the original untimed mobs");
+      auto historical=library.activities;
+      for(auto name:{"ZS_SIT_THRONE","ZS_SAW","ZS_REPAIR_HUT","ZS_PRAY_INNOS"})
+        historical.erase(name);
+      std::erase_if(historical,[](const auto& entry) { return entry.second.item.has_value(); });
+      if(version<4) {
+        historical.erase("ZS_SIT_BENCH");
+        historical.erase("ZS_SIT_CHAIR");
+        }
+      check(ready.activities==historical,"archived sections retain their original mob records");
       if(version==2) {
         check(ready.points.size()==1 && ready.points.at("ZS_STAND_GUARDING")==guard,"v2 retains the guard");
         for(auto name:{"ZS_SIT_CAMPFIRE","ZS_PEE","ZS_STAND_ARMSCROSSED","ZS_STAND_WP"})

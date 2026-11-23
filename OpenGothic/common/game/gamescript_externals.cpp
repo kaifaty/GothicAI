@@ -813,11 +813,8 @@ void GameScript::equipitem(std::shared_ptr<daedalus::INpc> npcRef, int cls) {
     return symbol!=nullptr ? symbol->name() : std::to_string(cls);
     });
   auto self = findNpc(npcRef);
-  if(self!=nullptr) {
-    if(self->itemCount(uint32_t(cls))==0)
-      self->addItem(uint32_t(cls),1);
-    self->useItem(uint32_t(cls),Item::NSLOT,true);
-    }
+  if(self!=nullptr)
+    NpcEngineCalls::equipItem(*self,uint32_t(cls));
   }
 
 void GameScript::createinvitem(std::shared_ptr<daedalus::INpc> npcRef, int itemInstance) {

@@ -32,21 +32,68 @@ ActivityDefinitions::MobActivity mob(const Json& json,int version) {
   a.useState=integer(at(json,"use_state"));
   a.leaveState=integer(at(json,"leave_state"));
   a.loopResult=integer(at(json,"loop_result"));
-  if(version>=4 && json.HasMember("seated")) {
+  unsigned fields=9;
+  if(version==4 && json.HasMember("seated")) {
     const auto& parameters=at(json,"seated");
     DefinitionJson::object(parameters,{"timer_seconds","roll_range","animations"});
-    auto& seated=a.seated.emplace();
-    seated.timerSeconds=integer(at(parameters,"timer_seconds"));
-    seated.rollRange=integer(at(parameters,"roll_range"));
+    a.skipApproachWhenBusy=true;
+    auto& timer=a.timer.emplace();
+    timer.timerSeconds=integer(at(parameters,"timer_seconds"));
+    timer.rollRange=integer(at(parameters,"roll_range"));
+    timer.rollVariable=".RANDOM";
     const auto& animations=at(parameters,"animations");
-    require(seated.timerSeconds>=0 && seated.rollRange>0 && animations.IsArray() &&
-            !animations.Empty() && animations.Size()<=uint32_t(seated.rollRange),"invalid seated gestures");
+    require(timer.timerSeconds>=0 && timer.rollRange>0 && animations.IsArray() &&
+            !animations.Empty() && animations.Size()<=uint32_t(timer.rollRange),"invalid seated gestures");
     for(const auto& animation:animations.GetArray()) {
-      seated.animations.push_back(bytes(animation));
-      require(!seated.animations.back().empty(),"empty seated animation");
+      timer.gestures.push_back({bytes(animation),int32_t(timer.gestures.size())});
+      require(!timer.gestures.back().animation.empty(),"empty seated animation");
       }
+    ++fields;
     }
-  require(json.MemberCount()==(a.seated ? 10u : 9u),"unexpected parameter field");
+  if(version>=5 && json.HasMember("skip_approach_when_busy")) {
+    const auto& guard=at(json,"skip_approach_when_busy");
+    require(guard.IsBool() && guard.GetBool(),"invalid mob approach body check");
+    a.skipApproachWhenBusy=true;
+    ++fields;
+    }
+  if(version>=5 && json.HasMember("timer")) {
+    const auto& parameters=at(json,"timer");
+    DefinitionJson::object(parameters,{"timer_seconds","roll_range","roll_variable","gestures"});
+    auto& timer=a.timer.emplace();
+    timer.timerSeconds=integer(at(parameters,"timer_seconds"));
+    timer.rollRange=integer(at(parameters,"roll_range"));
+    timer.rollVariable=string(at(parameters,"roll_variable"));
+    const auto& gestures=at(parameters,"gestures");
+    require(timer.timerSeconds>=0 && timer.rollRange>=0 && gestures.IsArray(),"invalid mob timer");
+    require(timer.rollRange==0 ? timer.rollVariable.empty() && gestures.Empty()
+                               : timer.rollVariable==".RANDOM" || timer.rollVariable==".ZUFALL",
+            "invalid mob roll");
+    for(const auto& gesture:gestures.GetArray()) {
+      DefinitionJson::object(gesture,{"animation","through_roll"});
+      MobActivity::Timer::Gesture entry{bytes(at(gesture,"animation")),integer(at(gesture,"through_roll"))};
+      require(!entry.animation.empty() && entry.throughRoll>=0 && entry.throughRoll<timer.rollRange &&
+              (timer.gestures.empty() || timer.gestures.back().throughRoll<=entry.throughRoll),"invalid mob timer gesture");
+      timer.gestures.push_back(std::move(entry));
+      }
+    ++fields;
+    }
+  if(version>=5 && json.HasMember("item")) {
+    using End=MobActivity::Item::End;
+    const auto& parameters=at(json,"item");
+    DefinitionJson::object(parameters,{"required","equip","end_action","end_item"});
+    auto& item=a.item.emplace();
+    item.required=integer(at(parameters,"required"));
+    const auto& equip=at(parameters,"equip");
+    require(equip.IsBool(),"expected equip flag");
+    item.equip=equip.GetBool();
+    const auto end=string(at(parameters,"end_action"));
+    require(end=="none" || end=="use" || end=="remove","unsupported item end action");
+    item.endAction=end=="use" ? End::Use : end=="remove" ? End::Remove : End::None;
+    item.endItem=integer(at(parameters,"end_item"));
+    require(item.required>0 && (item.endAction==End::None ? item.endItem==0 : item.endItem>0),"invalid activity item");
+    ++fields;
+    }
+  require(json.MemberCount()==fields,"unexpected parameter field");
   return a;
   }
 ActivityDefinitions::PointActivity point(const Json& json,int version) {

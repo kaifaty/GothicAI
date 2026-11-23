@@ -16,28 +16,44 @@
 // template walk below instead of the script. Both sides share this file, so the call stream the
 // import compares with the VM is the stream the game issues.
 namespace ActivityDefinitions {
-inline constexpr int FormatVersion = 4;
+inline constexpr int FormatVersion = 5;
 enum class Phase : uint8_t { Init, Loop, End };
 enum class Approach : uint8_t { NearestWaypoint, Distance };
 
-inline bool seatedState(std::string_view state) {
-  return state=="ZS_SIT_BENCH" || state=="ZS_SIT_CHAIR";
+inline bool mobInitChecksBody(std::string_view state) {
+  return state=="ZS_SIT_BENCH" || state=="ZS_SIT_CHAIR" || state=="ZS_SIT_THRONE";
+  }
+
+inline bool timedMobState(std::string_view state) {
+  return state=="ZS_SIT_BENCH" || state=="ZS_SIT_CHAIR" || state=="ZS_SAW" ||
+         state=="ZS_REPAIR_HUT" || state=="ZS_PRAY_INNOS";
   }
 
 // "An activity at a world object": approach the routine point, use the named object whenever it
 // is free and the body is not already busy with it, leave the object at the end. The perception
 // set stays a script helper executed by the VM at its place (reactions are step D5).
 struct MobActivity {
-  struct Seated {
+  struct Timer {
+    struct Gesture {
+      std::string animation;
+      int32_t throughRoll = 0; // inclusive upper limit, using the same draw for the whole queue
+      bool operator==(const Gesture&) const = default;
+      };
     int32_t timerSeconds = 0;
-    int32_t rollRange = 0;
-    // Each animation has its index as an inclusive upper limit for the same roll.
-    std::vector<std::string> animations;
-    std::span<const std::string> animationsFor(size_t roll) const {
-      return std::span<const std::string>(animations).subspan(std::min(roll,animations.size()));
-      }
-    bool operator==(const Seated&) const = default;
+    int32_t rollRange = 0; // zero: only reset the timer
+    std::string rollVariable;
+    std::vector<Gesture> gestures;
+    bool operator==(const Timer&) const = default;
     };
+  struct Item {
+    enum class End { None, Use, Remove };
+    int32_t required = 0;
+    bool equip = false; // equip on entry, including when already present
+    End endAction = End::None;
+    int32_t endItem = 0;
+    bool operator==(const Item&) const = default;
+    };
+  std::optional<Item> item;
   std::string perceptions;          // deferred helper without arguments, first in Init
   int32_t     walkMode = 0;         // AI_SetWalkMode argument
   Approach    approach = Approach::NearestWaypoint;
@@ -47,7 +63,8 @@ struct MobActivity {
   int32_t     useState = 0;         // AI_UseMob state in Loop
   int32_t     leaveState = 0;       // AI_UseMob state in End
   int32_t     loopResult = 0;       // Loop result
-  std::optional<Seated> seated;
+  bool skipApproachWhenBusy = false;
+  std::optional<Timer> timer;
   bool operator==(const MobActivity&) const = default;
   };
 
@@ -108,6 +125,11 @@ class Host {
     virtual bool        isMobAvailable(std::string_view scheme) = 0;        // WLD_ISMOBAVAILABLE(self,scheme)
     virtual int32_t     bodyState() = 0;                                    // NPC_GETBODYSTATE(self)
     virtual void        useMob(std::string_view scheme, int32_t state) = 0; // AI_USEMOB(self,scheme,state)
+    virtual int32_t     itemCount(int32_t item) = 0;
+    virtual void        createItem(int32_t item) = 0;
+    virtual void        equipItem(int32_t item) = 0;
+    virtual void        useItem(int32_t item) = 0;
+    virtual void        removeItem(int32_t item) = 0;
   };
 
 // Writes every call of a host as text, in the form the import gives the script's own calls:
@@ -173,6 +195,28 @@ class Recorder final : public Host {
       host.useMob(scheme,state);
       }
 
+    int32_t itemCount(int32_t item) override {
+      const auto count=host.itemCount(item);
+      sink("NPC_HASITEMS(self,"+std::to_string(item)+")->"+std::to_string(count));
+      return count;
+      }
+    void createItem(int32_t item) override {
+      sink("CREATEINVITEM(self,"+std::to_string(item)+")");
+      host.createItem(item);
+      }
+    void equipItem(int32_t item) override {
+      sink("EQUIPITEM(self,"+std::to_string(item)+")");
+      host.equipItem(item);
+      }
+    void useItem(int32_t item) override {
+      sink("AI_USEITEM(self,"+std::to_string(item)+")");
+      host.useItem(item);
+      }
+    void removeItem(int32_t item) override {
+      sink("NPC_REMOVEINVITEMS(self,"+std::to_string(item)+",1)->0");
+      host.removeItem(item);
+      }
+
   private:
     Host& host;
     Sink  sink;
@@ -198,7 +242,7 @@ inline int run(const MobActivity& activity, Phase phase, Host& host) {
   switch(phase) {
     case Phase::Init: {
       resetForActivity(host,activity.perceptions);
-      if(activity.seated && bodyStateContains(host.bodyState(),activity.busyBodyState))
+      if(activity.skipApproachWhenBusy && bodyStateContains(host.bodyState(),activity.busyBodyState))
         return 0;
       host.setWalkMode(activity.walkMode);
       bool away = false;
@@ -210,6 +254,12 @@ inline int run(const MobActivity& activity, Phase phase, Host& host) {
         }
       if(away)
         host.gotoWaypoint(host.waypoint());
+      if(const auto& item=activity.item) {
+        if(host.itemCount(item->required)==0)
+          host.createItem(item->required);
+        if(item->equip)
+          host.equipItem(item->required);
+        }
       return 0;
       }
     case Phase::Loop: {
@@ -221,6 +271,12 @@ inline int run(const MobActivity& activity, Phase phase, Host& host) {
       }
     case Phase::End:
       host.useMob(activity.scheme,activity.leaveState);
+      if(const auto& item=activity.item) {
+        if(item->endAction==MobActivity::Item::End::Use)
+          host.useItem(item->endItem);
+        if(item->endAction==MobActivity::Item::End::Remove && host.itemCount(item->endItem)>=1)
+          host.removeItem(item->endItem);
+        }
       return 0;
     }
   return 0;

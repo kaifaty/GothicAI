@@ -11,8 +11,8 @@
 namespace {
 using Type = daedalus::DaedalusDataType;
 
-// Accepted untimed states. ZS_ROAST_SCAVENGER is captured but never runs in a NEWWORLD day.
-constexpr std::array<std::string_view,7> acceptedStates = {
+// Accepted untimed states.
+constexpr std::array<std::string_view,13> acceptedStates = {
   "ZS_SMITH_ANVIL",
   "ZS_SMITH_COOL",
   "ZS_SMITH_FIRE",
@@ -20,6 +20,12 @@ constexpr std::array<std::string_view,7> acceptedStates = {
   "ZS_READ_BOOKSTAND",
   "ZS_STOMP_HERB",
   "ZS_SMOKE_WATERPIPE",
+  "ZS_ROAST_SCAVENGER",
+  "ZS_COOK_CAULDRON",
+  "ZS_COOK_PAN",
+  "ZS_COOK_STOVE",
+  "ZS_PICK_ORE",
+  "ZS_POTION_ALCHEMY",
   };
 
 const daedalus::DaedalusSymbol* function(const daedalus::DaedalusScript& script, const std::string& name, bool result) {
@@ -46,7 +52,7 @@ bool ActivityDefinitionRuntime::events() {
   }
 
 bool ActivityDefinitionRuntime::accepted(std::string_view state) {
-  if(ActivityDefinitions::seatedState(state))
+  if(ActivityDefinitions::timedMobState(state) || ActivityDefinitions::mobInitChecksBody(state))
     return true;
   for(auto name:acceptedStates)
     if(name==state)
@@ -68,7 +74,7 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
         std::pair{function(script,name+"_END",false),ActivityDefinitions::Phase::End},
         };
       for(const auto& [symbol,phase]:phases) {
-        if(phase==ActivityDefinitions::Phase::Loop && (record.point || record.mob->seated))
+        if(phase==ActivityDefinitions::Phase::Loop && (record.point || record.mob->timer))
           continue; // explicit calls and the events-off fallback still use the script Loop
         definitions.phases.emplace(symbol->index(),Phase{record,phase,helper->index()});
         }
@@ -76,8 +82,9 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
     catch(const std::exception& e) { throw std::runtime_error("activity definitions: "+name+": "+e.what()); }
     };
   for(const auto& [name,activity]:library.activities) {
-    if(ActivityDefinitions::seatedState(name)!=activity.seated.has_value())
-      continue; // old records for a different seated script stay on the VM
+    if(ActivityDefinitions::timedMobState(name)!=activity.timer.has_value() ||
+       ActivityDefinitions::mobInitChecksBody(name)!=activity.skipApproachWhenBusy)
+      continue; // old records that lack a verified timer or body check stay on the VM
     if(mode==Mode::Accepted && !accepted(name))
       continue;
     const auto& stored = definitions.activities.emplace(name,activity).first->second;
@@ -112,10 +119,11 @@ const ActivityDefinitionRuntime::Phase* ActivityDefinitionRuntime::find(const De
   return found==definitions.phases.end() ? nullptr : &found->second;
   }
 
-int ActivityDefinitionRuntime::run(daedalus::DaedalusVm& vm, World& world, Npc& npc, const Phase& entry) {
+int ActivityDefinitionRuntime::run(daedalus::DaedalusVm& vm, World& world, Npc& npc, const Phase& entry,
+                                   const std::function<void(int32_t)>& createItem) {
   NpcActivityHost host(world,npc,[&vm,&entry](std::string_view) {
     vm.call_function<void>(vm.find_symbol_by_index(entry.helper));
-    });
+    },createItem);
   if(const auto* point=entry.record.point) {
     using Form = ActivityDefinitions::PointActivity::Form;
     if(entry.phase==ActivityDefinitions::Phase::End) {

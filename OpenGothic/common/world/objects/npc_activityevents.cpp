@@ -432,9 +432,9 @@ void Npc::tickPointGesture() {
   playActivityGesture();
   }
 
-void Npc::tickSeatedGesture() {
+void Npc::tickMobTimer() {
   const auto& mob=*activityEvents.activity->mob;
-  if(mob.seated && int32_t(stateTime()/1000)>mob.seated->timerSeconds &&
+  if(mob.timer && int32_t(stateTime()/1000)>mob.timer->timerSeconds &&
      ActivityDefinitions::bodyStateContains(int32_t(bodyState()),mob.busyBodyState))
     playActivityGesture();
   }

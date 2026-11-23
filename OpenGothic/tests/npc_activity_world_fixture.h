@@ -426,13 +426,15 @@ void guardActivityWorld(Gothic& gothic) {
   std::swap(Contract::activities(script),empty);
   checkPolled(true);
 
-  // This STAND user still runs the original AI_GotoFP with events enabled.
+  // Exercise an original AI_GotoFP alongside the guard's event-driven reservation.
   EventActor dementor=guard;
   dementor.state="ZS_STAND_DEMENTOR";
   dementor.phases=activityPhases(script,dementor.state.c_str());
   first.setSimTier(NpcSimTier::Full);
   second.setSimTier(NpcSimTier::Full);
   auto scriptSelect = [&](Npc& npc,EventActor& actor) {
+    auto& events=Contract::activityEventsOn(script);
+    const bool previous=std::exchange(events,false);
     test.start(actor,wp->position(),&npc,false);
     npc.attachToPoint(wp);
     npc.updateTransform();
@@ -440,6 +442,7 @@ void guardActivityWorld(Gothic& gothic) {
     activityDrain(npc);
     const auto loops=calls.phase(npc,actor.state+"_LOOP");
     Contract::tickRoutine(npc);
+    events=previous;
     require(calls.phase(npc,actor.state+"_LOOP")==loops+1 && npc.aiQueueFront() && npc.aiQueueFront()->point==post &&
             npc.aiQueueFront()->s0.empty(),"the original VM Loop selected the harbour post through AI_GotoFP");
     };
@@ -1575,6 +1578,102 @@ void seatedGestureAtObject(Npc& npc,uint32_t range) {
   require(full && silent,"seated gesture: the fixed seed covers a full chain and a silent outcome");
   }
 
+void workMobActivitiesWorld(ActivityEventsWorld& test,bool events) {
+  using Contract=NpcDefinitionContract;
+  struct Site { const char* state; const char* actor; const char* scheme; int body; int seconds; };
+  constexpr std::array sites={
+    Site{"ZS_SIT_THRONE","BAU_910_MARIA","THRONE",65547,0},
+    Site{"ZS_SAW","BAU_964_BAUER","BAUMSAEGE",32784,15},
+    Site{"ZS_REPAIR_HUT","VLK_480_FELLAN","REPAIR",32784,5},
+    Site{"ZS_PRAY_INNOS","PAL_299_SERGIO","INNOS",BS_MOBINTERACT,0},
+    Site{"ZS_ROAST_SCAVENGER",nullptr,"BARBQ",32784,0},
+    };
+  auto& world=test.world();
+  auto& script=world.script();
+  ActivityCalls calls;
+  for(const auto& site:sites) {
+    EventActor activity;
+    if(site.actor) {
+      auto* npc=activityNpc(world,site.actor);
+      require(npc!=nullptr,"work MOB: the routine actor must exist");
+      activity=test.actor(site.state,site.scheme,npc);
+      } else {
+      // The roast has a real object in NEWWORLD but no actor in its normal day.
+      activity.npc=test.extra();
+      activity.phases=activityPhases(script,site.state);
+      activity.point=world.findWayPoint("NW_TROLLAREA_PORTAL_KDWWAIT_04");
+      require(activity.point!=nullptr,"work MOB: the roasting waypoint must exist");
+      activity.pointName=activity.point->name;
+      activity.state=site.state;
+      activity.scheme=site.scheme;
+      }
+    auto& npc=*activity.npc;
+    const auto at=activity.point->position();
+    test.only({&npc});
+    test.moveHero(at+Tempest::Vec3(350,0,0),0);
+    test.start(activity,at,&npc,false);
+    Contract::tickRoutine(npc);
+    npc.setPerceptionDisable(PERC_ASSESSPLAYER);
+    auto* object=world.availableMob(npc,site.scheme);
+    require(object!=nullptr,(activity.state+": the routine has a free object").c_str());
+    test.stepUntil(750,[&] {
+      return npc.interactive()==object && object->userCount()==1 && object->isStaticState() && npc.isAiQueueEmpty() &&
+             ActivityDefinitions::bodyStateContains(int32_t(npc.bodyState()),site.body) &&
+             (!events || test.stage(npc)==ActivityEvents::Stage::Hold);
+      },activity.state+" holds the real object");
+    const auto loop=activity.state+"_LOOP";
+    if(std::string_view(site.state)=="ZS_PRAY_INNOS") {
+      // The shrine holds the non-interruptible body state, outside the Loop's timer guard.
+      npc.setStateTime(6000);
+      Contract::aiState(npc).loopNextTime=world.tickCount();
+      Contract::tickRoutine(npc);
+      require(npc.stateTime()==6000,"the shrine's actual pose keeps the original timer untouched");
+      npc.clearAiQueue();
+      }
+    if(site.seconds>0) {
+      const auto boundary=uint64_t(site.seconds+1)*1000;
+      npc.setStateTime(boundary-1);
+      Contract::aiState(npc).loopNextTime=world.tickCount();
+      Contract::tickRoutine(npc);
+      require(npc.stateTime()==boundary-1 && npc.isAiQueueEmpty(),"work MOB: the timer waits for the whole second");
+      auto* repair=script.getVm().find_symbol_by_name(loop+".ZUFALL");
+      script.setSeed(73106);
+      auto expected=Contract::random(script);
+      bool animated=false,silent=false;
+      for(size_t i=0;i<(repair ? 32u : 1u);++i) {
+        const int32_t roll=repair ? int32_t(expected()%100) : -1;
+        npc.setStateTime(boundary);
+        Contract::aiState(npc).loopNextTime=world.tickCount();
+        Contract::tickRoutine(npc);
+        require(npc.stateTime()==0 && Contract::random(script)==expected,"work MOB: reset and expected random stream");
+        if(repair)
+          require(repair->get_int()==roll,"repair: the saved roll is the draw from this perception beat");
+        const auto* action=npc.aiQueueFront();
+        if(roll>=0 && roll<50) {
+          require(action && action->act==AI_PlayAnimBs && action->s0=="T_REPAIR_RANDOM_1" && action->i0==site.body,
+                  "repair: a successful draw queues the original gesture");
+          animated=true;
+          } else {
+          require(action==nullptr,"work MOB: a silent timer reset queues no command");
+          silent=true;
+          }
+        npc.clearAiQueue();
+        if(animated && silent)
+          break;
+        }
+      require(silent && (!repair || animated),"work MOB: fixed draws cover the required outcomes");
+      }
+    const auto count=calls.phase(npc,loop);
+    std::printf("Work MOB %s (events=%d): object %u, %zu Loop calls\n",site.state,int(events),object->zenId(),count);
+    require((count==0)==events,"work MOB: the routine uses the requested executor");
+    npc.clearState(false);
+    require(object->isAttached(npc) && npc.aiQueueFront() && npc.aiQueueFront()->act==AI_UseMob &&
+            npc.aiQueueFront()->i0==-1,"work MOB: queue the original leave before releasing ownership");
+    test.stepUntil(650,[&] { return !object->isAttached(npc) && !test.places().reserved(npc); },activity.state+" releases its object");
+    test.stop(npc);
+    }
+  }
+
 void seatedActivitiesWorld(Gothic& gothic,bool events) {
   using Contract=NpcDefinitionContract;
   using ActivityEvents::Stage;
@@ -1708,9 +1807,262 @@ void seatedActivitiesWorld(Gothic& gothic,bool events) {
       test.stepUntil(600,[&] { return !object->isAttached(*npc) && !test.places().reserved(*npc); },
                      std::string(site.state)+" releases its seat");
       }
+    workMobActivitiesWorld(test,events);
   }
   gothic.clearGame().reset();
   if(!output) std::filesystem::remove_all(directory);
+  }
+
+void sleepRoutineWorld(Gothic& gothic,bool events) {
+  using Contract=NpcDefinitionContract;
+  ActivityEventsWorld test(gothic);
+  auto& world=test.world();
+  auto* matteo=activityNpc(world,"VLK_416_MATTEO");
+  require(matteo!=nullptr,"sleep routine: the authored bed user must exist");
+  auto bedtime=test.actor("ZS_GOTOBED","BEDHIGH",matteo);
+  const auto sleep=activityPhases(world.script(),"ZS_SLEEP");
+  const auto* approach=test.awayFrom(*bedtime.point,200.f);
+  test.only({matteo});
+  test.moveHero(bedtime.point->position()+Tempest::Vec3(150,0,0),0);
+  test.start(bedtime,bedtime.point->position(),matteo,false);
+  Contract::tickRoutine(*matteo);
+  auto samePoint=Contract::queue(*matteo);
+  bool startsSleep=false;
+  while(samePoint.size()>0) {
+    const auto action=samePoint.pop();
+    require(action.act!=AI_GoToPoint,"a sleeper already at the waypoint skips the approach");
+    startsSleep |= action.act==AI_StartState && action.func==ScriptFn(sleep.init);
+    }
+  require(startsSleep,"the bedtime state queues sleep when the NPC is already at the waypoint");
+  test.start(bedtime,approach->position(),matteo,false);
+  const auto deadline=Contract::aiState(*matteo).eTime;
+  Contract::tickRoutine(*matteo);
+  matteo->setPerceptionDisable(PERC_ASSESSPLAYER);
+  const auto approaches=activityQueue(*matteo);
+  require(approaches.size()>=2 && approaches.back().starts_with("StartState "),
+          "sleep routine: the approach queues the sleep transition last");
+
+  auto& vm=world.script().getVm();
+  size_t vmLoops=0;
+  const auto observer=vm.add_call_observer([&](const auto& function) {
+    vmLoops+=function.name()=="ZS_SLEEP_LOOP";
+    });
+  const auto settled=[&] {
+    const auto* object=matteo->interactive();
+    return matteo->isInState(ScriptFn(sleep.init)) && object && object->checkMobName("BEDHIGH") &&
+           object->userCount()==1 && object->isStaticState() && matteo->isAiQueueEmpty() &&
+           ActivityDefinitions::bodyStateContains(int32_t(matteo->bodyState()),BS_LIE);
+    };
+  test.stepUntil(1200,settled,"Matteo sleeps in a bed after approaching his routine waypoint");
+  require(Contract::aiState(*matteo).eTime==deadline,"sleep routine: the transition preserves the row's end time");
+  test.step(90);
+  require(settled() && (vmLoops==0)==events,"sleep routine: a held bed remains settled with the selected executor");
+  vm.remove_call_observer(observer);
+
+  Contract::aiState(*matteo).eTime=world.time();
+  Contract::aiState(*matteo).loopNextTime=world.tickCount();
+  Contract::tickRoutine(*matteo);
+  auto tail=Contract::queue(*matteo);
+  require(tail.size()!=0,"sleep routine: waking queues a bed release");
+  while(tail.size()>1)
+    tail.pop();
+  const auto release=tail.pop();
+  require(release.act==AI_UseMob && release.s0=="BEDHIGH" && release.i0==-1,
+          "sleep routine: the end requests the normal get-up animation");
+  test.stepUntil(600,[&] { return matteo->interactive()==nullptr; },"Matteo leaves his bed");
+  std::printf("Sleep routine (events=%d): %zu VM Loop calls; approach, handoff, held bed and release verified\n",
+              int(events),vmLoops);
+  }
+
+// The switch and the accepted list through the loader the game calls.
+void activitySwitch(GameScript& script,const std::vector<std::string>& accepted,const char* other,size_t pointPhases) {
+  const auto base=baseProgramIndex().dir.parent_path();
+  std::string sha;
+  loadBaseProgram(Gothic::inst().defaultGameDatFile(),Settings::getI("GAME","language"),&sha);
+  const auto* configured=std::getenv("OPENGOTHIC_ACTIVITY_RECORDS");
+  const std::optional<std::string> previous=configured ? std::optional<std::string>(configured) : std::nullopt;
+  struct Restore {
+    const std::optional<std::string>& previous;
+    ~Restore() { if(previous) setenv("OPENGOTHIC_ACTIVITY_RECORDS",previous->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_RECORDS"); }
+    } restore{previous};
+  // The phase lookup the game's dispatcher uses, for all three phases.
+  auto runs=[&](const ActivityDefinitionRuntime::Definitions& definitions,const char* state) {
+    if(state==nullptr) return false;
+    const auto& st=script.aiState(script.findSymbolIndex(state));
+    return ActivityDefinitionRuntime::find(definitions,uint32_t(st.funcIni))!=nullptr &&
+           ActivityDefinitionRuntime::find(definitions,uint32_t(st.funcLoop))!=nullptr &&
+           ActivityDefinitionRuntime::find(definitions,uint32_t(st.funcEnd))!=nullptr;
+    };
+  auto loaded=[&](const char* value) {
+    if(value) setenv("OPENGOTHIC_ACTIVITY_RECORDS",value,1); else unsetenv("OPENGOTHIC_ACTIVITY_RECORDS");
+    const auto definitions=ActivityDefinitionRuntime::load(base,script.getVm(),sha);
+    size_t acceptedRuns=0;
+    for(const auto& state:accepted)
+      acceptedRuns+=runs(definitions,state.c_str()) ? 1 : 0;
+    return std::tuple{acceptedRuns,runs(definitions,other),definitions.phases.size()};
+    };
+  const auto all=accepted.size(),captured=all+(other!=nullptr ? 1 : 0);
+  require(loaded(nullptr)==std::tuple{all,false,3*all+pointPhases},"by default every accepted activity, and only those, runs from its record");
+  require(loaded("1")==std::tuple{all,false,3*all+pointPhases},"another switch value keeps the accepted list");
+  require(loaded("0")==std::tuple{size_t(0),false,size_t(0)},"OPENGOTHIC_ACTIVITY_RECORDS=0 must run every activity in the VM");
+  require(loaded("all")==std::tuple{all,other!=nullptr,3*captured+pointPhases},
+          "OPENGOTHIC_ACTIVITY_RECORDS=all must run every captured activity from its record");
+  std::printf("Activity switch: default and 1 run the %zu accepted states only, 0 none, all every captured state\n",all);
+  }
+
+void pairedSmalltalkWorld(ActivityEventsWorld& test,bool events) {
+  using Contract=NpcDefinitionContract;
+  auto& world=test.world();
+  auto& script=world.script();
+  auto* first=activityNpc(world,"BAU_918_BAUER");
+  auto* second=activityNpc(world,"BAU_919_BAUER");
+  const auto* firstPost=world.findPoint("FP_SMALLTALK_NW_BIGFARM_KITCHEN_03",false);
+  const auto* secondPost=world.findPoint("FP_SMALLTALK_NW_BIGFARM_KITCHEN_04",false);
+  require(first && second && firstPost && secondPost,"smalltalk: the farm kitchen pair and posts exist");
+  test.freePoint(firstPost);
+  test.freePoint(secondPost);
+  test.moveHero(firstPost->position()+Tempest::Vec3(300,0,0),0);
+  test.only({first,second});
+  EventActor talk;
+  talk.phases=activityPhases(script,"ZS_SMALLTALK");
+  talk.state="ZS_SMALLTALK";
+  talk.pointName="NW_BIGFARM_KITCHEN_09";
+  auto prepare=[&](Npc& actor,const WayPoint& post) {
+    test.start(talk,post.position(),&actor,false);
+    Contract::tickRoutine(actor);
+    // This scene starts after the approach, on the two points from the day journal.
+    actor.clearAiQueue();
+    actor.attachToPoint(&post);
+    require(actor.isOnFreePoint("SMALLTALK"),"smalltalk: the actor is at the authored free point");
+    };
+  prepare(*first,*firstPost);
+  prepare(*second,*secondPost);
+  require(first->qDistTo(*second)<500.f*500.f,"smalltalk: the other actor is within dialogue distance");
+
+  {
+    ActivityStream stream(world,*first);
+    auto& vm=script.getVm();
+    auto& roll=*vm.find_symbol_by_name("B_SAY_SMALLTALK.RANDOM");
+    auto& choice=*vm.find_symbol_by_name("B_SAY_SMALLTALK.CHOICE");
+    roll.set_int(-1);
+    choice.set_int(-1);
+    second->setStateTime(1200);
+    script.setSeed(42);
+    auto expected=Contract::random(script);
+    first->setStateTime(7999);
+    Contract::aiState(*first).loopNextTime=world.tickCount();
+    Contract::tickRoutine(*first);
+    require(roll.get_int()==-1 && choice.get_int()==-1 && Contract::random(script)==expected &&
+            second->stateTime()==1200 && first->isAiQueueEmpty(),"smalltalk: no turn or RNG before eight seconds");
+
+    const auto draw=expected()%120;
+    expected(); // The original draws again with bound one.
+    first->setStateTime(8000);
+    Contract::aiState(*first).loopNextTime=world.tickCount();
+    Contract::tickRoutine(*first);
+    require(first->stateTime()==0 && second->stateTime()==4000,"smalltalk: reset the speaker and stagger the partner");
+    require(Contract::random(script)==expected && roll.get_int()==int32_t(draw) && choice.get_int()==0,
+            "smalltalk: preserve both draws and both saved locals");
+    auto queue=Contract::queue(*first);
+    require(queue.size()==2,"smalltalk: exactly one turn and one SVM line");
+    const auto turn=queue.pop();
+    const auto line=queue.pop();
+    require(turn.act==AI_TurnToNpc && turn.target==second &&
+            line.act==AI_OutputSvm && line.target==first && line.s0=="$SMALLTALK21",
+            "smalltalk: queue the turn toward the partner before the seeded line to self");
+    require(stream.records==size_t(events),"smalltalk: run the selected executor at the timed wake");
+    }
+  test.stop(*first);
+  test.stop(*second);
+  first->attachToPoint(nullptr);
+  second->attachToPoint(nullptr);
+  }
+
+// The real game's item symbols and STAND post, used by both executors. The
+// caller discards this world after the case, so no other actor runs in it.
+void itemRoutinePhasesWorld(Gothic& gothic,bool events) {
+  using Contract=NpcDefinitionContract;
+  ActivityEventsWorld test(gothic);
+  auto& world=test.world();
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& npc=*test.extra();
+  const auto* post=world.findPoint("FP_STAND_CITY_20",false);
+  require(post,"item routine: the harbour STAND post exists");
+  npc.clearState(true);
+  npc.setPosition(post->position());
+  npc.attachToPoint(post);
+  npc.updateTransform();
+  require(npc.isOnFreePoint("STAND"),"item routine: the actor reached the post");
+  constexpr std::array food={"ITFO_APPLE","ITFO_CHEESE","ITFO_BACON","ITFOMUTTON"};
+  constexpr std::array foodGesture={"T_FOOD_RANDOM_1","T_FOODHUGE_RANDOM_1","T_MEAT_RANDOM_1","T_MEAT_RANDOM_1"};
+  for(const auto* name:{"ZS_STAND_EATING","ZS_STAND_DRINKING"}) {
+    const bool eating=std::string_view(name)=="ZS_STAND_EATING";
+    const auto phases=activityPhases(script,name);
+    std::string loopName=std::string(name)+"_LOOP";
+    size_t loops=0;
+    const auto observer=vm.add_call_observer([&](const auto& fn) { if(fn.name()==loopName) ++loops; });
+    auto invoke=[&](size_t phase) { script.invokeState(&npc,nullptr,nullptr,ScriptFn(phase)); };
+    script.setSeed(73106);
+    auto random=Contract::random(script);
+    const auto choice=eating ? size_t(random()%food.size()) : 0;
+    const auto item=uint32_t(script.findSymbolIndex(eating ? food[choice] : "ITFO_BOOZE"));
+    npc.delItem(item,uint32_t(npc.itemCount(item)));
+    invoke(phases.init);
+    require(npc.itemCount(item)==1 && npc.handle().aivar[19]==1 && (!eating || size_t(npc.handle().aivar[18])==choice) &&
+            Contract::random(script)==random,"item routine: Init selects and creates the original item once");
+    const auto created=npc.getItem(item);
+    require(created && vm.global_item()->get_instance()==std::static_pointer_cast<daedalus::IItem>(created->handlePtr()),
+            "item routine: item creation keeps the script ITEM global");
+    npc.clearAiQueue();
+    const auto limit=eating ? 6000u : 8000u;
+    npc.setStateTime(limit-1);
+    invoke(phases.loop);
+    auto queue=Contract::queue(npc);
+    auto take=[&](auto action) {
+      require(queue.size()>0,"item routine: expected a queued command");
+      auto next=queue.pop();
+      require(next.act==action,"item routine: command type in sequence");
+      return next;
+      };
+    auto use=[&](int state) {
+      const auto a=take(AI_UseItemToState);
+      require(uint32_t(a.i0)==item && a.i1==state,"item routine: command item and animation state");
+      };
+    auto gesture=[&](std::string_view clip) {
+      const auto a=take(AI_PlayAnimBs);
+      require(a.s0==clip && a.i0==BS_ITEMINTERACT,"item routine: gesture name and item-interaction pose");
+      };
+    take(AI_AlignToFp);
+    use(0);
+    if(eating && choice==0) gesture("T_FOOD_RANDOM_2");
+    require(queue.size()==0 && npc.handle().aivar[19]==0 && npc.stateTime()==limit-1 &&
+            Contract::random(script)==random,"item routine: enter the pose while the timer is still below threshold");
+    npc.clearAiQueue();
+    npc.setStateTime(limit);
+    const auto draw=eating ? 0u : uint32_t(random()%10);
+    invoke(phases.loop);
+    queue=Contract::queue(npc);
+    take(AI_AlignToFp);
+    if(eating) gesture(foodGesture[choice]);
+    else {
+      if(draw==0) gesture("T_POTION_RANDOM_3");
+      gesture("T_POTION_RANDOM_1");
+      if(draw==1) gesture("T_POTION_RANDOM_2");
+      const auto* local=vm.find_symbol_by_name(loopName+".RANDOM");
+      require(local && uint32_t(local->get_int())==draw,"item routine: drinking keeps the saved RNG outcome");
+      }
+    require(queue.size()==0 && npc.stateTime()==0 && Contract::random(script)==random && loops==(events ? 0u : 2u),
+            "item routine: original timed gesture with the requested executor");
+    vm.remove_call_observer(observer);
+    npc.clearAiQueue();
+    invoke(phases.end);
+    queue=Contract::queue(npc);
+    if(eating) gesture("T_POTION_RANDOM_2");
+    use(-1);
+    require(queue.size()==0,"item routine: release the item after the last command");
+    npc.clearAiQueue();
+    }
   }
 
 void pointActivitiesInBothModes(Gothic& gothic) {
@@ -1720,6 +2072,10 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     setenv("OPENGOTHIC_ACTIVITY_EVENTS",events ? "1" : "0",1);
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
     const auto save=pointActivitiesWorld(gothic,events);
+    itemRoutinePhasesWorld(gothic,events);
+    ActivityEventsWorld paired(gothic);
+    pairedSmalltalkWorld(paired,events);
+    sleepRoutineWorld(gothic,events);
     gothic.clearGame().reset();
     seatedActivitiesWorld(gothic,events);
     if(events) {
@@ -1729,4 +2085,177 @@ void pointActivitiesInBothModes(Gothic& gothic) {
       }
     }
   if(previousEvents) setenv("OPENGOTHIC_ACTIVITY_EVENTS",previousEvents->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_EVENTS");
+  }
+
+// Rare rows use their authored actor and waypoint where the release worlds contain them.
+// The concert and the test model's three rows name points absent from the four release waynets.
+struct RoutineWitnessSite {
+  const char* state;
+  const char* actor;
+  const char* point;
+  };
+
+struct RoutineWitness {
+  std::vector<std::string> entry, departure;
+  Tempest::Vec3            position;
+  uint32_t                 pose = 0;
+  int32_t                  stage = 0;
+  bool                     operator==(const RoutineWitness& other) const {
+    return entry==other.entry && departure==other.departure && pose==other.pose && stage==other.stage &&
+           (position-other.position).length()<1.f;
+    }
+  };
+
+std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* worldName,
+                                                std::span<const RoutineWitnessSite> sites,bool events) {
+  using Contract=NpcDefinitionContract;
+  gothic.setGame(std::make_unique<GameSession>(worldName));
+  std::vector<RoutineWitness> result(sites.size());
+  std::vector<uint8_t> save;
+  {
+    ActivityEventsWorld test(gothic);
+    auto& world=test.world();
+    auto& script=world.script();
+    auto& vm=script.getVm();
+    test.only({});
+    ActivityEvents::reset();
+    std::map<std::string,size_t> vmCalls;
+    const auto observer=vm.add_call_observer([&](const auto& function) { ++vmCalls[function.name()]; });
+    for(size_t i=0;i<sites.size();++i) {
+      const auto& site=sites[i];
+      const auto* point=world.findWayPoint(site.point);
+      require(point!=nullptr,(std::string(site.state)+": fixture waypoint is missing").c_str());
+      auto* actor=activityNpc(world,site.actor);
+      if(actor==nullptr)
+        actor=world.addNpc(script.findSymbolIndex(site.actor),point->position());
+      require(actor!=nullptr && !actor->isDead(),(std::string(site.state)+": fixture actor is missing or dead").c_str());
+      require(activityNpc(world,site.actor)==actor,(std::string(site.state)+": fixture actor must be in the live world").c_str());
+      const auto state=script.findSymbolIndex(site.state);
+      require(state!=0,(std::string(site.state)+": routine script symbol is missing").c_str());
+      test.stop(*actor);
+      test.moveHero(point->position()+Tempest::Vec3(650,0,0),0);
+      script.setSeed(73106);
+      actor->setPosition(point->position());
+      require(actor->startState(ScriptFn(state),site.point),(std::string(site.state)+": cannot start the fixture state").c_str());
+      const auto vmBefore=vmCalls[site.state];
+      const auto eventsBefore=test.stats(site.state).wakes[0];
+      Contract::tickRoutine(*actor);
+      auto& witness=result[i];
+      witness.entry=activityQueue(*actor);
+      witness.stage=actor->handle().aivar[19];
+      require(actor->isInState(ScriptFn(state)) && Contract::aiState(*actor).started,
+              (std::string(site.state)+": Init must run through the NPC lifecycle").c_str());
+      require(vmCalls[site.state]-vmBefore==(events ? 0u : 1u) &&
+              test.stats(site.state).wakes[0]-eventsBefore==(events ? 1u : 0u),
+              (std::string(site.state)+": Init did not run through the expected executor").c_str());
+    }
+    vm.remove_call_observer(observer);
+    Tempest::MemWriter writer(save);
+    Serialize out(writer);
+    Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+    std::memset(preview.data(),0,4);
+    gothic.gameSession()->save(out,"human routine entries",preview);
+    for(size_t i=0;i<sites.size();++i) {
+      const auto* actor=activityNpc(world,sites[i].actor);
+      require(actor!=nullptr,(std::string(sites[i].state)+": fixture actor must survive until the save").c_str());
+      result[i].position=actor->position();
+      result[i].pose=actor->bodyStateMasked();
+    }
+  }
+  gothic.clearGame().reset();
+  {
+    Tempest::MemReader reader(save);
+    Serialize in(reader);
+    gothic.setGame(std::make_unique<GameSession>(in));
+    auto& world=*gothic.world();
+    auto& script=world.script();
+    auto& vm=script.getVm();
+    std::map<std::string,size_t> vmCalls;
+    const auto observer=vm.add_call_observer([&](const auto& function) { ++vmCalls[function.name()]; });
+    for(size_t i=0;i<sites.size();++i) {
+      const auto& site=sites[i];
+      auto* actor=activityNpc(world,site.actor);
+      auto& witness=result[i];
+      const auto id=ScriptFn(script.findSymbolIndex(site.state));
+      require(actor!=nullptr && actor->isInState(id) && Contract::aiState(*actor).started &&
+              activityQueue(*actor)==witness.entry && actor->handle().aivar[19]==witness.stage &&
+              actor->bodyStateMasked()==witness.pose && (actor->position()-witness.position).length()<1.f,
+              (std::string(site.state)+": ordinary reload must restore the entry before its pending commands run").c_str());
+      if(std::string_view(site.state)=="ZS_GUARD_PASSAGE") {
+        const auto aligned=[](const Npc& npc) {
+          const auto queue=activityQueue(npc);
+          return queue.size()==1 && queue.front().starts_with("AlignToWp ");
+          };
+        ActivityEventsWorld test(gothic);
+        const auto guard=actor->position();
+        for(const auto [distance,time,expect] : {std::tuple{650.f,2999,false},std::tuple{450.f,3000,false},
+                                                std::tuple{650.f,3000,true}}) {
+          test.moveHero(guard+Tempest::Vec3(distance,0,0),0);
+          actor->clearAiQueue();
+          actor->setStateTime(time);
+          Contract::aiState(*actor).loopNextTime=world.tickCount();
+          Contract::tickRoutine(*actor);
+          require(aligned(*actor)==expect && actor->stateTime()==(expect ? 0u : uint64_t(time)),
+                  "ZS_GUARD_PASSAGE: align and reset only at three seconds with the hero outside 500 cm");
+        }
+        require(events ? vmCalls["ZS_GUARD_PASSAGE_LOOP"]==0 : vmCalls["ZS_GUARD_PASSAGE_LOOP"]==3,
+                "ZS_GUARD_PASSAGE must use the expected Loop executor across the threshold");
+      }
+      actor->clearAiQueue();
+      const std::string end=std::string(site.state)+"_END";
+      const auto vmBefore=vmCalls[end];
+      actor->clearState(false);
+      witness.departure=activityQueue(*actor);
+      require(!actor->isInState(id) && vmCalls[end]-vmBefore==(events || !vm.find_symbol_by_name(end) ? 0u : 1u),
+              (std::string(site.state)+": End did not run through the expected executor").c_str());
+    }
+    vm.remove_call_observer(observer);
+  }
+  gothic.clearGame().reset();
+  return result;
+  }
+
+void remainingRoutineWitnesses(Gothic& gothic) {
+  static constexpr RoutineWitnessSite khorinis[] = {
+    {"ZS_CIRCLE",              "KDW_1400_ADDON_SATURAS_NW",        "NW_TROLLAREA_PORTALTEMPEL_RITUAL_01"},
+    {"ZS_CONCERT",             "PIR_1390_ADDON_INEXTREMO_DRPYMONTE","NW_CITY_PATH_HABOUR_03"},
+    {"ZS_FLEETOWP",            "BDT_1013_BANDIT_L",                "NW_XARDAS_MONSTER_INSERT_01"},
+    {"ZS_FOLLOW_PLAYER",       "BAU_931_TILL",                     "NW_BIGFARM_KITCHEN_02"},
+    {"ZS_GUARD_PASSAGE",       "KDF_507_TALAMON",                  "NW_MONASTERY_CELLAR_15"},
+    {"ZS_GUIDE_PLAYER",        "VLK_440_BARTOK",                    "NW_FARM1_CITYWALL_FOREST_07"},
+    {"ZS_PRACTICE_MAGIC",      "TA_TESTMODELL",                    "NW_CITY_PATH_HABOUR_03"},
+    {"ZS_RUNTOWP",             "MIL_337_MIKA",                     "NW_FARM2_PATH_03"},
+    {"ZS_SPIT_FIRE",           "VLK_468_CANTHAR",                  "NW_CITY_PATH_HABOUR_03"},
+    {"ZS_STAND_DEMENTOR",      "DMT_1202_DEMENTOR",                "NW_XARDAS_VALLEY_03"},
+    {"ZS_STAND_RANGERMEETING", "MIL_350_ADDON_MARTIN",             "NW_TAVERNE_07"},
+    {"ZS_WASH_FP",             "MIL_313_BOLTAN",                   "NW_CITY_PATH_HABOUR_03"},
+    };
+  static constexpr RoutineWitnessSite jharkendar[] = {
+    {"ZS_COOK_PAN",       "PIR_1352_ADDON_ALLIGATORJACK", "AD_PIRATECAMP_AJ_03"},
+    {"ZS_GHOST",          "NONE_ADDON_111_QUARHODRON",    "ADW_ANCIENTGHOST"},
+    {"ZS_GHOSTWUSEL",      "NONE_ADDON_112_RHADEMES",      "ADW_ADANOSTEMPEL_RHADEMES_02"},
+    {"ZS_PICK_ORE",       "BDT_10004_ADDON_FINN",         "ADW_MINE_PICK_06"},
+    {"ZS_ROAST_SCAVENGER", "PIR_1364_ADDON_PIRAT",         "ADW_PIRATECAMP_SCAVENGER"},
+    };
+  struct Setting {
+    const char* key;
+    std::optional<std::string> previous;
+    explicit Setting(const char* name):key(name) { if(const auto* value=std::getenv(key)) previous=value; }
+    ~Setting() { if(previous) setenv(key,previous->c_str(),1); else unsetenv(key); }
+    } records("OPENGOTHIC_ACTIVITY_RECORDS"), events("OPENGOTHIC_ACTIVITY_EVENTS");
+  for(const auto& [world,sites] : {std::pair{"NEWWORLD.ZEN",std::span<const RoutineWitnessSite>(khorinis)},
+                                  std::pair{"ADDONWORLD.ZEN",std::span<const RoutineWitnessSite>(jharkendar)}}) {
+    setenv(records.key,"0",1);
+    setenv(events.key,"0",1);
+    const auto original=remainingRoutineRun(gothic,world,sites,false);
+    setenv(records.key,"1",1);
+    setenv(events.key,"1",1);
+    const auto native=remainingRoutineRun(gothic,world,sites,true);
+    for(size_t i=0;i<sites.size();++i) {
+      const auto& site=sites[i];
+      require(native[i]==original[i],(std::string(site.state)+": queue, pose or stage differs against the original").c_str());
+      std::printf("Routine witness %s in %s with %s: Init, normal load and End agree in both executors\n",
+                  site.state,world,site.actor);
+    }
+  }
   }

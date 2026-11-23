@@ -1781,41 +1781,7 @@ size_t activityThreshold(World& world,Npc& npc,const std::string& label,size_t i
   return events;
   }
 
-// The switch and the accepted list through the loader the game calls.
-void activitySwitch(GameScript& script,const std::vector<std::string>& accepted,const char* other,size_t pointPhases=0) {
-  const auto base=baseProgramIndex().dir.parent_path();
-  std::string sha;
-  loadBaseProgram(Gothic::inst().defaultGameDatFile(),Settings::getI("GAME","language"),&sha);
-  const auto* configured=std::getenv("OPENGOTHIC_ACTIVITY_RECORDS");
-  const std::optional<std::string> previous=configured ? std::optional<std::string>(configured) : std::nullopt;
-  struct Restore {
-    const std::optional<std::string>& previous;
-    ~Restore() { if(previous) setenv("OPENGOTHIC_ACTIVITY_RECORDS",previous->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_RECORDS"); }
-    } restore{previous};
-  // The phase lookup the game's dispatcher uses, for all three phases.
-  auto runs=[&](const ActivityDefinitionRuntime::Definitions& definitions,const char* state) {
-    if(state==nullptr) return false;
-    const auto& st=script.aiState(script.findSymbolIndex(state));
-    return ActivityDefinitionRuntime::find(definitions,uint32_t(st.funcIni))!=nullptr &&
-           ActivityDefinitionRuntime::find(definitions,uint32_t(st.funcLoop))!=nullptr &&
-           ActivityDefinitionRuntime::find(definitions,uint32_t(st.funcEnd))!=nullptr;
-    };
-  auto loaded=[&](const char* value) {
-    if(value) setenv("OPENGOTHIC_ACTIVITY_RECORDS",value,1); else unsetenv("OPENGOTHIC_ACTIVITY_RECORDS");
-    const auto definitions=ActivityDefinitionRuntime::load(base,script.getVm(),sha);
-    size_t acceptedRuns=0;
-    for(const auto& state:accepted)
-      acceptedRuns+=runs(definitions,state.c_str()) ? 1 : 0;
-    return std::tuple{acceptedRuns,runs(definitions,other),definitions.phases.size()};
-    };
-  const auto all=accepted.size(),captured=all+(other!=nullptr ? 1 : 0);
-  require(loaded(nullptr)==std::tuple{all,false,3*all+pointPhases},"by default every accepted activity, and only those, runs from its record");
-  require(loaded("1")==std::tuple{all,false,3*all+pointPhases},"another switch value keeps the accepted list");
-  require(loaded("0")==std::tuple{size_t(0),false,size_t(0)},"OPENGOTHIC_ACTIVITY_RECORDS=0 must run every activity in the VM");
-  require(loaded("all")==std::tuple{all,other!=nullptr,3*captured+pointPhases},
-          "OPENGOTHIC_ACTIVITY_RECORDS=all must run every captured activity from its record");
-  std::printf("Activity switch: default and 1 run the %zu accepted states only, 0 none, all every captured state\n",all);
-  }
+void activitySwitch(GameScript& script,const std::vector<std::string>& accepted,const char* other,size_t pointPhases=0);
 
 // The phases the engine starts and the uses it queues, per NPC, seen from the engine's side.
 class ActivityCalls final : public NpcActivityProbe {
@@ -1933,15 +1899,15 @@ void activityDefinitionsSynthetic(World& world) {
   auto& script=world.script();
   // The record phases against the VM: the polled Loop of OPENGOTHIC_ACTIVITY_EVENTS=0.
   NpcDefinitionContract::activityEventsOn(script)=false;
-  activitySwitch(script,{"ZS_SMITH_ANVIL","ZS_SMOKE_WATERPIPE"},"ZS_ROAST_SCAVENGER");
+  activitySwitch(script,{"ZS_SMITH_ANVIL","ZS_SMOKE_WATERPIPE"},"ZS_TEST_ROAST");
   // The game's accepted list itself, without game data.
   for(const char* state:{"ZS_SMITH_ANVIL","ZS_SMITH_COOL","ZS_SMITH_FIRE","ZS_SMITH_SHARP","ZS_READ_BOOKSTAND",
                          "ZS_STOMP_HERB","ZS_SMOKE_WATERPIPE"})
     require(ActivityDefinitionRuntime::accepted(state),(std::string("the game must accept ")+state).c_str());
-  require(!ActivityDefinitionRuntime::accepted("ZS_ROAST_SCAVENGER"),"ZS_ROAST_SCAVENGER has no day parity and stays in the VM");
+  require(!ActivityDefinitionRuntime::accepted("ZS_TEST_ROAST"),"ZS_TEST_ROAST is a captured but unaccepted test record");
   auto* npc=world.addNpc(script.findSymbolIndex("NPC_NO_ID"),Tempest::Vec3{});
   require(npc!=nullptr,"activity NPC must exist");
-  const auto anvil=activityPhases(script,"ZS_SMITH_ANVIL"),roast=activityPhases(script,"ZS_ROAST_SCAVENGER");
+  const auto anvil=activityPhases(script,"ZS_SMITH_ANVIL"),roast=activityPhases(script,"ZS_TEST_ROAST");
   const auto& phases=NpcDefinitionContract::activities(script).phases;
   require(phases.contains(anvil.init) && phases.contains(anvil.loop) && phases.contains(anvil.end),
           "the game must load the accepted activity record");
@@ -1987,19 +1953,19 @@ void activityDefinitionsSynthetic(World& world) {
   for(const char* name:{"init","loop","end"}) {
     require(phase("ZS_SMITH_ANVIL",name,"engine")==1 && phase("ZS_SMITH_ANVIL",name,"records")==1,
             "the accepted phase must be counted once, from its record");
-    require(phase("ZS_ROAST_SCAVENGER",name,"engine")==1 && phase("ZS_ROAST_SCAVENGER",name,"records")==0,
+    require(phase("ZS_TEST_ROAST",name,"engine")==1 && phase("ZS_TEST_ROAST",name,"records")==0,
             "the outside phase must be counted once, from the VM");
     }
   require(phase("ZS_SMITH_ANVIL","init","nested")==1 && phase("ZS_SMITH_ANVIL","loop","nested")==0 &&
           phase("ZS_SMITH_ANVIL","end","nested")==0,"a record phase runs only its deferred perception helper in the VM");
-  require(phase("ZS_ROAST_SCAVENGER","init","nested")==3 && phase("ZS_ROAST_SCAVENGER","loop","nested")==1,
+  require(phase("ZS_TEST_ROAST","init","nested")==3 && phase("ZS_TEST_ROAST","loop","nested")==1,
           "the VM phase runs its helpers");
   require(phase("ZS_SMITH_ANVIL","init","instructions")==9 && phase("ZS_SMITH_ANVIL","loop","instructions")==0 &&
-          phase("ZS_SMITH_ANVIL","end","instructions")==0 && phase("ZS_ROAST_SCAVENGER","init","instructions")>9,
+          phase("ZS_SMITH_ANVIL","end","instructions")==0 && phase("ZS_TEST_ROAST","init","instructions")>9,
           "a record phase counts only the instructions of its deferred helper");
   activityEventsSynthetic(world,*npc,anvil,roast);
   world.removeNpc(*npc);
-  std::printf("Activity counters: ZS_SMITH_ANVIL 3 phases from the record, ZS_ROAST_SCAVENGER 3 from the VM; %zu equal events\n",events);
+  std::printf("Activity counters: ZS_SMITH_ANVIL 3 phases from the record, ZS_TEST_ROAST 3 from the VM; %zu equal events\n",events);
   }
 
 Npc* activityNpc(World& world,const char* name) {
@@ -2173,8 +2139,12 @@ void activityDefinitionsWorld(Gothic& gothic) {
   std::vector<std::string> accepted;
   for(const auto& spec:worldActivities)
     accepted.emplace_back(spec.state);
-  constexpr size_t eventPhases=7*2; // Init and End of five point activities and two seated activities.
-  activitySwitch(script,accepted,"ZS_ROAST_SCAVENGER",eventPhases);
+  accepted.emplace_back("ZS_SIT_THRONE");
+  accepted.emplace_back("ZS_ROAST_SCAVENGER");
+  for(const auto* state:{"ZS_COOK_CAULDRON","ZS_COOK_PAN","ZS_COOK_STOVE","ZS_PICK_ORE","ZS_POTION_ALCHEMY"})
+    accepted.emplace_back(state);
+  constexpr size_t eventPhases=10*2; // Init and End of five point activities and five timed MOB activities.
+  activitySwitch(script,accepted,nullptr,eventPhases);
   std::vector<WorldActivity> activities;
   std::set<Npc*> actors;
   for(const auto& spec:worldActivities) {
@@ -2198,7 +2168,7 @@ void activityDefinitionsWorld(Gothic& gothic) {
     actors.insert(activity.actor);
     activities.push_back(std::move(activity));
     }
-  require(NpcDefinitionContract::activities(script).phases.size()==3*activities.size()+eventPhases,
+  require(NpcDefinitionContract::activities(script).phases.size()==3*accepted.size()+eventPhases,
           "the game must load the accepted mob phases and the point activities' Init and End");
   size_t events=0;
   for(auto& activity:activities)
@@ -4006,6 +3976,7 @@ void moverChildSave() {
   animationEffects(gothic);
   guardCampfireChange(gothic);
   gothic.clearGame().reset();
+  remainingRoutineWitnesses(gothic);
   }
 
 }

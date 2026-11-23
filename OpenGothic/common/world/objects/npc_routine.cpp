@@ -191,10 +191,10 @@ void Npc::tickRoutine() {
       const bool fastPath = aiPolicy==NpcProcessPolicy::AiFar2 && routines.empty();
       runLoop = !(fastPath && currentFp!=nullptr && qDistTo(currentFp)<MAX_DIST*MAX_DIST);
       if(runLoop) {
-        if(!events)
+        if(!events && owner.rules().routineTimerDue(*this,aiState.funcLoop))
           loop = invokeRoutine(aiState.funcLoop);
-        else if(!atPoint)
-          tickSeatedGesture(); // the seated Loop also draws before End on the final perception beat
+        else if(events && !atPoint)
+          tickMobTimer(); // The timer also fires on the final perception beat before End.
         }
       }
     else if(!events) {
