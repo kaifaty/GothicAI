@@ -438,7 +438,7 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
     npc_settempattitude(self,npc_getpermattitude(self,hero()));
     vm.call_function<void>("B_STOPLOOKAT",self);
     ai_stoppointat(self);
-    if(npc_isplayer(other()) && self->guild<GIL_SEPERATOR_HUM) {
+    if(npc_isplayer(other()) && self->guild<int32_t(GIL_SEPERATOR_HUM)) {
       self->aivar[defeatedByPlayer] = 1;
       self->aivar[fightResult] = number("FIGHT_LOST");
       if(self->guild==GIL_SLD && self->aivar[duelCounted]==0 && self->aivar[attackReason]==number("AR_NONE")) {
