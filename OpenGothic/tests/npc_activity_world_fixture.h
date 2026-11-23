@@ -1494,6 +1494,7 @@ void quietSoundRooms(Gothic& gothic) {
   const auto clear=script.findFunction("ZS_CLEARROOM");
   const auto roomPc=vm.find_symbol_by_name("B_ASSESSENTERROOM")->address();
   const auto portalCollision=script.findFunction("B_ASSESSPORTALCOLLISION");
+  const auto portalPc=vm.find_symbol_by_index(portalCollision.ptr)->address();
   auto& leftRoomComment=*vm.find_symbol_by_name("PLAYER_LEFTROOMCOMMENT");
   const int32_t savedComment=leftRoomComment.get_int();
   const auto setPrivateRoom=[&](bool privateRoom) {
@@ -1632,19 +1633,17 @@ void quietSoundRooms(Gothic& gothic) {
       leftRoomComment.set_int(1);
       npc->setPerceptionEnable(PERC_ASSESSENTERROOM,portalCollision.ptr);
       npc->aiPush(AiQueue::aiWait(173));
-      size_t roomCalls=0,portalCalls=0,roomBytecode=0;
-      const auto count=vm.add_call_observer([&](const auto& symbol) {
-        roomCalls+=symbol.name()=="B_ASSESSENTERROOM";
-        portalCalls+=symbol.name()=="B_ASSESSPORTALCOLLISION";
+      size_t portalBytecode=0,roomBytecode=0;
+      vm.observe_instructions([&](const auto&) {
+        portalBytecode+=vm.pc()==portalPc;
+        roomBytecode+=vm.pc()==roomPc;
         });
-      vm.observe_instructions([&](const auto&) { roomBytecode+=vm.pc()==roomPc; });
       events=native;
       const bool delivered=npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSENTERROOM);
       events=enabled;
       vm.observe_instructions({});
-      vm.remove_call_observer(count);
-      require(delivered && portalCalls==1 && roomCalls==1 && roomBytecode==(native ? 0u : 1u),
-              "enter room: the stock portal callback dispatches once and the room bytecode runs only in VM mode");
+      require(delivered && portalBytecode==(native ? 0u : 1u) && roomBytecode==portalBytecode,
+              "enter room: the callback and the entering reaction execute bytecode only on the legacy path");
       const auto* queued=npc->aiQueueFront();
       require(queued && queued->act==AI_StartState && queued->func==(privateRoom ? clear : observe) &&
               queued->target==&hero && queued->i0==1 &&
@@ -1667,8 +1666,57 @@ void quietSoundRooms(Gothic& gothic) {
     std::printf("D5.3 %s entry: perception, action queue and room comment match the VM\n",privateRoom ? "private" : "public");
     }
 
+  std::vector<std::string> originalDeparture;
+  for(bool native:{false,true}) {
+    prepare(true);
+    const auto heroGuild=hero.handle().guild;
+    const auto seenLeft=npc->handle().aivar[21];
+    const auto leaveLanding=otherRoom->groundPos;
+    test.only({&hero});
+    test.moveHero(leaveLanding,hero.rotation());
+    test.stepUntil(120,[&] { return hero.portalName()!=portal && world.guildOfRoom(hero.portalName())>=0; },
+                   "portal departure: the hero finds the other room's tagged floor");
+    const std::string formerPortal(hero.portalName());
+    const auto formerGuild=world.guildOfRoom(formerPortal);
+    const auto separator=formerPortal.find('_');
+    require(formerPortal.starts_with("S:") && separator!=std::string::npos && separator>2,
+            "portal departure: the fixture needs a named former room");
+    const std::string_view formerRoom(formerPortal.data()+2,separator-2);
+    world.assignRoomToGuild(formerRoom,int32_t(npc->handle().guild));
+    test.moveHero(*inside,hero.rotation());
+    test.stepUntil(120,[&] { return hero.portalName()==portal && hero.formerPortalName()==formerPortal; },
+                   "portal departure: crossing back preserves the actual former room");
+    test.only({npc,&hero});
+    npc->setDirection(hero.position()-npc->position());
+    npc->updateTransform();
+    // The entrance policy considers personal attitude; the departure policy uses guild attitude.
+    npc->setAttitude(ATT_FRIENDLY);
+    hero.handle().guild=GIL_BDT;
+    npc->handle().aivar[21]=0;
+    npc->setPerceptionEnable(PERC_ASSESSENTERROOM,portalCollision.ptr);
+    size_t portalBytecode=0;
+    vm.observe_instructions([&](const auto&) { portalBytecode+=vm.pc()==portalPc; });
+    events=native;
+    const bool delivered=npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSENTERROOM);
+    events=enabled;
+    vm.observe_instructions({});
+    const auto* queued=npc->aiQueueFront();
+    require(delivered && portalBytecode==(native ? 0u : 1u) && npc->handle().aivar[21]==1 &&
+            queued && queued->act==AI_StartState && queued->func==observe && queued->target==&hero && queued->i0==0 &&
+            !npc->hasPerc(PERC_ASSESSENTERROOM),
+            "portal departure: a witness of the hero leaving its guild's room records it and observes");
+    if(native) require(activityQueue(*npc)==originalDeparture,"portal departure: original and native commands match");
+    else originalDeparture=activityQueue(*npc);
+    world.assignRoomToGuild(formerRoom,formerGuild);
+    hero.handle().guild=heroGuild;
+    npc->handle().aivar[21]=seenLeft;
+    }
+  std::puts("D5.5 former-room witness and observation queue match the VM");
+
   const auto roomPhases=activityPhases(script,"ZS_CLEARROOM");
   const auto roomExit=script.findFunction("B_EXITIFROOMLEFT");
+  const auto roomTalk=script.findFunction("B_CLEARROOMTALK");
+  const auto roomTalkPc=vm.find_symbol_by_index(roomTalk.ptr)->address();
   const auto attack=script.findFunction("ZS_ATTACK");
   const auto attackReason=vm.find_symbol_by_name("AR_CLEARROOM")->get_int();
   const auto roomCode=std::array{vm.find_symbol_by_index(roomPhases.init)->address(),
@@ -1700,9 +1748,11 @@ void quietSoundRooms(Gothic& gothic) {
               npc->aiQueueFront() && npc->aiQueueFront()->func==clear,
               "clear room: the stock portal event starts the private-room reaction");
       std::array<size_t,4> vmEntries{};
+      size_t roomTalkBytecode=0;
       vm.observe_instructions([&](const auto&) {
         for(size_t i=0;i<roomCode.size();++i)
           vmEntries[i]+=vm.pc()==roomCode[i];
+        roomTalkBytecode+=vm.pc()==roomTalkPc;
         });
       Contract::nextAiAction(*npc);
       Contract::tickRoutine(*npc);
@@ -1713,6 +1763,11 @@ void quietSoundRooms(Gothic& gothic) {
       if(native) require(activityQueue(*npc)==originalInit,"clear room: the initial commands match the VM");
       else originalInit=activityQueue(*npc);
 
+      npc->clearAiQueue();
+      require(npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSTALK) &&
+              roomTalkBytecode==(native ? 0u : 1u) &&
+              saysTo(*npc,hero,hostile ? "$GETOUTOFHERE" : "$WHYAREYOUINHERE"),
+              "clear room: addressing the owner repeats the appropriate warning through the selected callback");
       const auto loop=[&] { return script.invokeState(npc,&hero,&hero,ScriptFn(roomPhases.loop)); };
       npc->clearAiQueue();
       npc->setStateTime(2600);

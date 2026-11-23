@@ -34,10 +34,17 @@ bool GameScript::nativeRoomReactionsEnabled() const {
   }
 
 bool GameScript::invokeNativeRoomPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase) {
-  if(symbol.name()!="B_EXITIFROOMLEFT" || !nativeRoomReactionsEnabled())
+  const std::string_view name = symbol.name();
+  if((name!="B_EXITIFROOMLEFT" && name!="B_ASSESSPORTALCOLLISION" && name!="B_CLEARROOMTALK") ||
+     !nativeRoomReactionsEnabled())
     return false;
   phase.fromRecord();
-  phase.result = runExitIfRoomLeft();
+  if(name=="B_EXITIFROOMLEFT")
+    phase.result = runExitIfRoomLeft();
+  else if(name=="B_ASSESSPORTALCOLLISION")
+    runPortalCollisionReaction();
+  else
+    runClearRoomTalk();
   return true;
   }
 
@@ -113,6 +120,56 @@ int32_t GameScript::runEnterRoomReaction() {
   else
     ai_startstate(self,int(findFunction("ZS_CLEARROOM").ptr),1,"");
   return 1;
+  }
+
+void GameScript::runPortalCollisionReaction() {
+  auto& former = *findSymbol("B_ASSESSPORTALCOLLISION.FORMERPORTALGUILD");
+  former.set_int(wld_getformerplayerportalguild());
+  if(runEnterRoomReaction()!=0)
+    return;
+
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto body = npc_getbodystate(other);
+  const bool onFeet = ActivityDefinitions::bodyStateContains(body,BS_STAND) ||
+                      ActivityDefinitions::bodyStateContains(body,BS_SNEAK);
+  const bool visible = npc_canseenpc(self,other);
+  if(onFeet && !visible)
+    return;
+
+  npc_perceiveall(self);
+  // On success the original query replaces OTHER with the NPC already clearing the room.
+  if(wld_detectnpcex(self,-1,int(findFunction("ZS_CLEARROOM").ptr),-1,0))
+    return;
+
+  const int32_t guild = int32_t(self->guild);
+  const int32_t formerGuild = former.get_int();
+  const bool alliedToFormerRoom = wld_getguildattitude(guild,formerGuild)==ATT_FRIENDLY;
+  if(!alliedToFormerRoom && guild!=formerGuild)
+    return;
+  const bool friendOfPlayer = self->type==NpcType::G2_FRIEND && npc_isplayer(other);
+  const int32_t otherGuild = other ? int32_t(other->guild) : int32_t(GIL_NONE);
+  if(friendOfPlayer || wld_getguildattitude(guild,otherGuild)==ATT_FRIENDLY || guild==GIL_NONE)
+    return;
+
+  if(alliedToFormerRoom && (formerGuild==GIL_SLD || formerGuild==GIL_MIL)) {
+    const auto reason = findSymbol("AR_LEFTPORTALROOM")->get_int();
+    vm.call_function<void>("B_ATTACK",self,other,reason,0);
+    return;
+    }
+
+  constexpr size_t seenLeftRoom = 21; // AIV_SEENLEFTROOM in the verified program
+  self->aivar[seenLeftRoom] = 1;
+  npc_clearaiqueue(self);
+  vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+  ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),0,"");
+  }
+
+void GameScript::runClearRoomTalk() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const bool wantsAttack = vm.call_function<int32_t>("C_WANTTOATTACKROOMINTRUDER",self)!=0;
+  vm.call_function<void>("B_SAY",self,vm.global_other()->get_instance(),
+                         wantsAttack ? std::string_view{"$GETOUTOFHERE"} : std::string_view{"$WHYAREYOUINHERE"});
   }
 
 void GameScript::runQuietSoundReaction(Npc& listener) {

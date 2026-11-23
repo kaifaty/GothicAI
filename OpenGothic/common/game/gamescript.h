@@ -353,6 +353,8 @@ class GameScript final : public GameRules {
     void loadNativeRoomReaction();
     int32_t runEnterRoomReaction();
     int32_t runExitIfRoomLeft();
+    void runPortalCollisionReaction();
+    void runClearRoomTalk();
     void runQuietSoundReaction(Npc& listener);
     static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                        RoutineDefinitionRuntime::Definitions& routines,
