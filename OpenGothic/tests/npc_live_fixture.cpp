@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -1048,7 +1049,8 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
   const auto truth=script.intSymbol("TRUE",1), falsity=script.intSymbol("FALSE",0);
   std::map<std::string_view,int32_t> before;
   for(const auto* name:{"CURRENTLEVEL","KAPITEL","RAVENISDEAD","SKLAVEN_WEG","ENTERADW_KAPITEL2","ENTERADW_KAPITEL3",
-                        "ENTERNW_KAPITEL6","ENTEROW_KAPITEL1","ENTEROW_KAPITEL2","ENTEROW_KAPITEL6"})
+                        "ENTERADW_KAPITEL5","ENTERADW_KAPITEL6","ENTERNW_KAPITEL6","ENTEROW_KAPITEL1",
+                        "ENTEROW_KAPITEL2","ENTEROW_KAPITEL6"})
     before.emplace(name,script.findSymbol(name)->get_int());
   Environment placement;
   placement.set("OPENGOTHIC_PLACEMENT_RECORDS",std::string("0"));
@@ -1063,6 +1065,16 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
     {"B_INITNPCGLOBALS",khorinis},{"B_ENTER_ADDONWORLD_KAPITEL_1",khorinis},
     {"B_ENTER_ADDONWORLD_KAPITEL_2",khorinis},{"B_ENTER_ADDONWORLD_KAPITEL_3",khorinis},{"B_INITNPCGLOBALS",addon},
     };
+  std::vector<uint32_t> migrated{init->address(),entry->address()};
+  for(const auto& [name,levelValue]:expected) {
+    if(name.starts_with("INIT_SUB_ADDON_PART_") || name=="B_ENTER_ADDONWORLD_KAPITEL_2" || name=="B_ENTER_ADDONWORLD_KAPITEL_3")
+      migrated.push_back(script.findSymbol(name)->address());
+    }
+  const auto none=script.intSymbol("GIL_NONE",-1), publicGuild=script.intSymbol("GIL_PUBLIC",-1);
+  const std::vector<Call> expectedRooms={
+    {"tavern01",none},{"beds01",publicGuild},{"merchant01",publicGuild},
+    {"schmied01",none},{"zoll01",none},{"raven01",publicGuild},
+    };
   for(bool native:{false,true}) {
     setenv("OPENGOTHIC_PLACEMENT_RECORDS",native ? "1" : "0",1);
     level->set_int(khorinis);
@@ -1070,8 +1082,10 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
     jack->set_instance(nullptr);
     for(const auto* name:{"RAVENISDEAD","SKLAVEN_WEG","ENTERADW_KAPITEL2","ENTERADW_KAPITEL3"})
       script.findSymbol(name)->set_int(falsity);
+    for(const auto& [room,guild]:expectedRooms)
+      world.assignRoomToGuild(room,guild==none ? publicGuild : none);
 
-    std::vector<Call> calls;
+    std::vector<Call> calls, rooms;
     const auto observer=vm.add_call_observer([&](const auto& symbol) {
       const auto& name=symbol.name();
       if(name.starts_with("INIT_SUB_ADDON_PART_") || name.starts_with("B_ENTER_ADDONWORLD") ||
@@ -1080,9 +1094,17 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
       if(name=="B_ENTER_ADDONWORLD_KAPITEL_1")
         chapter->set_int(3);
       });
-    size_t roots=0, rooms=0;
-    vm.observe_instructions([&](const auto&) { if(vm.pc()==init->address() || vm.pc()==entry->address()) ++roots; });
-    vm.observe_externals([&](const auto& symbol) { if(symbol.name()=="WLD_ASSIGNROOMTOGUILD") ++rooms; });
+    size_t bytecode=0;
+    vm.observe_instructions([&](const auto&) {
+      if(std::ranges::find(migrated,vm.pc())!=migrated.end()) ++bytecode;
+      });
+    vm.observe_externals([&](const auto& symbol) {
+      if(symbol.name()!="WLD_ASSIGNROOMTOGUILD")
+        return;
+      const auto* room=std::get<daedalus::DaedalusSymbol*>(vm.stack_frame(1).value);
+      const auto* guild=std::get<daedalus::DaedalusSymbol*>(vm.stack_frame(0).value);
+      rooms.emplace_back(room->get_string(),guild->get_int());
+      });
     const auto pc=vm.pc();
     const auto context=vm.unsafe_get_gi();
     vm.push_int(0x12345678);
@@ -1091,9 +1113,15 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
     vm.observe_instructions({});
     vm.observe_externals({});
     vm.remove_call_observer(observer);
-    require(roots==(native ? 0u : 2u) && rooms==6 && sentinel==0x12345678 &&
+    require(bytecode==(native ? 0u : migrated.size()) && rooms==expectedRooms && sentinel==0x12345678 &&
             vm.pc()==pc && vm.unsafe_get_gi()==context && calls==expected,
             "Addon World Init must preserve the ordered calls, live chapter and VM context");
+    for(const auto& [room,guild]:expectedRooms) {
+      std::string sector=room;
+      for(auto& ch:sector)
+        ch=char(std::toupper(static_cast<unsigned char>(ch)));
+      require(world.guildOfRoom("P:"+sector+"_")==guild,"bandit camp must assign the original room owner");
+      }
     require(chapter->get_int()==3 && level->get_int()==addon && jack->get_instance()==boundJack &&
             script.intSymbol("ENTERADW_KAPITEL2",0)==truth && script.intSymbol("ENTERADW_KAPITEL3",0)==truth,
             "Addon World must apply the live chapter latches and final NPC aliases");
@@ -1103,6 +1131,10 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
       {"B_ENTER_OLDWORLD_KAPITEL_1","ENTEROW_KAPITEL1"},
       {"B_ENTER_OLDWORLD_KAPITEL_2","ENTEROW_KAPITEL2"},
       {"B_ENTER_OLDWORLD_KAPITEL_6","ENTEROW_KAPITEL6"},
+      {"B_ENTER_ADDONWORLD_KAPITEL_2","ENTERADW_KAPITEL2"},
+      {"B_ENTER_ADDONWORLD_KAPITEL_3","ENTERADW_KAPITEL3"},
+      {"B_ENTER_ADDONWORLD_KAPITEL_5","ENTERADW_KAPITEL5"},
+      {"B_ENTER_ADDONWORLD_KAPITEL_6","ENTERADW_KAPITEL6"},
       };
     for(const auto& [name,flag]:latches) {
       auto* latch=script.findSymbol(flag);
@@ -1120,7 +1152,7 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
     }
   for(const auto& [name,value]:before)
     script.findSymbol(name)->set_int(value);
-  std::puts("Addon World entry: Init order, live chapter, room assignments, NPC aliases and four chapter latches match stock");
+  std::puts("Addon World entry: Init order, live chapter, room assignments, NPC aliases and eight chapter latches match stock");
   }
 
 } // namespace NpcWorldFixture

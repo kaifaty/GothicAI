@@ -166,6 +166,10 @@ void GameScript::loadNativeWorldEntry() {
     {"B_ENTER_OLDWORLD_KAPITEL_1","ENTEROW_KAPITEL1"},
     {"B_ENTER_OLDWORLD_KAPITEL_2","ENTEROW_KAPITEL2"},
     {"B_ENTER_OLDWORLD_KAPITEL_6","ENTEROW_KAPITEL6"},
+    {"B_ENTER_ADDONWORLD_KAPITEL_2","ENTERADW_KAPITEL2"},
+    {"B_ENTER_ADDONWORLD_KAPITEL_3","ENTERADW_KAPITEL3"},
+    {"B_ENTER_ADDONWORLD_KAPITEL_5","ENTERADW_KAPITEL5"},
+    {"B_ENTER_ADDONWORLD_KAPITEL_6","ENTERADW_KAPITEL6"},
     };
   for(const auto& [name,flag]:latches)
     vm.override_function(name,std::function<void()>{[this,flag] {
@@ -173,6 +177,24 @@ void GameScript::loadNativeWorldEntry() {
       if(latch->get_int()==findSymbol("FALSE")->get_int())
         latch->set_int(findSymbol("TRUE")->get_int());
       }},PlacementDefinitionRuntime::enabled);
+  for(const auto* stage:{"INIT_SUB_ADDON_PART_PIRATESCAMP_01", "INIT_SUB_ADDON_PART_ENTRANCE_01",
+                         "INIT_SUB_ADDON_PART_GOLDMINE_01", "INIT_SUB_ADDON_PART_CANYON_01",
+                         "INIT_SUB_ADDON_PART_VALLEY_01", "INIT_SUB_ADDON_PART_ADANOSTEMPLE_01"})
+    vm.override_function(stage,std::function<void()>{[] {}},PlacementDefinitionRuntime::enabled);
+
+  vm.override_function("INIT_SUB_ADDON_PART_BANDITSCAMP_01",std::function<void()>{[this] {
+    static constexpr std::pair<const char*,const char*> rooms[]={
+      {"$53469","GIL_NONE"},   {"$53470","GIL_PUBLIC"}, {"$53471","GIL_PUBLIC"},
+      {"$53472","GIL_NONE"},   {"$53473","GIL_NONE"},   {"$53474","GIL_PUBLIC"},
+      };
+    const auto* assign=findSymbol("WLD_ASSIGNROOMTOGUILD");
+    for(const auto& [room,guild]:rooms) {
+      vm.push_reference(findSymbol(room));
+      vm.push_reference(findSymbol(guild));
+      vm.unsafe_call_external(assign);
+      }
+    }},PlacementDefinitionRuntime::enabled);
+
   vm.override_function("B_KAPITELWECHSEL",std::function<void(int32_t,int32_t)>{
     [this](int32_t chapter,int32_t level) { changeChapter(chapter,level); }},PlacementDefinitionRuntime::enabled);
   }
