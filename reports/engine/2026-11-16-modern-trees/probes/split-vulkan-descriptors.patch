@@ -1,0 +1,288 @@
+--- a/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vpoolcache.cpp
++++ b/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vpoolcache.cpp
+@@ -5,6 +5,8 @@
+ #include "vdescriptorarray.h"
+
+ #include <bit>
++#include "split.h"
++#include <algorithm>
+
+ using namespace Tempest;
+ using namespace Tempest::Detail;
+@@ -22,12 +24,34 @@
+   }
+
+
++// The layout cache includes the active mask in the set layout identity.
++static bool sameActiveBindings(const Bindings& a,const Bindings& b,uint32_t active) {
++  if(((a.array^b.array)&active)!=0) return false;
++  for(auto mask=active;mask!=0;mask&=mask-1) {
++    const auto i=std::countr_zero(mask);
++    if(a.data[i]!=b.data[i] || a.offset[i]!=b.offset[i] || a.smp[i]!=b.smp[i] || a.map[i]!=b.map[i])
++      return false;
++    }
++  return true;
++  }
++static Bindings activeBindings(const Bindings& source,uint32_t active) {
++  Bindings ret;
++  ret.array=source.array & active;
++  for(auto mask=active;mask!=0;mask&=mask-1) {
++    const auto i=std::countr_zero(mask);
++    ret.data[i]=source.data[i]; ret.offset[i]=source.offset[i]; ret.smp[i]=source.smp[i]; ret.map[i]=source.map[i];
++    }
++  return ret;
++  }
++
+ VPoolCache::VPoolCache(VDevice& dev)
+   : dev(dev) {
+   cache.reserve(MaxCache);
+   }
+
+ VPoolCache::~VPoolCache() {
++  for(auto& d:descriptors)
++    vkDestroyDescriptorPool(dev.device.impl, d.pool, nullptr);
+   for(auto& i:cache)
+     vkDestroyDescriptorPool(dev.device.impl, i, nullptr);
+   }
+@@ -278,35 +302,39 @@
+     lx.count[i] = bindlessCapacity(lx.bindings[i], a->size());
+     }
+
++  const auto scalar = descriptorPart(lx, ~lx.array);
++  const auto arrays = descriptorPart(lx, lx.array);
++  const auto scalarLayout = dev.setLayouts.findLayout(scalar);
++  const auto arrayLayout = dev.setLayouts.findLayout(arrays);
+   Inst ret;
+-  ret.dLay = dev.setLayouts.findLayout(lx);
+-  ret.pLay = dev.psoLayouts.findLayout(pb, ret.dLay);
+-
++  ret.pLay = dev.psoLayouts.findLayout(pb, scalarLayout, arrayLayout);
+   std::lock_guard<std::mutex> guard(sync);
+-  for(auto& i:descriptors) {
+-    if(i.dLay!=ret.dLay || i.bindings!=binding)
+-      continue;
+-    ret.set = i.set;
+-    return ret;
+-    }
+-
+-  auto& desc = descriptors.emplace_back();
+-  try {
+-    desc.dLay     = ret.dLay;
+-    desc.bindings = binding;
+-    desc.arrays   = lx.active & binding.array;
+-    desc.pool     = allocPool(lx);
+-    desc.set      = allocDescSet(desc.pool, ret.dLay);
+-    initDescriptorSet(desc.set, binding, lx);
+-    }
+-  catch(...) {
+-    if(desc.pool!=VK_NULL_HANDLE)
+-      vkDestroyDescriptorPool(dev.device.impl, desc.pool, nullptr);
+-    descriptors.pop_back();
+-    throw;
+-    }
+-
+-  ret.set  = desc.set;
++  auto getSet = [&](const LayoutDesc& part, VkDescriptorSetLayout setLayout) {
++    for(const auto& d:descriptors)
++      if(d.dLay==setLayout && sameActiveBindings(d.bindings, binding, part.active))
++        return d.set;
++
++    auto& desc = descriptors.emplace_back();
++    try {
++      desc.dLay = setLayout;
++      desc.bindings = activeBindings(binding, part.active);
++      desc.arrays = part.active & binding.array;
++      desc.pool = allocPool(part);
++      desc.set = allocDescSet(desc.pool, setLayout);
++      if(desc.set==VK_NULL_HANDLE)
++        throw std::runtime_error("Cannot allocate a split descriptor set");
++      initDescriptorSet(desc.set, binding, part);
++      }
++    catch(...) {
++      if(desc.pool!=VK_NULL_HANDLE)
++        vkDestroyDescriptorPool(dev.device.impl, desc.pool, nullptr);
++      descriptors.pop_back();
++      throw;
++      }
++    return desc.set;
++    };
++  ret.set = getSet(scalar, scalarLayout);
++  ret.arrays = getSet(arrays, arrayLayout);
+   return ret;
+   }
+
+--- a/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vpoolcache.h
++++ b/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vpoolcache.h
+@@ -23,7 +23,7 @@
+     using LayoutDesc = ShaderReflection::LayoutDesc;
+     struct Inst {
+       VkDescriptorSet       set  = VK_NULL_HANDLE;
+-      VkDescriptorSetLayout dLay = VK_NULL_HANDLE;
++      VkDescriptorSet       arrays = VK_NULL_HANDLE;
+       VkPipelineLayout      pLay = VK_NULL_HANDLE;
+       };
+
+--- a/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vpsolayoutcache.cpp
++++ b/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vpsolayoutcache.cpp
+@@ -1,6 +1,7 @@
+ #if defined(TEMPEST_BUILD_VULKAN)
+
+ #include "vpsolayoutcache.h"
++#include "split.h"
+ #include "gapi/vulkan/vdevice.h"
+
+ using namespace Tempest;
+@@ -16,17 +17,22 @@
+   }
+
+ VkPipelineLayout VPsoLayoutCache::findLayout(const ShaderReflection::PushBlock& pb, VkDescriptorSetLayout lay) {
++  return findLayout(pb, lay, VK_NULL_HANDLE);
++  }
++
++VkPipelineLayout VPsoLayoutCache::findLayout(const ShaderReflection::PushBlock& pb, VkDescriptorSetLayout lay, VkDescriptorSetLayout arrays) {
+   std::lock_guard<std::mutex> guard(sync);
+
+   const auto stageFlags = nativeFormat(pb.stage);
+   for(auto& i:layouts)
+-    if(i.lay==lay && i.pushStage==stageFlags && i.pushSize==pb.size)
++    if(i.lay==lay && i.arrays==arrays && i.pushStage==stageFlags && i.pushSize==pb.size)
+       return i.pLay;
+
++  const VkDescriptorSetLayout sets[] = {lay, arrays};
+   VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
+   pipelineLayoutInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+-  pipelineLayoutInfo.pSetLayouts            = &lay;
+-  pipelineLayoutInfo.setLayoutCount         = 1;
++  pipelineLayoutInfo.pSetLayouts            = sets;
++  pipelineLayoutInfo.setLayoutCount         = arrays ? 2 : 1;
+   pipelineLayoutInfo.pushConstantRangeCount = 0;
+
+   VkPushConstantRange push = {};
+@@ -41,6 +47,7 @@
+
+   auto& ret = layouts.emplace_back();
+   ret.lay       = lay;
++  ret.arrays    = arrays;
+   ret.pushStage = stageFlags;
+   ret.pushSize  = uint32_t(pb.size);
+   try {
+@@ -54,6 +61,11 @@
+   }
+
+ VkPipelineLayout VPsoLayoutCache::findLayout(const ShaderReflection::PushBlock& pb, const ShaderReflection::LayoutDesc& lay) {
++  if(lay.isUpdateAfterBind()) {
++    const auto scalar = dev.setLayouts.findLayout(descriptorPart(lay, ~lay.array));
++    const auto arrays = dev.setLayouts.findLayout(descriptorPart(lay, lay.array));
++    return findLayout(pb, scalar, arrays);
++    }
+   auto dLay = dev.setLayouts.findLayout(lay);
+   return dev.psoLayouts.findLayout(pb, dLay);
+   }
+--- a/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vpsolayoutcache.h
++++ b/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vpsolayoutcache.h
+@@ -17,6 +17,7 @@
+     ~VPsoLayoutCache();
+
+     VkPipelineLayout      findLayout(const ShaderReflection::PushBlock &pb, VkDescriptorSetLayout lay);
++    VkPipelineLayout      findLayout(const ShaderReflection::PushBlock &pb, VkDescriptorSetLayout lay, VkDescriptorSetLayout arrays);
+     VkPipelineLayout      findLayout(const ShaderReflection::PushBlock &pb, const ShaderReflection::LayoutDesc& lay);
+
+   private:
+@@ -24,6 +25,7 @@
+       VkShaderStageFlags    pushStage = 0;
+       uint32_t              pushSize  = 0;
+       VkDescriptorSetLayout lay       = VK_NULL_HANDLE;
++      VkDescriptorSetLayout arrays = VK_NULL_HANDLE;
+       VkPipelineLayout      pLay      = VK_NULL_HANDLE;
+       };
+
+--- a/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vpipeline.cpp
++++ b/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vpipeline.cpp
+@@ -50,6 +50,12 @@
+       bindings[i] = &s->lay;
+       }
+     ShaderReflection::setupLayout(pb, layout, sync, bindings, count);
++    if(!device.props.hasDescriptorHeap)
++      for(size_t stage=0;stage<count;++stage)
++        if(bindings[stage])
++          for(auto& slot:*bindings[stage])
++            if(slot.cls!=ShaderReflection::Push && slot.isArray()!=bool(layout.array & (1u<<slot.layout)))
++              throw std::runtime_error("Conflicting descriptor array classification across shader stages");
+
+     for(size_t i=0; i<count; ++i)
+       if(sh[i]!=nullptr)
+--- a/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vshader.cpp
++++ b/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vshader.cpp
+@@ -12,6 +12,33 @@
+   createInfo.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+   createInfo.codeSize = src_size;
+   createInfo.pCode    = reinterpret_cast<const uint32_t*>(source);
++
++  std::vector<uint32_t> words;
++  if(!device.props.hasDescriptorHeap) {
++    for(const auto& slot:lay) {
++      if(!slot.isArray() || slot.cls==ShaderReflection::Push)
++        continue;
++      if(words.empty())
++        words.assign(createInfo.pCode, createInfo.pCode + src_size/sizeof(uint32_t));
++      bool moved = false;
++      for(size_t pos=5;pos<words.size();) {
++        const auto instruction = words[pos];
++        if((instruction & 0xffffu)==71u && (instruction >> 16)==4 &&
++           words[pos+1]==uint32_t(slot.spvId) && words[pos+2]==34u) {
++          if(words[pos+3]!=0)
++            throw std::runtime_error("Unexpected input descriptor set");
++          words[pos+3] = 1;
++          moved = true;
++          break;
++          }
++        pos += instruction >> 16;
++        }
++      if(!moved)
++        throw std::runtime_error("Missing descriptor set decoration");
++      }
++    }
++  if(!words.empty())
++    createInfo.pCode = words.data();
+
+   if(vkCreateShaderModule(device.device.impl,&createInfo,nullptr,&impl)!=VK_SUCCESS)
+     throw std::system_error(Tempest::GraphicsErrc::InvalidShaderModule, "\"" + dbg.source + "\"");
+--- a/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vcommandbuffer.cpp
++++ b/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vcommandbuffer.cpp
+@@ -744,9 +744,8 @@
+   if(lay->isUpdateAfterBind()) {
+     auto dset = device.descPool.allocBindless(*pb, *lay, bindings);
+     pLay = dset.pLay;
+-    vkCmdBindDescriptorSets(impl, bindPoint,
+-                            pLay, 0, 1,
+-                            &dset.set, 0, nullptr);
++    const VkDescriptorSet sets[] = {dset.set, dset.arrays};
++    vkCmdBindDescriptorSets(impl, bindPoint, pLay, 0, 2, sets, 0, nullptr);
+     } else {
+     auto dset = pushDescriptors.push(*pb, *lay, bindings);
+     vkCmdBindDescriptorSets(impl, bindPoint,
+--- /dev/null
++++ b/OpenGothic/lib/Tempest/Engine/gapi/vulkan/split.h
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include "gapi/shaderreflection.h"
++#include <bit>
++
++namespace Tempest::Detail {
++inline ShaderReflection::LayoutDesc descriptorPart(ShaderReflection::LayoutDesc layout, uint32_t active) {
++  layout.active &= active;
++  layout.array &= active;
++  layout.runtime &= active;
++  layout.resources &= active;
++  layout.samplers &= active;
++  for(size_t i=0; i<MaxBindings; ++i) {
++    if(layout.active & (1u<<i))
++      continue;
++    layout.bindings[i] = ShaderReflection::Count;
++    layout.stage[i] = ShaderReflection::None;
++    layout.count[i] = layout.bufferSz[i] = layout.bufferEl[i] = 0;
++    }
++  return layout;
++  }
++}
