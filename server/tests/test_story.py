@@ -124,17 +124,20 @@ async def test_programs_wait_for_the_world_to_resume_after_the_slow_dialog(monke
         [{"text": "Дальше"}],
         [{"text": "Опыт"}],
     ]
-    title, exit_topic = "Проверка вариантов", "Конец"
-    topics = [title, exit_topic]
+    title, exit_topic, stock_exit = "Проверка вариантов", "Завершить проверку диалога", "Конец"
+    exit_id = "DIR_PROGRAM_WINDOW_EXIT"
+    topics = [title, exit_topic, stock_exit]
     menus = iter([
         (22, []), (20, []), (0, topics),  # the previous line holds up the opening
         (28, []), (24, []), (0, ["Золото", "Дальше"]),  # the new line holds up the choices
         (0, ["Опыт"]), (0, topics),
     ])
     wall = 0.0
+    exit_patches = []
 
     async def menu():
         nonlocal wall
+        assert len(exit_patches) == 1
         waited, seen = next(menus)
         wall += waited
         return seen
@@ -150,14 +153,14 @@ async def test_programs_wait_for_the_world_to_resume_after_the_slow_dialog(monke
         nonlocal wall
         assert link.story_state.await_count == 3
         assert timeout == 110 - wall
-        assert timeout >= 6
-        wall += 6  # the chapter screen keeps the world paused after both flags clear
-        return 6
+        wall += 1  # The next tick at a rate of one frame per second.
+        return 1
 
     evaluations = iter([[2, 3, 2], [3], [1, 0, 12], [3], [1, 0, 1], [0, 3], [1, 0, 12], [1, 3]])
 
     async def evaluate(_npc, _expressions):
-        assert wall == 100
+        assert wall == 95
+        assert exit_patches[-1] == {"op": "remove_node", "node": exit_id}
         return next(evaluations)
 
     link.ping.side_effect = ping
@@ -169,6 +172,15 @@ async def test_programs_wait_for_the_world_to_resume_after_the_slow_dialog(monke
         steps = op.get("steps") or []
         if steps == [{"do": "call", "call": ["call", "CREATEINVITEMS", ["inst", "OTHER"]]}]:
             raise GameError("CREATEINVITEMS takes 3 arguments")
+        if op.get("node") == exit_id:
+            assert op["op"] == "remove_node" and link.ping.await_count == 1
+            exit_patches.append(op)
+        elif op["op"] == "add_node" and op["node"]["id"] == exit_id:
+            assert op["node"]["description"] == exit_topic
+            assert op["node"]["program"] == [
+                {"do": "call", "call": ["call", "AI_STOPPROCESSINFOS", ["inst", "SELF"]]},
+            ]
+            exit_patches.append(op)
 
     async def message(_link, kind, *_args, **_kwargs):
         if kind is LineStarted:
