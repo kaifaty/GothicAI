@@ -33,6 +33,189 @@ LiteralPlacement readLiteralPlacement(daedalus::DaedalusScript& vm,uint32_t& pc,
   return {what,where,external};
   }
 
+void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
+  static constexpr auto chapter4 = "B_ENTER_NEWWORLD_KAPITEL_4";
+  static constexpr auto chapter5 = "B_ENTER_NEWWORLD_KAPITEL_5";
+  struct Group {
+    uint32_t offset, count;
+    };
+  // Offsets and lengths in the verified stock program. Only the immutable
+  // insert calls are read here, while the conditions are evaluated at entry.
+  static constexpr std::array groups4 = {Group{82,15}, Group{328,61}, Group{1281,6},
+                                          Group{1552,90}, Group{2923,23}, Group{3330,1}};
+  static constexpr std::array groups5 = {Group{160,1}, Group{191,18}, Group{482,2},
+                                          Group{554,26}, Group{1000,9}, Group{1772,1}};
+  const auto read = [&](const char* name,const std::array<Group,6>& groups) {
+    const auto start = vm.find_symbol_by_name(name)->address();
+    std::array<std::vector<LiteralPlacement>,groups4.size()> rows;
+    for(size_t i=0;i<groups.size();++i) {
+      auto pc = start+groups[i].offset;
+      rows[i].reserve(groups[i].count);
+      for(uint32_t j=0;j<groups[i].count;++j)
+        rows[i].push_back(readLiteralPlacement(vm,pc,name));
+      }
+    return rows;
+    };
+  const auto symbol = [&vm](std::string_view name) { return vm.find_symbol_by_name(name); };
+  const auto number = [symbol](std::string_view name) { return symbol(name)->get_int(); };
+  const auto set = [&vm,symbol,number](std::string_view target,std::string_view value) {
+    vm.set_int(nullptr,symbol(target),0,number(value));
+    };
+  const auto insert = [&vm](const std::vector<LiteralPlacement>& rows) {
+    for(const auto& row:rows) {
+      vm.push_int(int32_t(row.instance->index()));
+      vm.push_reference(row.point);
+      vm.unsafe_call_external(row.external);
+      }
+    };
+  const auto guildIs = [&vm,symbol,number](std::string_view guild) {
+    const auto hero = vm.global_hero()->get_instance();
+    vm.unsafe_set_gi(hero);
+    return vm.get_int(hero,symbol("C_NPC.GUILD"),0)==number(guild);
+    };
+  const auto call = [&vm,symbol](std::string_view name) {
+    vm.unsafe_call_bl(symbol(name));
+    };
+  const auto routine = [&vm,symbol,call](std::string_view actor,std::string_view label) {
+    vm.push_reference(symbol(actor));
+    vm.push_reference(symbol(label));
+    call("B_STARTOTHERROUTINE");
+    };
+  const auto salandrilAtAltar = [&vm,symbol](std::string_view altar) {
+    vm.push_reference(symbol("SALANDRIL"));
+    vm.push_reference(symbol(altar));
+    vm.unsafe_call_external(symbol("NPC_GETDISTTOWP"));
+    return vm.pop_int()<10000;
+    };
+  const auto giveObsessionBook = [&vm,symbol](std::string_view actor) {
+    vm.push_reference(symbol(actor));
+    vm.push_int(int32_t(symbol("ITWR_DEMENTOROBSESSIONBOOK_MIS")->index()));
+    vm.push_int(1);
+    vm.unsafe_call_external(symbol("CREATEINVITEMS"));
+    };
+
+  vm.override_function(chapter4,std::function<void()>{[&vm,symbol,number,set,insert,guildIs,call,routine,
+                                                       salandrilAtAltar,giveObsessionBook,rows=read(chapter4,groups4)] {
+    if(number("ENTERNW_KAPITEL4")==number("FALSE")) {
+      if(salandrilAtAltar("$28240"))
+        routine("SALANDRIL","$28241"); // Start
+      routine("JORGEN","$28242"); // Kloster
+      vm.push_int(int32_t(symbol("BDT_1050_LANDSTREICHER")->index()));
+      call("B_KILLNPC");
+      insert(rows[0]);
+      if(guildIs("GIL_PAL"))
+        insert(rows[1]);
+      const bool paladin = guildIs("GIL_PAL");
+      const bool dragonHunter = guildIs("GIL_DJG");
+      if(paladin || dragonHunter) {
+        insert(rows[2]);
+        routine("VINO","$28325"); // BugsThere
+        routine("LOBARTSBAUER1","$28326");
+        routine("LOBARTSBAUER2","$28327");
+        }
+      const bool hunter = guildIs("GIL_DJG");
+      const bool mage = guildIs("GIL_KDF");
+      if(hunter || mage) {
+        for(const auto* shrine:{"SHRINEISOBSESSED_NW_TROLLAREA_PATH_37", "SHRINEISOBSESSED_NW_FARM1_CONNECT_XARDAS",
+                                "SHRINEISOBSESSED_NW_TROLLAREA_PATH_66", "SHRINEISOBSESSED_NW_TROLLAREA_PATH_04",
+                                "SHRINEISOBSESSED_SAGITTA", "SHRINEISOBSESSED_NW_BIGMILL_MALAKSVERSTECK_02",
+                                "SHRINEISOBSESSED_NW_FARM3_BIGWOOD_02"})
+          set(shrine,"FALSE");
+        }
+      if(guildIs("GIL_DJG"))
+        insert(rows[3]);
+      if(guildIs("GIL_KDF")) {
+        insert(rows[4]);
+        giveObsessionBook("RANDOLPH");
+        routine("RANDOLPH","$28441"); // Obsessed
+        }
+      set("ENTERNW_KAPITEL4","TRUE");
+      }
+    if(number("TALBIN_FOLLOWSTHROUGHPASS")==number("LOG_RUNNING")) {
+      insert(rows[5]);
+      set("TALBIN_FOLLOWSTHROUGHPASS","LOG_SUCCESS");
+      }
+    }},PlacementDefinitionRuntime::enabled);
+
+  vm.override_function(chapter5,std::function<void()>{[&vm,symbol,number,set,insert,guildIs,call,routine,
+                                                       salandrilAtAltar,giveObsessionBook,rows=read(chapter5,groups5)] {
+    const auto sekobAlive = [&] {
+      vm.push_reference(symbol("SEKOB"));
+      vm.unsafe_call_external(symbol("NPC_ISDEAD"));
+      return vm.pop_int()==number("FALSE");
+      };
+    if(number("ENTERNW_KAPITEL5")==number("FALSE")) {
+      vm.push_int(int32_t(symbol("XARDAS")->index())); // The stock call takes this alias's symbol ID.
+      call("B_REMOVENPC");
+      routine("LESTER","$28443"); // XardasWeg
+      if(salandrilAtAltar("$28444"))
+        routine("SALANDRIL","$28445"); // Start
+      if(sekobAlive()) {
+        routine("ROSI","$28446"); // FleeFromSekob
+        routine("TILL","$28447");
+        set("ROSI_FLEEFROMSEKOB_KAP5","TRUE");
+        }
+      if(number("GORNDJG_IS_ALIVE")==number("TRUE"))
+        insert(rows[0]);
+      if(number("DJG_ANGAR_IS_ALIVE")==number("TRUE"))
+        insert(rows[1]);
+      if(guildIs("GIL_PAL"))
+        insert(rows[2]);
+      (void)guildIs("GIL_DJG"); // Empty stock branch still evaluates the member read.
+      if(guildIs("GIL_KDF")) {
+        insert(rows[3]);
+        if(sekobAlive()) {
+          giveObsessionBook("SEKOB");
+          routine("SEKOB","$28495"); // Obsessed
+          }
+        }
+      insert(rows[4]);
+      static constexpr const char* guards[] = {
+        "SCHIFFSWACHE_212", "SCHIFFSWACHE_213", "PAL_220_SCHIFFSWACHE", "PAL_221_SCHIFFSWACHE", "PAL_222_SCHIFFSWACHE",
+        "PAL_223_SCHIFFSWACHE", "PAL_224_SCHIFFSWACHE", "PAL_225_SCHIFFSWACHE", "PAL_226_SCHIFFSWACHE",
+        "PAL_227_SCHIFFSWACHE", "PAL_228_SCHIFFSWACHE",
+        };
+      auto* flags = symbol("C_NPC.FLAGS");
+      for(const auto* guard:guards) {
+        const auto actor = symbol(guard)->get_instance();
+        vm.unsafe_set_gi(actor);
+        vm.set_int(actor,flags,0,0);
+        }
+      static constexpr std::pair<const char*,const char*> shipRoutines[] = {
+        {"PAL_220_SCHIFFSWACHE","$28505"}, {"PAL_221_SCHIFFSWACHE","$28506"}, {"PAL_222_SCHIFFSWACHE","$28507"},
+        {"PAL_223_SCHIFFSWACHE","$28508"}, {"PAL_224_SCHIFFSWACHE","$28509"}, {"PAL_225_SCHIFFSWACHE","$28510"},
+        {"PAL_226_SCHIFFSWACHE","$28511"}, {"PAL_227_SCHIFFSWACHE","$28512"}, {"PAL_228_SCHIFFSWACHE","$28513"},
+        {"PAL_230_RITTER","$28514"}, {"PAL_231_RITTER","$28515"}, {"PAL_240_RITTER","$28516"}, {"PAL_241_RITTER","$28517"},
+        };
+      for(const auto& [actor,label]:shipRoutines)
+        routine(actor,label); // ShipFree
+      const bool paladin = guildIs("GIL_PAL");
+      const bool militia = guildIs("GIL_MIL");
+      const auto art = paladin || militia ? std::array{"$28518","$28519"} :
+                       guildIs("GIL_KDF") ? std::array{"$28520","$28521"} : std::array{"$28522","$28523"};
+      vm.push_reference(symbol("KAPWECHSEL_5"));
+      vm.push_reference(symbol("KAPWECHSEL_5_TEXT"));
+      for(const auto* name:art)
+        vm.push_reference(symbol(name));
+      vm.push_int(6000);
+      vm.unsafe_call_external(symbol("INTRODUCECHAPTER"));
+      set("ENTERNW_KAPITEL5","TRUE");
+      }
+    const bool gateGuardsPending = number("PAL_SCHIFFSWACHE_EXCHANGE_ONETIME")==number("FALSE");
+    const bool gateOpen = number("MIS_OCGATEOPEN")==number("TRUE");
+    if(gateGuardsPending && gateOpen) {
+      routine("PAL_212_SCHIFFSWACHE","$28524"); // ShipFree
+      routine("PAL_213_SCHIFFSWACHE","$28525");
+      set("PAL_SCHIFFSWACHE_EXCHANGE_ONETIME","TRUE");
+      set("MIS_SHIPISFREE","TRUE");
+      }
+    if(number("BIFF_FOLLOWSTHROUGHPASS")==number("LOG_RUNNING")) {
+      insert(rows[5]);
+      set("BIFF_FOLLOWSTHROUGHPASS","LOG_SUCCESS");
+      }
+    }},PlacementDefinitionRuntime::enabled);
+  }
+
 PlacementDefinitionRuntime::Definitions dragonIslandPlacement(daedalus::DaedalusScript& vm) {
   using Value = PlacementDefinitions::Value;
   struct Captain {
@@ -615,6 +798,7 @@ void GameScript::loadNativeWorldEntry() {
     vm.unsafe_call_bl(findSymbol("B_ENTER_OLDWORLD"));
     }},PlacementDefinitionRuntime::enabled);
 
+  loadKhorinisLateChapters(vm);
   vm.override_function("B_KAPITELWECHSEL",std::function<void(int32_t,int32_t)>{
     [this](int32_t chapter,int32_t level) { changeChapter(chapter,level); }},PlacementDefinitionRuntime::enabled);
   loadOldWorldChapterEntries();
