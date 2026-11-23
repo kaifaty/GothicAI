@@ -49,8 +49,20 @@ NpcDefinitions::Value value(const Json& json) {
   else throw std::runtime_error("unsupported value type "+type);
   return result;
   }
-NpcDefinitions::Step step(const Json& json) {
+NpcDefinitions::Step step(const Json& json,bool allowTalentWrites) {
   require(json.IsObject(),"step must be an object");
+  if(json.HasMember("global")) {
+    NpcDefinitions::GlobalIntWrite write;
+    write.binding=string(at(json,"global"));
+    require(allowTalentWrites && NpcDefinitions::isPlayerTalentArray(write.binding),"invalid NPC global write");
+    const auto& index=at(json,"index");
+    const auto& value=at(json,"value");
+    require(index.IsUint() && index.GetUint()<=std::numeric_limits<uint16_t>::max(),"expected uint16 global index");
+    require(value.IsInt() && json.MemberCount()==3,"invalid NPC global assignment");
+    write.index=uint16_t(index.GetUint());
+    write.value=value.GetInt();
+    return write;
+    }
   if(json.HasMember("field")) {
     NpcDefinitions::Field field;
     field.binding=string(at(json,"field"));
@@ -91,7 +103,8 @@ NpcDefinitions::Library NpcDefinitions::read(const std::filesystem::path& base,
     require(!doc.HasParseError(),"invalid JSON");
     require(string(at(doc,"format"))=="gothic-npc-definitions","unsupported format");
     const auto& version=at(doc,"version");
-    require(version.IsInt() && version.GetInt()==1,"unsupported version");
+    const bool talentWrites=version.IsInt() && version.GetInt()==2 && programSha256==TalentWriteProgram;
+    require((version.IsInt() && version.GetInt()==1) || talentWrites,"unsupported version");
     require(!string(at(doc,"program_name")).empty(),"empty program name");
     require(string(at(doc,"program_sha256"))==programSha256,"program SHA differs");
     require(string(at(doc,"string_encoding"))=="unicode-byte-mapping","unsupported string encoding");
@@ -99,6 +112,7 @@ NpcDefinitions::Library NpcDefinitions::read(const std::filesystem::path& base,
     require(records.IsArray(),"records must be an array");
     require(doc.MemberCount()==6,"unexpected envelope field");
     Library result;
+    result.programSha256=programSha256;
     for(const auto& record:records.GetArray()) {
       const auto name=string(at(record,"symbol"));
       try {
@@ -116,8 +130,9 @@ NpcDefinitions::Library NpcDefinitions::read(const std::filesystem::path& base,
         require(status=="captured","unsupported capture status");
         require(record.MemberCount()==3,"unexpected captured NPC field");
         Definition definition;
+        const bool allowTalentWrites=talentWrites && writesPlayerTalents(name);
         for(const auto& json:steps.GetArray()) {
-          try { definition.steps.push_back(step(json)); }
+          try { definition.steps.push_back(step(json,allowTalentWrites)); }
           catch(const std::exception& e) { throw std::runtime_error("step "+std::to_string(definition.steps.size()+1)+": "+e.what()); }
           }
         result.npcs.emplace(name,std::move(definition));

@@ -1586,8 +1586,28 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
 void realHelpers(const NpcSnapshot::Program& program,const fs::path& base) {
   const auto helpers=NpcHelperDefinitions::read(base,program.sha256);
   check(helpers.helpers.size()==6 && helpers.uncaptured.empty(),"the installed corpus captures all six helper forms");
+  const auto definitions=NpcDefinitions::read(base,program.sha256);
+  if(program.sha256==NpcDefinitions::TalentWriteProgram &&
+     read(base/"definitions"/program.sha256/"npcs.json")["version"].GetInt()==2) {
+    check(definitions.npcs.size()==1001 && definitions.uncaptured.size()==1 && definitions.uncaptured.contains("ITEMHOSHI"),
+          "the verified NPC corpus captures the seven talent constructors and keeps Itemhoshi in the VM");
+    const std::pair<const char*,size_t> cases[]={
+      {"PC_BANDIT",4},{"PC_E3MAGE",53},{"PC_E3PALADIN",22},{"PC_ITEMFELLER",62},
+      {"PC_MAGETEST",72},{"PC_LEVELINSPEKTOR",62},{"PC_ROCKEFELLER",62},
+      };
+    for(const auto& [name,expected]:cases) {
+      size_t writes=0;
+      for(const auto& step:definitions.npcs.at(name).steps)
+        if(const auto* write=std::get_if<NpcDefinitions::GlobalIntWrite>(&step)) {
+          check(NpcDefinitions::isPlayerTalentArray(write->binding) && write->value==1,
+                "debug NPC constructors write TRUE to the known player talent arrays");
+          ++writes;
+          }
+      check(writes==expected,"debug NPC constructors record all original player talent writes");
+      }
+    }
   std::map<std::string,size_t> calls;
-  for(const auto& [name,npc]:NpcDefinitions::read(base,program.sha256).npcs) {
+  for(const auto& [name,npc]:definitions.npcs) {
     (void)name;
     for(const auto& step:npc.steps)
       if(const auto* call=std::get_if<NpcDefinitions::Call>(&step); call && call->deferred) {

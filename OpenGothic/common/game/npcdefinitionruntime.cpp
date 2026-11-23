@@ -100,6 +100,14 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinit
           checkValue(field->value,binding->type());
           steps.emplace_back(Field{binding->index(),field->index,resolveValue(field->value,script)});
           }
+        else if(const auto* write=std::get_if<NpcDefinitions::GlobalIntWrite>(&step)) {
+          const auto* binding=script.find_symbol_by_name(write->binding);
+          if(library.programSha256!=NpcDefinitions::TalentWriteProgram || !NpcDefinitions::writesPlayerTalents(name) ||
+             !binding || !NpcDefinitions::isPlayerTalentArray(binding->name()) ||
+             binding->is_member() || binding->is_const() || binding->type()!=Type::INT || write->index>=binding->count())
+            throw std::runtime_error("invalid NPC global write "+write->binding+"["+std::to_string(write->index)+"]");
+          steps.emplace_back(GlobalIntWrite{binding->index(),write->index,write->value});
+          }
         else {
           const auto& call=std::get<NpcDefinitions::Call>(step);
           const auto* function=script.find_symbol_by_name(call.function);
@@ -192,6 +200,9 @@ bool NpcDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::share
       if(value.kind==Kind::String) binding->set_string(value.text,field->index,npc.get());
       else if(value.kind==Kind::Float) binding->set_float(value.real,field->index,npc.get());
       else binding->set_int(value.integer,field->index,npc.get());
+      }
+    else if(const auto* write=std::get_if<GlobalIntWrite>(&step)) {
+      vm.set_int(nullptr,vm.find_symbol_by_index(write->binding),write->index,write->value);
       }
     else {
       const auto& call=std::get<Call>(step);

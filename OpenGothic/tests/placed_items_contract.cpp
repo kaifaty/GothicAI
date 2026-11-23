@@ -705,7 +705,7 @@ struct HelperLocal {
   uint16_t index;
   std::variant<int32_t,float,std::string,std::shared_ptr<daedalus::DaedalusInstance>> value;
   };
-std::vector<HelperLocal> helperLocals(daedalus::DaedalusVm& vm) {
+std::vector<HelperLocal> helperLocals(daedalus::DaedalusVm& vm,bool saveTalents) {
   using Type=daedalus::DaedalusDataType;
   std::vector<HelperLocal> values;
   for(const auto& entry:vm.symbols()) {
@@ -714,7 +714,8 @@ std::vector<HelperLocal> helperLocals(daedalus::DaedalusVm& vm) {
        !(name.starts_with("B_SETFIGHTSKILLS.") || name.starts_with("B_ADDFIGHTSKILL.") ||
          name.starts_with("B_RAISEFIGHTTALENT.") || name.starts_with("B_RAISEREALFIGHTTALENTPERCENT.") ||
          name.starts_with("B_SETNPCVISUAL.") || name.starts_with("B_SETATTRIBUTESTOCHAPTER.") ||
-         name.starts_with("B_CREATEAMBIENTINV.") || name.starts_with("B_CREATEAMBIENTINV_"))) continue;
+         name.starts_with("B_CREATEAMBIENTINV.") || name.starts_with("B_CREATEAMBIENTINV_") ||
+         (saveTalents && NpcDefinitions::isPlayerTalentArray(name)))) continue;
     auto* symbol=vm.find_symbol_by_index(entry.index());
     for(uint16_t index=0;index<entry.count();++index) {
       if(entry.type()==Type::INT) values.push_back({symbol,index,entry.get_int(index)});
@@ -735,9 +736,9 @@ void restoreHelperLocals(const std::vector<HelperLocal>& values) {
       else entry.symbol->set_instance(value);
       },entry.value);
   }
-std::map<std::string,std::string> helperLocalText(daedalus::DaedalusVm& vm,const Npc& npc) {
+std::map<std::string,std::string> helperLocalText(daedalus::DaedalusVm& vm,const Npc& npc,bool saveTalents) {
   std::map<std::string,std::string> result;
-  for(const auto& entry:helperLocals(vm))
+  for(const auto& entry:helperLocals(vm,saveTalents))
     result[entry.symbol->name()+"["+std::to_string(entry.index)+"]"]=std::visit([&](const auto& value) -> std::string {
       using Type=std::decay_t<decltype(value)>;
       if constexpr(std::is_same_v<Type,std::string>) return Bench::bodyJson(value);
@@ -912,7 +913,8 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
       const auto previousContext=vm.unsafe_get_gi();
       std::unique_ptr<Npc> expected,actual;
       bool recordsActive=false;
-      const auto localBaseline=helperLocals(vm);
+      const bool saveTalents=program.sha256==NpcDefinitions::TalentWriteProgram && NpcDefinitions::writesPlayerTalents(name);
+      const auto localBaseline=helperLocals(vm,saveTalents);
       try {
         const auto policy=name=="PC_HERO" ? NpcProcessPolicy::Player : NpcProcessPolicy::AiNormal;
         const bool syntheticEquip=library.npcs.contains("NPC_NO_ID") &&
@@ -971,7 +973,7 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
           return result;
           };
         const auto expectedStrings=temporaryStrings();
-        const auto expectedLocals=helperLocalText(vm,*expected);
+        const auto expectedLocals=helperLocalText(vm,*expected,saveTalents);
         const auto expectedDaily=vm.find_symbol_by_index(uint32_t(expected->handle().daily_routine));
         const bool capturedDaily=expectedDaily && routines.routines.contains(expectedDaily->name());
         if(capturedDaily) {
@@ -996,9 +998,10 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
           }
         if(name=="VLK_408_JORA")
           difference(name,"record hitchance[1] after B_SetFightSkills","40",std::to_string(actual->handle().hitchance[1]));
-        const auto actualLocals=helperLocalText(vm,*actual);
-        if(helpersOnly)
-          for(const auto& [local,value]:expectedLocals) difference(name,"helper local "+local,value,actualLocals.at(local));
+        const auto actualLocals=helperLocalText(vm,*actual,saveTalents);
+        for(const auto& [local,value]:expectedLocals)
+          if(helpersOnly || (saveTalents && local.starts_with("PLAYER_TALENT_")))
+            difference(name,"constructor symbol "+local,value,actualLocals.at(local));
         const auto actualStrings=temporaryStrings();
         difference(name,"VM temporary string count",std::to_string(expectedStrings.size()),std::to_string(actualStrings.size()));
         for(size_t index=0;index<std::min(expectedStrings.size(),actualStrings.size());++index)
