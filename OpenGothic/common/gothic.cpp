@@ -20,7 +20,6 @@
 #include "game/definitions/definitiontypes.h"
 #include "game/definitions/baseprogram.h"
 #include "game/bodyenginepolicy.h"
-#include "game/gamescript_daystats.h"
 #include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/sounddefinitions.h"
 #include "game/definitions/cameradefinitions.h"
@@ -633,16 +632,14 @@ std::string_view Gothic::menuMain() const {
   }
 
 std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
-  return createPhoenixVm(loadScript(datFile,lang),datFile);
+  return createPhoenixVm(loadScript(datFile,lang));
   }
 
-std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(daedalus::DaedalusScript sc, std::string_view datFile) {
+std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(daedalus::DaedalusScript sc) {
   setupCommonScriptClasses(sc);
 
   auto vm = std::make_unique<daedalus::DaedalusVm>(std::move(sc), daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   setupVmCommonApi(*vm);
-  if(datFile=="MENU.DAT")
-    DayScriptStats::trace(*vm,"MENU.DAT");
   return vm;
   }
 

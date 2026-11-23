@@ -12,7 +12,6 @@
 #include "settings.h"
 
 #include <algorithm>
-#include <cstdlib>
 
 using namespace Tempest;
 
@@ -53,10 +52,8 @@ void MenuRoot::initSettings() {
   if(sha==MenuDefinitions::stockProgram && std::filesystem::exists(MenuDefinitions::section(base,sha))) {
     records = MenuDefinitions::read(base,sha);
     vm.reset();
-    if(const auto* probe = std::getenv("OPENGOTHIC_SCRIPT_PROBE"); probe && std::string_view(probe)=="1")
-      Log::i("script probe MENU.DAT: {} unattributed=0 (menu records)");
     } else {
-    vm = Gothic::inst().createPhoenixVm(std::move(script),"MENU.DAT");
+    vm = Gothic::inst().createPhoenixVm(std::move(script));
     vm->register_external("apply_options_video",applyVideoOptions);
     records.reset();
     }

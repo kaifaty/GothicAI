@@ -2,9 +2,6 @@
 #include "daedalus/classes.h"
 #include "utils/jsonescape.h"
 
-#include <cstdio>
-#include <cstdlib>
-
 namespace {
 std::string counts(const std::map<std::string,uint64_t>& values) {
   std::string out="{";
@@ -21,17 +18,6 @@ DayScriptStats::DayScriptStats(const RoutineDefinitions::Library& routines) {
     (void)name;
     for(const auto& row:rows) ++states[row.state].rows;
     }
-  }
-
-DayScriptStats::~DayScriptStats() {
-  if(!traceProgram.empty())
-    std::fprintf(stderr,"script probe %s: %s unattributed=%llu\n",traceProgram.c_str(),
-                 counts(instructionsBySymbol).c_str(),static_cast<unsigned long long>(unattributedInstructions));
-  }
-
-void DayScriptStats::trace(daedalus::DaedalusVm& vm, const char* program) {
-  if(const char* value=std::getenv("OPENGOTHIC_SCRIPT_PROBE"); value!=nullptr && std::string_view(value)=="1")
-    attach(vm,{})->traceProgram=program;
   }
 
 std::shared_ptr<DayScriptStats> DayScriptStats::attach(daedalus::DaedalusVm& vm, const RoutineDefinitions::Library& routines) {

@@ -1,5 +1,5 @@
 # @headless
-# The script probe starts before world creation. Use the stock healing shortcut path.
+# Use the stock healing shortcut path.
 seed 73106
 world-check NEWWORLD.ZEN
 give ITWR_MAP_NEWWORLD

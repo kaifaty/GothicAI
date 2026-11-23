@@ -6,7 +6,6 @@
 #include <Tempest/Dialog>
 
 #include <algorithm>
-#include <cstdlib>
 
 #include "utils/string_frm.h"
 #include "world/objects/npc.h"
@@ -301,8 +300,6 @@ GameMenu::GameMenu(MenuRoot &owner, KeyCodec& keyCodec, std::string_view menuSec
   down   = Resources::loadTexture("U.TGA");
 
   Gothic::inst().pushPause();
-  if(const char* probe=std::getenv("OPENGOTHIC_SCRIPT_PROBE"); probe!=nullptr && std::string_view(probe)=="1")
-    Log::i("script probe menu opened: ",menuSection);
   }
 
 GameMenu::~GameMenu() {

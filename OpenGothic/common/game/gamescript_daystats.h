@@ -20,9 +20,7 @@ class DayScriptStats {
       std::map<std::string,Phase> phases;
       };
     explicit DayScriptStats(const RoutineDefinitions::Library& routines);
-    ~DayScriptStats();
     static std::shared_ptr<DayScriptStats> attach(daedalus::DaedalusVm& vm, const RoutineDefinitions::Library& routines);
-    static void trace(daedalus::DaedalusVm& vm, const char* program);
     void stop(daedalus::DaedalusVm& vm);
     void begin(std::string_view symbol);
     void end();
@@ -50,5 +48,4 @@ class DayScriptStats {
     std::set<std::string> perceptions, dialogs;
     std::vector<Context> contexts;
     std::vector<Frame> stack;
-    std::string traceProgram;
   };
