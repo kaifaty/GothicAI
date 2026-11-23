@@ -97,6 +97,7 @@ GameScript::GameScript(GameSession &owner)
   initCommon();
   loadNativeRoutines();
   loadNativeRoomReaction();
+  loadNativeDrawWeaponReaction();
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
   }
@@ -1126,6 +1127,10 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
     }
   else if(sym!=nullptr && npc!=nullptr && invokeNativeRoomPerception(*sym,phase)) {
     // The perception ran in the engine.
+    }
+  else if(npc!=nullptr && fn==drawWeaponCallback && nativeDrawWeaponEnabled()) {
+    phase.fromRecord();
+    ret = runDrawWeaponReaction();
     }
   else if(sym!=nullptr && sym->rtype() == daedalus::DaedalusDataType::INT) {
     ret = vm.call_function<int>(sym);

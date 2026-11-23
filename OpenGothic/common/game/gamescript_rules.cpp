@@ -335,6 +335,64 @@ void GameScript::runQuietSoundReaction(Npc& listener) {
   ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),1,"");
   }
 
+bool GameScript::nativeDrawWeaponEnabled() const {
+  return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+  }
+
+void GameScript::loadNativeDrawWeaponReaction() {
+  if(!nativeRoutineProgram)
+    return;
+  drawWeaponCallback = findFunction("B_ASSESSDRAWWEAPON");
+  const auto enabled = [this] { return nativeDrawWeaponEnabled(); };
+  vm.override_function("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }},enabled);
+  using Actor = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("C_NPCISBOTHEREDBYWEAPON",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    return botheredByWeapon(self,other);
+    }},enabled);
+  }
+
+int32_t GameScript::botheredByWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("C_NPCISBOTHEREDBYWEAPON.OTH")->set_instance(other);
+  findSymbol("C_NPCISBOTHEREDBYWEAPON.SLF")->set_instance(self);
+  constexpr size_t partyMember = 15; // AIV_PARTYMEMBER
+  if(self==nullptr || self->aivar[partyMember]==1)
+    return 0;
+  // The friend exemption reads global OTHER. The weapon, attitude and spell checks use the argument.
+  if(npc_isplayer(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance())) && self->type==NpcType::G2_FRIEND)
+    return 0;
+  const bool melee = npc_isinfightmode(other,int(FightMode::FMODE_MELEE));
+  const bool toughGuy = vm.call_function<int32_t>("C_NPCISTOUGHGUY",self)!=0;
+  if(melee && toughGuy)
+    return 0;
+  if(npc_getattitude(self,other)==ATT_FRIENDLY || vm.call_function<int32_t>("C_NPCISGATEGUARD",self)!=0 ||
+     npc_isinfightmode(other,int(FightMode::FMODE_FIST)))
+    return 0;
+  const auto spellCategory = npc_getactivespellcat(other);
+  if(npc_isinfightmode(other,int(FightMode::FMODE_MAGIC)) && spellCategory!=SPELL_BAD)
+    return 0;
+  return self->guild!=GIL_ORC && self->guild!=GIL_DMT;
+  }
+
+int32_t GameScript::runDrawWeaponReaction() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  if(npc_isinfightmode(other(),int(FightMode::FMODE_NONE)) ||
+     npc_getdisttonpc(self,other())>findSymbol("PERC_DIST_DIALOG")->get_int() || botheredByWeapon(self,other())==0)
+    return 0;
+  const auto react = findFunction("ZS_REACTTOWEAPON");
+  if(npc_isinstate(self,int(react.ptr)))
+    return 0;
+  const bool watchedFight = npc_wasinstate(self,int(findFunction("ZS_WATCHFIGHT").ptr));
+  const bool observing = npc_isinstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr));
+  if((watchedFight && observing) || !npc_canseenpc(self,other()))
+    return 0;
+
+  npc_clearaiqueue(self);
+  vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+  ai_startstate(self,int(react.ptr),0,"");
+  return 1;
+  }
+
 bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   constexpr size_t lastFightAgainstPlayer = 0; // AIV_LASTFIGHTAGAINSTPLAYER
   constexpr size_t repeatedWarning = 19; // AIV_TAPOSITION

@@ -1596,6 +1596,79 @@ void humanReactionPhases(World& world,Npc& npc,Npc& hero) {
   std::puts("Human reactions: six damage and weapon phases match the VM");
   }
 
+void drawWeaponPerceptions(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto draw=script.findFunction("B_ASSESSDRAWWEAPON");
+  const auto assess=script.findFunction("B_ASSESSPLAYER");
+  const auto threat=script.findFunction("B_ASSESSTHREAT");
+  const auto react=script.findFunction("ZS_REACTTOWEAPON");
+  const auto dagger=script.findSymbolIndex("ITMW_1H_VLK_DAGGER");
+  const auto drawPc=vm.find_symbol_by_name("B_ASSESSDRAWWEAPON")->address();
+  const auto policyPc=vm.find_symbol_by_name("C_NPCISBOTHEREDBYWEAPON")->address();
+  auto& comment=*vm.find_symbol_by_name("PLAYER_DRAWWEAPONCOMMENT");
+  const int savedComment=comment.get_int();
+  auto& state=Contract::aiState(npc).funcIni;
+  auto& previous=Contract::previousState(npc);
+  const auto savedState=state;
+  const auto savedPrevious=previous;
+  // The ordinary player assessment skips the room interruption if the listener is already observing.
+  state=script.findFunction("ZS_OBSERVEPLAYER");
+  previous=ScriptFn();
+  require(Contract::aiState(npc).started && npc.qDistTo(hero)<500.f*500.f && npc.canSeeNpc(hero,false),
+          "draw weapon: the active observer sees the player inside warning distance");
+  struct Site { PercType perc; bool melee; };
+  for(const Site site : {Site{PERC_DRAWWEAPON,true},Site{PERC_ASSESSPLAYER,true},
+                         Site{PERC_ASSESSTHREAT,true},Site{PERC_DRAWWEAPON,false}}) {
+    if(site.melee)
+      hero.setToFightMode(dagger);
+    else
+      hero.setToFistMode();
+    std::vector<std::string> original;
+    for(bool native:{false,true}) {
+      enabled=native;
+      comment.set_int(1);
+      npc.clearAiQueue();
+      npc.aiPush(AiQueue::aiWait(173));
+      npc.setPerceptionEnable(PERC_DRAWWEAPON,draw.ptr);
+      npc.setPerceptionEnable(PERC_ASSESSPLAYER,assess.ptr);
+      npc.setPerceptionEnable(PERC_ASSESSTHREAT,threat.ptr);
+      size_t drawBytecode=0,policyBytecode=0,playerAssessment=0;
+      vm.observe_instructions([&](const auto&) {
+        drawBytecode+=vm.pc()==drawPc;
+        policyBytecode+=vm.pc()==policyPc;
+        });
+      const auto count=vm.add_call_observer([&](const auto& symbol) {
+        playerAssessment+=symbol.name()=="B_ASSESSPLAYER";
+        });
+      const bool delivered=npc.perceptionProcess(hero,nullptr,npc.qDistTo(hero),site.perc);
+      vm.remove_call_observer(count);
+      vm.observe_instructions({});
+      require(delivered && playerAssessment==(site.perc==PERC_ASSESSPLAYER ? 1u : 0u) &&
+              drawBytecode==(native || site.perc==PERC_ASSESSTHREAT ? 0u : 1u) && policyBytecode==(native ? 0u : 1u),
+              "draw weapon: draw, player and threat callbacks skip the migrated bytecode only in native mode");
+      const auto* next=npc.aiQueueFront();
+      require(comment.get_int()==1 && next &&
+              (site.melee ? next->act==AI_StartState && next->func==react && next->target==&hero && next->i0==0 &&
+                            !npc.hasPerc(PERC_DRAWWEAPON) && !npc.hasPerc(PERC_ASSESSPLAYER)
+                          : next->act==AI_Wait && npc.hasPerc(PERC_DRAWWEAPON) && npc.hasPerc(PERC_ASSESSPLAYER)),
+              "draw weapon: drawn steel replaces the queue and fists leave it alone");
+      auto queue=activityQueue(npc);
+      if(native) require(original==queue,"draw weapon: the stock and native perception queues match");
+      else original=std::move(queue);
+      }
+    }
+  hero.closeWeapon(true);
+  state=savedState;
+  previous=savedPrevious;
+  comment.set_int(savedComment);
+  enabled=wasEnabled;
+  std::puts("Draw weapon: direct perception, player assessment and threat match the VM, including the fist rejection");
+  }
+
 void quietSoundRooms(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -1770,6 +1843,7 @@ void quietSoundRooms(Gothic& gothic) {
 
   prepare(true);
   observePlayerPhases(world,*npc,hero,false);
+  drawWeaponPerceptions(world,*npc,hero);
   for(bool privateRoom:{false,true}) {
     std::vector<std::string> original;
     for(bool native:{false,true}) {
