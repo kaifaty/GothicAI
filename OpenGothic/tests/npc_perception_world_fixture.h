@@ -102,7 +102,15 @@ void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
   const bool savedEvents=events;
   const auto infoClass=script.findSymbolIndex("C_INFO");
   const auto previousSelf=vm.global_self()->get_instance();
+  const auto previousOther=vm.global_other()->get_instance();
   const auto previousContext=vm.unsafe_get_gi();
+  const auto learner=std::static_pointer_cast<daedalus::INpc>(player.handlePtr());
+  auto* savedLearner=script.findSymbol("B_GETLEARNCOSTTALENT.OTH");
+  static constexpr std::array integerSlots={"B_GETLEARNCOSTTALENT.SKILL","B_GETLEARNCOSTTALENT.TALENT",
+                                             "B_GETLEARNCOSTTALENT.KOSTEN","B_BUILDLEARNSTRING.KOSTEN"};
+  static constexpr std::array textSlots={"B_BUILDLEARNSTRING.TEXT","B_BUILDLEARNSTRING.CONCATTEXT"};
+  std::array<int32_t,integerSlots.size()> originalIntegers{};
+  std::array<std::string,textSlots.size()> originalText;
   using Info=std::tuple<uint32_t,int32_t,int32_t,int32_t,int32_t,int32_t,std::string,int32_t,int32_t>;
   using Choice=std::tuple<uint32_t,uint32_t,int32_t,std::string,bool>;
   std::vector<Info> original;
@@ -111,15 +119,26 @@ void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
     if(native && (!savedEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
       continue;
     events=native;
-    std::vector<std::string> constructors;
+    vm.global_other()->set_instance(learner);
+    savedLearner->set_instance(nullptr);
+    for(auto name:integerSlots)
+      script.findSymbol(name)->set_int(-1);
+    for(auto name:textSlots)
+      script.findSymbol(name)->set_string("");
+    size_t constructors=0;
     const auto observer=vm.add_call_observer([&](const auto& function) {
-      if(function.parent()==infoClass && function.type()==daedalus::DaedalusDataType::INSTANCE)
-        constructors.push_back(function.name());
+      constructors+=function.parent()==infoClass && function.type()==daedalus::DaedalusDataType::INSTANCE;
       });
     script.initDialogs();
     vm.remove_call_observer(observer);
-    require(vm.global_self()->get_instance()==previousSelf && vm.unsafe_get_gi()==previousContext,
+    require(vm.global_self()->get_instance()==previousSelf && vm.global_other()->get_instance()==learner &&
+            vm.unsafe_get_gi()==previousContext && savedLearner->get_instance()==learner,
             "dialog metadata: initialization must restore the original VM context");
+    vm.global_other()->set_instance(previousOther);
+    std::array<int32_t,integerSlots.size()> integers;
+    std::array<std::string,textSlots.size()> text;
+    std::ranges::transform(integerSlots,integers.begin(),[&](auto name) { return script.findSymbol(name)->get_int(); });
+    std::ranges::transform(textSlots,text.begin(),[&](auto name) { return script.findSymbol(name)->get_string(); });
 
     std::vector<Info> metadata;
     for(const auto& info:Contract::dialogInfos(script)) {
@@ -137,14 +156,14 @@ void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
     if(native) {
       require(metadata==original && choices==originalChoices,
               "dialog metadata: preserve all typed fields, localized bytes, catalogue order and live choice filtering");
-      std::sort(constructors.begin(),constructors.end());
-      require(constructors==std::vector<std::string>{"DIA_BARTOK_TEACHSNEAK","DIA_BENNET_TEACHCOMMON","DIA_DOBAR_TEACH",
-                                                    "DIA_THORBEN_TEACH","DIA_WOLF_TEACHCRAWLERPLATES"},
-              "dialog metadata: only the five computed descriptions need their stock constructors");
+      require(constructors==0 && integers==originalIntegers && text==originalText,
+              "dialog metadata: preserve the saved teacher helper fields without executing any stock constructor");
       } else {
-      require(constructors.size()==metadata.size(),"dialog metadata: the compatibility mode runs every constructor");
+      require(constructors==metadata.size(),"dialog metadata: the compatibility mode runs every constructor");
       original=std::move(metadata);
       originalChoices=std::move(choices);
+      originalIntegers=integers;
+      originalText=std::move(text);
       }
     }
   events=savedEvents;
