@@ -433,6 +433,8 @@ class GameScript final : public GameRules {
     void runThreatReaction();
     void runWarnReaction();
     void runFightSoundReaction();
+    void runFightDefeat();
+    void runCheerFight();
     bool hasAttackReasonToKill(const std::shared_ptr<daedalus::INpc>& npc);
     bool wantsToAttackSheepKiller(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     bool wantsToAttackThief(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
@@ -720,6 +722,8 @@ class GameScript final : public GameRules {
     ScriptFn                                                    threatCallback;
     ScriptFn                                                    warnCallback;
     ScriptFn                                                    fightSoundCallback;
+    ScriptFn                                                    fightDefeatCallback;
+    ScriptFn                                                    cheerFightCallback;
     ScriptFn                                                    damageCallback;
     ScriptFn                                                    enemyCallback;
     ScriptFn                                                    playerCallback;

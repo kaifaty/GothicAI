@@ -361,6 +361,8 @@ void GameScript::loadNativeHumanPerceptions() {
   threatCallback = findFunction("B_ASSESSTHREAT");
   warnCallback = findFunction("B_ASSESSWARN");
   fightSoundCallback = findFunction("B_ASSESSFIGHTSOUND");
+  fightDefeatCallback = findFunction("B_ASSESSDEFEAT");
+  cheerFightCallback = findFunction("B_CHEERFIGHT");
   damageCallback = findFunction("B_ASSESSDAMAGE");
   enemyCallback = findFunction("B_ASSESSENEMY");
   playerCallback = findFunction("B_ASSESSPLAYER");
@@ -387,8 +389,9 @@ void GameScript::loadNativeHumanPerceptions() {
 bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase) {
   const bool stopShortZap = fn==stopShortZapCallback;
   const bool propertyCrime = fn==theftCallback || fn==useMobCallback;
+  const bool fightWitness = fn==fightDefeatCallback || fn==cheerFightCallback;
   if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=warnCallback && fn!=fightSoundCallback &&
-      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !propertyCrime && !stopShortZap &&
+      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !propertyCrime && !stopShortZap && !fightWitness &&
       fn!=moveMobCallback && fn!=surpriseCallback) ||
      !nativeHumanPerceptionsEnabled())
     return false;
@@ -411,6 +414,10 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
     runWarnReaction();
   else if(fn==fightSoundCallback)
     runFightSoundReaction();
+  else if(fn==fightDefeatCallback)
+    runFightDefeat();
+  else if(fn==cheerFightCallback)
+    runCheerFight();
   else if(stopShortZap)
     stopControlSpell(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()),true);
   else
@@ -834,6 +841,48 @@ void GameScript::runSurpriseReaction() {
     constexpr size_t attackReason = 9; // AIV_ATTACKREASON
     self->aivar[attackReason] = findSymbol("AR_GUILDENEMY")->get_int();
     }
+  }
+
+void GameScript::runFightDefeat() {
+  constexpr size_t attackReason = 9; // AIV_ATTACKREASON
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto victim = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_victim()->get_instance());
+  npc_clearaiqueue(self);
+  const bool playerFriend = self && self->type==NpcType::G2_FRIEND && npc_isplayer(other);
+  const bool tough = isToughGuy(self);
+  if(playerFriend || tough) {
+    sayToNpc(self,other,npc_getattitude(self,other)==ATT_FRIENDLY ? "$GOODVICTORY" : "$NOTBAD");
+    return;
+    }
+  if((victim ? victim->aivar[attackReason] : 0)!=findSymbol("AR_NONE")->get_int()) {
+    sayToNpc(self,other,"$OHMYGODHESDOWN");
+    memorizePlayerCrime(self,other,findSymbol("CRIME_ATTACK")->get_int());
+    } else {
+    sayToNpc(self,other,"$NOTBAD");
+    }
+  }
+
+void GameScript::runCheerFight() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto victim = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_victim()->get_instance());
+  const auto separator = findSymbol("GIL_SEPERATOR_HUM")->get_int();
+  if(npc_getstatetime(self)<=2 || (other && int32_t(other->guild)>separator) || (victim && int32_t(victim->guild)>separator))
+    return;
+  npc_setstatetime(self,0);
+  if(!isToughGuy(self))
+    return;
+
+  static constexpr std::string_view concern[] = {"$OOH01","$OOH02","$OOH03"};
+  static constexpr std::string_view cheer[] = {"$CHEERFRIEND01","$CHEERFRIEND02","$CHEERFRIEND03"};
+  const auto variation = hlp_random(3);
+  findSymbol("B_CHEERFIGHT.ZUFALL")->set_int(variation);
+  const bool friendAttacker = npc_getattitude(self,other)==ATT_FRIENDLY;
+  const bool friendVictim = npc_getattitude(self,victim)==ATT_FRIENDLY;
+  const bool upset = !friendAttacker && friendVictim;
+  vm.call_function<void>("B_SAY_OVERLAY",self,self,upset ? concern[size_t(variation)] : cheer[size_t(variation)]);
+  ai_playani(self,upset ? "T_WATCHFIGHT_OHNO" : "T_WATCHFIGHT_YEAH");
   }
 
 void GameScript::runPropertyCrime(bool usingMob) {
