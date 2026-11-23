@@ -2410,18 +2410,19 @@ void fightWatchPerceptions(World& world,Npc& npc,Npc& hero) {
       require(delivered && bytecode==(native ? 0u : 1u) && variation.get_int()==expectedRoll &&
               Contract::random(script)==random,"fight witnesses: exact callback dispatch and random draw");
       auto queue=Contract::queue(npc);
+      const auto& overlay=Contract::overlayQueue(npc);
       if(defeat) {
-        require(queue.size()==1 && aivar[1]==(likesHero ? 0 : crime),
+        require(queue.size()==1 && overlay.size()==0 && aivar[1]==(likesHero ? 0 : crime),
                 "fight witnesses: defeat replaces the old queue and records the appropriate crime");
         const auto speech=queue.pop();
         require(speech.act==AI_OutputSvm && speech.target==&hero && speech.s0==(likesHero ? "$GOODVICTORY" : "$OHMYGODHESDOWN"),
                 "fight witnesses: defeat preserves the original praise or complaint");
         } else {
         require(npc.stateTime()==(site==Site::BeforeCheer ? 2999u : 0u) && aivar[1]==0 &&
-                queue.size()==(reacts ? 3u : 1u) && queue.pop().act==AI_Wait,
+                queue.size()==(reacts ? 2u : 1u) && overlay.size()==size_t(reacts) && queue.pop().act==AI_Wait,
                 "fight witnesses: the timer resets after the threshold and the original AI wait remains");
         if(reacts) {
-          const auto speech=queue.pop();
+          const auto& speech=*overlay.front();
           const auto animation=queue.pop();
           const auto expectedLine=std::string(likesHero ? "$CHEERFRIEND0" : "$OOH0")+std::to_string(expectedRoll+1);
           require(speech.act==AI_OutputSvmOverlay && speech.target==&npc && speech.s0==expectedLine &&
