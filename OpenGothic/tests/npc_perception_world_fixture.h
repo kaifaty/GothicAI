@@ -277,12 +277,76 @@ void stockLearnCostTalent(GameScript& script, Npc& npc, Npc& player) {
   enabled=saved;
   }
 
+void stockTeachAttribute(GameScript& script, Npc& npc, Npc& player) {
+  using Contract=NpcDefinitionContract;
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool saved=enabled;
+  const auto teacher=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto student=std::static_pointer_cast<daedalus::INpc>(player.handlePtr());
+  const auto savedQueue=Contract::queue(npc);
+  const auto savedOrder=Contract::outputOrder(script);
+  const auto savedAwaitQueue=Contract::activityEvents(npc).awaitQueue;
+  const auto savedStrength=student->attribute[ATR_STRENGTH];
+  const auto savedRealStrength=student->aivar[81];
+  const auto savedLp=student->lp;
+  auto* helper=vm.find_symbol_by_name("B_TEACHATTRIBUTEPOINTS");
+  static constexpr struct {
+    int32_t current,trained,points,lp,price;
+    bool accepted;
+    } cases[] = {
+    {35,29,5,5,5,true},
+    {40,20,1,99,1,false},
+    {39,20,2,99,2,false},
+    {20,60,3,8,9,false},
+    };
+  for(bool native:{false,true}) {
+    if(native && (!saved || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+      continue;
+    enabled=native;
+    for(const auto& [current,trained,points,lp,price,accepted]:cases) {
+      Contract::queue(npc)=savedQueue;
+      Contract::outputOrder(script)=savedOrder;
+      Contract::activityEvents(npc).awaitQueue=savedAwaitQueue;
+      student->attribute[ATR_STRENGTH]=current;
+      student->aivar[81]=trained;
+      student->lp=lp;
+      size_t instructions=0, notices=0;
+      vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==helper->address(); });
+      vm.observe_externals([&](const auto& function) { notices+=function.name()=="PRINTSCREEN"; });
+      using storygraph::Value;
+      std::string error;
+      const auto trainedResult=storygraph::callFunction(vm,*helper,{Value::instance(teacher),Value::instance(student),
+          Value::integer(ATR_STRENGTH),Value::integer(points),Value::integer(40)},error);
+      vm.observe_instructions({});
+      vm.observe_externals({});
+      require(trainedResult && trainedResult->i==int32_t(accepted) && instructions==(native ? 0u : 1u) && notices==1,
+              "attribute lesson: preserve selected execution, teacher refusals and training notices");
+      require(Contract::queue(npc).size()==savedQueue.size()+size_t(!accepted) &&
+              Contract::outputOrder(script)==savedOrder+int(!accepted),
+              "attribute lesson: queue one teacher line after a refusal and preserve its ordinal");
+      require(student->lp==lp-(accepted ? price : 0) &&
+              student->attribute[ATR_STRENGTH]==current+(accepted ? points : 0) &&
+              student->aivar[81]==trained+(accepted ? points : 0),
+              "attribute lesson: debit LP only for a successful lesson and update both saved attributes");
+      }
+    }
+  Contract::queue(npc)=savedQueue;
+  Contract::outputOrder(script)=savedOrder;
+  Contract::activityEvents(npc).awaitQueue=savedAwaitQueue;
+  student->attribute[ATR_STRENGTH]=savedStrength;
+  student->aivar[81]=savedRealStrength;
+  student->lp=savedLp;
+  enabled=saved;
+  }
+
 void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
   stockLearnString(script);
   stockLearnCostAttribute(script,npc,player);
   stockLearnCostTalent(script,npc,player);
+  stockTeachAttribute(script,npc,player);
   auto& vm=script.getVm();
   auto& events=Contract::activityEventsOn(script);
   const bool savedEvents=events;

@@ -14,17 +14,19 @@
 
 namespace {
 
+struct RestoreContext {
+  daedalus::DaedalusVm& vm;
+  std::shared_ptr<daedalus::DaedalusInstance> caller;
+  ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+  };
+
 void pushTieredLearnCost(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& result,
                         const std::shared_ptr<daedalus::DaedalusInstance>& learner, std::string_view slot,
                         std::optional<int32_t> points = std::nullopt) {
   const auto index = uint16_t(vm.find_symbol_by_name(slot)->get_int());
   auto* aivar = vm.find_symbol_by_name("C_NPC.AIVAR");
   // The result reference holds the learner's context before BL restores the caller's.
-  struct RestoreContext {
-    daedalus::DaedalusVm& vm;
-    std::shared_ptr<daedalus::DaedalusInstance> caller;
-    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
-    } restore{vm,vm.unsafe_get_gi()};
+  RestoreContext restore{vm,vm.unsafe_get_gi()};
   vm.unsafe_set_gi(learner);
   int32_t cost = 5;
   for(; cost>1; --cost) {
@@ -72,6 +74,85 @@ int32_t fixedTalentLearnCost(int32_t talent, int32_t skill) {
     case TALENT_RUNES:            return price(runes,5);
     default:                      return 0;
     }
+  }
+
+void teachAttributePoints(daedalus::DaedalusVm& vm) {
+  const auto symbol = [&](std::string_view name) { return vm.find_symbol_by_name(name); };
+  const auto caller = vm.unsafe_get_gi();
+  const auto popParameter = [&](std::string_view name) {
+    auto* saved = symbol(name);
+    vm.set_int(caller,saved,0,vm.pop_int());
+    return saved;
+    };
+  auto* maximum = popParameter("B_TEACHATTRIBUTEPOINTS.TEACHERMAX");
+  auto* points = popParameter("B_TEACHATTRIBUTEPOINTS.POINTS");
+  auto* attribute = popParameter("B_TEACHATTRIBUTEPOINTS.ATTRIB");
+  auto* learner = symbol("B_TEACHATTRIBUTEPOINTS.OTH");
+  learner->set_instance(vm.pop_instance());
+  auto* teacher = symbol("B_TEACHATTRIBUTEPOINTS.SLF");
+  teacher->set_instance(vm.pop_instance());
+
+  vm.push_reference(points);
+  vm.push_reference(learner);
+  vm.push_reference(attribute);
+  vm.unsafe_call_bl(symbol("B_GETLEARNCOSTATTRIBUTE"));
+  const auto unitPrice = vm.pop_int();
+  const auto cost = std::bit_cast<int32_t>(uint32_t(unitPrice)*uint32_t(vm.pop_int()));
+  vm.set_int(caller,symbol("B_TEACHATTRIBUTEPOINTS.KOSTEN"),0,cost);
+  auto* failure = symbol("FALSE");
+  const auto id = attribute->get_int();
+  if(id!=ATR_STRENGTH && id!=ATR_DEXTERITY && id!=ATR_MANAMAX) {
+    vm.push_reference(symbol("$27343")); // Stock wrong-parameter message.
+    vm.unsafe_call_external(symbol("PRINT"));
+    vm.push_reference(failure);
+    return;
+    }
+
+  RestoreContext restore{vm,caller};
+  const auto student = learner->get_instance();
+  vm.unsafe_set_gi(student);
+  // The price uses the trained value, while the teacher compares the current attribute.
+  const auto value = vm.get_int(student,symbol("C_NPC.ATTRIBUTE"),uint16_t(id));
+  vm.set_int(student,symbol("B_TEACHATTRIBUTEPOINTS.REALATTRIBUTE"),0,value);
+  const auto refuse = [&](daedalus::DaedalusSymbol* notice, std::string_view speech) {
+    vm.push_reference(notice);
+    vm.push_int(-1);
+    vm.push_int(-1);
+    vm.push_reference(symbol("FONT_SCREEN"));
+    vm.push_int(2);
+    vm.unsafe_call_external(symbol("PRINTSCREEN"));
+    vm.push_reference(teacher);
+    vm.push_reference(learner);
+    vm.push_reference(symbol(speech));
+    vm.unsafe_call_bl(symbol("B_SAY"));
+    (void)vm.pop_int(); // The script discards PRINTSCREEN's result on return.
+    vm.push_reference(failure);
+    };
+  const auto limit = maximum->get_int();
+  const bool alreadyAtLimit = value>=limit;
+  if(alreadyAtLimit || std::bit_cast<int32_t>(uint32_t(value)+uint32_t(points->get_int()))>limit) {
+    vm.push_reference(symbol("PRINT_NOLEARNOVERPERSONALMAX"));
+    vm.push_reference(maximum);
+    vm.unsafe_call_external(symbol("INTTOSTRING"));
+    vm.unsafe_call_external(symbol("CONCATSTRINGS"));
+    auto* notice = symbol("B_TEACHATTRIBUTEPOINTS.CONCATTEXT");
+    vm.set_string(student,notice,0,vm.pop_string());
+    // Stock speech IDs for being at the limit and crossing it in this request.
+    refuse(notice,alreadyAtLimit ? "$27344" : "$27345");
+    return;
+    }
+  auto* lp = symbol("C_NPC.LP");
+  if(vm.get_int(student,lp,0)<cost) {
+    refuse(symbol("PRINT_NOTENOUGHLP"),"$27346");
+    return;
+    }
+  const auto balance = std::bit_cast<int32_t>(uint32_t(vm.get_int(student,lp,0))-uint32_t(cost));
+  vm.set_int(student,lp,0,balance);
+  vm.push_reference(learner);
+  vm.push_reference(attribute);
+  vm.push_reference(points);
+  vm.unsafe_call_bl(symbol("B_RAISEATTRIBUTE"));
+  vm.push_reference(symbol("TRUE"));
   }
 
 } // namespace
@@ -206,6 +287,12 @@ void GameScript::loadNativeTrainingHelpers() {
         result->set_int(fixedTalentLearnCost(talent,skill));
         machine.push_reference(result);
         }
+      return {};
+      }
+    },enabled);
+  vm.override_function("B_TEACHATTRIBUTEPOINTS",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [](auto& machine) -> daedalus::DaedalusNakedCall {
+      teachAttributePoints(machine);
       return {};
       }
     },enabled);
