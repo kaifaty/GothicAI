@@ -336,6 +336,7 @@ class GameScript final : public GameRules {
     CollideMask runStockSpellCollision(Npc& target, Npc& caster, int32_t spellId);
     std::optional<int> runStockSpellMana(Npc& caster, int mana);
     bool runStockSpellCast(Npc& caster, std::string_view function, int32_t level);
+    bool runStockTeleportCast(const std::shared_ptr<daedalus::INpc>& actor, std::string_view function);
     void assessMagic(Npc& npc);
     void givePlayerXp(int32_t amount);
     void loadNativeQuestLog(const std::function<bool()>& enabled);

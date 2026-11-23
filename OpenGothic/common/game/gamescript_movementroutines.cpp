@@ -4,6 +4,9 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 
+#include <algorithm>
+#include <bit>
+
 namespace {
 constexpr std::string_view bed = "BEDHIGH";
 
@@ -11,6 +14,57 @@ bool inBodyState(const Npc& npc, BodyState state) {
   return ActivityDefinitions::bodyStateContains(int32_t(npc.bodyState()),int32_t(state));
 }
 }
+
+bool GameScript::runStockTeleportCast(const std::shared_ptr<daedalus::INpc>& actor, std::string_view function) {
+  struct Destination {
+    std::string_view function, world, waypoint;
+    int32_t spell;
+    };
+  static constexpr Destination destinations[] = {
+    {"SPELL_CAST_PALTELEPORTSECRET",   "NEWWORLD_ZEN", "NW_PAL_SECRETCHAMBER",     7},
+    {"SPELL_CAST_TELEPORTSEAPORT",     "NEWWORLD_ZEN", "HAFEN",                    8},
+    {"SPELL_CAST_TELEPORTMONASTERY",   "NEWWORLD_ZEN", "KLOSTER",                  9},
+    {"SPELL_CAST_TELEPORTFARM",        "NEWWORLD_ZEN", "BIGFARM",                 10},
+    {"SPELL_CAST_TELEPORTXARDAS",      "NEWWORLD_ZEN", "XARDAS",                  11},
+    {"SPELL_CAST_TELEPORTPASSNW",      "NEWWORLD_ZEN", "LEVELCHANGE",             12},
+    {"SPELL_CAST_TELEPORTPASSOW",      "OLDWORLD_ZEN", "SPAWN_MOLERAT02_SPAWN01",  13},
+    {"SPELL_CAST_TELEPORTOC",          "OLDWORLD_ZEN", "OC_MAGE_CENTER",          14},
+    {"SPELL_CAST_TELEPORTOWDEMONTOWER", "OLDWORLD_ZEN", "DT_E3_03",                15},
+    {"SPELL_CAST_TELEPORTTAVERNE",     "NEWWORLD_ZEN", "NW_TAVERNE_04",            16},
+    };
+  const auto cast = [&](const Destination& destination) {
+    const auto level = findSymbol(destination.world)->get_int();
+    vm.set_int(nullptr,findSymbol("B_PRINTTELEPORTTOOFARAWAY.LEVEL"),0,level);
+    if(level!=currentStoryWorld) {
+      vm.push_reference(findSymbol("PRINT_TELEPORTTOOFARAWAY"));
+      vm.push_int(-1);
+      vm.push_reference(findSymbol("YPOS_LEVELUP"));
+      vm.push_reference(findSymbol("FONT_SCREENSMALL"));
+      vm.push_int(2);
+      if(vm.unsafe_call_external(findSymbol("PRINTSCREEN")))
+        (void)vm.pop_int();
+      }
+    const auto mana = findSymbol(npc_getactivespellisscroll(actor) ? "SPL_COST_SCROLL" : "SPL_COST_TELEPORT")->get_int();
+    auto* attribute = findSymbol("C_NPC.ATTRIBUTE");
+    const auto oldMana = vm.get_int(actor,attribute,ATR_MANA);
+    vm.set_int(actor,attribute,ATR_MANA,std::bit_cast<int32_t>(uint32_t(oldMana)-uint32_t(mana)));
+    ai_teleport(actor,destination.waypoint);
+    ai_playani(actor,"T_HEASHOOT_2_STAND");
+    };
+
+  if(function=="SPELL_CAST_TELEPORT") {
+    // The dispatcher queries and republishes the active item for every destination.
+    for(const auto& destination : destinations)
+      if(npc_getactivespell(actor)==destination.spell)
+        cast(destination);
+    return true;
+    }
+  const auto destination = std::ranges::find(destinations,function,&Destination::function);
+  if(destination==std::end(destinations))
+    return false;
+  cast(*destination);
+  return true;
+  }
 
 bool GameScript::runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   const std::string_view name = symbol.name();

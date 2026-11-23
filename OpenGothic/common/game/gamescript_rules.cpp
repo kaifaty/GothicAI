@@ -3956,12 +3956,12 @@ bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32
     {"SPELL_CAST_WHIRLWIND",        "SPL_COST_WHIRLWIND"},
     {"SPELL_CAST_ZAP",              "SPL_COST_ZAP", "SPELL_CAST_ZAP.SPELLLEVEL"},
     };
+  const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
   const auto cast=std::ranges::find(casts,function,&Cast::function);
   if(cast==std::end(casts))
-    return false;
+    return runStockTeleportCast(self,function);
   if(!cast->levelParameter.empty())
     findSymbol(cast->levelParameter)->set_int(level);
-  const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
   if(!cast->runeCost.empty()) {
     const auto cost=findSymbol(npc_getactivespellisscroll(self) ? "SPL_COST_SCROLL" : cast->runeCost)->get_int();
     self->attribute[ATR_MANA]-=cost;
