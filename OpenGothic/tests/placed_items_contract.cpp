@@ -1965,16 +1965,11 @@ void activityDefinitionsSynthetic(World& world) {
   require(use!=nullptr && use->act==AI_UseMob && use->s0=="BSANVIL" && use->i0==1,
           "the game's host must queue AI_UseMob with the state of the use");
   npc->clearAiQueue();
-  // The outside state stays in the VM; the counters see who ran each phase.
   const auto directory=std::filesystem::temp_directory_path()/("gothic-activity-day-"+
       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   std::filesystem::create_directories(directory);
   std::string error;
-  NpcDayJournal::Options options;
-  options.directory=directory.string();
-  options.isolate=false;
-  options.scriptProbe=true;
-  options.traceNpcs={std::to_string(world.npcId(npc))};
+  const NpcDayJournal::Options options{.directory=directory.string(),.isolate=false,.scriptProbe=true};
   if(!NpcDayMeasurement::start(world,options,error)) throw std::runtime_error(error);
   for(auto function:{anvil.init,anvil.loop,anvil.end,roast.init,roast.loop,roast.end})
     script.invokeState(npc,nullptr,nullptr,uint32_t(function));
@@ -1999,7 +1994,6 @@ void activityDefinitionsSynthetic(World& world) {
           phase("ZS_SMITH_ANVIL","end","nested")==0,"a record phase runs only its deferred perception helper in the VM");
   require(phase("ZS_ROAST_SCAVENGER","init","nested")==3 && phase("ZS_ROAST_SCAVENGER","loop","nested")==1,
           "the VM phase runs its helpers");
-  // The nine instructions of the fixture's Perception_Set_Normal stay counted in the record's Init.
   require(phase("ZS_SMITH_ANVIL","init","instructions")==9 && phase("ZS_SMITH_ANVIL","loop","instructions")==0 &&
           phase("ZS_SMITH_ANVIL","end","instructions")==0 && phase("ZS_ROAST_SCAVENGER","init","instructions")>9,
           "a record phase counts only the instructions of its deferred helper");
