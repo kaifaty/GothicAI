@@ -1240,9 +1240,16 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
     Contract::outputOrder(script)=outputOrder;
     script.setSeed(73106);
     ActivityStream stream(world,npc);
-    size_t bytecode=0,outcomeChecks=0;
+    const std::array equipmentRules={
+      vm.find_symbol_by_name("B_CREATEAMMO")->address(),
+      vm.find_symbol_by_name("B_SELECTWEAPON")->address(),
+      vm.find_symbol_by_name("B_SELECTSPELL")->address(),
+      vm.find_symbol_by_name("C_NPCHASATTACKREASONTOKILL")->address(),
+      };
+    size_t bytecode=0,outcomeChecks=0,equipmentChecks=0;
     vm.observe_instructions([&](const auto&) {
       outcomeChecks+=vm.pc()==fleeCheck || vm.pc()==forcedRansack || vm.pc()==ransack;
+      equipmentChecks+=std::ranges::find(equipmentRules,vm.pc())!=equipmentRules.end();
       });
     const auto count=vm.add_call_observer([&](const auto& symbol) {
       bytecode+=symbol.name()=="ZS_ATTACK" || symbol.name()=="ZS_ATTACK_LOOP" || symbol.name()=="ZS_ATTACK_END";
@@ -1281,6 +1288,8 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
             bytecode==(native ? 0u : 4u) && stream.records==(native ? 4u : 0u),
             "human attack: End queues healing and all four calls use the selected executor");
     require(outcomeChecks==(native ? 0u : 3u),"human attack: Init and End use the selected combat outcome rules");
+    require(native ? equipmentChecks==0 : equipmentChecks>=2,
+            "human attack: ammo, weapon and intent rules use the selected executor in ordinary combat");
     std::erase_if(stream.events,[](const auto& event) {
       return !(event.starts_with("phase ") || event.starts_with("result ") ||
                event.starts_with("queue ") || event.starts_with("random "));

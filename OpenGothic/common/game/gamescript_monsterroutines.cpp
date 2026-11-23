@@ -315,9 +315,9 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     self->fight_tactic = targetOutside && attackerOutside ? findSymbol("FAI_NAILED")->get_int() : ai[originalFightTactic];
     }
   if(needsWeapon()) {
-    vm.call_function<void>("B_CREATEAMMO",self);
+    createAmmo(self);
     npc_changeattribute(self,ATR_MANA,ATR_MANAMAX);
-    vm.call_function<void>("B_SELECTWEAPON",self,other());
+    selectWeapon(self,other());
     }
   const auto target = other();
   if(!isNpcDownInScript(target) && hlp_isvalidnpc(target)) {

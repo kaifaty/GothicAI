@@ -514,6 +514,12 @@ void GameScript::loadNativeHumanPerceptions() {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
   using Actor = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("C_NPCISTOUGHGUY",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    return isToughGuy(npc);
+    }},enabled);
+  vm.override_function("C_REFUSETALK",std::function<int32_t(Actor,Actor)>{[this](const Actor& npc,const Actor& other) {
+    return refusesTalk(npc,other);
+    }},enabled);
   vm.override_function("C_WANTTOCALLGUARDS",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return wantsToCallGuards(npc);
     }},enabled);
@@ -1316,7 +1322,7 @@ void GameScript::runPlayerAssessment() {
       return;
       }
     const bool disguise = fakeGuild();
-    const bool refuse = vm.call_function<int32_t>("C_REFUSETALK",self,other())!=0;
+    const bool refuse = refusesTalk(self,other());
     const bool hasCrime = playerCrime(self)!=constant("CRIME_NONE");
     const bool diving = hasBodyState(other(),BS_DIVE);
     const bool swimming = hasBodyState(other(),BS_SWIM);
@@ -1524,7 +1530,7 @@ bool GameScript::runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol,
     if(guild(victim())<separator && guild(other())<separator &&
        !npc_isinstate(victim(),int(ZS_Unconscious)) && !npc_isinstate(other(),int(ZS_Unconscious)) &&
        (npc_getdisttonpc(self,victim())<distance || npc_getdisttonpc(self,other())<distance)) {
-      const bool tough = vm.call_function<int32_t>("C_NPCISTOUGHGUY",self)!=0;
+      const bool tough = isToughGuy(self);
       const std::string_view line = tough ? "$THERESAFIGHT" : "$OHMYGODITSAFIGHT";
       sayToNpc(self,other(),line);
       }
@@ -1558,7 +1564,7 @@ bool GameScript::runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol,
       return true;
       }
     // The stock loop still evaluates this policy on the continuing path.
-    vm.call_function<int32_t>("C_NPCISTOUGHGUY",self);
+    isToughGuy(self);
     const auto innerRange = constant("WATCHFIGHT_DIST_MIN");
     if(npc_getdisttonpc(self,victim())<=innerRange || npc_getdisttonpc(self,other())<=innerRange) {
       npc_clearaiqueue(self);
@@ -2017,8 +2023,8 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
       callGuards();
       aivar[guardCalls] = 2;
       }
-    vm.call_function<void>("B_CREATEAMMO",self);
-    vm.call_function<void>("B_SELECTWEAPON",self,other());
+    createAmmo(self);
+    selectWeapon(self,other());
     if(!targetDown() && hlp_isvalidnpc(other())) {
       if(targetValue(invincible)==0)
         ai_attack(self);
@@ -2080,7 +2086,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
     }
   if(wld_getguildattitude(int(self->guild),guild(hero()))!=ATT_HOSTILE && targetValue(killedByPlayer)==1)
     setCombatAttitude(self,ATT_FRIENDLY);
-  if(vm.call_function<int32_t>("C_NPCHASATTACKREASONTOKILL",self)!=0 && npc_isinstate(other(),int(ZS_Unconscious)))
+  if(hasAttackReasonToKill(self) && npc_isinstate(other(),int(ZS_Unconscious)))
     queueFinishingMove(self,other());
   ai_removeweapon(self);
   const bool near = npc_getdisttonpc(self,other())<constant("PERC_DIST_INTERMEDIAT");
@@ -2142,7 +2148,7 @@ bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symb
       setPerceptionPreset(true);
       }
     lookAtNpc(self,otherNpc());
-    vm.call_function<void>("B_SELECTWEAPON",self,other());
+    selectWeapon(self,other());
     turnToOther();
     if(weapon) {
       auto& comment = *findSymbol("PLAYER_DRAWWEAPONCOMMENT");
@@ -2340,7 +2346,7 @@ bool GameScript::runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
     if(self->aivar[routinePosition]==notInPosition) {
       turnToOther();
       if(wantsAttack()) {
-        vm.call_function<void>("B_SELECTWEAPON",self,other());
+        selectWeapon(self,other());
         say("$GETOUTOFHERE");
         } else if(npc_getattitude(otherNpc(),self)!=ATT_FRIENDLY) {
         say("$WHYAREYOUINHERE");
@@ -2967,7 +2973,9 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
   if(matches("GOLDMINECRAWLER")) {
     if(number("BLOODWYN_SPAWN")==0 && number("MINECRAWLER_KILLED")>=9) {
       ai_teleport(namedNpc("BLOODWYN"),"ADW_MINE_TO_MC_03");
-      vm.call_function<void>("B_STARTOTHERROUTINE",namedNpc("BLOODWYN"),std::string_view("MINE"));
+      vm.push_instance(namedNpc("BLOODWYN"));
+      vm.push_string("MINE");
+      vm.unsafe_call_bl(findSymbol("B_STARTOTHERROUTINE"));
       givePlayerXp(number("XP_ADDON_BLOODYWYN"));
       setNumber("BLOODWYN_SPAWN",1);
       } else {
@@ -3069,7 +3077,7 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
     return true;
   if(namedId("RAVEN")==hlp_getinstanceid(self)) {
     self->aivar[magic] = number("MAGIC_ALWAYS");
-    vm.call_function<void>("B_ATTACK",self,hero(),number("AR_GUILDENEMY"),int32_t(0));
+    startNpcAttack(self,hero(),number("AR_GUILDENEMY"),0);
     return true;
     }
 
@@ -3078,7 +3086,7 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
   if(distance<number("PERC_DIST_INTERMEDIAT") && canSee) {
     vm.call_function<void>("B_TURNTONPC",self,other());
     const auto attitude = npc_getpermattitude(self,other());
-    const auto toughGuy = vm.call_function<int32_t>("C_NPCISTOUGHGUY",self);
+    const auto toughGuy = isToughGuy(self);
     const bool threatens = int32_t(self->type)!=number("NPCTYPE_FRIEND") && attitude!=ATT_HOSTILE && toughGuy!=0;
     sayToNpc(self,other(),threatens ? "$NEXTTIMEYOUREINFORIT" : "$OHMYHEAD");
     }
@@ -3205,7 +3213,7 @@ bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& s
     npc_clearaiqueue(self);
     ai_standup(self);
     if(self->guild<int32_t(GIL_SEPERATOR_HUM))
-      vm.call_function<void>("B_ASSESSDAMAGE");
+      vm.unsafe_call_bl(findSymbol("B_ASSESSDAMAGE"));
     else
       npc_settempattitude(self,ATT_HOSTILE);
     result = LOOP_END;
