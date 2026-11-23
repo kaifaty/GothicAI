@@ -802,6 +802,11 @@ class GameScript final : public GameRules {
     std::array<int32_t,8>                                       worldEntryLatches{};
     std::array<int32_t,5>                                       crimeAbsolutionLevels{};
     std::array<int32_t,19>                                      petzCrimeCounters{};
+    struct DeathProgress {
+      int32_t canyonRazors=0, madKills=0, festerBugs=0, jackCrocodiles=0, minecrawlers=0, bloodwynSpawned=0;
+      int32_t ravenDead=0, dragonsKilled=0, allDragonsDead=0, undeadDragonDead=0, biffSurvived=0;
+      std::array<int32_t,4> dragonDeaths{};
+      } deathProgress;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};

@@ -83,6 +83,24 @@ void GameScript::initPerceptions() {
 void GameScript::loadNativeNpcDeath() {
   if(!nativeRoutineProgram)
     return;
+  static constexpr std::pair<std::string_view,int32_t DeathProgress::*> state[]={
+    {"CANYONRAZORBODYCOUNT",&DeathProgress::canyonRazors},
+    {"MADKILLERCOUNT",&DeathProgress::madKills},
+    {"FESTERS_GIANT_BUG_KILLED",&DeathProgress::festerBugs},
+    {"ALLIGATORJACK_KROKOSKILLED",&DeathProgress::jackCrocodiles},
+    {"MINECRAWLER_KILLED",&DeathProgress::minecrawlers},
+    {"BLOODWYN_SPAWN",&DeathProgress::bloodwynSpawned},
+    {"RAVENISDEAD",&DeathProgress::ravenDead},
+    {"MIS_KILLEDDRAGONS",&DeathProgress::dragonsKilled},
+    {"MIS_ALLDRAGONSDEAD",&DeathProgress::allDragonsDead},
+    {"UNDEADDRAGONISDEAD",&DeathProgress::undeadDragonDead},
+    {"DJG_BIFFSURVIVEDLASTDRAGON",&DeathProgress::biffSurvived},
+    };
+  for(const auto& [name,field]:state)
+    findSymbol(name)->bind_global_int(deathProgress.*field);
+  const std::array flags={"SWAPDRAGNISDEAD","RCKDRAGNISDEAD","FREDRAGNISDEAD","ICDRAGNISDEAD"};
+  for(size_t i=0;i<flags.size();++i)
+    findSymbol(flags[i])->bind_global_int(deathProgress.dragonDeaths[i]);
   using NpcRef = std::shared_ptr<daedalus::INpc>;
   vm.override_function("B_KILLNPC",std::function<void(int32_t)>{[this](int32_t symbol) { killNpc(symbol); }},
                        NpcDefinitionRuntime::enabled);
@@ -181,8 +199,6 @@ void GameScript::removeNpc(int32_t symbol) {
 int32_t GameScript::countDragonDeaths(const std::shared_ptr<daedalus::INpc>& actor) {
   auto* current = findSymbol("B_DRAGONKILLCOUNTER.CURRENT_DRAGON");
   auto* raven = findSymbol("B_DRAGONKILLCOUNTER.RAVN");
-  auto* ravenDead = findSymbol("RAVENISDEAD");
-  auto* count = findSymbol("MIS_KILLEDDRAGONS");
   auto* yes = findSymbol("TRUE");
   auto* no = findSymbol("FALSE");
   const auto findNpc = [&](std::string_view name, daedalus::DaedalusSymbol* local) {
@@ -215,52 +231,49 @@ int32_t GameScript::countDragonDeaths(const std::shared_ptr<daedalus::INpc>& act
 
   current->set_instance(actor);
   findNpc("BDT_1090_ADDON_RAVEN",raven);
-  if(matchesCurrent(raven) && ravenDead->get_int()==no->get_int()) {
+  if(matchesCurrent(raven) && deathProgress.ravenDead==no->get_int()) {
     play("$17823"); // Raven.
-    ravenDead->set_int(yes->get_int());
+    deathProgress.ravenDead=yes->get_int();
     vm.push_int(int32_t(findSymbolIndex("MYXIR_ADW")));
     vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
     }
 
   const auto dragon = memberNpc(current);
   if(dragon && dragon->guild==GIL_DRAGON) {
-    struct DragonDeath {
-      std::string_view source, local, latch;
+    constexpr std::pair<std::string_view,std::string_view> dragons[] = {
+      {"DRAGON_SWAMP","B_DRAGONKILLCOUNTER.SWAPDRAGN"},
+      {"DRAGON_ROCK", "B_DRAGONKILLCOUNTER.RCKDRAGN"},
+      {"DRAGON_FIRE", "B_DRAGONKILLCOUNTER.FREDRAGN"},
+      {"DRAGON_ICE",  "B_DRAGONKILLCOUNTER.ICDRAGN"},
       };
-    constexpr DragonDeath dragons[] = {
-      {"DRAGON_SWAMP","B_DRAGONKILLCOUNTER.SWAPDRAGN","SWAPDRAGNISDEAD"},
-      {"DRAGON_ROCK", "B_DRAGONKILLCOUNTER.RCKDRAGN", "RCKDRAGNISDEAD"},
-      {"DRAGON_FIRE", "B_DRAGONKILLCOUNTER.FREDRAGN", "FREDRAGNISDEAD"},
-      {"DRAGON_ICE",  "B_DRAGONKILLCOUNTER.ICDRAGN",  "ICDRAGNISDEAD"},
-      };
-    for(const auto& entry : dragons)
-      findNpc(entry.source,findSymbol(entry.local));
-    for(const auto& entry : dragons) {
-      auto* latch = findSymbol(entry.latch);
-      const bool pending = latch->get_int()==no->get_int();
+    for(const auto& [name,local]:dragons)
+      findNpc(name,findSymbol(local));
+    for(size_t i=0;i<std::size(dragons);++i) {
+      auto& latch=deathProgress.dragonDeaths[i];
+      const bool pending=latch==no->get_int();
       // The instance comparisons run even when the dragon is already counted.
-      const bool same = matchesCurrent(findSymbol(entry.local));
+      const bool same=matchesCurrent(findSymbol(dragons[i].second));
       if(pending && same) {
-        count->set_int(std::bit_cast<int32_t>(uint32_t(count->get_int())+1u));
-        latch->set_int(yes->get_int());
+        deathProgress.dragonsKilled=std::bit_cast<int32_t>(uint32_t(deathProgress.dragonsKilled)+1u);
+        latch=yes->get_int();
         }
       }
     }
 
-  if(count->get_int()==4) {
-    findSymbol("MIS_ALLDRAGONSDEAD")->set_int(yes->get_int());
+  if(deathProgress.dragonsKilled==4) {
+    deathProgress.allDragonsDead=yes->get_int();
     vm.push_reference(findSymbol("BIFF"));
     vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
     const bool biffAlive = vm.pop_int()==no->get_int();
     const bool biffInParty = findSymbol("DJG_BIFFPARTY")->get_int()==yes->get_int();
     if(biffAlive && biffInParty)
-      findSymbol("DJG_BIFFSURVIVEDLASTDRAGON")->set_int(yes->get_int());
+      deathProgress.biffSurvived=yes->get_int();
     }
 
   constexpr size_t monsterId = 43; // Stock AIVAR slot.
   const auto defeated = memberNpc(current);
   if(defeated && defeated->aivar[monsterId]==findSymbol("ID_DRAGON_UNDEAD")->get_int()) {
-    findSymbol("UNDEADDRAGONISDEAD")->set_int(yes->get_int());
+    deathProgress.undeadDragonDead=yes->get_int();
     auto* topic = findSymbol("TOPIC_BACKTOSHIP");
     vm.push_reference(topic);
     vm.push_reference(findSymbol("LOG_MISSION"));

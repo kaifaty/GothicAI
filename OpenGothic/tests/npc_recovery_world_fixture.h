@@ -335,6 +335,30 @@ void npcDeathLifecycle(Gothic& gothic) {
   load(corpse);
   auto& world=*gothic.world();
   auto& script=world.script();
+  {
+    auto* canyon=script.findSymbol("CANYONRAZORBODYCOUNT");
+    auto* swamp=script.findSymbol("SWAPDRAGNISDEAD");
+    const auto oldCanyon=canyon->get_int(), oldSwamp=swamp->get_int();
+    std::vector<uint8_t> legacy;
+    Tempest::MemWriter writer(legacy);
+    {
+      Serialize out(writer);
+      out.setEntry("game/daedalus");
+      out.write(uint32_t(2));
+      out.write(uint32_t(daedalus::DaedalusDataType::INT),canyon->name(),uint32_t(1),int32_t(7));
+      out.write(uint32_t(daedalus::DaedalusDataType::INT),swamp->name(),uint32_t(1),int32_t(2));
+    }
+    Tempest::MemReader reader(legacy);
+    Serialize in(reader);
+    require(in.setEntry("game/daedalus"),"death progress: legacy save entry is present");
+    script.loadVar(in);
+    const auto& progress=Contract::deathProgress(script);
+    require(progress.canyonRazors==7 && progress.dragonDeaths[0]==2 &&
+            canyon->get_int()==progress.canyonRazors && swamp->get_int()==progress.dragonDeaths[0],
+            "death progress: legacy save values are visible in engine storage and script aliases");
+    canyon->set_int(oldCanyon);
+    swamp->set_int(oldSwamp);
+  }
   auto& hero=*world.player();
   auto* npc=activityNpc(world,actor);
   require(npc && npc->isDead() && Contract::aiState(*npc).started && npc->stateOther()==&hero &&

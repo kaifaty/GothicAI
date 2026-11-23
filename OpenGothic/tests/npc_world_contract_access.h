@@ -24,6 +24,7 @@ struct NpcDefinitionContract {
   static int32_t& storyChapter(GameScript& script) { return script.storyChapter; }
   static int32_t currentStoryWorld(GameScript& script) { return script.currentStoryWorld; }
   static const auto& worldEntryLatches(GameScript& script) { return script.worldEntryLatches; }
+  static const auto& deathProgress(GameScript& script) { return script.deathProgress; }
   static void saveChapter(GameScript& script, Serialize& out) { script.saveSym(out,*script.findSymbol("KAPITEL")); }
   static auto& crimeAbsolutionLevels(GameScript& script) { return script.crimeAbsolutionLevels; }
   static auto& crimeCounters(GameScript& script) { return script.petzCrimeCounters; }

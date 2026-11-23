@@ -2936,8 +2936,7 @@ bool GameScript::dropsUnconsciousNpc() {
 void GameScript::showRemainingCanyonRazors() {
   auto* left=findSymbol("B_COUNTCANYONRAZOR.CANYONRAZORLEFT");
   auto* text=findSymbol("B_COUNTCANYONRAZOR.CANYONRAZORTEXT");
-  const auto count=findSymbol("CANYONRAZORBODYCOUNT")->get_int();
-  vm.push_int(std::bit_cast<int32_t>(10u-uint32_t(count)));
+  vm.push_int(std::bit_cast<int32_t>(10u-uint32_t(deathProgress.canyonRazors)));
   vm.unsafe_call_external(findSymbol("INTTOSTRING"));
   left->set_string(vm.pop_string());
   vm.push_reference(left);
@@ -2981,7 +2980,7 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
     };
   const auto number = [&](std::string_view name) { return findSymbol(name)->get_int(); };
   const auto setNumber = [&](std::string_view name, int32_t value) { findSymbol(name)->set_int(value); };
-  const auto increment = [&](std::string_view name) { setNumber(name,number(name)+1); };
+  const auto increment=[](int32_t& count) { count=std::bit_cast<int32_t>(uint32_t(count)+1u); };
 
   self->aivar[ransacked] = 0;
   self->aivar[partyMember] = 0;
@@ -2995,7 +2994,7 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
     }
 
   if(isCanyonRazor(self)) {
-    increment("CANYONRAZORBODYCOUNT");
+    increment(deathProgress.canyonRazors);
     if(number("MIS_ADDON_GREG_CLEARCANYON")==number("LOG_RUNNING"))
       showRemainingCanyonRazors();
     }
@@ -3011,12 +3010,12 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
   if(npc_isplayer(other())) {
     self->aivar[killedByPlayer] = 1;
     if(dropsUnconsciousNpc())
-      increment("MADKILLERCOUNT");
+      increment(deathProgress.madKills);
     const auto running = number("LOG_RUNNING");
     if(number("MIS_FESTER_KILLBUGS")==running && self->guild==number("GIL_GIANT_BUG"))
-      increment("FESTERS_GIANT_BUG_KILLED");
+      increment(deathProgress.festerBugs);
     if(number("MIS_KROKOJAGD")==running && matches("SWAMPRAT"))
-      increment("ALLIGATORJACK_KROKOSKILLED");
+      increment(deathProgress.jackCrocodiles);
     if(matches("RAMON"))
       setNumber("PLAYER_HASTALKEDTOBANDITCAMP",1);
     if(matches("FRANCO")) {
@@ -3030,15 +3029,15 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
     }
 
   if(matches("GOLDMINECRAWLER")) {
-    if(number("BLOODWYN_SPAWN")==0 && number("MINECRAWLER_KILLED")>=9) {
+    if(deathProgress.bloodwynSpawned==0 && deathProgress.minecrawlers>=9) {
       ai_teleport(namedNpc("BLOODWYN"),"ADW_MINE_TO_MC_03");
       vm.push_instance(namedNpc("BLOODWYN"));
       vm.push_string("MINE");
       vm.unsafe_call_bl(findSymbol("B_STARTOTHERROUTINE"));
       givePlayerXp(number("XP_ADDON_BLOODYWYN"));
-      setNumber("BLOODWYN_SPAWN",1);
+      deathProgress.bloodwynSpawned=1;
       } else {
-      increment("MINECRAWLER_KILLED");
+      increment(deathProgress.minecrawlers);
       }
     }
 
