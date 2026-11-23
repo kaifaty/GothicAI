@@ -317,7 +317,7 @@ bool GameScript::runFreezeOrWhirlwindSpell(Npc& npc, const daedalus::DaedalusSym
       damage = hp-1;
       }
     // Whirlwind still invokes the damage helper when its damage is zero.
-    vm.call_function<void>("B_MAGICHURTNPC",vm.global_other()->get_instance(),self,damage);
+    magicHurtNpc(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()),self,damage);
     }
   return true;
   }
