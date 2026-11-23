@@ -707,7 +707,7 @@ void GameScript::runMonsterAssessBody() {
       return;
     }
   npc_clearaiqueue(self);
-  vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+  clearPerceptions(self);
   ai_startstate(self,int(findFunction("ZS_MM_EATBODY").ptr),0,"");
   }
 
