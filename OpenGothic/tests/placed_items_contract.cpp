@@ -2175,6 +2175,8 @@ void activityDefinitionsWorld(Gothic& gothic) {
     accepted.emplace_back(spec.state);
   accepted.emplace_back("ZS_SIT_THRONE");
   accepted.emplace_back("ZS_ROAST_SCAVENGER");
+  for(const auto* state:{"ZS_COOK_CAULDRON","ZS_COOK_PAN","ZS_COOK_STOVE","ZS_PICK_ORE","ZS_POTION_ALCHEMY"})
+    accepted.emplace_back(state);
   constexpr size_t eventPhases=10*2; // Init and End of five point activities and five timed MOB activities.
   activitySwitch(script,accepted,nullptr,eventPhases);
   std::vector<WorldActivity> activities;

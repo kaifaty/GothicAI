@@ -33,10 +33,10 @@ void GameScript::loadNativeRoutines() {
     {"ZS_STUDY_WP",           &GameScript::runPointRoutine},
     {"ZS_ANNOUNCE_HEROLD",    &GameScript::runSocialRoutine, 70000, RoutineWake::Herald},
     {"ZS_CIRCLE",             &GameScript::runSocialRoutine},
-    {"ZS_CONCERT",            &GameScript::runSocialRoutine},
+    {"ZS_CONCERT",            &GameScript::runSocialRoutine, 0, RoutineWake::Concert},
     {"ZS_DANCE",              &GameScript::runSocialRoutine},
-    {"ZS_GHOST",              &GameScript::runSocialRoutine},
-    {"ZS_GHOSTWUSEL",         &GameScript::runSocialRoutine},
+    {"ZS_GHOST",              &GameScript::runSocialRoutine, 5000},
+    {"ZS_GHOSTWUSEL",         &GameScript::runSocialRoutine, 3000},
     {"ZS_PREACH_VATRAS",      &GameScript::runSocialRoutine, 13000},
     {"ZS_SMALLTALK",          &GameScript::runSocialRoutine, 8000, RoutineWake::Smalltalk},
     {"ZS_STAND_DEMENTOR",     &GameScript::runSocialRoutine},
@@ -55,7 +55,7 @@ void GameScript::loadNativeRoutines() {
   }
 
 bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe) {
-  if(floorDefer.active())
+  if(!activityEvents || floorDefer.active())
     return false;
   const auto it = nativeRoutinePhases.find(symbol.index());
   if(it==nativeRoutinePhases.end() || !(this->*it->second.callback)(npc,symbol,probe.result))
@@ -67,7 +67,7 @@ bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& s
   }
 
 bool GameScript::routineTimerDue(const Npc& npc, ScriptFn loop) const {
-  if(nativeRoutinePhases.empty() || floorDefer.active())
+  if(!activityEvents || nativeRoutinePhases.empty() || floorDefer.active())
     return true;
   const auto it = nativeRoutinePhases.find(uint32_t(loop.ptr));
   if(it==nativeRoutinePhases.end())
@@ -79,7 +79,9 @@ bool GameScript::routineTimerDue(const Npc& npc, ScriptFn loop) const {
     case RoutineWake::Smalltalk:
       return npc.stateTime()>=phase.minStateTime || !npc.isOnFreePoint("SMALLTALK");
     case RoutineWake::Herald:
-      return npc.stateTime()>=phase.minStateTime || npc.handle().aivar[19]==1;
+      return npc.stateTime()>=phase.minStateTime || npc.handlePtr()->aivar[19]==1;
+    case RoutineWake::Concert:
+      return npc.handlePtr()->aivar[19]==1;
     case RoutineWake::Timer:
       return npc.stateTime()>=phase.minStateTime;
     }
@@ -132,7 +134,7 @@ bool GameScript::invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::P
     return false;
   probe.fromRecord();
   probe.result = ActivityDefinitionRuntime::run(vm,world(),npc,*phase,[this,&npc](int32_t item) {
-    createinvitem(npc.handlePtr(),item);
+    storeItem(npc.addItem(uint32_t(item),1));
     });
   return true;
   }

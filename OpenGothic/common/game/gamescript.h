@@ -232,7 +232,7 @@ class GameScript final : public GameRules {
     void loadNativeRoutines();
 
     using NativeRoutineCallback = bool (GameScript::*)(Npc&, const daedalus::DaedalusSymbol&, int&);
-    enum class RoutineWake : uint8_t { Timer, Sleep, Smalltalk, Herald };
+    enum class RoutineWake : uint8_t { Timer, Sleep, Smalltalk, Herald, Concert };
     struct NativeRoutinePhase {
       std::string_view state;
       NativeRoutineCallback callback;
