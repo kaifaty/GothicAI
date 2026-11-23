@@ -192,5 +192,5 @@ void GameScript::assessSleepTalk(Npc& npc) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   if(npcBodyStateContains(self,BS_LIE))
     npc.aiPush(AiQueue::aiUseMob(bed,-1));
-  ai_startstate(self,int(ZS_Talk),0,"");
+  ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),0,"");
   }

@@ -2474,8 +2474,8 @@ void sleepRoutineWorld(Gothic& gothic,bool events,bool deep) {
     const auto release=commands.pop();
     const auto talk=commands.pop();
     require(release.act==AI_UseMob && release.s0=="BEDHIGH" && release.i0==-1 &&
-            talk.act==AI_StartState && talk.func==ScriptFn(world.script().findSymbolIndex("ZS_TALK")),
-            "sleep talk: release the bed before talking");
+            talk.act==AI_StartState && talk.func==ScriptFn(world.script().findSymbolIndex("ZS_OBSERVEPLAYER")),
+            "sleep talk: release the bed before watching the hero");
     matteo->clearAiQueue();
     }
 
