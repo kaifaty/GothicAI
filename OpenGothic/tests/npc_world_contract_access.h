@@ -1,5 +1,20 @@
 #pragma once
 
+#include "game/gamescript.h"
+#include "game/serialize.h"
+#include "graphics/mesh/skeleton.h"
+#include "world/objects/interactive.h"
+#include "world/objects/item.h"
+#include "world/objects/npc.h"
+#include "world/waypoint.h"
+#include "world/world.h"
+
+#include <Tempest/MemReader>
+#include <Tempest/MemWriter>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
 // Test-only access keeps the production creation entry point unchanged.
 struct NpcDefinitionContract {
   static auto& definitions(GameScript& script) { return script.npcDefinitions; }
@@ -74,3 +89,57 @@ struct NpcDefinitionContract {
   static size_t bone(const MdlVisual& view, std::string_view name) { return view.skeleton->findNode(name); }
   static const AnimationSolver& solver(const MdlVisual& view) { return view.solver; }
   };
+
+namespace NpcWorldFixture {
+
+inline void require(bool condition, const char* message) {
+  if(!condition)
+    throw std::runtime_error(message);
+  }
+
+inline std::vector<uint8_t> savedNpc(Npc& npc) {
+  std::vector<uint8_t> bytes;
+  {
+    Tempest::MemWriter writer(bytes);
+    Serialize out(writer);
+    out.setContext(&npc.world());
+    npc.save(out,0,"/npc/");
+    }
+  return bytes;
+  }
+
+inline void loadSavedNpc(Npc& npc,const std::vector<uint8_t>& bytes) {
+  Tempest::MemReader reader(bytes);
+  Serialize in(reader);
+  in.setContext(&npc.world());
+  npc.load(in,0,"/npc/");
+  npc.postValidate();
+  npc.setSimTier(NpcSimTier::Full);
+  }
+
+inline Npc* activityNpc(World& world,const char* name) {
+  const auto symbol=world.script().findSymbolIndex(name);
+  for(uint32_t i=0;i<world.npcCount();++i)
+    if(world.npcById(i)->instanceSymbol()==symbol)
+      return world.npcById(i);
+  return nullptr;
+  }
+
+// The NPC's queue as text, front first, without taking it.
+inline std::vector<std::string> activityQueue(const Npc& npc) {
+  auto queue=NpcDefinitionContract::queue(npc);
+  std::vector<std::string> actions;
+  while(queue.size()>0) {
+    const auto a=queue.pop();
+    actions.push_back(std::string(AiQueue::actionName(uint32_t(a.act)))+" "+std::to_string(a.i0)+" "+std::to_string(a.i1)+" "+
+                      a.s0+" "+(a.point ? a.point->name : "")+" "+(a.target ? std::string(a.target->displayName()) : "")+" "+
+                      std::to_string(a.func.ptr));
+    }
+  return actions;
+  }
+
+void diegoRouteBoundaries(World& world,Npc& context);
+void companionPlayerPerceptions(World& world,Npc& npc,Npc& hero);
+void fightSoundPerceptions(World& world,Npc& npc,Npc& hero);
+
+} // namespace NpcWorldFixture
