@@ -1355,6 +1355,86 @@ void placementDefinitions(World& world) {
   if(!differences.empty()) throw std::runtime_error("live placement differs: "+std::to_string(differences.size())+" differences; "+differences.front());
   }
 
+void dragonIslandPlacement(Gothic& gothic) {
+  const auto program=NpcSnapshot::load(baseProgramIndex().dir.parent_path());
+  if(program.sha256!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
+    return;
+  gothic.setGame(std::make_unique<GameSession>("DRAGONISLAND.ZEN"));
+  auto& world=*gothic.world();
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  const auto baseline=placementSnapshot(world,true);
+  const auto random=NpcDefinitionContract::random(script);
+  const auto* startup=vm.find_symbol_by_name("STARTUP_DRAGONISLAND");
+  const std::array addresses={startup->address(),vm.find_symbol_by_name("STARTUP_NEWWORLD_PART_DRAGON_ISLAND_01")->address(),
+                              vm.find_symbol_by_name("STARTUP_NEWWORLD_PART_DRAGON_UNDEAD_01")->address(),
+                              vm.find_symbol_by_name("STARTUP_NEWWORLD_PART_DRAGON_FINAL_01")->address()};
+  const auto captured=[&](bool record,int crew) {
+    placementRestore(world,baseline);
+    NpcDefinitionContract::random(script)=random;
+    const auto flag=[&](const char* name,int32_t value) { vm.find_symbol_by_name(name)->set_int(value); };
+    for(const auto* name:{"LEE_ISONBOARD","MILTENNW_ISONBOARD","LESTER_ISONBOARD","MARIO_ISONBOARD","WOLF_ISONBOARD",
+                          "VATRAS_ISONBOARD","BENNET_ISONBOARD","DIEGO_ISONBOARD","GORN_ISONBOARD","LARES_ISONBOARD",
+                          "BIFF_ISONBOARD","ANGAR_ISONBOARD","GIRION_ISONBOARD"})
+      flag(name,crew==3 ? 2 : 0);
+    flag("JORGENISCAPTAIN",crew==0 ? 2 : crew!=2);
+    flag("TORLOFISCAPTAIN",crew>=2);
+    flag("JACKISCAPTAIN",crew>=2);
+    flag("KAPITEL",5);
+    flag("CURRENTLEVEL",vm.find_symbol_by_name("NEWWORLD_ZEN")->get_int());
+    if(crew==1) {
+      flag("MILTENNW_ISONBOARD",2);
+      flag("DIEGO_ISONBOARD",2);
+      }
+    if(crew==2) {
+      flag("LESTER_ISONBOARD",2);
+      flag("LARES_ISONBOARD",2);
+      }
+    std::vector<std::string> calls;
+    size_t entries=0;
+    vm.observe_instructions([&](const auto&) { entries+=std::find(addresses.begin(),addresses.end(),vm.pc())!=addresses.end(); });
+    vm.observe_externals([&](const daedalus::DaedalusSymbol& external) {
+      auto line=external.name();
+      const auto arguments=vm.find_parameters_for_function(&external);
+      for(size_t i=0;i<arguments.size();++i) {
+        line+=" ";
+        line+=placementArgument(vm,arguments[i],uint16_t(arguments.size()-i-1),world);
+        }
+      calls.push_back(std::move(line));
+      });
+    script.startupFloor().begin();
+    vm.push_int(0x12345678);
+    const auto pc=vm.pc();
+    try {
+      if(record) script.runStartup(startup->name());
+      else vm.call_function<void>(startup);
+      }
+    catch(...) {
+      vm.observe_externals({});
+      vm.observe_instructions({});
+      script.startupFloor().end();
+      throw;
+      }
+    const auto stack=vm.pop_int();
+    vm.observe_externals({});
+    vm.observe_instructions({});
+    world.resetPositionToTA();
+    script.startupFloor().end();
+    require(stack==0x12345678 && vm.pc()==pc && entries==(record ? 0u : addresses.size()),
+            "Dragon Island placement: the selected executor leaves the stack and PC intact");
+    require((world.findNpcByInstance(script.findSymbolIndex("VLK_4250_JORGEN_DI"))!=nullptr)==(crew==1 || crew==3),
+            "Dragon Island placement: only the exact Jorgen captain flag inserts his island instance");
+    return std::tuple{calls,archiveEntries(placementSnapshot(world,false)),placementSymbols(script,false),script.randomState(nullptr)};
+    };
+  for(int crew:{0,1,2,3}) {
+    const auto vmResult=captured(false,crew);
+    require(captured(true,crew)==vmResult,
+            ("Dragon Island placement: crew case "+std::to_string(crew)+" matches stock calls and saved world").c_str());
+    }
+  gothic.clearGame().reset();
+  std::puts("Dragon Island placement: four captain and crew combinations match the original calls and world state");
+  }
+
 void placementDefinitionsDisabled(World& world) {
   auto& script=world.script();
   auto& vm=script.getVm();
@@ -3783,6 +3863,7 @@ void moverChildSave() {
   gothic.setupGlobalScripts();
   GameMusic music;
   pointActivitiesInBothModes(gothic);
+  dragonIslandPlacement(gothic);
   const auto placementWorldDifferences=placementFirstWorld(gothic);
   require(gothic.player()!=nullptr,"bench helper fixture has a player");
   routineTables(*gothic.player());
