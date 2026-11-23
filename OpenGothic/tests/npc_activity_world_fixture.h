@@ -2977,16 +2977,22 @@ void monsterWispSearch(World& world, Npc& actor, Npc& hero) {
     actor.clearAiQueue();
     vm.unsafe_call_bl(search);
     auto peek=random;
-    require(vm.pop_int()==int32_t(0x800003ffu) && flags->get_int()==int32_t(0x800003ffu) &&
+    require(vm.stack_frame(0).reference && vm.pop_int()==int32_t(0x800003ffu) && flags->get_int()==int32_t(0x800003ffu) &&
             vm.global_item()->get_instance()==itemHandle && !actor.aiQueueFront() && roll->get_int()==-1,
             "Wisp search: all trained categories match, and an item too far above or below is not approached");
     mode->set_int(script.findSymbol("WISPSEARCH_FOLLOW")->get_int());
     vm.unsafe_call_bl(search);
-    require(vm.pop_int()==0 && flags->get_int()==int32_t(0x800003ffu),"Wisp search: follow mode leaves the saved mask alone");
+    require(!vm.stack_frame(0).reference && vm.pop_int()==0 && flags->get_int()==int32_t(0x800003ffu),
+            "Wisp search: follow mode returns a literal and leaves the saved mask alone");
+    mode->set_int(script.findSymbol("WISPSEARCH_FOOD")->get_int());
+    actor.handle().senses_range=0;
+    vm.unsafe_call_bl(search);
+    require(vm.stack_frame(0).reference && vm.pop_int()==ITM_CAT_FOOD && !actor.aiQueueFront(),
+            "Wisp search: an empty scan still returns the saved category mask");
+    actor.handle().senses_range=3000;
 
     place(actor,origin+Tempest::Vec3(0,500,0));
     place(hero,actor.position()+Tempest::Vec3(1999,0,0));
-    mode->set_int(script.findSymbol("WISPSEARCH_FOOD")->get_int());
     position=0;
     summonTime=19;
     std::array<size_t,3> entries{};

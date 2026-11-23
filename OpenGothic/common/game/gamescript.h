@@ -305,7 +305,7 @@ class GameScript final : public GameRules {
     bool runMonsterSheepFollow(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterSummoned(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     int32_t detectWisp();
-    int32_t detectWispItem();
+    daedalus::DaedalusSymbol* detectWispItem();
     void approachWispItem();
     bool nativeMonsterPerceptionsEnabled();
     bool invokeNativeMonsterPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);

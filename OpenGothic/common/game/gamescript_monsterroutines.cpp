@@ -648,22 +648,20 @@ int32_t GameScript::detectWisp() {
   npc_perceiveall(self);
   if(wld_detectnpc(self,int32_t(detector->index()),-1,-1)) {
     // Use the SELF symbol, which resolves to this Wisp, rather than the detected duplicate.
-    const auto context = vm.unsafe_get_gi();
     vm.push_int(int32_t(vm.global_self()->index()));
     vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
-    vm.unsafe_set_gi(context);
     }
 
   const auto actor = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
   const auto inPosition = findSymbol("ISINPOS")->get_int();
-  const auto distance = npc_getdisttonpc(actor,hero);
   auto* aivar = findSymbol("C_NPC.AIVAR");
-  if(vm.get_int(actor,aivar,routinePosition)==inPosition && distance<2000) {
+  const bool alreadyInPosition = vm.get_int(actor,aivar,routinePosition)==inPosition;
+  if(const auto distance = npc_getdisttonpc(actor,hero); alreadyInPosition && distance<2000) {
     vm.set_int(actor,aivar,summonTime,0);
     detectWispItem();
     }
-  else if(distance<500) {
+  else if(npc_getdisttonpc(actor,hero)<500) {
     vm.set_int(actor,aivar,routinePosition,inPosition);
     }
   else {
@@ -674,10 +672,10 @@ int32_t GameScript::detectWisp() {
   return LOOP_END;
   }
 
-int32_t GameScript::detectWispItem() {
+daedalus::DaedalusSymbol* GameScript::detectWispItem() {
   const auto mode = findSymbol("WISPSEARCHING")->get_int();
   if(mode==findSymbol("WISPSEARCH_FOLLOW")->get_int())
-    return 0;
+    return nullptr;
 
   auto* flags = findSymbol("B_WISPDETECTEDITEM.WISPSEARCHFLAGS");
   const auto* talents = findSymbol("PLAYER_TALENT_WISPDETECTOR");
@@ -703,7 +701,7 @@ int32_t GameScript::detectWispItem() {
   const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   if(mask!=0 && wld_detectitem(self,mask))
     approachWispItem();
-  return mask;
+  return flags;
   }
 
 void GameScript::approachWispItem() {
