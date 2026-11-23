@@ -38,10 +38,8 @@ bool DrawCommands::prepareHistory(Encoder<CommandBuffer>& enc, const Texture2d& 
   if(history.dirty) {
     // The map follows capacities, not visible counts. Each block covers at most 128 consecutive
     // meshlets of one draw, so independent workgroups can compact without changing raster order.
-    struct CmdInfo { uint32_t first, blocks, flags, pad; };
-    struct Block { uint32_t command, offset; };
-    std::vector<CmdInfo> commands(cmd.size());
-    std::vector<Block> blocks;
+    std::vector<HistoryCommand> commands(cmd.size());
+    uint32_t blockCount = 0;
     for(size_t id=0; id<cmd.size(); ++id) {
       const auto& cx = cmd[id];
       if(cx.pMain==nullptr || (cx.alpha!=Material::Solid && cx.alpha!=Material::AlphaTest) || cx.maxPayload==0)
@@ -49,24 +47,35 @@ bool DrawCommands::prepareHistory(Encoder<CommandBuffer>& enc, const Texture2d& 
       if(cx.pHistoryGBuffer==nullptr || cx.pHistoryDepth==nullptr || cx.pHistoryVerify==nullptr)
         return false;
       const uint32_t count = (cx.maxPayload+127)/128;
-      commands[id] = {uint32_t(blocks.size()), count, 1u, 0u};
-      for(uint32_t i=0; i<count; ++i)
-        blocks.push_back({uint32_t(id), i*128});
+      commands[id] = {blockCount, count, 1u, 0u};
+      blockCount += count;
       }
-    if(blocks.empty())
+    if(blockCount==0)
       return false;
-    Resources::recycle(std::move(history.commands));
-    Resources::recycle(std::move(history.blocks));
-    history.commands = device.ssbo(commands);
-    history.blocks = device.ssbo(blocks);
-    history.blockCount = uint32_t(blocks.size());
+    // Each active command determines every block's owner and local offset.
+    if(commands!=history.uploadedCommands) {
+      struct Block { uint32_t command, offset; };
+      std::vector<Block> blocks;
+      blocks.reserve(blockCount);
+      for(size_t id=0; id<commands.size(); ++id)
+        for(uint32_t i=0; i<commands[id].blocks; ++i)
+          blocks.push_back({uint32_t(id), i*128});
+      auto commandBuffer = device.ssbo(commands);
+      auto blockBuffer = device.ssbo(blocks);
+      Resources::recycle(std::move(history.commands));
+      Resources::recycle(std::move(history.blocks));
+      history.commands = std::move(commandBuffer);
+      history.blocks = std::move(blockBuffer);
+      history.blockCount = blockCount;
+      history.uploadedCommands = std::move(commands);
+      }
     const auto reserve = [&](StorageBuffer& buffer, size_t bytes) {
       if(buffer.byteSize()>=bytes)
         return;
       Resources::recycle(std::move(buffer));
       buffer = device.ssbo(Uninitialized, bytes);
       };
-    reserve(history.compactScratch, blocks.size()*5*sizeof(uint32_t));
+    reserve(history.compactScratch, size_t(blockCount)*5*sizeof(uint32_t));
     reserve(history.view.visClusters, maxPayload*4*sizeof(uint32_t));
     reserve(history.view.indirectCmd, cmd.size()*sizeof(IndirectCmd));
     history.dirty = false;

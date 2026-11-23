@@ -175,8 +175,15 @@ class DrawCommands {
     std::vector<DrawCmd*>    ord;
     bool                     cmdDurtyBit = false;
     View                     views[SceneGlobals::V_Count];
+
+    struct HistoryCommand {
+      uint32_t first, blocks, flags, pad;
+      bool operator==(const HistoryCommand&) const = default;
+      };
+    static_assert(sizeof(HistoryCommand)==4*sizeof(uint32_t));
     struct {
       View view;
+      std::vector<HistoryCommand> uploadedCommands;
       Tempest::StorageBuffer commands, blocks, compactScratch, status, stats, counts[2];
       Tempest::StorageBuffer read[Resources::MaxFramesInFlight];
       bool written[Resources::MaxFramesInFlight] = {};
