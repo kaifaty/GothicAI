@@ -2569,10 +2569,13 @@ void shrinkSpellCast(World& world) {
   auto* sheep=script.findSymbol("SHEEP");
   auto* undeadLocal=script.findSymbol("C_NPCISUNDEAD.SLF");
   auto* perceptionLocal=script.findSymbol("B_CLEARPERCEPTIONS.SLF");
+  auto* refreshLocal=script.findSymbol("B_REFRESHATINSERT.HER");
   const auto state=script.findFunction("ZS_MAGICSHRINK");
-  require(hero && sheep && undeadLocal && perceptionLocal && state.isValid(),"the cast fixture needs its stock symbols");
+  require(hero && sheep && undeadLocal && perceptionLocal && refreshLocal && state.isValid(),
+          "the cast fixture needs its stock symbols");
   const auto oldHero=hero->get_instance(), oldSheep=sheep->get_instance();
   const auto oldUndead=undeadLocal->get_instance(), oldPerception=perceptionLocal->get_instance();
+  const auto oldRefresh=refreshLocal->get_instance();
   const auto* wp=world.findWayPoint("NW_FARM4_BALTHASAR");
   require(wp!=nullptr,"the cast fixture needs a spawn point");
   const auto target=world.addNpc(sheep->index(),wp->position());
@@ -2674,6 +2677,7 @@ void shrinkSpellCast(World& world) {
   sheep->set_instance(oldSheep);
   undeadLocal->set_instance(oldUndead);
   perceptionLocal->set_instance(oldPerception);
+  refreshLocal->set_instance(oldRefresh);
   for(size_t i=0;i<locals.size();++i)
     locals[i]->set_int(oldLocals[i]);
   events=previousEvents;
