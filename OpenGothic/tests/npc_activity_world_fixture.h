@@ -3247,6 +3247,106 @@ void specialMonsterRoutines(GameSession& session, World& world, Npc& wolf, Npc& 
   std::puts("Special monster routines: original and native dragon rest, both sheep followers and summoned creature agree");
   }
 
+void monsterDamagePerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  const auto direct=script.findFunction("B_MM_ASSESSDAMAGE");
+  const auto witnessed=script.findFunction("B_MM_ASSESSOTHERSDAMAGE");
+  const auto attack=script.findFunction("ZS_MM_ATTACK");
+  const auto flee=script.findFunction("ZS_MM_FLEE");
+  const auto wolfVars=std::to_array(wolf.handle().aivar);
+  const auto sheepVars=std::to_array(sheep.handle().aivar);
+  const auto wolfExternal=wolf.isExternalControl(), sheepExternal=sheep.isExternalControl();
+  const auto wolfState=NpcDefinitionContract::aiState(wolf);
+  const auto place=[](Npc& actor,Tempest::Vec3 position) {
+    actor.setPosition(position);
+    actor.updateTransform();
+    };
+  const auto wolfPosition=wolf.position(), sheepPosition=sheep.position(), heroPosition=hero.position();
+  const auto origin=wolfPosition+Tempest::Vec3(0,500,0);
+  place(wolf,origin);
+  place(sheep,origin+Tempest::Vec3(220,0,0));
+  place(hero,origin+Tempest::Vec3(-220,0,0));
+  require(wolf.canSeeNpc(hero,true) && wolf.canSeeNpc(sheep,true),"monster damage perception: both witnesses need an unobstructed view");
+  wolf.setExternalControl(false);
+  sheep.setExternalControl(false);
+  std::vector<std::vector<std::string>> original;
+  for(bool native:{false,true}) {
+    events=native;
+    std::copy(wolfVars.begin(),wolfVars.end(),wolf.handle().aivar);
+    std::copy(sheepVars.begin(),sheepVars.end(),sheep.handle().aivar);
+    auto& wolfAI=wolf.handle().aivar;
+    wolfAI[15]=0;
+    wolfAI[29]=0;
+    NpcDefinitionContract::aiState(wolf)=wolfState;
+    size_t index=0;
+    auto perceive=[&](Npc& receiver,Npc& source,Npc* victim,PercType perception,ScriptFn handler,ScriptFn expected,Npc* target) {
+      receiver.clearAiQueue();
+      receiver.aiPush(AiQueue::aiWait(100));
+      receiver.setPerceptionEnable(perception,handler.ptr);
+      const auto handlerPc=script.findSymbol(size_t(handler.ptr))->address();
+      size_t entries=0;
+      vm.observe_instructions([&](const auto&) { entries+=vm.pc()==handlerPc; });
+      const bool delivered=receiver.perceptionProcess(source,victim,receiver.qDistTo(source),perception);
+      vm.observe_instructions({});
+      require(delivered && entries==(native ? 0u : 1u),"monster damage perception: the original callback only executes in VM mode");
+      const auto* action=receiver.aiQueueFront();
+      require(action && receiver.target()==target,"monster damage perception: the target matches the selected response");
+      if(expected.isValid())
+        require(action->act==AI_StartState && action->func==expected && action->target==&source && action->victim==victim &&
+                !receiver.hasPerc(perception),"monster damage perception: the transition replaces the old queue and clears perceptions");
+      else
+        require(action->act==AI_Wait && receiver.hasPerc(perception),"monster damage perception: an active or unassigned response preserves the queue");
+      auto result=activityQueue(receiver);
+      result.push_back(std::to_string(receiver.handle().aivar[22]));
+      result.push_back(std::to_string(receiver.handle().aivar[29]));
+      if(native)
+        require(result==original[index],"monster damage perception: original and native queues and combat bookkeeping agree");
+      else
+        original.push_back(std::move(result));
+      ++index;
+      };
+
+    wolf.setTarget(nullptr);
+    sheep.setTarget(nullptr);
+    perceive(wolf,hero,nullptr,PERC_ASSESSDAMAGE,direct,attack,&hero);
+    require(wolfAI[29]==1,"monster damage perception: an attack sets combat priority");
+    perceive(sheep,wolf,nullptr,PERC_ASSESSDAMAGE,direct,flee,&wolf);
+
+    require(wolf.startState(attack,wolf.handle().wp),"monster damage perception: the wolf can take a hit during combat");
+    NpcDefinitionContract::aiState(wolf).started=true;
+    wolf.setTarget(&sheep);
+    wolfAI[7]=int32_t(sheep.instanceSymbol());
+    wolfAI[22]=-1;
+    perceive(wolf,hero,nullptr,PERC_ASSESSDAMAGE,direct,{},&sheep);
+    require(wolfAI[22]==int32_t(hero.instanceSymbol()),"monster damage perception: the first hit records the new attacker");
+    perceive(wolf,hero,nullptr,PERC_ASSESSDAMAGE,direct,{},&hero);
+    NpcDefinitionContract::aiState(wolf)=wolfState;
+
+    wolfAI[15]=1;
+    perceive(wolf,sheep,&hero,PERC_ASSESSOTHERSDAMAGE,witnessed,attack,&sheep);
+    wolf.setTarget(nullptr);
+    perceive(wolf,hero,&sheep,PERC_ASSESSMURDER,witnessed,attack,&sheep);
+    wolf.setTarget(nullptr);
+    perceive(wolf,sheep,nullptr,PERC_ASSESSFIGHTSOUND,witnessed,{},nullptr);
+    }
+  events=previousEvents;
+  std::copy(wolfVars.begin(),wolfVars.end(),wolf.handle().aivar);
+  std::copy(sheepVars.begin(),sheepVars.end(),sheep.handle().aivar);
+  for(auto* actor:{&wolf,&sheep}) {
+    actor->setTarget(nullptr);
+    actor->clearAiQueue();
+    }
+  wolf.setExternalControl(wolfExternal);
+  sheep.setExternalControl(sheepExternal);
+  place(wolf,wolfPosition);
+  place(sheep,sheepPosition);
+  place(hero,heroPosition);
+  std::puts("Monster damage perception: original and native attack, flee, retargeting and witnessed hits agree");
+  }
+
 std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -3405,6 +3505,7 @@ std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   monsterHuntAndEatBodyPhases(world,*wolf,sheep);
   monsterBodyPerception(world,*wolf,sheep);
   specialMonsterRoutines(session,world,*wolf,sheep,hero);
+  monsterDamagePerception(world,*wolf,sheep,hero);
   const auto attack=script.findFunction("ZS_MM_ATTACK");
   require(wolf->startState(attack,site->name),"the wolf must enter attack before saving");
   wolf->setTarget(&hero);

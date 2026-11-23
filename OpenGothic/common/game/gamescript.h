@@ -264,7 +264,9 @@ class GameScript final : public GameRules {
     bool nativeMonsterPerceptionsEnabled();
     bool invokeNativeMonsterPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);
     void runMonsterAssessBody();
+    void runMonsterAssessDamage();
     void runMonsterAssessEnemy();
+    void runMonsterAssessOthersDamage();
     bool monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monster, const std::shared_ptr<daedalus::INpc>& body);
     bool monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey);
     bool monsterTargetHasBodyState(const std::shared_ptr<daedalus::INpc>& target, int32_t state);

@@ -642,13 +642,18 @@ bool GameScript::nativeMonsterPerceptionsEnabled() {
 
 bool GameScript::invokeNativeMonsterPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe) {
   const auto name = symbol.name();
-  if((name!="B_MM_ASSESSENEMY" && name!="B_MM_ASSESSBODY") || !nativeMonsterPerceptionsEnabled())
+  if((name!="B_MM_ASSESSENEMY" && name!="B_MM_ASSESSBODY" && name!="B_MM_ASSESSDAMAGE" && name!="B_MM_ASSESSOTHERSDAMAGE") ||
+     !nativeMonsterPerceptionsEnabled())
     return false;
   probe.fromRecord();
   if(name=="B_MM_ASSESSENEMY")
     runMonsterAssessEnemy();
-  else
+  else if(name=="B_MM_ASSESSBODY")
     runMonsterAssessBody();
+  else if(name=="B_MM_ASSESSDAMAGE")
+    runMonsterAssessDamage();
+  else
+    runMonsterAssessOthersDamage();
   return true;
   }
 
@@ -711,6 +716,94 @@ void GameScript::runMonsterAssessBody() {
   npc_clearaiqueue(self);
   clearPerceptions(self);
   ai_startstate(self,int(findFunction("ZS_MM_EATBODY").ptr),0,"");
+  }
+
+void GameScript::runMonsterAssessDamage() {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = [&] { return std::static_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  auto& ai = self->aivar;
+  ai[monsterPriority] = findSymbol("PRIO_ATTACK")->get_int();
+  vm.call_function<void>("B_BELIARSWEAPONSPECIALDAMAGE",other(),self);
+
+  const auto hammer = int(findSymbolIndex("HOLY_HAMMER_MIS"));
+  if(npc_hasitems(other(),hammer)>0) {
+    const auto golem = hlp_getnpc(int(findSymbolIndex("MAGICGOLEM")));
+    findSymbol("B_MM_ASSESSDAMAGE.MAGGOL")->set_instance(golem);
+    npc_getinvitem(other(),hammer);
+    const auto weapon = npc_getreadiedweapon(other());
+    findSymbol("B_MM_ASSESSDAMAGE.OTHWEAP")->set_instance(weapon);
+    if(hlp_getinstanceid(vm.global_item()->get_instance())==hlp_getinstanceid(weapon) &&
+       hlp_getinstanceid(self)==hlp_getinstanceid(golem)) {
+      npc_changeattribute(self,ATR_HITPOINTS,-1000);
+      return;
+      }
+    }
+  if(ai[enemyOverride]==1 && self->guild==GIL_Stoneguardian)
+    vm.call_function<void>("B_AWAKE_STONEGUARDIAN",self);
+
+  const auto source = other();
+  const auto attack = int(findFunction("ZS_MM_ATTACK").ptr);
+  const bool predator = monsterPredatorFoundPrey(source,self);
+  if(!predator && npc_isinstate(self,attack)) {
+    if((ai[partyMember]==1 && npc_isplayer(source)) ||
+       (source->aivar[realId]==findSymbol("ID_SKELETON_MAGE")->get_int() && ai[realId]==findSymbol("ID_SKELETON")->get_int()))
+      return;
+    const auto hit = hlp_getinstanceid(source);
+    if(hit!=ai[lastTarget]) {
+      if(hit==ai[hitByOtherNpc])
+        npc_settarget(self,source);
+      else
+        ai[hitByOtherNpc] = hit;
+      }
+    return;
+    }
+  npc_clearaiqueue(self);
+  npc_settarget(self,source);
+  vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+  ai_startstate(self,predator ? int(findFunction("ZS_MM_FLEE").ptr) : attack,0,"");
+  }
+
+void GameScript::runMonsterAssessOthersDamage() {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::static_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto victim = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_victim()->get_instance());
+  const auto range = findSymbol("PERC_DIST_INTERMEDIAT")->get_int();
+  if((npc_getdisttonpc(self,other)>range && npc_getdisttonpc(self,victim)>range) || !npc_canseenpcfreelos(self,victim))
+    return;
+
+  const auto attack = [&](const std::shared_ptr<daedalus::INpc>& target) {
+    npc_clearaiqueue(self);
+    vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+    npc_settarget(self,target);
+    ai_startstate(self,int(findFunction("ZS_MM_ATTACK").ptr),0,"");
+    };
+  if(self->aivar[partyMember]==1) {
+    if(npc_isplayer(victim)) {
+      attack(other);
+      return;
+      }
+    if(!npc_isdead(victim) && npc_isplayer(other)) {
+      attack(victim);
+      return;
+      }
+    }
+  if(self->guild==GIL_WOLF && npc_isdead(victim) && npc_isplayer(other) && other->guild==GIL_WOLF && victim->guild==GIL_WOLF) {
+    npc_clearaiqueue(self);
+    vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+    const auto summoned = int(findFunction("ZS_MM_RTN_SUMMONED").ptr);
+    self->start_aistate = summoned;
+    ai_startstate(self,summoned,0,"");
+    return;
+    }
+  if(self->aivar[enemyOverride]==1 && self->guild==GIL_Stoneguardian && victim->guild==GIL_Stoneguardian)
+    vm.call_function<void>("B_AWAKE_STONEGUARDIAN",self);
+
+  const bool friendlyToSource = wld_getguildattitude(self->guild,other->guild)==ATT_FRIENDLY;
+  const bool friendlyToVictim = wld_getguildattitude(self->guild,victim->guild)==ATT_FRIENDLY;
+  if(!friendlyToSource && friendlyToVictim)
+    attack(other);
+  else if(!npc_isdead(victim) && !friendlyToVictim && friendlyToSource)
+    attack(victim);
   }
 
 bool GameScript::monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey) {
