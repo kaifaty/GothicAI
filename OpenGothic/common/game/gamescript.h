@@ -441,6 +441,9 @@ class GameScript final : public GameRules {
     bool hasAttackReasonToKill(const std::shared_ptr<daedalus::INpc>& npc);
     bool wantsToAttackSheepKiller(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     bool wantsToAttackThief(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool wantsToAttackMurderer(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool belongsToBanditCamp(const std::shared_ptr<daedalus::INpc>& npc);
+    bool isNpcDownInScript(const std::shared_ptr<daedalus::INpc>& npc);
     void runDamageReaction();
     int32_t runEnemyReaction();
     void runPlayerAssessment();
@@ -451,6 +454,7 @@ class GameScript final : public GameRules {
     void runPropertyCrime(bool usingMob);
     void runMoveMobReaction();
     void runSurpriseReaction();
+    void runMurderReaction();
     void startHumanWarning(const std::shared_ptr<daedalus::INpc>& self, ScriptFn state);
     int32_t botheredByWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void loadNativeEquipment();
@@ -741,6 +745,7 @@ class GameScript final : public GameRules {
     ScriptFn                                                    useMobCallback;
     ScriptFn                                                    moveMobCallback;
     ScriptFn                                                    surpriseCallback;
+    ScriptFn                                                    murderCallback;
     ScriptFn                                                    stopShortZapCallback;
     ScriptFn                                                    restartTentacleCallback;
     std::unordered_map<uint32_t,NativeRoutinePhase>              nativeRoutinePhases;

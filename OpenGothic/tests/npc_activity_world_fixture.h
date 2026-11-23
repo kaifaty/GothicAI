@@ -2610,8 +2610,6 @@ void enemyPerceptions(World& world,Npc& npc,Npc& hero) {
   const auto enemy=script.findFunction("B_ASSESSENEMY");
   const auto enemyPc=vm.find_symbol_by_name("B_ASSESSENEMY")->address();
   const auto player=script.findFunction("B_ASSESSPLAYER");
-  const auto murder=script.findFunction("B_ASSESSMURDER");
-  auto* lobart=activityNpc(world,"BAU_950_LOBART");
   const auto attack=script.findFunction("ZS_ATTACK");
   const auto observe=script.findFunction("ZS_OBSERVEPLAYER");
   const auto playerReason=script.intSymbol("AR_REACTTOWEAPON",-1);
@@ -2627,17 +2625,16 @@ void enemyPerceptions(World& world,Npc& npc,Npc& hero) {
   const auto savedNpcGuild=npc.handle().guild;
   const auto savedHeroGuild=hero.handle().guild;
   const auto savedInvincible=hero.handle().aivar[4];
-  require(lobart && Contract::aiState(npc).started && !hero.isDown() && npc.qDistTo(hero)<500.f*500.f &&
+  require(Contract::aiState(npc).started && !hero.isDown() && npc.qDistTo(hero)<500.f*500.f &&
           script.guildAttitude(npc,hero)!=ATT_HOSTILE,"enemy perception: a live player is nearby without an old guild feud");
   hero.handle().aivar[4]=0;
   npc.setAttitude(ATT_HOSTILE);
 
-  enum class Site { BeforeDelay, AfterDelay, ObservingPlayer, MurderBl, OpposedGuild, EnemyOverride };
-  for(auto site:{Site::BeforeDelay,Site::AfterDelay,Site::ObservingPlayer,Site::MurderBl,Site::OpposedGuild,Site::EnemyOverride}) {
+  enum class Site { BeforeDelay, AfterDelay, ObservingPlayer, TalkBl, OpposedGuild, EnemyOverride };
+  for(auto site:{Site::BeforeDelay,Site::AfterDelay,Site::ObservingPlayer,Site::TalkBl,Site::OpposedGuild,Site::EnemyOverride}) {
     const bool guildFeud=site==Site::OpposedGuild;
     const bool playerAssessment=site==Site::ObservingPlayer;
-    const bool murderAssessment=site==Site::MurderBl;
-    const bool watching=playerAssessment || murderAssessment;
+    const bool watching=playerAssessment || site==Site::TalkBl;
     const bool hostile=site!=Site::BeforeDelay && site!=Site::EnemyOverride;
     npc.handle().guild=guildFeud ? uint32_t(GIL_MIL) : savedNpcGuild;
     hero.handle().guild=guildFeud ? uint32_t(GIL_BDT) : savedHeroGuild;
@@ -2657,16 +2654,16 @@ void enemyPerceptions(World& world,Npc& npc,Npc& hero) {
       npc.aiPush(AiQueue::aiWait(173));
       npc.setPerceptionEnable(PERC_ASSESSENEMY,enemy.ptr);
       npc.setPerceptionEnable(PERC_ASSESSPLAYER,player.ptr);
-      npc.setPerceptionEnable(PERC_ASSESSMURDER,murder.ptr);
+      npc.setPerceptionEnable(PERC_ASSESSTALK,script.findFunction("B_ASSESSTALK").ptr);
       size_t bytecode=0,playerCalls=0;
       vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==enemyPc; });
       const auto observer=vm.add_call_observer([&](const auto& sym) { playerCalls+=sym.name()=="B_ASSESSPLAYER"; });
-      const auto perc=playerAssessment ? PERC_ASSESSPLAYER : murderAssessment ? PERC_ASSESSMURDER : PERC_ASSESSENEMY;
-      const bool delivered=npc.perceptionProcess(hero,murderAssessment ? lobart : nullptr,npc.qDistTo(hero),perc);
+      const auto perc=playerAssessment ? PERC_ASSESSPLAYER : site==Site::TalkBl ? PERC_ASSESSTALK : PERC_ASSESSENEMY;
+      const bool delivered=npc.perceptionProcess(hero,nullptr,npc.qDistTo(hero),perc);
       vm.remove_call_observer(observer);
       vm.observe_instructions({});
       require(delivered && bytecode==(native ? 0u : 1u) && playerCalls==(!native && playerAssessment ? 1u : 0u),
-              "enemy perception: direct, player and murder callbacks skip enemy bytecode in native mode");
+              "enemy perception: direct, player and talk callbacks skip enemy bytecode in native mode");
       const auto* next=npc.aiQueueFront();
       if(hostile) {
         require(next && next->act==AI_StartState && next->func==attack && next->target==&hero && next->i0==0 &&
@@ -2691,7 +2688,7 @@ void enemyPerceptions(World& world,Npc& npc,Npc& hero) {
   npc.handle().guild=savedNpcGuild;
   hero.handle().guild=savedHeroGuild;
   hero.handle().aivar[4]=savedInvincible;
-  std::puts("Enemy perception: direct, player and murder assessment match the VM for delay, observation, guild and override");
+  std::puts("Enemy perception: direct, player and talk assessment match the VM for delay, observation, guild and override");
   }
 
 void playerAssessmentRoutes(World& world,Npc& npc,Npc& hero) {
@@ -3031,6 +3028,8 @@ void fightWatchPerceptions(World& world,Npc& npc,Npc& hero) {
   std::puts("Fight witnesses: defeat and cheering match the VM");
   }
 
+#include "npc_murder_world_fixture.h"
+
 void quietSoundRooms(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -3219,6 +3218,7 @@ void quietSoundRooms(Gothic& gothic) {
   propertyCrimePerceptions(world,*npc,hero);
   moveMobAndSurprisePerceptions(world,*npc,hero);
   fightWatchPerceptions(world,*npc,hero);
+  murderPerceptions(world,*npc,hero);
   for(bool privateRoom:{false,true}) {
     std::vector<std::string> original;
     for(bool native:{false,true}) {

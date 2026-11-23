@@ -374,6 +374,7 @@ void GameScript::loadNativeHumanPerceptions() {
   useMobCallback = findFunction("B_ASSESSUSEMOB");
   moveMobCallback = findFunction("B_MOVEMOB");
   surpriseCallback = findFunction("B_ASSESSSURPRISE");
+  murderCallback = findFunction("B_ASSESSMURDER");
   stopShortZapCallback = findFunction("B_STOPSHORTZAPPED");
   restartTentacleCallback = findFunction("B_RESTARTGREENTENTACLE");
   const auto enabled = [this] { return nativeHumanPerceptionsEnabled(); };
@@ -393,6 +394,15 @@ void GameScript::loadNativeHumanPerceptions() {
   vm.override_function("C_NPCISBOTHEREDBYWEAPON",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     return botheredByWeapon(self,other);
     }},enabled);
+  vm.override_function("C_WANTTOATTACKMURDER",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    return wantsToAttackMurderer(self,other);
+    }},enabled);
+  vm.override_function("C_NPCBELONGSTOBL",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    return belongsToBanditCamp(npc);
+    }},enabled);
+  vm.override_function("C_NPCISDOWN",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    return isNpcDownInScript(npc);
+    }},enabled);
   }
 
 bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase) {
@@ -402,7 +412,7 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
   const bool fightWitness = fn==fightDefeatCallback || fn==cheerFightCallback;
   const bool companionFight = fn==followFightSoundCallback || fn==guideFightSoundCallback;
   if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=warnCallback && fn!=fightSoundCallback &&
-      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && fn!=followPlayerCallback &&
+      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && fn!=murderCallback && fn!=followPlayerCallback &&
       fn!=guidePlayerCallback && !companionFight && !propertyCrime && !stopShortZap && !restartTentacle && !fightWitness &&
       fn!=moveMobCallback && fn!=surpriseCallback) ||
      !nativeHumanPerceptionsEnabled())
@@ -428,6 +438,8 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
     runMoveMobReaction();
   else if(fn==surpriseCallback)
     runSurpriseReaction();
+  else if(fn==murderCallback)
+    runMurderReaction();
   else if(fn==warnCallback)
     runWarnReaction();
   else if(fn==fightSoundCallback)
@@ -555,6 +567,31 @@ bool GameScript::wantsToAttackThief(const std::shared_ptr<daedalus::INpc>& self,
   return !isGateGuard(self);
   }
 
+bool GameScript::wantsToAttackMurderer(const std::shared_ptr<daedalus::INpc>& self,
+                                      const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("C_WANTTOATTACKMURDER.OTH")->set_instance(other);
+  findSymbol("C_WANTTOATTACKMURDER.SLF")->set_instance(self);
+  constexpr size_t ignoreMurder = 54; // AIV_IGNORE_MURDER
+  if(self) {
+    const auto guild = self->guild;
+    if(guild==GIL_BDT || guild==GIL_DJG || guild==GIL_STRF || guild==GIL_DMT ||
+       self->aivar[ignoreMurder]==1 || (self->type==NpcType::G2_FRIEND && npc_isplayer(other)))
+      return false;
+    }
+  return !hasAttackReasonToKill(other) && !isGateGuard(self);
+  }
+
+bool GameScript::belongsToBanditCamp(const std::shared_ptr<daedalus::INpc>& npc) {
+  findSymbol("C_NPCBELONGSTOBL.SLF")->set_instance(npc);
+  return npc && (npc->type==NpcType::G2_BL_MAIN || npc->type==NpcType::G2_BL_AMBIENT);
+  }
+
+bool GameScript::isNpcDownInScript(const std::shared_ptr<daedalus::INpc>& npc) {
+  findSymbol("C_NPCISDOWN.SLF")->set_instance(npc);
+  return npc_isdead(npc) || npc_isinstate(npc,int(findFunction("ZS_MAGICSLEEP").ptr)) ||
+         npc_isinstate(npc,int(ZS_Unconscious));
+  }
+
 void GameScript::runFightSoundReaction() {
   using Actor = std::shared_ptr<daedalus::INpc>;
   const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
@@ -634,10 +671,7 @@ void GameScript::runFightSoundReaction() {
     npc_perceiveall(self);
     npc_getnexttarget(self); // Updates OTHER before the validation and queued target use.
     const auto target = other();
-    findSymbol("C_NPCISDOWN.SLF")->set_instance(target);
-    const bool down = npc_isdead(target) || npc_isinstate(target,int(findFunction("ZS_MAGICSLEEP").ptr)) ||
-                      npc_isinstate(target,int(findFunction("ZS_UNCONSCIOUS").ptr));
-    if(!down && hlp_isvalidnpc(target))
+    if(!isNpcDownInScript(target) && hlp_isvalidnpc(target))
       attack(target,"AR_GUILDENEMY");
     return;
     }
@@ -949,6 +983,74 @@ void GameScript::runPropertyCrime(bool usingMob) {
   startNpcAttack(self,other(),reason,0);
   }
 
+void GameScript::runMurderReaction() {
+  constexpr size_t dropDeadAndKill = 52; // AIV_DROPDEADANDKILL
+  constexpr size_t toughGuy = 57; // AIV_TOUGHGUY
+  constexpr size_t enemyOverride = 61; // AIV_ENEMYOVERRIDE
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto victim = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_victim()->get_instance());
+  const auto constant = [&](std::string_view name) { return findSymbol(name)->get_int(); };
+  const auto attack = [&](std::string_view reason) { startNpcAttack(self,other(),constant(reason),0); };
+  const auto report = [&](std::string_view crime) { memorizePlayerCrime(self,other(),constant(crime)); };
+  const auto guild = [](const std::shared_ptr<daedalus::INpc>& actor) { return actor ? int32_t(actor->guild) : 0; };
+  const auto killer = other();
+  if(self==nullptr || hlp_getinstanceid(killer)==hlp_getinstanceid(self))
+    return;
+  const auto range = constant("PERC_DIST_INTERMEDIAT");
+  const auto height = constant("PERC_DIST_HEIGHT");
+  if((npc_getdisttonpc(self,victim)>range && npc_getdisttonpc(self,killer)>range) ||
+     (npc_getheighttonpc(self,victim)>height && npc_getheighttonpc(self,killer)>height) ||
+     (!npc_canseenpcfreelos(self,victim) && !npc_canseenpcfreelos(self,killer)))
+    return;
+  if(runEnemyReaction()!=0)
+    return;
+
+  const auto victimGuild = guild(victim);
+  if(victim && victim->aivar[toughGuy]==0 && victimGuild==GIL_SHEEP) {
+    if(wantsToAttackSheepKiller(self,other())) {
+      attack("AR_SHEEPKILLER");
+      return;
+      }
+    if(isGateGuard(self))
+      report("CRIME_SHEEPKILLER");
+    }
+  const auto separator = constant("GIL_SEPERATOR_HUM");
+  if(victimGuild>separator)
+    return;
+  if(guild(other())>separator) {
+    attack("AR_MONSTERMURDEREDHUMAN");
+    return;
+    }
+  if(self->aivar[enemyOverride]==1) {
+    self->aivar[enemyOverride] = 0;
+    npc_perceiveall(self);
+    npc_getnexttarget(self);
+    if(!isNpcDownInScript(other()) && hlp_isvalidnpc(other()))
+      attack("AR_GUILDENEMY");
+    return;
+    }
+
+  const auto attitudeToKiller = npc_getattitude(self,other());
+  const auto attitudeToVictim = npc_getattitude(self,victim);
+  if((attitudeToKiller==ATT_NEUTRAL || attitudeToKiller==ATT_FRIENDLY) &&
+     (attitudeToVictim==ATT_ANGRY || attitudeToVictim==ATT_HOSTILE))
+    return;
+  if(self->type==NpcType::G2_FRIEND && npc_isplayer(other()))
+    return;
+  if(!wantsToAttackMurderer(self,other())) {
+    if(isGateGuard(self))
+      report("CRIME_MURDER");
+    return;
+    }
+  const auto attacker = other();
+  if((victim && victim->aivar[dropDeadAndKill]==1) || (attacker && attacker->aivar[dropDeadAndKill]==1))
+    return;
+  if((!belongsToBanditCamp(victim) && victimGuild==GIL_BDT) || victimGuild==GIL_DMT)
+    return;
+  attack("AR_HUMANMURDEREDHUMAN");
+  }
+
 void GameScript::runPlayerAssessment() {
   constexpr size_t startedTalk = 3; // AIV_NPCSTARTEDTALK
   constexpr size_t invincible = 4; // AIV_INVINCIBLE
@@ -971,7 +1073,7 @@ void GameScript::runPlayerAssessment() {
   findSymbol("B_ASSESSPLAYER.PCL")->set_instance(inspector);
   const auto source = other();
   if(hlp_getinstanceid(source)==hlp_getinstanceid(inspector) || self==nullptr || (source && source->aivar[invincible]==1) ||
-     vm.call_function<int32_t>("C_NPCISDOWN",source)!=0)
+     isNpcDownInScript(source))
     return;
 
   const auto otherGuild = source ? int32_t(source->guild) : 0;
@@ -994,7 +1096,7 @@ void GameScript::runPlayerAssessment() {
     startNpcAttack(self,other(),constant("AR_GUILDENEMY"),0);
 
   const bool near = distance()<=constant("PERC_DIST_INTERMEDIAT");
-  const bool pursueMurderer = vm.call_function<int32_t>("C_WANTTOATTACKMURDER",self,other())!=0;
+  const bool pursueMurderer = wantsToAttackMurderer(self,other());
   const bool murdered = playerCrime(self)==constant("CRIME_MURDER");
   if(near && pursueMurderer && murdered) {
     startNpcAttack(self,other(),constant("AR_HUMANMURDEREDHUMAN"),0);
@@ -1156,7 +1258,7 @@ bool GameScript::runHumanFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
     npc_gettarget(self);
     const auto target = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
     if(npc_getdisttonpc(self,target)>findSymbol("FIGHT_DIST_CANCEL")->get_int() ||
-       vm.call_function<int32_t>("C_NPCISDOWN",target)!=0) {
+       isNpcDownInScript(target)) {
       npc_clearaiqueue(self);
       result = LOOP_END;
       } else {
@@ -1411,7 +1513,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
   const auto constant = [&](std::string_view name) { return findSymbol(name)->get_int(); };
   const auto absolution = [&] { return currentAbsolutionLevel(self); };
   const auto bodyState = [&](int32_t body) { return vm.call_function<int32_t>("C_BODYSTATECONTAINS",other(),body)!=0; };
-  const auto targetDown = [&] { return vm.call_function<int32_t>("C_NPCISDOWN",other())!=0; };
+  const auto targetDown = [&] { return isNpcDownInScript(other()); };
   const auto stopPursuit = [&] {
     npc_clearaiqueue(self);
     ai_standup(self);
@@ -1947,8 +2049,7 @@ int32_t GameScript::currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>
   findSymbol("C_NPCBELONGSTOFARM.SLF")->set_instance(self);
   if(guild==GIL_SLD || guild==GIL_BAU)
     return findSymbol("ABSOLUTIONLEVEL_FARM")->get_int();
-  findSymbol("C_NPCBELONGSTOBL.SLF")->set_instance(self);
-  if(type==NpcType::G2_BL_MAIN || type==NpcType::G2_BL_AMBIENT)
+  if(belongsToBanditCamp(self))
     return findSymbol("ABSOLUTIONLEVEL_BL")->get_int();
   return 0;
   }

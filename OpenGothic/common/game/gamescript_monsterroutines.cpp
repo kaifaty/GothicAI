@@ -328,7 +328,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     vm.call_function<void>("B_SELECTWEAPON",self,other());
     }
   const auto target = other();
-  if(!monsterTargetIsDown(target) && hlp_isvalidnpc(target)) {
+  if(!isNpcDownInScript(target) && hlp_isvalidnpc(target)) {
     if(target->aivar[invincible]==0)
       ai_attack(self);
     else
@@ -347,7 +347,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
   npc_getnexttarget(self);
   const auto next = other();
   const bool closeOrPlayer = npc_isplayer(next) || distanceToTarget()<findSymbol("PERC_DIST_INTERMEDIAT")->get_int();
-  const bool down = monsterTargetIsDown(next);
+  const bool down = isNpcDownInScript(next);
   if(next!=nullptr && next->aivar[invincible]==0 && closeOrPlayer && !down && hlp_isvalidnpc(next)) {
     ai[lastTarget] = hlp_getinstanceid(next);
     result = LOOP_CONTINUE;
