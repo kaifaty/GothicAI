@@ -156,3 +156,26 @@ bool NpcHelperRuntime::invoke(DaedalusVm& vm,const std::shared_ptr<INpc>& npc,
   run(found->second,args,host);
   return true;
   }
+
+bool NpcHelperRuntime::addFightSkill(DaedalusVm& vm,const std::shared_ptr<INpc>& npc,
+                                    int32_t talent,int32_t percent,const Definitions& definitions) {
+  if(!enabled()) return false;
+  const auto* helper=vm.find_symbol_by_name("B_ADDFIGHTSKILL");
+  if(helper==nullptr) return false;
+  const auto found=definitions.helpers.find(helper->index());
+  if(found==definitions.helpers.end() || !std::holds_alternative<AddFightSkill>(found->second))
+    return false;
+
+  struct RestoreContext {
+    DaedalusVm& vm;
+    std::shared_ptr<DaedalusInstance> previous;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(previous)); }
+    } restore{vm,vm.unsafe_get_gi()};
+  std::array<Value,3> args{};
+  args[0].kind=Kind::Self;
+  args[1].integer=talent;
+  args[2].integer=percent;
+  RuntimeHost host(vm,npc,definitions);
+  run(found->second,args,host);
+  return true;
+  }

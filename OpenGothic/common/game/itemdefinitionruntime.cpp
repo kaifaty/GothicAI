@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 #include <type_traits>
 
@@ -159,4 +160,30 @@ void ItemDefinitionRuntime::registerStockArmorSetEffects(Definitions& definition
       definitions.armorSetEffects.emplace(function->index(),ArmorSetEffect{armorFlag->index(),beltFlag->index(),equip});
       }
     }
+  }
+
+void ItemDefinitionRuntime::registerStockFightSkillEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
+  const auto bind = [&](std::string_view suffix, Talent talent, int32_t bonus, bool playerOnly) {
+    for(bool equip : {true,false}) {
+      const auto name = std::string(equip ? "EQUIP_" : "UNEQUIP_").append(suffix);
+      const auto* function = program.find_symbol_by_name(name);
+      if(function==nullptr)
+        throw std::runtime_error("stock weapon skill: missing symbol "+name);
+      definitions.fightSkillEffects.emplace(function->index(),FightSkillEffect{talent,equip ? bonus : -bonus,playerOnly});
+      }
+    };
+  const auto bindWeapons = [&](std::string_view hand, Talent talent, std::initializer_list<int> bonuses) {
+    for(const auto bonus : bonuses) {
+      const auto suffix = (bonus<10 ? "0" : "")+std::to_string(bonus);
+      const auto* constant = program.find_symbol_by_name("WAFFENBONUS_"+suffix);
+      if(constant==nullptr)
+        throw std::runtime_error("stock weapon skill: missing bonus "+suffix);
+      bind(std::string(hand).append(suffix),talent,constant->get_int(),true);
+      }
+    };
+  // The remaining generic tiers have no stock item bindings.
+  bindWeapons("1H_",TALENT_1H,{2,3,5,6,7,8,10});
+  bindWeapons("2H_",TALENT_2H,{2,3,4,5,10});
+  bind("ALRIKSSWORD",TALENT_1H,10,false);
+  bind("MORGANSRING",TALENT_1H,10,false);
   }

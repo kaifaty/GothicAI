@@ -2444,6 +2444,78 @@ auto stockArmorSetEffects(World& world, bool native) {
   return std::pair{withSet,beltOnly};
   }
 
+bool stockItemFightSkillEffects(World& world, bool native) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& hero=*world.player();
+  auto* jora=activityNpc(world,"VLK_408_JORA");
+  const auto alrikSword=script.findSymbolIndex("ITMW_ALRIKSSWORD_MIS");
+  const auto sword=script.findSymbolIndex("ITMW_1H_VLK_SWORD");
+  const auto club=script.findSymbolIndex("ITMW_ADDON_KEULE_1H_01");
+  const auto staff=script.findSymbolIndex("ITMW_ADDON_STAB01");
+  require(jora && jora->currentMeleeWeapon() && jora->currentMeleeWeapon()->clsId()==alrikSword,
+          "weapon skill: the actual merchant must already wear Alrik's sword");
+  if(const auto* prior=hero.currentMeleeWeapon())
+    hero.unequipItem(prior->clsId());
+  auto equip=[&](Npc& actor, size_t item) {
+    require(actor.itemCount(item)!=0 || actor.addItem(item,1),"weapon skill: add the actual stock item");
+    actor.useItem(item,Item::NSLOT,true);
+    require(actor.currentMeleeWeapon() && actor.currentMeleeWeapon()->clsId()==item,
+            "weapon skill: equip through the inventory slot");
+    };
+  auto setSkill=[](Npc& actor, Talent talent, int32_t chance, int32_t level) {
+    actor.handle().hitchance[talent]=chance;
+    actor.setTalentSkill(talent,level);
+    };
+  auto hasSkill=[](const Npc& actor, Talent talent, int32_t chance, int32_t level) {
+    return actor.hitChance(talent)==chance && actor.talentSkill(talent)==level;
+    };
+  const auto& helpers=NpcDefinitionContract::definitions(script).helpers.helpers;
+  const bool typed=native && NpcHelperRuntime::enabled() &&
+                   helpers.contains(script.findSymbol("B_ADDFIGHTSKILL")->index());
+  size_t weapons=0,helper=0,stages=0;
+  const auto observer=vm.add_call_observer([&](const auto& fn) {
+    weapons+=fn.name().starts_with("EQUIP_1H_") || fn.name().starts_with("UNEQUIP_1H_") ||
+             fn.name().starts_with("EQUIP_2H_") || fn.name().starts_with("UNEQUIP_2H_") ||
+             fn.name().ends_with("EQUIP_ALRIKSSWORD");
+    helper+=fn.name()=="B_ADDFIGHTSKILL";
+    });
+  vm.observe_externals([&](const auto& fn) { stages+=fn.name()=="NPC_SETTALENTSKILL"; });
+  setSkill(*jora,TALENT_1H,60,2);
+  jora->unequipItem(alrikSword);
+  require(hasSkill(*jora,TALENT_1H,50,1),"weapon skill: Alrik's sword removes the merchant's master rank");
+  equip(*jora,sword);
+  jora->unequipItem(sword);
+  require(hasSkill(*jora,TALENT_1H,50,1) && script.findSymbol("B_ADDFIGHTSKILL.PERCENT")->get_int()==-10,
+          "weapon skill: generic blades leave an NPC's skill and the helper arguments untouched");
+  equip(*jora,alrikSword);
+  require(hasSkill(*jora,TALENT_1H,60,2),"weapon skill: Alrik's sword restores the NPC's master rank");
+
+  setSkill(hero,TALENT_1H,32,1);
+  equip(hero,club);
+  require(hasSkill(hero,TALENT_1H,22,0),"weapon skill: the stock club's reversed binding subtracts while worn");
+  hero.unequipItem(club);
+  require(hasSkill(hero,TALENT_1H,32,1),"weapon skill: removing the stock club restores the original rank");
+
+  const auto oldTwoHand=std::pair{hero.hitChance(TALENT_2H),hero.talentSkill(TALENT_2H)};
+  setSkill(hero,TALENT_1H,-1,0);
+  setSkill(hero,TALENT_2H,20,2);
+  equip(hero,staff);
+  require(hasSkill(hero,TALENT_2H,23,2),"weapon skill: the two-handed novice check still reads the one-handed percentage");
+  hero.unequipItem(staff);
+  setSkill(hero,TALENT_2H,oldTwoHand.first,oldTwoHand.second);
+  setSkill(hero,TALENT_1H,25,0);
+  const auto context=vm.unsafe_get_gi();
+  equip(hero,sword);
+  vm.observe_externals({});
+  vm.remove_call_observer(observer);
+  const size_t expectedCallbacks=typed ? 0u : native ? 7u : 9u;
+  require(hasSkill(hero,TALENT_1H,30,1) && weapons==expectedCallbacks && helper==(typed ? 0u : 7u) &&
+          stages==10 && vm.unsafe_get_gi()==context,
+          "weapon skill: the hero reaches the fighter threshold through the selected executor");
+  return typed;
+  }
+
 void npcUnconsciousLifecycle(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   constexpr auto* actor="BAU_951_HILDA";
@@ -2486,6 +2558,7 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   std::vector<uint8_t> knockedOut,healing,pendingPotion;
   std::pair<std::vector<size_t>,std::vector<std::string>> stockEquipment;
   std::pair<std::array<int32_t,PROT_MAX>,std::array<int32_t,PROT_MAX>> stockArmor;
+  bool typedWeaponEffects=false;
   int32_t originalXp=0;
   for(bool native:{false,true}) {
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
@@ -2510,6 +2583,7 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     const auto armor=stockArmorSetEffects(world,native);
     if(native) require(armor==stockArmor,"armor sets: native protection matches the stock callbacks");
     else stockArmor=armor;
+    typedWeaponEffects=stockItemFightSkillEffects(world,native);
     script.setSeed(73106);
     const auto beforeXp=hero.experience();
     const auto wakeAt=int64_t(script.findSymbol("HAI_TIME_UNCONSCIOUS")->get_int())*1000;
@@ -2699,10 +2773,11 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   auto& potionWorld=*gothic.world();
   auto& potionScript=potionWorld.script();
   auto& potionVm=potionScript.getVm();
-  size_t loadedPotionCalls=0,loadedArmorCalls=0;
+  size_t loadedPotionCalls=0,loadedArmorCalls=0,loadedWeaponCalls=0;
   const auto potionObserver=potionVm.add_call_observer([&](const auto& symbol) {
     loadedPotionCalls+=symbol.name()=="USEITPO_HEALTH_03";
     loadedArmorCalls+=symbol.name()=="UNEQUIP_ITAR_MIL_L";
+    loadedWeaponCalls+=symbol.name()=="UNEQUIP_1H_05";
     });
   auto& armoredHero=*potionWorld.player();
   const auto armor=potionScript.findSymbolIndex("ITAR_MIL_L");
@@ -2715,6 +2790,18 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   require(!armoredHero.currentArmor() && potionScript.findSymbol("MILARMOR_EQUIPPED")->get_int()==0 &&
           std::to_array(armoredHero.handle().protection)==stockArmor.second && loadedArmorCalls==0,
           "armor sets: native unequip removes the saved bonus exactly once");
+  const auto sword=potionScript.findSymbolIndex("ITMW_1H_VLK_SWORD");
+  require(armoredHero.currentMeleeWeapon() && armoredHero.currentMeleeWeapon()->clsId()==sword &&
+          armoredHero.hitChance(TALENT_1H)==30 && armoredHero.talentSkill(TALENT_1H)==1 &&
+          potionScript.findSymbol("B_ADDFIGHTSKILL.SLF")->get_instance()==
+            std::static_pointer_cast<daedalus::INpc>(armoredHero.handlePtr()) &&
+          potionScript.findSymbol("B_ADDFIGHTSKILL.PERCENT")->get_int()==5 &&
+          potionScript.findSymbol("B_ADDFIGHTSKILL.TALENT")->get_int()==TALENT_1H,
+          "weapon skill: loading the VM-era save must keep the weapon, rank, and helper arguments");
+  armoredHero.unequipItem(sword);
+  require(!armoredHero.currentMeleeWeapon() && armoredHero.hitChance(TALENT_1H)==25 &&
+          armoredHero.talentSkill(TALENT_1H)==0 && loadedWeaponCalls==(typedWeaponEffects ? 0u : 1u),
+          "weapon skill: removal must subtract the saved bonus once and return to novice");
   require(potionScript.findSymbol("B_SELECTSPELL.DK_RND")->get_int()==int32_t(std::mt19937(73106)()%10),
           "equipment: normal load keeps the original saved spell-selection draw");
   auto* drinker=activityNpc(potionWorld,actor);

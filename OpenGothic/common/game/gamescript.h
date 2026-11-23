@@ -356,6 +356,7 @@ class GameScript final : public GameRules {
     void loadNativeRoomReaction();
     void loadNativeEquipment();
     bool applyArmorSetEffect(Npc& npc, uint32_t callback);
+    bool applyFightSkillItemEffect(Npc& npc, uint32_t callback);
     void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
     void selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     int32_t runEnterRoomReaction();
