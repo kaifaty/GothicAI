@@ -2486,6 +2486,11 @@ void controlSpellPhases(World& world,Npc& npc,Npc& hero) {
   const auto savedAttitude=npc.attitude();
   const auto savedTempAttitude=npc.tempAttitude();
   const auto savedTime=npc.stateTime();
+  auto& lastHitSpell=Contract::lastHitSpell(npc);
+  const auto savedLastHitSpell=lastHitSpell;
+  const auto tentacleSpell=script.intSymbol("SPL_GREENTENTACLE",-1);
+  const auto otherSpell=script.intSymbol("SPL_FIREBOLT",-1);
+  require(tentacleSpell>=0 && otherSpell>=0 && tentacleSpell!=otherSpell,"green tentacle: the fixture needs two distinct stock spell IDs");
   auto& aivar=npc.handle().aivar;
   const auto savedAivar=std::to_array(aivar);
   const auto wolfGuild=script.intSymbol("GIL_WOLF",-1);
@@ -2510,10 +2515,11 @@ void controlSpellPhases(World& world,Npc& npc,Npc& hero) {
     pose.set_int(2);
     script.setSeed(73106);
     ActivityStream stream(world,npc);
-    size_t phases=0,stopCalls=0,damageCalls=0,invocations=0;
+    size_t phases=0,stopCalls=0,restartCalls=0,damageCalls=0,invocations=0;
     const auto observer=vm.add_call_observer([&](const auto& sym) {
       phases+=sym.name().starts_with("ZS_GREENTENTACLE") || sym.name().starts_with("ZS_SHORTZAPPED");
       stopCalls+=sym.name()=="B_STOPGREENTENTACLE" || sym.name()=="B_STOPSHORTZAPPED";
+      restartCalls+=sym.name()=="B_RESTARTGREENTENTACLE";
       damageCalls+=sym.name()=="B_ASSESSDAMAGE";
       });
     const auto invoke=[&](size_t phase,int time=0) {
@@ -2528,6 +2534,15 @@ void controlSpellPhases(World& world,Npc& npc,Npc& hero) {
     const auto humanPose=queue.pop();
     require(humanPose.act==AI_PlayAnimBs && humanPose.s0=="T_STAND_2_GREENTENTACLEC_VICTIM" &&
             humanPose.i0==BS_UNCONSCIOUS && pose.get_int()==2,"green tentacle: Init keeps the spell's selected pose");
+    const auto pending=activityQueue(npc);
+    for(const auto& [spell,expected]:{std::pair{otherSpell,17000u},std::pair{tentacleSpell,0u}}) {
+      npc.setStateTime(17000);
+      lastHitSpell=spell;
+      require(npc.perceptionProcess(hero,&npc,0,PERC_ASSESSMAGIC),"green tentacle: the active state receives subsequent magic");
+      require(npc.stateTime()==expected && activityQueue(npc)==pending,
+              "green tentacle: only a matching last hit restarts the timer and the queue is preserved");
+      }
+    lastHitSpell=savedLastHitSpell;
     npc.clearAiQueue();
     require(invoke(tentacle.loop,20999)==LOOP_CONTINUE && npc.isAiQueueEmpty() &&
             invoke(tentacle.loop,21000)==LOOP_END,"green tentacle: the timeout compares whole seconds");
@@ -2562,7 +2577,8 @@ void controlSpellPhases(World& world,Npc& npc,Npc& hero) {
             "green tentacle: a nonhuman stop restores magic perception and sets hostility");
     vm.remove_call_observer(observer);
     require(phases==(native ? 0u : invocations) && stopCalls==(native ? 0u : 4u) && damageCalls==(native ? 0u : 3u) &&
-            stream.records==(native ? invocations+1 : 0u),"spell control: all phases and the routed stop use the selected executor");
+            restartCalls==(native ? 0u : 2u) && stream.records==(native ? invocations+3 : 0u),
+            "spell control: all phases and the routed reactions use the selected executor");
     std::erase_if(stream.events,[](const auto& event) {
       return !(event.starts_with("phase ") || event.starts_with("result ") ||
                event.starts_with("queue ") || event.starts_with("random "));
@@ -2582,7 +2598,7 @@ void controlSpellPhases(World& world,Npc& npc,Npc& hero) {
   npc.setTempAttitude(savedTempAttitude);
   npc.setStateTime(int64_t(savedTime));
   std::copy(savedAivar.begin(),savedAivar.end(),aivar);
-  std::puts("Spell control: green tentacle and short zap match the VM including timed and perceived stops");
+  std::puts("Spell control: green tentacle and short zap match the VM including timed and perceived stops, and selective restart");
   }
 
 void enemyPerceptions(World& world,Npc& npc,Npc& hero) {

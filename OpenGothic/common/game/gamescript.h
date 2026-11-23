@@ -739,6 +739,7 @@ class GameScript final : public GameRules {
     ScriptFn                                                    moveMobCallback;
     ScriptFn                                                    surpriseCallback;
     ScriptFn                                                    stopShortZapCallback;
+    ScriptFn                                                    restartTentacleCallback;
     std::unordered_map<uint32_t,NativeRoutinePhase>              nativeRoutinePhases;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
