@@ -1244,6 +1244,17 @@ int GameScript::invokeManaRelease(Npc &npc, Npc* target, int mana) {
 
   if(usesNativeShrinkSpell(npc.activeWeapon()))
     return runShrinkMana(npc,mana,true);
+  if(nativeRoutineProgram && activityEvents && !floorDefer.active() &&
+     ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off) {
+    const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+    findSymbol("SPELL_PROCESSMANA_RELEASE.MANAINVESTED")->set_int(mana);
+    const auto spell = npc_getactivespell(actor);
+    findSymbol("SPELL_PROCESSMANA_RELEASE.ACTIVESPELL")->set_int(spell);
+    for(const auto name : {"SPL_PYROKINESIS", "SPL_CHARGEFIREBALL", "SPL_CHARGEZAP", "SPL_WINDFIST"})
+      if(spell==findSymbol(name)->get_int())
+        return SPL_SENDCAST;
+    return SPL_SENDSTOP;
+    }
   return vm.call_function<int>(fn,mana);
   }
 

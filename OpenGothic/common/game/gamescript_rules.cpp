@@ -3828,6 +3828,7 @@ std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
   struct Admission {
     int spell;
     std::string_view invested, runeCost;
+    SpellCode denied = SPL_SENDSTOP;
     };
   // Stock dispatcher IDs whose handlers only store the argument and compare mana.
   static constexpr Admission admissions[] = {
@@ -3838,6 +3839,16 @@ std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
     { 4, "SPELL_LOGIC_PALREPELEVIL.MANAINVESTED", "SPL_COST_PALREPELEVIL"},
     { 5, "SPELL_LOGIC_PALFULLHEAL.MANAINVESTED", "SPL_COST_PALFULLHEAL"},
     { 6, "SPELL_LOGIC_PALDESTROYEVIL.MANAINVESTED", "SPL_COST_PALDESTROYEVIL"},
+    { 7, "SPELL_LOGIC_PALTELEPORTSECRET.MANAINVESTED", "SPL_COST_TELEPORT", SPL_NEXTLEVEL},
+    { 8, "SPELL_LOGIC_TELEPORTSEAPORT.MANAINVESTED", "SPL_COST_TELEPORT", SPL_NEXTLEVEL},
+    { 9, "SPELL_LOGIC_TELEPORTMONASTERY.MANAINVESTED", "SPL_COST_TELEPORT", SPL_NEXTLEVEL},
+    {10, "SPELL_LOGIC_TELEPORTFARM.MANAINVESTED", "SPL_COST_TELEPORT", SPL_NEXTLEVEL},
+    {11, "SPELL_LOGIC_TELEPORTXARDAS.MANAINVESTED", "SPL_COST_TELEPORT", SPL_NEXTLEVEL},
+    {12, "SPELL_LOGIC_TELEPORTPASSNW.MANAINVESTED", "SPL_COST_TELEPORT", SPL_NEXTLEVEL},
+    {13, "SPELL_LOGIC_TELEPORTPASSOW.MANAINVESTED", "SPL_COST_TELEPORT", SPL_NEXTLEVEL},
+    {14, "SPELL_LOGIC_TELEPORTOC.MANAINVESTED", "SPL_COST_TELEPORT", SPL_NEXTLEVEL},
+    {15, "SPELL_LOGIC_TELEPORTOWDEMONTOWER.MANAINVESTED", "SPL_COST_TELEPORT", SPL_NEXTLEVEL},
+    {16, "SPELL_LOGIC_TELEPORTTAVERNE.MANAINVESTED", "SPL_COST_TELEPORT", SPL_NEXTLEVEL},
     {18, "SPELL_LOGIC_LIGHT.MANAINVESTED", "SPL_COST_LIGHT"},
     {19, "SPELL_LOGIC_FIREBOLT.MANAINVESTED", "SPL_COST_FIREBOLT"},
     {20, "SPELL_LOGIC_ICEBOLT.MANAINVESTED", "SPL_COST_ICEBOLT"},
@@ -3891,7 +3902,7 @@ std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
   const auto scroll=npc_getactivespellisscroll(self);
   const auto scrollCost=findSymbol("SPL_COST_SCROLL")->get_int();
   const auto runeCost=findSymbol(rule->runeCost)->get_int();
-  return (scroll && available>=scrollCost) || available>=runeCost ? SPL_SENDCAST : SPL_SENDSTOP;
+  return (scroll && available>=scrollCost) || available>=runeCost ? SPL_SENDCAST : rule->denied;
   }
 
 bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32_t level) {
