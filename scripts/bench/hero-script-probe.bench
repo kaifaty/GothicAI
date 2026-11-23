@@ -1,0 +1,14 @@
+# @headless
+# The script probe starts before world creation. Use the stock healing shortcut path.
+seed 73106
+world-check NEWWORLD.ZEN
+give ITWR_MAP_NEWWORLD
+tap map
+wait 500
+healing begin stock-shortcut ITPO_HEALTH_01
+give ITPO_HEALTH_01
+tap heal
+wait 2000
+equip ITFO_HALVORFISH_MIS
+wait 3500
+pos
