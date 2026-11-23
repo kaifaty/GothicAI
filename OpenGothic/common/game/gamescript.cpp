@@ -97,6 +97,7 @@ GameScript::GameScript(GameSession &owner)
   initCommon();
   loadNativeKillNpc();
   loadNativeNpcGlobals();
+  loadNativeMonsterAttitudes();
   loadNativeRoutineExchange();
   loadNativeRoutines();
   loadNativeRoomReaction();

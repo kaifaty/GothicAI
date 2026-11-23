@@ -179,3 +179,58 @@ void GameScript::loadNativeNpcGlobals() {
       }
     }},NpcDefinitionRuntime::enabled);
   }
+
+void GameScript::loadNativeMonsterAttitudes() {
+  if(!nativeRoutineProgram)
+    return;
+
+  using Op=daedalus::DaedalusOpcode;
+  using Type=daedalus::DaedalusDataType;
+  const auto setter = findSymbol("B_SETMONSTERATTITUDE")->address();
+  auto pc = findSymbol("B_INITMONSTERATTITUDES")->address();
+  const auto literal = [&] {
+    const auto instruction = vm.instruction_at(pc);
+    const auto* value = instruction.op==Op::PUSHV ? findSymbol(instruction.symbol) : nullptr;
+    if(value==nullptr || !value->is_const() || value->type()!=Type::INT)
+      throw std::runtime_error("Invalid stock monster attitude literal at "+std::to_string(pc));
+    pc += instruction.size;
+    return value->get_int();
+    };
+  struct AttitudeRule { int32_t from, attitude, to; };
+  std::vector<AttitudeRule> rules;
+  rules.reserve(1932);
+  while(vm.instruction_at(pc).op!=Op::RSR) {
+    const AttitudeRule rule = {literal(),literal(),literal()};
+    const auto call = vm.instruction_at(pc);
+    if(call.op!=Op::BL || call.address!=setter)
+      throw std::runtime_error("Invalid stock monster attitude call at "+std::to_string(pc));
+    pc += call.size;
+    rules.push_back(rule);
+    }
+
+  vm.override_function("B_INITMONSTERATTITUDES",std::function<void()>{[this,rules=std::move(rules)] {
+    static constexpr int32_t humanGuilds[] = {
+      GIL_NONE,GIL_PAL,GIL_MIL,GIL_VLK,GIL_KDF,GIL_NOV,GIL_DJG,GIL_SLD,GIL_BAU,GIL_BDT,GIL_STRF,GIL_OUT,GIL_PIR,GIL_KDW,
+      };
+    constexpr int32_t humanSeparator = int32_t(GIL_SEPERATOR_HUM);
+    auto* fromGuild = findSymbol("B_SETMONSTERATTITUDE.FROMGUILD");
+    auto* attitude = findSymbol("B_SETMONSTERATTITUDE.ATTITUDE");
+    auto* toGuild = findSymbol("B_SETMONSTERATTITUDE.TOGUILD");
+    for(const auto& rule : rules) {
+      toGuild->set_int(rule.to);
+      attitude->set_int(rule.attitude);
+      fromGuild->set_int(rule.from);
+      if(rule.to==humanSeparator) {
+        for(const auto guild : humanGuilds)
+          wld_setguildattitude(rule.from,rule.attitude,guild);
+        }
+      else if(rule.from==humanSeparator) {
+        for(const auto guild : humanGuilds)
+          wld_setguildattitude(guild,rule.attitude,rule.to);
+        }
+      else {
+        wld_setguildattitude(rule.from,rule.attitude,rule.to);
+        }
+      }
+    }},NpcDefinitionRuntime::enabled);
+  }

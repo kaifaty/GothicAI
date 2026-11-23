@@ -57,6 +57,7 @@ struct NpcDefinitionContract {
   static const auto& items(GameScript& script) { return script.itemDefinitions; }
   static const auto& routines(GameScript& script) { return script.routineDefinitions; }
   static auto& random(GameScript& script) { return script.randGen; }
+  static auto& guildAttitudes(GameScript& script) { return script.gilAttitudes; }
   static int& outputOrder(GameScript& script) { return script.aiOutOrderId; }
   // the views of items (graphics/itemview): the sword and the bow on a body, a lying item's
   static const ItemView& sword(const Npc& npc) { return npc.visual.sword.view; }
