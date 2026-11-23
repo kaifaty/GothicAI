@@ -3827,8 +3827,9 @@ std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
 
   struct Admission {
     int spell;
-    std::string_view invested, runeCost, transformTo = {};
+    std::string_view invested, cost, transformTo = {};
     SpellCode denied = SPL_SENDSTOP;
+    bool charge = false;
     };
   // Transforms also spend mana and publish their target form at admission.
   static constexpr Admission admissions[] = {
@@ -3857,13 +3858,17 @@ std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
     {23, "SPELL_LOGIC_INSTANTFIREBALL.MANAINVESTED", "SPL_COST_INSTANTFIREBALL"},
     {24, "SPELL_LOGIC_ZAP.MANAINVESTED", "SPL_COST_ZAP"},
     {25, "SPELL_LOGIC_SUMMONWOLF.MANAINVESTED", "SPL_COST_SUMMONWOLF"},
+    {26, "SPELL_LOGIC_WINDFIST.MANAINVESTED", "STEP_WINDFIST", {}, SPL_DONTINVEST, true},
     {28, "SPELL_LOGIC_MEDIUMHEAL.MANAINVESTED", "SPL_COST_MEDIUMHEAL"},
     {29, "SPELL_LOGIC_LIGHTNINGFLASH.MANAINVESTED", "SPL_COST_LIGHTNINGFLASH"},
+    {30, "SPELL_LOGIC_CHARGEFIREBALL.MANAINVESTED", "STEP_CHARGEFIREBALL", {}, SPL_DONTINVEST, true},
     {31, "SPELL_LOGIC_SUMMONSKELETON.MANAINVESTED", "SPL_COST_SUMMONSKELETON"},
     {32, "SPELL_LOGIC_FEAR.MANAINVESTED", "SPL_COST_FEAR"},
     {33, "SPELL_LOGIC_ICECUBE.MANAINVESTED", "SPL_COST_ICECUBE"},
+    {34, "SPELL_LOGIC_CHARGEZAP.MANAINVESTED", "STEP_CHARGEZAP", {}, SPL_DONTINVEST, true},
     {35, "SPELL_LOGIC_SUMMONGOLEM.MANAINVESTED", "SPL_COST_SUMMONGOLEM"},
     {36, "SPELL_LOGIC_DESTROYUNDEAD.MANAINVESTED", "SPL_COST_DESTROYUNDEAD"},
+    {37, "SPELL_LOGIC_PYROKINESIS.MANAINVESTED", "STEP_FIRESTORM", {}, SPL_DONTINVEST, true},
     {38, "SPELL_LOGIC_FIRESTORM.MANAINVESTED", "SPL_COST_INSTANTFIRESTORM"},
     {39, "SPELL_LOGIC_ICEWAVE.MANAINVESTED", "SPL_COST_ICEWAVE"},
     {40, "SPELL_LOGIC_SUMMONDEMON.MANAINVESTED", "SPL_COST_SUMMONDEMON"},
@@ -3911,9 +3916,29 @@ std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
   findSymbol(rule->invested)->set_int(mana);
 
   const auto available=self->attribute[ATR_MANA];
+  if(rule->charge) {
+    const auto step=findSymbol(rule->cost)->get_int();
+    if(available<step)
+      return rule->denied;
+
+    auto& chargeLevel=self->aivar[88]; // Stock charge level shared by the four spells.
+    if(mana<=step) {
+      chargeLevel=1;
+      return SPL_STATUS_CANINVEST_NO_MANADEC;
+      }
+    for(int32_t level=1; level<=3; ++level) {
+      if(chargeLevel<=level && mana>level*step) {
+        self->attribute[ATR_MANA]=std::max(0,available-step);
+        chargeLevel=level+1;
+        return SPL_NEXTLEVEL;
+        }
+      }
+    return chargeLevel==4 && mana>3*step ? rule->denied : SPL_STATUS_CANINVEST_NO_MANADEC;
+    }
+
   const auto scroll=npc_getactivespellisscroll(self);
   const auto scrollCost=findSymbol("SPL_COST_SCROLL")->get_int();
-  const auto runeCost=findSymbol(rule->runeCost)->get_int();
+  const auto runeCost=findSymbol(rule->cost)->get_int();
   if(!((scroll && available>=scrollCost) || available>=runeCost))
     return rule->denied;
   if(!rule->transformTo.empty()) {

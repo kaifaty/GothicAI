@@ -648,13 +648,14 @@ void stockSpellCastAccounting(World& world) {
     int32_t mana=3;
     int32_t healing=0;
     bool fear=false;
+    int32_t chargeStep=0;
     } cases[] = {
     {"ITSC_ICEBOLT",5,"SPELL_LOGIC_ICEBOLT.MANAINVESTED"},
     {"ITRU_ICEBOLT",10,"SPELL_LOGIC_ICEBOLT.MANAINVESTED"},
     {"ITSC_ZAP",5,"SPELL_LOGIC_ZAP.MANAINVESTED","SPELL_CAST_ZAP.SPELLLEVEL"},
     {"ITSC_SLEEP",0},
-    {"ITSC_CHARGEFIREBALL",3,nullptr,"SPELL_CAST_CHARGEFIREBALL.SPELLLEVEL"},
-    {"ITRU_WINDFIST",20,nullptr,"SPELL_CAST_WINDFIST.SPELLLEVEL",80},
+    {"ITSC_CHARGEFIREBALL",3,"SPELL_LOGIC_CHARGEFIREBALL.MANAINVESTED","SPELL_CAST_CHARGEFIREBALL.SPELLLEVEL",3,0,false,40},
+    {"ITRU_WINDFIST",20,"SPELL_LOGIC_WINDFIST.MANAINVESTED","SPELL_CAST_WINDFIST.SPELLLEVEL",80,0,false,20},
     {"ITSC_FEAR",5,nullptr,nullptr,3,0,true},
     {"ITRU_SKULL",70,nullptr,nullptr,70},
     {"ITSC_MEDIUMHEAL",5,nullptr,nullptr,3,400},
@@ -673,7 +674,41 @@ void stockSpellCastAccounting(World& world) {
               "cast accounting: the actual test item must be active");
       events=native;
       size_t instructions=0;
-      if(row.admission!=nullptr) {
+      if(row.chargeStep!=0) {
+        auto& local=*script.findSymbol(row.admission);
+        const auto oldLocal=local.get_int();
+        auto& chargeLevel=caster->handle().aivar[88];
+        const auto oldChargeLevel=chargeLevel;
+        const auto step=row.chargeStep;
+        const struct Charge { int32_t mana, amount, level, manaAfter, levelAfter; SpellCode code; } charges[] = {
+          {step-1,step+1,2,step-1,2,SPL_DONTINVEST},
+          {step,step,4,step,1,SPL_STATUS_CANINVEST_NO_MANADEC},
+          {step,step+1,1,0,2,SPL_NEXTLEVEL},
+          {step,3*step,3,step,3,SPL_STATUS_CANINVEST_NO_MANADEC},
+          {step,3*step+1,3,0,4,SPL_NEXTLEVEL},
+          {step,3*step+1,4,step,4,SPL_DONTINVEST},
+          };
+        for(const auto& charge:charges) {
+          caster->handle().attribute[ATR_MANA]=charge.mana;
+          chargeLevel=charge.level;
+          symbol.set_instance(nullptr);
+          invested.set_int(-1);
+          activeSpell.set_int(-1);
+          local.set_int(-1);
+          instructions=0;
+          vm.observe_instructions([&](const auto&) { ++instructions; });
+          const auto result=script.invokeMana(*caster,&target,charge.amount);
+          vm.observe_instructions({});
+          require(result==charge.code && (instructions==0)==native &&
+                  caster->attribute(ATR_MANA)==charge.manaAfter && chargeLevel==charge.levelAfter &&
+                  invested.get_int()==charge.amount && activeSpell.get_int()==item->spellId() && local.get_int()==charge.amount &&
+                  symbol.get_instance()==std::static_pointer_cast<daedalus::IItem>(item->handlePtr()),
+                  "spell charge: preserve boundaries, debit, level, saved locals and the active item");
+          }
+        chargeLevel=oldChargeLevel;
+        local.set_int(oldLocal);
+        }
+      else if(row.admission!=nullptr) {
         auto& local=*script.findSymbol(row.admission);
         const auto oldLocal=local.get_int();
         for(bool enough:{false,true}) {
