@@ -46,7 +46,10 @@ static bool sameActiveBindings(const Bindings& a, const Bindings& b, uint32_t ac
     return false;
   for(auto mask=active; mask!=0; mask &= mask-1) {
     const auto i = std::countr_zero(mask);
-    if(a.data[i]!=b.data[i] || a.offset[i]!=b.offset[i] || a.smp[i]!=b.smp[i] || a.map[i]!=b.map[i])
+    if(a.data[i]!=b.data[i])
+      return false;
+    // An array copies its own descriptors, including their samplers and image views.
+    if((a.array & (1u << i))==0 && (a.offset[i]!=b.offset[i] || a.smp[i]!=b.smp[i] || a.map[i]!=b.map[i]))
       return false;
     }
   return true;
