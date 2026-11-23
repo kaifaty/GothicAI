@@ -255,6 +255,9 @@ class GameScript final : public GameRules {
     bool runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runShrinkState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool usesNativeShrinkSpell(const Item* item) const;
+    int runShrinkMana(Npc& caster, int mana, bool release);
+    void castShrink(Npc& caster, Npc* target);
     bool monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window);
     void enableMonsterRoutinePerceptions(Npc& npc);
     void beginMonsterRoutine(Npc& npc, bool desynchronize = true, WalkBit mode = WalkBit::WM_Walk);

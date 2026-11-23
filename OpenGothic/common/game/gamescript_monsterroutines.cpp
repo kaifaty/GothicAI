@@ -1,11 +1,16 @@
 #include "gamescript.h"
 
+#include "world/objects/item.h"
 #include "world/objects/npc.h"
 
 namespace {
 constexpr std::string_view roam = "FP_ROAM";
 constexpr std::string_view campfire = "FP_CAMPFIRE";
 constexpr size_t routinePosition = 19;
+constexpr size_t shrinkStage = 42; // AIV_MM_SHRINKSTATE
+constexpr int32_t shrinkSpell = 46; // SPL_SHRINK
+constexpr int32_t shrinkScrollCost = 5;
+constexpr int32_t shrinkRuneCost = 300;
 }
 
 bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
@@ -112,7 +117,7 @@ bool GameScript::runShrinkState(Npc& npc, const daedalus::DaedalusSymbol& symbol
     return true;
 
   auto& record=npc.handle();
-  auto& stage=record.aivar[42]; // AIV_MM_SHRINKSTATE, also used by the spell and saved NPCs.
+  auto& stage=record.aivar[shrinkStage];
   if(name=="ZS_MAGICSHRINK") {
     if(npc_hasbodyflag(self,BS_FLAG_INTERRUPTABLE))
       ai_standupquick(self);
@@ -152,4 +157,62 @@ bool GameScript::runShrinkState(Npc& npc, const daedalus::DaedalusSymbol& symbol
     }
   ai_wait(self,0.38f);
   return true;
+  }
+
+bool GameScript::usesNativeShrinkSpell(const Item* item) const {
+  return item!=nullptr && item->isSpellOrRune() && item->spellId()==shrinkSpell &&
+         nativeRoutineProgram && activityEvents && !floorDefer.active() &&
+         ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+  }
+
+int GameScript::runShrinkMana(Npc& caster, int mana, bool release) {
+  const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
+  if(release) {
+    findSymbol("SPELL_PROCESSMANA_RELEASE.MANAINVESTED")->set_int(mana);
+    findSymbol("SPELL_PROCESSMANA_RELEASE.ACTIVESPELL")->set_int(npc_getactivespell(self));
+    return SPL_SENDSTOP;
+    }
+  findSymbol("SPELL_PROCESSMANA.MANAINVESTED")->set_int(mana);
+  findSymbol("SPELL_PROCESSMANA.ACTIVESPELL")->set_int(npc_getactivespell(self));
+  findSymbol("SPELL_LOGIC_SHRINK.MANAINVESTED")->set_int(mana);
+  const auto available=self->attribute[ATR_MANA];
+  const auto scroll=npc_getactivespellisscroll(self);
+  return (scroll && available>=shrinkScrollCost) || available>=shrinkRuneCost ? SPL_SENDCAST : SPL_SENDSTOP;
+  }
+
+void GameScript::castShrink(Npc& caster, Npc* target) {
+  const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
+  self->attribute[ATR_MANA]-=npc_getactivespellisscroll(self) ? shrinkScrollCost : shrinkRuneCost;
+
+  const auto victim=target ? std::static_pointer_cast<daedalus::INpc>(target->handlePtr()) : nullptr;
+  // The stock predicate evaluates the undead check even for ineligible targets.
+  findSymbol("C_NPCISUNDEAD.SLF")->set_instance(victim);
+  if(victim) {
+    bool undead=victim->aivar[43]==42; // AIV_MM_REAL_ID == ID_DRAGON_UNDEAD
+    switch(victim->guild) {
+      case GIL_UNDEADORC:
+      case GIL_SHADOWBEAST_SKELETON:
+      case GIL_ZOMBIE:
+      case GIL_SKELETON_MAGE:
+      case GIL_SUMMONED_SKELETON:
+      case GIL_SKELETON:
+      case GIL_SUMMONED_GOBBO_SKELETON:
+      case GIL_GOBBO_SKELETON:
+        undead=true;
+        break;
+      }
+    if(victim->aivar[shrinkStage]==0 && victim->guild>int32_t(GIL_SEPERATOR_HUM) &&
+       !undead && victim->flags!=NpcFlag::IMMORTAL) {
+      npc_clearaiqueue(victim);
+      findSymbol("B_CLEARPERCEPTIONS.SLF")->set_instance(victim);
+      for(const auto type:{PERC_ASSESSPLAYER, PERC_ASSESSENEMY, PERC_ASSESSBODY, PERC_ASSESSMAGIC,
+                           PERC_ASSESSDAMAGE, PERC_ASSESSMURDER, PERC_ASSESSTHEFT, PERC_ASSESSUSEMOB,
+                           PERC_ASSESSENTERROOM, PERC_ASSESSTHREAT, PERC_DRAWWEAPON, PERC_ASSESSFIGHTSOUND,
+                           PERC_ASSESSQUIETSOUND, PERC_ASSESSWARN, PERC_ASSESSTALK, PERC_MOVEMOB,
+                           PERC_ASSESSOTHERSDAMAGE, PERC_ASSESSSTOPMAGIC, PERC_ASSESSSURPRISE})
+        npc_percdisable(victim,type);
+      ai_startstate(victim,int(findFunction("ZS_MAGICSHRINK").ptr),0,"");
+      }
+    }
+  ++self->aivar[20]; // AIV_SELECTSPELL
   }

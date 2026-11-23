@@ -2560,6 +2560,126 @@ void itemRoutinePhasesWorld(Gothic& gothic,bool events) {
     }
   }
 
+void shrinkSpellCast(World& world) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  auto* hero=script.findSymbol("PC_HERO");
+  auto* sheep=script.findSymbol("SHEEP");
+  auto* undeadLocal=script.findSymbol("C_NPCISUNDEAD.SLF");
+  auto* perceptionLocal=script.findSymbol("B_CLEARPERCEPTIONS.SLF");
+  const auto state=script.findFunction("ZS_MAGICSHRINK");
+  require(hero && sheep && undeadLocal && perceptionLocal && state.isValid(),"the cast fixture needs its stock symbols");
+  const auto oldHero=hero->get_instance(), oldSheep=sheep->get_instance();
+  const auto oldUndead=undeadLocal->get_instance(), oldPerception=perceptionLocal->get_instance();
+  const auto* wp=world.findWayPoint("NW_FARM4_BALTHASAR");
+  require(wp!=nullptr,"the cast fixture needs a spawn point");
+  const auto target=world.addNpc(sheep->index(),wp->position());
+  require(target!=nullptr,"the cast fixture needs a live target");
+  const auto targetHandle=std::static_pointer_cast<daedalus::INpc>(target->handlePtr());
+  const auto oldSelf=vm.global_self()->get_instance(), oldOther=vm.global_other()->get_instance();
+  const auto oldGi=vm.unsafe_get_gi();
+  const std::array locals{
+    script.findSymbol("SPELL_PROCESSMANA.MANAINVESTED"),
+    script.findSymbol("SPELL_PROCESSMANA.ACTIVESPELL"),
+    script.findSymbol("SPELL_LOGIC_SHRINK.MANAINVESTED"),
+    script.findSymbol("SPELL_PROCESSMANA_RELEASE.MANAINVESTED"),
+    script.findSymbol("SPELL_PROCESSMANA_RELEASE.ACTIVESPELL")
+    };
+  std::array<int32_t,5> oldLocals{};
+  for(size_t i=0;i<locals.size();++i)
+    oldLocals[i]=locals[i]->get_int();
+
+  const struct Case {
+    int32_t guild, stage, species;
+    NpcFlag flags;
+    bool eligible;
+    } cases[]={
+    {GIL_SHEEP,0,0,NpcFlag::NONE,true},
+    {GIL_SHEEP,0,0,NpcFlag::IMMORTAL|NpcFlag::FRIENDS,true},
+    {GIL_SHEEP,0,0,NpcFlag::IMMORTAL,false},
+    {GIL_SHEEP,1,0,NpcFlag::NONE,false},
+    {GIL_SHEEP,0,42,NpcFlag::NONE,false},
+    {GIL_SKELETON,0,0,NpcFlag::NONE,false},
+    {GIL_BAU,0,0,NpcFlag::NONE,false}
+    };
+  using Observation=std::tuple<int32_t,int32_t,std::vector<std::string>,std::array<bool,PERC_Count>>;
+  const auto run=[&](const char* itemName,int32_t cost,bool native) {
+    events=native;
+    auto* itemSymbol=script.findSymbol(itemName);
+    require(itemSymbol!=nullptr,"the cast fixture needs the stock scroll or rune");
+    const auto oldItem=itemSymbol->get_instance();
+    auto* caster=world.addNpc(hero->index(),wp->position());
+    require(caster!=nullptr,"the cast fixture needs a caster");
+    auto* item=caster->addItem(itemSymbol->index(),1);
+    require(item && caster->drawSpell(item->spellId()) && caster->activeWeapon()==item,
+            "the caster must ready the normal shrink item");
+    size_t instructions=0;
+    vm.observe_instructions([&](const auto&) { ++instructions; });
+    auto& mana=caster->handle().attribute[ATR_MANA];
+    mana=cost-1;
+    require(script.invokeMana(*caster,target,17)==SPL_SENDSTOP,"stock mana dispatch must deny one below the cost");
+    mana=cost;
+    itemSymbol->set_instance(nullptr);
+    require(script.invokeMana(*caster,target,18)==SPL_SENDCAST &&
+            itemSymbol->get_instance()==std::static_pointer_cast<daedalus::IItem>(item->handlePtr()),
+            "stock mana dispatch must accept the cost and publish the active item instance");
+    require(script.invokeManaRelease(*caster,target,19)==SPL_SENDSTOP &&
+            locals[0]->get_int()==18 && locals[1]->get_int()==item->spellId() && locals[2]->get_int()==18 &&
+            locals[3]->get_int()==19 && locals[4]->get_int()==item->spellId(),
+            "mana dispatch must preserve its saved parameter and active-spell locals");
+
+    std::vector<Observation> result;
+    for(const auto& c:cases) {
+      target->handle().guild=c.guild;
+      target->handle().aivar[42]=c.stage;
+      target->handle().aivar[43]=c.species;
+      target->handle().flags=c.flags;
+      target->clearAiQueue();
+      target->aiPush(AiQueue::aiWait(912));
+      for(int i=1;i<PERC_Count;++i)
+        target->setPerceptionEnable(PercType(i),state.ptr);
+      undeadLocal->set_instance(nullptr);
+      perceptionLocal->set_instance(nullptr);
+      mana=cost+1;
+      const auto selected=caster->handle().aivar[20];
+      script.invokeSpell(*caster,target,*item);
+      const auto* next=target->aiQueueFront();
+      require(next && (c.eligible ? next->act==AI_StartState && next->func==state && next->i0==0 && next->target==target :
+                                    next->act==AI_Wait),
+              "the normal cast must replace the queue only for an eligible target");
+      require(mana==1 && caster->handle().aivar[20]==selected+1 && undeadLocal->get_instance()==targetHandle &&
+              perceptionLocal->get_instance()==(c.eligible ? targetHandle : nullptr),
+              "the cast must deduct mana, advance selection and preserve both helper locals");
+      std::array<bool,PERC_Count> perceptions{};
+      for(int i=1;i<PERC_Count;++i)
+        perceptions[i]=target->hasPerc(PercType(i));
+      result.emplace_back(mana,caster->handle().aivar[20],activityQueue(*target),perceptions);
+      }
+    vm.observe_instructions({});
+    require((instructions==0)==native && vm.global_self()->get_instance()==oldSelf &&
+            vm.global_other()->get_instance()==oldOther && vm.unsafe_get_gi()==oldGi,
+            "the selected cast path must restore the calling script context");
+    world.removeNpc(*caster);
+    hero->set_instance(oldHero);
+    itemSymbol->set_instance(oldItem);
+    return result;
+    };
+  for(const auto [item,cost]:{std::pair("ITSC_SHRINK",5),std::pair("ITRU_SHRINK",300)}) {
+    const auto stock=run(item,cost,false);
+    require(run(item,cost,true)==stock,"the shrink cast must match stock queue, mana and perceptions");
+    }
+  world.removeNpc(*target);
+  sheep->set_instance(oldSheep);
+  undeadLocal->set_instance(oldUndead);
+  perceptionLocal->set_instance(oldPerception);
+  for(size_t i=0;i<locals.size();++i)
+    locals[i]->set_int(oldLocals[i]);
+  events=previousEvents;
+  std::puts("Shrink cast: stock mana, target eligibility, perceptions, queued state and saved locals match");
+  }
+
 void shrinkSpellStates(World& world) {
   const auto program=NpcSnapshot::load(baseProgramIndex().dir.parent_path());
   if(program.sha256!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
@@ -2643,6 +2763,7 @@ void shrinkSpellStates(World& world) {
   vm.remove_call_observer(observer);
   events=previousEvents;
   std::puts("Shrink spell states: staged effects, old save and permanent shrunken state match stock");
+  shrinkSpellCast(world);
   }
 
 void pointActivitiesInBothModes(Gothic& gothic) {
