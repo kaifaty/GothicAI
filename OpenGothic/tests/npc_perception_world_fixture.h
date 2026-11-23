@@ -147,10 +147,80 @@ void stockLearnString(GameScript& script) {
   events=saved;
   }
 
+void stockLearnCostAttribute(GameScript& script, Npc& npc, Npc& player) {
+  auto& vm=script.getVm();
+  auto& enabled=NpcDefinitionContract::activityEventsOn(script);
+  const bool saved=enabled;
+  const auto caller=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto learner=std::static_pointer_cast<daedalus::INpc>(player.handlePtr());
+  const auto priorContext=vm.unsafe_get_gi();
+  const auto priorOther=vm.global_other()->get_instance();
+  const auto priorAivar=std::to_array(learner->aivar);
+  const auto priorAttributes=std::to_array(learner->attribute);
+  auto* helper=vm.find_symbol_by_name("B_GETLEARNCOSTATTRIBUTE");
+  auto* cost=vm.find_symbol_by_name("B_GETLEARNCOSTATTRIBUTE.KOSTEN");
+  auto* argument=vm.find_symbol_by_name("B_GETLEARNCOSTATTRIBUTE.ATTRIBUT");
+  auto* target=vm.find_symbol_by_name("B_GETLEARNCOSTATTRIBUTE.OTH");
+  const auto priorCost=cost->get_int();
+  const auto priorArgument=argument->get_int();
+  const auto priorTarget=target->get_instance();
+  vm.unsafe_set_gi(caller);
+  vm.global_other()->set_instance(learner);
+  constexpr std::pair<int,int> tiers[]={{29,1},{30,2},{59,2},{60,3},{89,3},{90,4},{119,4},{120,5}};
+  const auto pushCall=[&](Attribute attribute) {
+    vm.push_reference(vm.global_other());
+    vm.push_int(attribute);
+    vm.unsafe_call_bl(helper);
+    };
+  for(bool native:{false,true}) {
+    if(native && (!saved || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+      continue;
+    enabled=native;
+    size_t instructions=0;
+    vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==helper->address(); });
+    for(const auto& [attribute,slot]:{std::pair{ATR_STRENGTH,81u},std::pair{ATR_DEXTERITY,82u},std::pair{ATR_MANAMAX,83u}}) {
+      learner->attribute[attribute]=130;
+      for(const auto& [level,tier]:tiers) {
+        learner->aivar[slot]=level;
+        pushCall(attribute);
+        require(vm.pop_int()==tier && argument->get_int()==attribute && target->get_instance()==learner,
+                "attribute training: price tiers must use trained levels without temporary bonuses");
+        }
+      }
+    vm.push_string("first caller temporary");
+    vm.push_string("second caller temporary");
+    pushCall(ATR_STRENGTH);
+    pushCall(ATR_HITPOINTS);
+    for(const auto& context:{caller,learner}) {
+      require(vm.top_is_reference(),"attribute training: the return must refer to a saved variable");
+      const auto [ref,index,instance]=vm.pop_reference();
+      require(ref==cost && index==0 && instance==context && cost->get_int()==0,
+              "attribute training: queued returns must share the latest value and retain their own context");
+      }
+    require(vm.pop_string()=="second caller temporary" && vm.pop_string()=="first caller temporary",
+            "attribute training: leave both caller temporaries untouched");
+    std::string error;
+    const auto priced=storygraph::callFunction(vm,*helper,{storygraph::Value::instance(learner),
+                                                          storygraph::Value::integer(ATR_MANAMAX)},error);
+    vm.observe_instructions({});
+    require(priced && priced->i==5 && instructions==(native ? 0u : 27u) && vm.unsafe_get_gi()==caller,
+            "attribute training: the typed StoryGraph caller must use the selected executor and restore caller context");
+    }
+  vm.global_other()->set_instance(priorOther);
+  vm.unsafe_set_gi(priorContext);
+  std::ranges::copy(priorAivar,learner->aivar);
+  std::ranges::copy(priorAttributes,learner->attribute);
+  cost->set_int(priorCost);
+  argument->set_int(priorArgument);
+  target->set_instance(priorTarget);
+  enabled=saved;
+  }
+
 void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
   stockLearnString(script);
+  stockLearnCostAttribute(script,npc,player);
   auto& vm=script.getVm();
   auto& events=Contract::activityEventsOn(script);
   const bool savedEvents=events;

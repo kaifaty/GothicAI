@@ -89,9 +89,12 @@ auto GameScript::npcRecord(daedalus::DaedalusSymbol* symbol) -> std::shared_ptr<
   return nullptr;
   }
 
-void GameScript::loadNativeLearnString() {
+void GameScript::loadNativeTrainingHelpers() {
   if(!nativeRoutineProgram)
     return;
+  const auto enabled = [this] {
+    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+    };
   vm.override_function("B_BUILDLEARNSTRING",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
     [this](auto& machine) -> daedalus::DaedalusNakedCall {
       machine.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->set_int(machine.pop_int());
@@ -99,9 +102,42 @@ void GameScript::loadNativeLearnString() {
       machine.push_reference(&buildLearnString(machine.pop_string()));
       return {};
       }
-    },[this] {
-      return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
-      });
+    },enabled);
+  vm.override_function("B_GETLEARNCOSTATTRIBUTE",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [](auto& machine) -> daedalus::DaedalusNakedCall {
+      const auto attribute = machine.pop_int();
+      machine.find_symbol_by_name("B_GETLEARNCOSTATTRIBUTE.ATTRIBUT")->set_int(attribute);
+      const auto learner = machine.pop_instance();
+      machine.find_symbol_by_name("B_GETLEARNCOSTATTRIBUTE.OTH")->set_instance(learner);
+      auto* result = machine.find_symbol_by_name("B_GETLEARNCOSTATTRIBUTE.KOSTEN");
+      result->set_int(0);
+      std::string_view slot;
+      switch(attribute) {
+        case ATR_STRENGTH:  slot = "REAL_STRENGTH";  break;
+        case ATR_DEXTERITY: slot = "REAL_DEXTERITY"; break;
+        case ATR_MANAMAX:   slot = "REAL_MANA_MAX";  break;
+        default: machine.push_reference(result); return {};
+        }
+      const auto index = uint16_t(machine.find_symbol_by_name(slot)->get_int());
+      auto* aivar = machine.find_symbol_by_name("C_NPC.AIVAR");
+      // A supported attribute returns the shared result with the learner's context.
+      struct RestoreContext {
+        daedalus::DaedalusVm& vm;
+        std::shared_ptr<daedalus::DaedalusInstance> caller;
+        ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+        } restore{machine,machine.unsafe_get_gi()};
+      machine.unsafe_set_gi(learner);
+      int32_t cost = 5;
+      for(; cost>1; --cost) {
+        // The trained value excludes temporary attribute bonuses.
+        if(machine.get_int(learner,aivar,index)>=30*(cost-1))
+          break;
+        }
+      result->set_int(cost);
+      machine.push_reference(result);
+      return {};
+      }
+    },enabled);
   }
 
 auto GameScript::buildLearnString(std::string_view title) -> daedalus::DaedalusSymbol& {

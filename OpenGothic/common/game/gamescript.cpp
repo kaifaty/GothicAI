@@ -105,7 +105,7 @@ GameScript::GameScript(GameSession &owner)
   loadNativeHumanPerceptions();
   loadNativeEquipment();
   loadNativeTalkReaction();
-  loadNativeLearnString();
+  loadNativeTrainingHelpers();
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
   }

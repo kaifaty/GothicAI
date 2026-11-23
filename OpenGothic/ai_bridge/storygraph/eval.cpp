@@ -118,8 +118,8 @@ std::optional<Value> storygraph::callFunction(daedalus::DaedalusVm& vm, const da
       error = "no engine function " + ident(fn.name());
       return std::nullopt;
       }
-    } else if(fn.name()=="B_GIVEPLAYERXP" || fn.name()=="B_STARTOTHERROUTINE" ||
-              fn.name()=="B_KAPITELWECHSEL" || fn.name()=="B_GREG_COMESTODEXTER") {
+    } else if(fn.name()=="B_GETLEARNCOSTATTRIBUTE" || fn.name()=="B_GIVEPLAYERXP" ||
+              fn.name()=="B_STARTOTHERROUTINE" || fn.name()=="B_KAPITELWECHSEL" || fn.name()=="B_GREG_COMESTODEXTER") {
     vm.unsafe_call_bl(&fn);
     } else {
     vm.unsafe_call(&fn);
