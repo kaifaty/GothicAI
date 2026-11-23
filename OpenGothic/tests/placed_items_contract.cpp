@@ -28,6 +28,7 @@
 #include "game/activitydefinitionruntime.h"
 #include "game/npcactivityhost.h"
 #include "activitydefinitions.h"
+#include "npcdayjournal.h"
 #include "npcdaymeasurement.h"
 #include "world/activityevents.h"
 #include "world/mobreservations.h"
@@ -1969,7 +1970,12 @@ void activityDefinitionsSynthetic(World& world) {
       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   std::filesystem::create_directories(directory);
   std::string error;
-  if(!NpcDayMeasurement::start(world,directory.string(),0,false,{},error)) throw std::runtime_error(error);
+  NpcDayJournal::Options options;
+  options.directory=directory.string();
+  options.isolate=false;
+  options.scriptProbe=true;
+  options.traceNpcs={std::to_string(world.npcId(npc))};
+  if(!NpcDayMeasurement::start(world,options,error)) throw std::runtime_error(error);
   for(auto function:{anvil.init,anvil.loop,anvil.end,roast.init,roast.loop,roast.end})
     script.invokeState(npc,nullptr,nullptr,uint32_t(function));
   NpcDayMeasurement::stop(world);

@@ -96,8 +96,8 @@ bool npcDayCommand(const NpcCommandsContext& context,const std::vector<std::stri
   for(size_t i=saving ? 2 : 1;i<a.size();++i) {
     if(a[i]=="probe") opt.scriptProbe=true;
     else if(a[i].starts_with("trace=")) {
-      opt.scriptProbe=true;
       const auto names=a[i].substr(6);
+      if(names.empty()) ok=false;
       for(size_t at=0;at<names.size();) {
         const auto end=names.find(',',at);
         opt.traceNpcs.push_back(names.substr(at,end-at));

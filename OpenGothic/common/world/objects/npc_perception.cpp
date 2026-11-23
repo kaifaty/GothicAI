@@ -1,5 +1,7 @@
 #include "npc.h"
 
+#include "world/npcactivityprobe.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -326,6 +328,8 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
   // Vanilla B_AssessQuietSound dereferences OTHER. Unknown physical causes
   // still turn the listener natively, without inventing a script actor.
   const bool callbackDispatched = noise.culprit!=nullptr && hasPerc(PERC_ASSESSQUIETSOUND);
+  if(auto* probe=NpcActivityProbe::instance)
+    probe->physicsNoise(*this,noise.culprit,callbackDispatched);
   if(callbackDispatched) {
     physicsNoiseCallback = true;
     owner.rules().invokeState(this,noise.culprit,nullptr,perception[PERC_ASSESSQUIETSOUND].func);

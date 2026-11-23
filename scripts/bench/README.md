@@ -1916,7 +1916,7 @@ explain the bounds and remaining combat/body work. `npcday` files:
 | `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
 | `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
 | `npc-day-script.json` | Opt-in `probe`: deterministic script calls by symbol/family, per-state engine Init/Loop/End entries, nested calls, inclusive VM instruction counts, externals and RNG sources. Header records `npc` or `shared` random streams. |
-| `npc-day-activity.jsonl` | Opt-in `trace=ID,SYMBOL,display-name`: phase entry/result, engine queue commands with raw action arguments, RNG bound/result/source, FP and MOB occupancy, observed body-state changes. Numeric IDs are world-array NPC IDs; symbols select all matching instances. |
+| `npc-day-activity.jsonl` | Opt-in `trace=ID,SYMBOL,display-name`: phase entry/result, queue commands, RNG, FP and MOB occupancy, and body changes. `activity_transition` records the wake reasons, stages, place, owner NPC ID and queue head after the step. `physics_noise` identifies the culprit and whether the quiet-sound reaction entered the VM. Numeric IDs are world-array NPC IDs; symbols select all matching instances. |
 | `npc-day-arrivals.csv` | Audit-only exact terminal arrivals, observed movement start, final goal identity, actor/target position, ZS, queue and executor; it adds no records to the strict samples/events files. |
 
 The society stand's core is checked against the same journal: `scripts/society_parity.py` compares its marks
@@ -1929,8 +1929,9 @@ stops, so commands after `npcday` use the shared stream again. Do not combine `n
 in one scenario: the arena isolates its actors and clears all streams on reset. `std::rand` (sound variants, gestures, parry variant) is not reseeded.
 States that start and end within one world tick are not seen by the event poll.
 
-`probe` and `trace=...` install measurement only for that journal interval; both are off by default.
-The original journal fields and event thresholds are unchanged. `trace=` implies `probe`.
+`trace=...` records selected NPCs independently of the Daedalus observer, with RNG sources labeled
+`engine` or `script`. Add `probe` for the VM counters and detailed RNG attribution. Both options
+apply only during the journal interval and are off by default.
 The instruction metric includes helpers and reentrant script work during the engine phase; it is
 not wall time. `engine` counts entries through `invokeState`, while `nested` excludes that entry.
 `records` counts the entries that ran from an activity record (D4.1) instead of the script; such a phase has no
