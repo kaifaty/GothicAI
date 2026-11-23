@@ -1533,7 +1533,7 @@ void quietSoundRooms(Gothic& gothic) {
     const auto guild=privateRoom ? int32_t(npc->handle().guild) : int32_t(GIL_PUBLIC);
     world.assignRoomToGuild("FARM01",guild);
     require(world.guildOfRoom(npc->portalName())==guild &&
-            (!privateRoom || (guild>GIL_NONE && guild!=GIL_PUBLIC && world.guildOfRoom(hero.portalName())==guild)),
+            (!privateRoom || (guild>int32_t(GIL_NONE) && guild!=int32_t(GIL_PUBLIC) && world.guildOfRoom(hero.portalName())==guild)),
             "enter room: the fixture changes the guild of the occupied portal");
     };
   EventActor activity;
@@ -1616,6 +1616,10 @@ void quietSoundRooms(Gothic& gothic) {
         require(!npc->canSeeSource(),"quiet sound: the outside source is unseen");
         npc->aiPush(AiQueue::aiWait(173));
         }
+      auto& fakeBanditActor=*vm.find_symbol_by_name("C_PLAYERISFAKEBANDIT.SLF");
+      fakeBanditActor.set_instance(nullptr);
+      auto& checkedGuild=*vm.find_symbol_by_name("C_NPCISBOTHEREDBYPLAYERROOMGUILD.PORTALGUILD");
+      checkedGuild.set_int(-123);
       size_t quietCalls=0,roomCalls=0,fakeBanditCalls=0,clearCalls=0;
       const auto observer=vm.add_call_observer([&](const auto& symbol) {
         quietCalls+=symbol.name()=="B_ASSESSQUIETSOUND";
@@ -1633,8 +1637,14 @@ void quietSoundRooms(Gothic& gothic) {
         const auto* queued=npc->aiQueueFront();
         require(queued && queued->act==AI_StartState && queued->func==(site.privateRoom ? clear : observe) &&
                 queued->target==&hero && queued->i0==1 && !npc->hasPerc(PERC_ASSESSQUIETSOUND) &&
-                clearCalls==size_t(!native) && fakeBanditCalls==(site.sameRoom ? 0u : 1u),
+                clearCalls==size_t(!native) && fakeBanditCalls==size_t(!native && !site.sameRoom),
                 "quiet sound: the room or unseen source queues its transition and clears perceptions");
+        if(site.privateRoom)
+          require(checkedGuild.get_int()==int32_t(npc->handle().guild),
+                  "enter room: both guild checks remember the private room's owner");
+        if(!site.sameRoom)
+          require(fakeBanditActor.get_instance()==std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()),
+                  "quiet sound: the original fake-bandit helper and the native check store the same listener");
         }
       if(site.friendly) {
         const auto* queued=npc->aiQueueFront();

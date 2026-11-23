@@ -112,6 +112,37 @@ bool GameScript::isGateGuard(const std::shared_ptr<daedalus::INpc>& self) {
   return npc_isinstate(self,int(findFunction("ZS_GUARD_PASSAGE").ptr));
   }
 
+bool GameScript::isBotheredByPlayerRoomGuild(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("C_NPCISBOTHEREDBYPLAYERROOMGUILD.SLF")->set_instance(self);
+  const auto portalGuild = wld_getplayerportalguild();
+  findSymbol("C_NPCISBOTHEREDBYPLAYERROOMGUILD.PORTALGUILD")->set_int(portalGuild);
+  const auto npcGuild = self ? int32_t(self->guild) : int32_t(GIL_NONE);
+  const bool allied = wld_getguildattitude(npcGuild,portalGuild)==ATT_FRIENDLY;
+  return (allied || npcGuild==portalGuild) && portalGuild>int32_t(GIL_NONE);
+  }
+
+bool GameScript::isPlayerFakeBandit(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("C_PLAYERISFAKEBANDIT.OTH")->set_instance(other);
+  findSymbol("C_PLAYERISFAKEBANDIT.SLF")->set_instance(self);
+  constexpr size_t ignoresArmor = 73; // AIV_IGNORESARMOR in the verified program
+  constexpr size_t ignoresFakeGuild = 70; // AIV_IGNORESFAKEGUILD
+  const auto guild = self ? self->guild : GIL_NONE;
+  if(self && (self->aivar[ignoresArmor]==1 || self->aivar[ignoresFakeGuild]==1 || guild==GIL_PIR))
+    return false;
+
+  if(npc_hasequippedarmor(other)) {
+    const auto armor = npc_getequippedarmor(other);
+    findSymbol("C_PLAYERISFAKEBANDIT.ITM")->set_instance(armor);
+    const bool heavyBandit = hlp_isitem(armor,int(findSymbolIndex("ITAR_BDT_H")));
+    const bool thorus = hlp_isitem(armor,int(findSymbolIndex("ITAR_THORUS_ADDON")));
+    const bool mediumBandit = hlp_isitem(armor,int(findSymbolIndex("ITAR_BDT_M")));
+    return heavyBandit || thorus || mediumBandit;
+    }
+
+  return findSymbol("PLAYER_HASTALKEDTOBANDITCAMP")->get_int()==1 &&
+         findSymbol("CURRENTLEVEL")->get_int()==findSymbol("ADDONWORLD_ZEN")->get_int() && guild==GIL_BDT;
+  }
+
 void GameScript::desynchronizeNpc() {
   const auto delay = hlp_random(1000);
   findSymbol("B_MM_DESYNCHRONIZE.MSEC")->set_int(delay);
@@ -201,7 +232,7 @@ int32_t GameScript::runEnterRoomReaction() {
     if(!std::ranges::any_of(interruptible,inState))
       return 0;
     }
-  else if(vm.call_function<int32_t>("C_NPCISBOTHEREDBYPLAYERROOMGUILD",self)==0) {
+  else if(!isBotheredByPlayerRoomGuild(self)) {
     return 0;
     }
 
@@ -290,7 +321,8 @@ void GameScript::runQuietSoundReaction(Npc& listener) {
 
   constexpr size_t enemyOverride = 61; // AIV_ENEMYOVERRIDE in the verified program
   const bool bandit = listener.handle().guild==GIL_BDT;
-  const auto fakeBandit = vm.call_function<int32_t>("C_PLAYERISFAKEBANDIT",vm.global_self()->get_instance(),vm.global_other()->get_instance())!=0;
+  const auto currentSelf = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const bool fakeBandit = isPlayerFakeBandit(currentSelf,std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()));
   const bool overrideEnemy = listener.handle().aivar[enemyOverride]==1;
   const bool stillHostile = hostileToSource();
   if(((bandit && fakeBandit) || overrideEnemy) && stillHostile)
@@ -384,7 +416,7 @@ int32_t GameScript::runExitIfRoomLeft() {
   const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const auto guild = wld_getplayerportalguild();
   findSymbol("B_EXITIFROOMLEFT.PORTALGUILD")->set_int(guild);
-  const bool bothered = vm.call_function<int32_t>("C_NPCISBOTHEREDBYPLAYERROOMGUILD",self)!=0;
+  const bool bothered = isBotheredByPlayerRoomGuild(self);
   if(guild!=int32_t(GIL_PUBLIC) && bothered)
     return 0;
 
