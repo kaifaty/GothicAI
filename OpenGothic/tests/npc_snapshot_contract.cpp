@@ -1560,6 +1560,7 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
       auto historical=library.activities;
       for(auto name:{"ZS_SIT_THRONE","ZS_SAW","ZS_REPAIR_HUT","ZS_PRAY_INNOS"})
         historical.erase(name);
+      std::erase_if(historical,[](const auto& entry) { return entry.second.item.has_value(); });
       if(version<4) {
         historical.erase("ZS_SIT_BENCH");
         historical.erase("ZS_SIT_CHAIR");

@@ -1044,7 +1044,6 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
     put(item,"end_item",Json(a.item->endItem),allocator);
     put(parameters,"item",std::move(item),allocator);
     }
-    }
   put(json,"template",text("mob",allocator),allocator);
   put(json,"parameters",std::move(parameters),allocator);
   return json;
