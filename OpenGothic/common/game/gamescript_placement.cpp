@@ -34,6 +34,101 @@ LiteralPlacement readLiteralPlacement(daedalus::DaedalusScript& vm,uint32_t& pc,
   return {what,where,external};
   }
 
+bool runKhorinisNpcTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol& trigger) {
+  const auto symbol = [&vm](std::string_view name) { return vm.find_symbol_by_name(name); };
+  const auto ref = [&vm,symbol](std::string_view name) { vm.push_reference(symbol(name)); };
+  const auto actor = [&vm,symbol](std::string_view name) { vm.push_instance(symbol(name)->get_instance()); };
+  const auto external = [&vm,symbol](std::string_view name) { vm.unsafe_call_external(symbol(name)); };
+  const auto value = [symbol](std::string_view name) { return symbol(name)->get_int(); };
+  if(trigger.name()=="B_MAGECAVETRIGGER") {
+    const bool questActive = value("MIS_SCHNITZELJAGD")==value("LOG_RUNNING");
+    actor("MAGICGOLEM");
+    external("NPC_ISDEAD");
+    const auto golemDead = vm.pop_int();
+    if(!questActive || golemDead!=value("FALSE"))
+      return true;
+    actor("AGON");
+    external("NPC_ISDEAD");
+    const auto agonDead = vm.pop_int();
+    actor("AGON");
+    external("HLP_ISVALIDNPC");
+    const auto agonValid = vm.pop_int();
+    if(agonDead || !agonValid)
+      return true;
+    actor("AGON");
+    ref("$51970"); // NW_TROLLAREA_PATH_02
+    external("AI_TELEPORT");
+    actor("AGON");
+    ref("$51971"); // GOLEMLIVES
+    external("NPC_EXCHANGEROUTINE");
+    actor("AGON");
+    external("AI_CONTINUEROUTINE");
+    return true;
+    }
+
+  struct Spawn {
+    std::string_view trigger, once;
+    uint32_t offset, count;
+    std::array<std::string_view,7> ornamentText;
+    };
+  static constexpr Spawn spawns[] = {
+    {"EVT_CAVALORNSGOBBOS_FUNC","EVT_CAVALORNSGOBBOS_FUNC_ONETIME",16,3,{}},
+    {"EVT_TROLL_GRAVE_01",{},0,4,{}},
+    {"EVT_ORNAMENT_SWITCH_FOREST_01_FUNC","ORNAMENT_SWITCHED_FOREST",16,2,
+     {"$52164","$52165","$52166","$52167","$52168","$52169","$52170"}},
+    {"EVT_ORNAMENT_SWITCH_BIGFARM_01_FUNC","ORNAMENT_SWITCHED_BIGFARM",16,2,
+     {"$52153","$52154","$52155","$52156","$52157","$52158","$52159"}},
+    };
+  const auto spawn = std::ranges::find(spawns,trigger.name(),&Spawn::trigger);
+  if(spawn==std::end(spawns))
+    return false;
+  auto* once = spawn->once.empty() ? nullptr : symbol(spawn->once);
+  if(once && once->get_int()!=value("FALSE"))
+    return true;
+  auto pc = trigger.address()+spawn->offset;
+  daedalus::DaedalusSymbol* placedItem = nullptr;
+  for(uint32_t i=0;i<spawn->count;++i) {
+    const auto row = readLiteralPlacement(vm,pc,trigger.name());
+    vm.push_int(int32_t(row.instance->index()));
+    vm.push_reference(row.point);
+    vm.unsafe_call_external(row.external);
+    if(row.external->name()=="WLD_INSERTITEM")
+      placedItem = vm.find_symbol_by_index(row.instance->index());
+    }
+  if(placedItem) {
+    const auto& text = spawn->ornamentText;
+    const auto effect = [&](std::string_view name,daedalus::DaedalusSymbol& target) {
+      ref(name);
+      vm.push_instance(target.get_instance());
+      vm.push_instance(target.get_instance());
+      vm.push_int(0);
+      vm.push_int(0);
+      vm.push_int(0);
+      ref("FALSE");
+      external("WLD_PLAYEFFECT");
+      };
+    effect(text[0],*vm.global_hero());
+    effect(text[1],*placedItem);
+    for(const auto sound : {text[2],text[3],text[4]}) {
+      ref(sound);
+      external("SND_PLAY");
+      }
+    effect(text[5],*placedItem);
+    ref("TOPIC_ADDON_ORNAMENT");
+    ref("LOG_MISSION");
+    external("LOG_CREATETOPIC");
+    ref("TOPIC_ADDON_ORNAMENT");
+    ref("LOG_RUNNING");
+    external("LOG_SETTOPICSTATUS");
+    ref("TOPIC_ADDON_ORNAMENT");
+    ref(text[6]);
+    vm.unsafe_call_bl(symbol("B_LOGENTRY"));
+    }
+  if(once)
+    vm.set_int(nullptr,once,0,value("TRUE"));
+  return true;
+  }
+
 void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
   static constexpr auto chapter4 = "B_ENTER_NEWWORLD_KAPITEL_4";
   static constexpr auto chapter5 = "B_ENTER_NEWWORLD_KAPITEL_5";
@@ -300,6 +395,8 @@ PlacementDefinitionRuntime::Definitions dragonIslandPlacement(daedalus::Daedalus
 void GameScript::invokeWorldTrigger(std::string_view fn) {
   const auto* symbol = findSymbol(fn);
   if(symbol!=nullptr && nativeRoutineProgram && PlacementDefinitionRuntime::enabled()) {
+    if(runKhorinisNpcTrigger(vm,*symbol))
+      return;
     struct Room {
       std::string_view trigger;
       uint32_t         spawnCount;
