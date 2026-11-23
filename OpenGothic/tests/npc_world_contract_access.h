@@ -15,6 +15,7 @@ struct NpcDefinitionContract {
   static void nextAiAction(Npc& npc) { npc.nextAiAction(npc.aiQueue,0); }
   static void tickActivityDeadline(Npc& npc) { npc.tickActivityDeadline(); }
   static const AiQueue& queue(const Npc& npc) { return npc.aiQueue; }
+  static const AiQueue& overlayQueue(const Npc& npc) { return npc.aiQueueOverlay; }
   static bool walking(const Npc& npc) { return !npc.go2.empty(); }
   static const auto& physicsPosition(const Npc& npc) { return npc.physic.position(); }
   // An action at the head of the queue, as an interruption ahead of the queued use.
