@@ -318,6 +318,112 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
   return true;
   }
 
+bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  // These AIVAR slots belong to the verified NotR program.
+  constexpr size_t fightResult = 0;
+  constexpr size_t ransacked = 10;
+  constexpr size_t guardPassage = 12;
+  constexpr size_t partyMember = 15;
+  constexpr size_t victoryXpGiven = 16;
+  constexpr size_t arenaFight = 45;
+  constexpr size_t attackReason = 47;
+  constexpr size_t duelCounted = 48;
+  constexpr size_t magic = 51;
+  constexpr size_t defeatedByPlayer = 66;
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto hero = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance()); };
+  const auto number = [&](std::string_view name) { return findSymbol(name)->get_int(); };
+  const auto namedId = [&](std::string_view name) { return hlp_getinstanceid(findSymbol(name)->get_instance()); };
+  const auto startState = [&](std::string_view name) { ai_startstate(self,int(findFunction(name).ptr),0,""); };
+
+  result = 0;
+  if(symbol.name()=="ZS_UNCONSCIOUS_LOOP") {
+    result = npc_getstatetime(self)<number("HAI_TIME_UNCONSCIOUS") ? LOOP_CONTINUE : LOOP_END;
+    return true;
+    }
+
+  if(symbol.name()=="ZS_UNCONSCIOUS") {
+    npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction("B_ASSESSMAGIC").ptr));
+    const auto body = npc_getbodystate(self);
+    if(ActivityDefinitions::bodyStateContains(body,BS_DIVE) || ActivityDefinitions::bodyStateContains(body,BS_SWIM)) {
+      npc_clearaiqueue(self);
+      vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+      startState("ZS_DEAD");
+      return true;
+      }
+
+    self->aivar[guardPassage] = number("GP_NONE");
+    npc_setrefusetalk(self,0);
+    npc_settempattitude(self,npc_getpermattitude(self,hero()));
+    vm.call_function<void>("B_STOPLOOKAT",self);
+    ai_stoppointat(self);
+    if(npc_isplayer(other()) && self->guild<GIL_SEPERATOR_HUM) {
+      self->aivar[defeatedByPlayer] = 1;
+      self->aivar[fightResult] = number("FIGHT_LOST");
+      if(self->guild==GIL_SLD && self->aivar[duelCounted]==0 && self->aivar[attackReason]==number("AR_NONE")) {
+        auto& duels = *findSymbol("SLD_DUELLE_GEWONNEN");
+        duels.set_int(duels.get_int()+1);
+        self->aivar[duelCounted] = 1;
+        }
+      if(self->aivar[arenaFight]==number("AF_RUNNING"))
+        self->aivar[arenaFight] = number("AF_AFTER");
+      }
+    if(const auto winner = other(); npc_isplayer(self) && winner) {
+      winner->aivar[fightResult] = number("FIGHT_WON");
+      if(winner->aivar[arenaFight]==number("AF_RUNNING"))
+        winner->aivar[arenaFight] = number("AF_AFTER");
+      }
+
+    vm.call_function<void>("B_GIVETRADEINV",self);
+    vm.call_function<void>("B_CLEARRUNEINV",self);
+    const auto winner = other();
+    if(self->aivar[victoryXpGiven]==0 && ((winner && winner->aivar[partyMember]==1) || npc_isplayer(winner))) {
+      vm.call_function<void>("B_GIVEPLAYERXP",self->level*number("XP_PER_VICTORY"));
+      self->aivar[victoryXpGiven] = 1;
+      }
+    ai_unequipweapons(self);
+    if(namedId("CIPHER")==hlp_getinstanceid(other()) && namedId("DAR")==hlp_getinstanceid(self))
+      findSymbol("DAR_LOSTAGAINSTCIPHER")->set_int(1);
+    return true;
+    }
+
+  if(symbol.name()!="ZS_UNCONSCIOUS_END")
+    return false;
+  self->aivar[ransacked] = 0;
+  ai_standup(self);
+  if(npc_isplayer(self))
+    return true;
+  if(namedId("RAVEN")==hlp_getinstanceid(self)) {
+    self->aivar[magic] = number("MAGIC_ALWAYS");
+    vm.call_function<void>("B_ATTACK",self,hero(),number("AR_GUILDENEMY"),int32_t(0));
+    return true;
+    }
+
+  const auto distance = npc_getdisttonpc(self,other());
+  const auto canSee = npc_canseenpcfreelos(self,other());
+  if(distance<number("PERC_DIST_INTERMEDIAT") && canSee) {
+    vm.call_function<void>("B_TURNTONPC",self,other());
+    const auto attitude = npc_getpermattitude(self,other());
+    const auto toughGuy = vm.call_function<int32_t>("C_NPCISTOUGHGUY",self);
+    const bool threatens = int32_t(self->type)!=number("NPCTYPE_FRIEND") && attitude!=ATT_HOSTILE && toughGuy!=0;
+    vm.call_function<void>("B_SAY",self,other(),std::string_view(threatens ? "$NEXTTIMEYOUREINFORIT" : "$OHMYHEAD"));
+    }
+  npc_perceiveall(self);
+  // Both detections run. A melee item overrides ITEM when both searches succeed.
+  const bool ranged = wld_detectitem(self,ITM_CAT_FF);
+  const bool melee = wld_detectitem(self,ITM_CAT_NF);
+  if(ranged || melee) {
+    const auto item = std::dynamic_pointer_cast<daedalus::IItem>(vm.global_item()->get_instance());
+    if(hlp_isvaliditem(item) && npc_getdisttoitem(self,item)<=500)
+      ai_takeitem(self,item);
+    }
+  ai_equipbestmeleeweapon(self);
+  ai_equipbestrangedweapon(self);
+  startState("ZS_HEALSELF");
+  return true;
+  }
+
 int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {
   auto* symbol = findSymbol(name);
   if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT)

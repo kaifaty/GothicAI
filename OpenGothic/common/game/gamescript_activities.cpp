@@ -44,6 +44,7 @@ void GameScript::loadNativeRoutines() {
     {"ZS_STAND_RANGERMEETING",&GameScript::runSocialRoutine},
     {"ZS_OBSERVEPLAYER",      &GameScript::runObservePlayer},
     {"ZS_DEAD",               &GameScript::runDeadState},
+    {"ZS_UNCONSCIOUS",        &GameScript::runUnconsciousState},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
     {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_REST",        &GameScript::runMonsterRoutine},

@@ -2016,6 +2016,125 @@ void npcDeathLifecycle(Gothic& gothic) {
   std::puts("Death lifecycle: native Init and Loop match Daedalus, including the ordinary corpse load");
   }
 
+void npcUnconsciousLifecycle(Gothic& gothic) {
+  using Contract=NpcDefinitionContract;
+  constexpr auto* actor="BAU_951_HILDA";
+  std::string program;
+  loadBaseProgram(gothic.defaultGameDatFile(),Settings::getI("GAME","language"),&program);
+  if(program!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
+    std::puts("SKIP unconscious: the fixture is for the verified NotR program");
+    return;
+    }
+
+  auto recoveryQueue=[](const Npc& npc,ScriptFn heal,const Npc& hero) {
+    auto queue=Contract::queue(npc);
+    require(queue.size()>=4 && queue.pop().act==AI_StandUp,
+            "unconscious: recovery starts with standing up");
+    auto next=queue.pop();
+    if(next.act==AI_TakeItem)
+      next=queue.pop();
+    require(next.act==AI_EquipMelee && queue.pop().act==AI_EquipRange && queue.size()==1,
+            "unconscious: recovery retrieves any weapon before equipping melee and ranged");
+    const auto start=queue.pop();
+    require(start.act==AI_StartState && start.func==heal && start.target==&hero,
+            "unconscious: recovery queues self-healing with the original other");
+    return activityQueue(npc);
+    };
+  std::vector<std::string> originalInit,originalEnd;
+  std::vector<uint8_t> knockedOut;
+  int32_t originalXp=0;
+  for(bool native:{false,true}) {
+    gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+    ActivityEventsWorld test(gothic);
+    auto& world=test.world();
+    auto& script=world.script();
+    auto& hero=*world.player();
+    auto* npc=activityNpc(world,actor);
+    require(npc && npc->attribute(ATR_HITPOINTS)>0 && (npc->position()-hero.position()).length()>1000,
+            "unconscious: the fixture needs a living Hilda away from the hero");
+    test.stop(*npc);
+    npc->setSimTier(NpcSimTier::Full);
+    npc->setProcessPolicy(NpcProcessPolicy::AiNormal);
+    npc->setAttitude(ATT_NEUTRAL);
+    npc->setOther(&hero);
+    npc->handle().aivar[16]=0; // AIV_VictoryXPGiven
+    script.setSeed(73106);
+    Contract::activityEventsOn(script)=native;
+    const auto beforeXp=hero.experience();
+    const auto wakeAt=int64_t(script.findSymbol("HAI_TIME_UNCONSCIOUS")->get_int())*1000;
+    auto& vm=script.getVm();
+    size_t phaseCalls=0,rewards=0;
+    const auto observer=vm.add_call_observer([&](const auto& symbol) {
+      phaseCalls+=symbol.name().starts_with("ZS_UNCONSCIOUS");
+      rewards+=symbol.name()=="B_GIVEPLAYERXP";
+      });
+    npc->changeAttribute(ATR_HITPOINTS,-npc->attribute(ATR_HITPOINTS),true);
+    npc->setOther(&hero);
+    require(npc->isUnconscious() && !npc->isDead() && npc->attribute(ATR_HITPOINTS)==1,
+            "unconscious: nonlethal HP loss enters the engine knockout path");
+    {
+      ActivityStream stream(world,*npc);
+      Contract::tickRoutine(*npc);
+      require(npc->hasPerc(PERC_ASSESSMAGIC) && npc->handle().aivar[0]==1 && npc->handle().aivar[16]==1 &&
+              npc->handle().aivar[66]==1 && rewards==1 && hero.experience()>beforeXp,
+              "unconscious: Init restores magic perception, records a loss and awards victory XP once");
+      const auto init=activityQueue(*npc);
+      const auto gained=hero.experience()-beforeXp;
+      if(native) require(init==originalInit && gained==originalXp,"unconscious: Init queue and experience match Daedalus");
+      else { originalInit=init; originalXp=gained; }
+
+      npc->clearAiQueue(); // Isolate the recovery queue from the knockdown commands.
+      npc->handle().aivar[10]=1; // AIV_Ransacked
+      npc->setStateTime(wakeAt-1);
+      Contract::tickRoutine(*npc);
+      require(npc->isUnconscious() && npc->isAiQueueEmpty() && npc->handle().aivar[10]==1,
+              "unconscious: the last millisecond before the deadline still waits");
+      if(native) {
+        Tempest::MemWriter writer(knockedOut);
+        Serialize out(writer);
+        Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+        std::memset(preview.data(),0,4);
+        gothic.gameSession()->save(out,"unconscious before recovery",preview);
+        }
+      npc->setStateTime(wakeAt);
+      Contract::tickRoutine(*npc);
+      require(!npc->isUnconscious() && npc->handle().aivar[10]==0 && rewards==1 &&
+              phaseCalls==(native ? 0u : 4u) && stream.records==(native ? 4u : 0u) &&
+              activityCount(stream.events,"phase ZS_UNCONSCIOUS_LOOP")==2,
+              "unconscious: the deadline ends the state once through the selected executor");
+      const auto end=recoveryQueue(*npc,script.findFunction("ZS_HEALSELF"),hero);
+      if(native) require(end==originalEnd,"unconscious: End queue matches Daedalus");
+      else originalEnd=end;
+      }
+    vm.remove_call_observer(observer);
+    gothic.clearGame().reset();
+    }
+
+  Tempest::MemReader reader(knockedOut);
+  Serialize in(reader);
+  gothic.setGame(std::make_unique<GameSession>(in));
+  auto& world=*gothic.world();
+  auto& script=world.script();
+  auto& hero=*world.player();
+  auto* npc=activityNpc(world,actor);
+  const auto wakeAt=int64_t(script.findSymbol("HAI_TIME_UNCONSCIOUS")->get_int())*1000;
+  require(npc && npc->isUnconscious() && Contract::aiState(*npc).started && npc->stateOther()==&hero &&
+          npc->stateTime()==uint64_t(wakeAt-1) && npc->handle().aivar[10]==1 && npc->handle().aivar[16]==1,
+          "unconscious: ordinary load keeps the down state, time, culprit and flags");
+  const auto restoredXp=hero.experience();
+  {
+    ActivityStream stream(world,*npc);
+    npc->setStateTime(wakeAt);
+    Contract::tickRoutine(*npc);
+    require(!npc->isUnconscious() && npc->handle().aivar[10]==0 && hero.experience()==restoredXp &&
+            stream.records==2 && activityCount(stream.events,"phase ZS_UNCONSCIOUS")==0 &&
+            recoveryQueue(*npc,script.findFunction("ZS_HEALSELF"),hero)==originalEnd,
+            "unconscious: ordinary load resumes recovery without replaying Init or rewarding again");
+  }
+  gothic.clearGame().reset();
+  std::puts("Unconscious lifecycle: native Init, deadline and recovery match Daedalus across ordinary load");
+  }
+
 void seatedGestureAtObject(Npc& npc,uint32_t range) {
   using Contract=NpcDefinitionContract;
   auto& script=npc.world().script();
@@ -2560,6 +2679,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
       gothic.clearGame().reset();
       quietSoundAtPost(gothic);
       npcDeathLifecycle(gothic);
+      npcUnconsciousLifecycle(gothic);
       }
     }
   if(previousEvents) setenv("OPENGOTHIC_ACTIVITY_EVENTS",previousEvents->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_EVENTS");
