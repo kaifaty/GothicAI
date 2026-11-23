@@ -1853,6 +1853,161 @@ void sleepRoutineWorld(Gothic& gothic,bool events) {
               int(events),vmLoops);
   }
 
+void pairedSmalltalkWorld(ActivityEventsWorld& test,bool events) {
+  using Contract=NpcDefinitionContract;
+  auto& world=test.world();
+  auto& script=world.script();
+  auto* first=activityNpc(world,"BAU_918_BAUER");
+  auto* second=activityNpc(world,"BAU_919_BAUER");
+  const auto* firstPost=world.findPoint("FP_SMALLTALK_NW_BIGFARM_KITCHEN_03",false);
+  const auto* secondPost=world.findPoint("FP_SMALLTALK_NW_BIGFARM_KITCHEN_04",false);
+  require(first && second && firstPost && secondPost,"smalltalk: the farm kitchen pair and posts exist");
+  test.freePoint(firstPost);
+  test.freePoint(secondPost);
+  test.moveHero(firstPost->position()+Tempest::Vec3(300,0,0),0);
+  test.only({first,second});
+  EventActor talk;
+  talk.phases=activityPhases(script,"ZS_SMALLTALK");
+  talk.state="ZS_SMALLTALK";
+  talk.pointName="NW_BIGFARM_KITCHEN_09";
+  auto prepare=[&](Npc& actor,const WayPoint& post) {
+    test.start(talk,post.position(),&actor,false);
+    Contract::tickRoutine(actor);
+    // This scene starts after the approach, on the two points from the day journal.
+    actor.clearAiQueue();
+    actor.attachToPoint(&post);
+    require(actor.isOnFreePoint("SMALLTALK"),"smalltalk: the actor is at the authored free point");
+    };
+  prepare(*first,*firstPost);
+  prepare(*second,*secondPost);
+  require(first->qDistTo(*second)<500.f*500.f,"smalltalk: the other actor is within dialogue distance");
+
+  {
+    ActivityStream stream(world,*first);
+    auto& vm=script.getVm();
+    auto& roll=*vm.find_symbol_by_name("B_SAY_SMALLTALK.RANDOM");
+    auto& choice=*vm.find_symbol_by_name("B_SAY_SMALLTALK.CHOICE");
+    roll.set_int(-1);
+    choice.set_int(-1);
+    second->setStateTime(1200);
+    script.setSeed(42);
+    auto expected=Contract::random(script);
+    first->setStateTime(7999);
+    Contract::aiState(*first).loopNextTime=world.tickCount();
+    Contract::tickRoutine(*first);
+    require(roll.get_int()==-1 && choice.get_int()==-1 && Contract::random(script)==expected &&
+            second->stateTime()==1200 && first->isAiQueueEmpty(),"smalltalk: no turn or RNG before eight seconds");
+
+    const auto draw=expected()%120;
+    expected(); // The original draws again with bound one.
+    first->setStateTime(8000);
+    Contract::aiState(*first).loopNextTime=world.tickCount();
+    Contract::tickRoutine(*first);
+    require(first->stateTime()==0 && second->stateTime()==4000,"smalltalk: reset the speaker and stagger the partner");
+    require(Contract::random(script)==expected && roll.get_int()==int32_t(draw) && choice.get_int()==0,
+            "smalltalk: preserve both draws and both saved locals");
+    auto queue=Contract::queue(*first);
+    require(queue.size()==2,"smalltalk: exactly one turn and one SVM line");
+    const auto turn=queue.pop();
+    const auto line=queue.pop();
+    require(turn.act==AI_TurnToNpc && turn.target==second &&
+            line.act==AI_OutputSvm && line.target==first && line.s0=="$SMALLTALK21",
+            "smalltalk: queue the turn toward the partner before the seeded line to self");
+    require(stream.records==size_t(events),"smalltalk: run the selected executor at the timed wake");
+    }
+  test.stop(*first);
+  test.stop(*second);
+  first->attachToPoint(nullptr);
+  second->attachToPoint(nullptr);
+  }
+
+// The real game's item symbols and STAND post, used by both executors. The
+// caller discards this world after the case, so no other actor runs in it.
+void itemRoutinePhasesWorld(Gothic& gothic,bool events) {
+  using Contract=NpcDefinitionContract;
+  ActivityEventsWorld test(gothic);
+  auto& world=test.world();
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& npc=*test.extra();
+  const auto* post=world.findPoint("FP_STAND_CITY_20",false);
+  require(post,"item routine: the harbour STAND post exists");
+  npc.clearState(true);
+  npc.setPosition(post->position());
+  npc.attachToPoint(post);
+  npc.updateTransform();
+  require(npc.isOnFreePoint("STAND"),"item routine: the actor reached the post");
+  constexpr std::array food={"ITFO_APPLE","ITFO_CHEESE","ITFO_BACON","ITFOMUTTON"};
+  constexpr std::array foodGesture={"T_FOOD_RANDOM_1","T_FOODHUGE_RANDOM_1","T_MEAT_RANDOM_1","T_MEAT_RANDOM_1"};
+  for(const auto* name:{"ZS_STAND_EATING","ZS_STAND_DRINKING"}) {
+    const bool eating=std::string_view(name)=="ZS_STAND_EATING";
+    const auto phases=activityPhases(script,name);
+    std::string loopName=std::string(name)+"_LOOP";
+    size_t loops=0;
+    const auto observer=vm.add_call_observer([&](const auto& fn) { if(fn.name()==loopName) ++loops; });
+    auto invoke=[&](size_t phase) { script.invokeState(&npc,nullptr,nullptr,ScriptFn(phase)); };
+    script.setSeed(73106);
+    auto random=Contract::random(script);
+    const auto choice=eating ? size_t(random()%food.size()) : 0;
+    const auto item=uint32_t(script.findSymbolIndex(eating ? food[choice] : "ITFO_BOOZE"));
+    npc.delItem(item,uint32_t(npc.itemCount(item)));
+    invoke(phases.init);
+    require(npc.itemCount(item)==1 && npc.handle().aivar[19]==1 && (!eating || size_t(npc.handle().aivar[18])==choice) &&
+            Contract::random(script)==random,"item routine: Init selects and creates the original item once");
+    const auto created=npc.getItem(item);
+    require(created && vm.global_item()->get_instance()==std::static_pointer_cast<daedalus::IItem>(created->handlePtr()),
+            "item routine: item creation keeps the script ITEM global");
+    npc.clearAiQueue();
+    const auto limit=eating ? 6000u : 8000u;
+    npc.setStateTime(limit-1);
+    invoke(phases.loop);
+    auto queue=Contract::queue(npc);
+    auto take=[&](auto action) {
+      require(queue.size()>0,"item routine: expected a queued command");
+      auto next=queue.pop();
+      require(next.act==action,"item routine: command type in sequence");
+      return next;
+      };
+    auto use=[&](int state) {
+      const auto a=take(AI_UseItemToState);
+      require(uint32_t(a.i0)==item && a.i1==state,"item routine: command item and animation state");
+      };
+    auto gesture=[&](std::string_view clip) {
+      const auto a=take(AI_PlayAnimBs);
+      require(a.s0==clip && a.i0==BS_ITEMINTERACT,"item routine: gesture name and item-interaction pose");
+      };
+    take(AI_AlignToFp);
+    use(0);
+    if(eating && choice==0) gesture("T_FOOD_RANDOM_2");
+    require(queue.size()==0 && npc.handle().aivar[19]==0 && npc.stateTime()==limit-1 &&
+            Contract::random(script)==random,"item routine: enter the pose while the timer is still below threshold");
+    npc.clearAiQueue();
+    npc.setStateTime(limit);
+    const auto draw=eating ? 0u : uint32_t(random()%10);
+    invoke(phases.loop);
+    queue=Contract::queue(npc);
+    take(AI_AlignToFp);
+    if(eating) gesture(foodGesture[choice]);
+    else {
+      if(draw==0) gesture("T_POTION_RANDOM_3");
+      gesture("T_POTION_RANDOM_1");
+      if(draw==1) gesture("T_POTION_RANDOM_2");
+      const auto* local=vm.find_symbol_by_name(loopName+".RANDOM");
+      require(local && uint32_t(local->get_int())==draw,"item routine: drinking keeps the saved RNG outcome");
+      }
+    require(queue.size()==0 && npc.stateTime()==0 && Contract::random(script)==random && loops==(events ? 0u : 2u),
+            "item routine: original timed gesture with the requested executor");
+    vm.remove_call_observer(observer);
+    npc.clearAiQueue();
+    invoke(phases.end);
+    queue=Contract::queue(npc);
+    if(eating) gesture("T_POTION_RANDOM_2");
+    use(-1);
+    require(queue.size()==0,"item routine: release the item after the last command");
+    npc.clearAiQueue();
+    }
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
@@ -1860,6 +2015,9 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     setenv("OPENGOTHIC_ACTIVITY_EVENTS",events ? "1" : "0",1);
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
     const auto save=pointActivitiesWorld(gothic,events);
+    itemRoutinePhasesWorld(gothic,events);
+    ActivityEventsWorld paired(gothic);
+    pairedSmalltalkWorld(paired,events);
     sleepRoutineWorld(gothic,events);
     gothic.clearGame().reset();
     seatedActivitiesWorld(gothic,events);
