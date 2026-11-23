@@ -217,6 +217,107 @@ bool GameScript::runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symb
   return false;
   }
 
+bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  // These AIVAR slots belong to the verified NotR program.
+  constexpr size_t sawCrime = 1;
+  constexpr size_t ransacked = 10;
+  constexpr size_t partyMember = 15;
+  constexpr size_t victoryXpGiven = 16;
+  constexpr size_t deathHandled = 19; // AIV_TAPOSITION
+  constexpr size_t monsterId = 43;
+  constexpr size_t killedByPlayer = 67;
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+
+  if(symbol.name()=="ZS_DEAD_LOOP") {
+    if(self->aivar[deathHandled]==0) {
+      vm.call_function<void>("B_DRAGONKILLCOUNTER",self);
+      self->aivar[deathHandled] = 1;
+      }
+    result = LOOP_CONTINUE;
+    return true;
+    }
+  if(symbol.name()!="ZS_DEAD")
+    return false;
+
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto namedNpc = [&](std::string_view name) {
+    return std::dynamic_pointer_cast<daedalus::INpc>(findSymbol(name)->get_instance());
+    };
+  const auto matches = [&](std::string_view name) {
+    return hlp_getinstanceid(self)==hlp_getinstanceid(namedNpc(name));
+    };
+  const auto number = [&](std::string_view name) { return findSymbol(name)->get_int(); };
+  const auto setNumber = [&](std::string_view name, int32_t value) { findSymbol(name)->set_int(value); };
+  const auto increment = [&](std::string_view name) { setNumber(name,number(name)+1); };
+
+  self->aivar[ransacked] = 0;
+  self->aivar[partyMember] = 0;
+  vm.call_function<void>("B_STOPLOOKAT",self);
+  ai_stoppointat(self);
+
+  const auto winner = other();
+  if(self->aivar[victoryXpGiven]==0 && (npc_isplayer(winner) || (winner && winner->aivar[partyMember]==1))) {
+    vm.call_function<void>("B_GIVEPLAYERXP",self->level*number("XP_PER_VICTORY"));
+    self->aivar[victoryXpGiven] = 1;
+    }
+
+  if(vm.call_function<int32_t>("C_IAMCANYONRAZOR",self)==1) {
+    increment("CANYONRAZORBODYCOUNT");
+    if(number("MIS_ADDON_GREG_CLEARCANYON")==number("LOG_RUNNING"))
+      vm.call_function<void>("B_COUNTCANYONRAZOR");
+    }
+
+  if(self->aivar[monsterId]==number("ID_SWAMPDRONE")) {
+    const auto target = other();
+    if(npc_getdisttonpc(self,target)<300)
+      target->attribute[NpcAttribute::hitpoints] -= 50;
+    }
+  if(matches("DIEGOOW"))
+    setNumber("DIEGO_ISDEAD",1);
+
+  if(npc_isplayer(other())) {
+    self->aivar[killedByPlayer] = 1;
+    if(vm.call_function<int32_t>("C_DROPUNCONSCIOUS")!=0)
+      increment("MADKILLERCOUNT");
+    const auto running = number("LOG_RUNNING");
+    if(number("MIS_FESTER_KILLBUGS")==running && self->guild==number("GIL_GIANT_BUG"))
+      increment("FESTERS_GIANT_BUG_KILLED");
+    if(number("MIS_KROKOJAGD")==running && matches("SWAMPRAT"))
+      increment("ALLIGATORJACK_KROKOSKILLED");
+    if(matches("RAMON"))
+      setNumber("PLAYER_HASTALKEDTOBANDITCAMP",1);
+    if(matches("FRANCO")) {
+      if(number("MIS_HLPLOGAN")==running)
+        setNumber("MIS_HLPLOGAN",number("LOG_OBSOLETE"));
+      if(number("MIS_HLPEDGOR")==running)
+        setNumber("MIS_HLPEDGOR",number("LOG_OBSOLETE"));
+      }
+    if(matches("FORTUNO"))
+      log_settopicstatus(findSymbol("TOPIC_ADDON_FORTUNO")->get_string(),number("LOG_OBSOLETE"));
+    }
+
+  if(matches("GOLDMINECRAWLER")) {
+    if(number("BLOODWYN_SPAWN")==0 && number("MINECRAWLER_KILLED")>=9) {
+      ai_teleport(namedNpc("BLOODWYN"),"ADW_MINE_TO_MC_03");
+      vm.call_function<void>("B_STARTOTHERROUTINE",namedNpc("BLOODWYN"),std::string_view("MINE"));
+      vm.call_function<void>("B_GIVEPLAYERXP",number("XP_ADDON_BLOODYWYN"));
+      setNumber("BLOODWYN_SPAWN",1);
+      } else {
+      increment("MINECRAWLER_KILLED");
+      }
+    }
+
+  vm.call_function<void>("B_GIVETRADEINV",self);
+  vm.call_function<void>("B_GIVEDEATHINV",self);
+  vm.call_function<void>("B_CLEARRUNEINV",self);
+  vm.call_function<void>("B_DELETEPETZCRIME",self);
+  self->aivar[sawCrime] = number("CRIME_NONE");
+  ai_unequipweapons(self);
+  self->aivar[deathHandled] = 0;
+  result = 0;
+  return true;
+  }
+
 int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {
   auto* symbol = findSymbol(name);
   if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT)

@@ -1896,6 +1896,126 @@ void quietSoundAtPost(Gothic& gothic) {
   std::filesystem::remove_all(directory);
   }
 
+void npcDeathLifecycle(Gothic& gothic) {
+  using Contract=NpcDefinitionContract;
+  constexpr auto* actor="BAU_951_HILDA";
+  std::string program;
+  loadBaseProgram(gothic.defaultGameDatFile(),Settings::getI("GAME","language"),&program);
+  if(program!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
+    std::puts("SKIP death: the fixture is for the verified NotR program");
+    return;
+    }
+
+  auto save=[&](const char* label) {
+    std::vector<uint8_t> bytes;
+    {
+      Tempest::MemWriter writer(bytes);
+      Serialize out(writer);
+      Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+      std::memset(preview.data(),0,4);
+      gothic.gameSession()->save(out,label,preview);
+    }
+    return bytes;
+    };
+  auto load=[&](const std::vector<uint8_t>& bytes) {
+    gothic.clearGame().reset();
+    Tempest::MemReader reader(bytes);
+    Serialize in(reader);
+    gothic.setGame(std::make_unique<GameSession>(in));
+    };
+  auto consequences=[](Npc& npc,const Npc& hero) {
+    std::map<size_t,size_t> loot;
+    for(auto item=npc.inventory().iterator(Inventory::T_Ransack);item.isValid();++item)
+      loot[item->clsId()]+=item.count();
+    return std::tuple{activityQueue(npc),loot,std::to_array(npc.handle().aivar),hero.experience()};
+    };
+  using Consequences=decltype(consequences(std::declval<Npc&>(),std::declval<const Npc&>()));
+
+  gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+  {
+    ActivityEventsWorld test(gothic);
+    test.only({});
+    test.step(24);
+  }
+  const auto alive=save("before death state");
+  Consequences original;
+  std::vector<uint8_t> corpse;
+  for(bool native:{false,true}) {
+    load(alive);
+    ActivityEventsWorld test(gothic);
+    auto& world=test.world();
+    auto& script=world.script();
+    auto& vm=script.getVm();
+    auto& hero=*world.player();
+    auto* npc=activityNpc(world,actor);
+    require(npc && !npc->isDead() && !npc->isImmortal() && npc->attribute(ATR_HITPOINTS)>0,
+            "death: the fixture needs a living Hilda");
+    test.stop(*npc);
+    npc->setSimTier(NpcSimTier::Full);
+    npc->setProcessPolicy(NpcProcessPolicy::AiNormal);
+    script.setSeed(73106);
+    Contract::activityEventsOn(script)=native;
+    npc->handle().aivar[16]=0; // This defeat has not yet awarded experience.
+    const auto beforeXp=hero.experience();
+    const auto dead=script.findFunction("ZS_DEAD");
+    const auto initPc=script.findSymbol("ZS_DEAD")->address();
+    const auto loopPc=script.findSymbol("ZS_DEAD_LOOP")->address();
+    size_t initVm=0,loopVm=0,deathLoot=0,dragonChecks=0;
+    const auto calls=vm.add_call_observer([&](const auto& symbol) {
+      deathLoot+=symbol.name()=="B_GIVEDEATHINV";
+      dragonChecks+=symbol.name()=="B_DRAGONKILLCOUNTER";
+      });
+    vm.observe_instructions([&](const auto&) {
+      initVm+=vm.pc()==initPc;
+      loopVm+=vm.pc()==loopPc;
+      });
+    npc->changeAttribute(ATR_HITPOINTS,-npc->attribute(ATR_HITPOINTS),false);
+    npc->setOther(&hero);
+    require(npc->isDead() && npc->isInState(dead) && !Contract::aiState(*npc).started,
+            "death: the engine enters the original death state");
+    Contract::tickRoutine(*npc);
+    Contract::tickRoutine(*npc);
+    Contract::tickRoutine(*npc);
+    vm.observe_instructions({});
+    vm.remove_call_observer(calls);
+    require(initVm==(native ? 0u : 1u) && loopVm==(native ? 0u : 2u) && deathLoot==1 && dragonChecks==1,
+            "death: Init grants loot once and the first Loop alone checks the dragon counter");
+    require(npc->stateOther()==&hero && hero.experience()>beforeXp && npc->handle().aivar[16]==1,
+            "death: the credited player receives experience and remains the state's other");
+    auto outcome=consequences(*npc,hero);
+    if(!native) original=std::move(outcome);
+    else {
+      require(outcome==original,"death: the two executors agree on queue, loot, flags and experience");
+      npc->setStateTime(750);
+      corpse=save("inside death state");
+      }
+    }
+
+  load(corpse);
+  auto& world=*gothic.world();
+  auto& script=world.script();
+  auto& hero=*world.player();
+  auto* npc=activityNpc(world,actor);
+  require(npc && npc->isDead() && Contract::aiState(*npc).started && npc->stateOther()==&hero &&
+          npc->stateTime()==750 && consequences(*npc,hero)==original,
+          "death: normal load restores the corpse, credited player, time, loot and queue");
+  {
+    ActivityStream stream(world,*npc);
+    auto& vm=script.getVm();
+    size_t repeated=0;
+    const auto calls=vm.add_call_observer([&](const auto& symbol) {
+      repeated+=symbol.name()=="B_GIVEPLAYERXP" || symbol.name()=="B_GIVEDEATHINV" || symbol.name()=="B_DRAGONKILLCOUNTER";
+      });
+    Contract::tickRoutine(*npc);
+    vm.remove_call_observer(calls);
+    require(activityCount(stream.events,"phase ZS_DEAD")==0 && activityCount(stream.events,"phase ZS_DEAD_LOOP")==1 &&
+            stream.records==1 && repeated==0 && consequences(*npc,hero)==original,
+            "death: a loaded corpse continues the native Loop without repeating rewards or the first check");
+  }
+  gothic.clearGame().reset();
+  std::puts("Death lifecycle: native Init and Loop match Daedalus, including the ordinary corpse load");
+  }
+
 void seatedGestureAtObject(Npc& npc,uint32_t range) {
   using Contract=NpcDefinitionContract;
   auto& script=npc.world().script();
@@ -2439,6 +2559,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
       loadCampfireGroup(gothic,save);
       gothic.clearGame().reset();
       quietSoundAtPost(gothic);
+      npcDeathLifecycle(gothic);
       }
     }
   if(previousEvents) setenv("OPENGOTHIC_ACTIVITY_EVENTS",previousEvents->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_EVENTS");
