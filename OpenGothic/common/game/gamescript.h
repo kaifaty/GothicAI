@@ -95,6 +95,7 @@ class GameScript final : public GameRules {
     void         loadQuests(Serialize& fin);
     void         saveVar(Serialize& fout);
     void         loadVar(Serialize& fin);
+    void         initPerceptions();
     void         savePerc(Serialize& fout);
     void         loadPerc(Serialize& fin);
 
@@ -294,6 +295,11 @@ class GameScript final : public GameRules {
       RoutineWake wake = RoutineWake::Timer;
       bool enters = false;
       };
+    void refreshNpcAtInsert(Npc& npc);
+    void loadNativeKillNpc();
+    void loadNativeNpcGlobals();
+    void invokeKillNpc(int32_t symbol);
+    void killNpc(int32_t symbol);
     void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
     bool startHotkeyPotion(Npc& pl, bool mana);

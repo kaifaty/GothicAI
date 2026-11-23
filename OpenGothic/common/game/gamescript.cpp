@@ -95,6 +95,8 @@ GameScript::GameScript(GameSession &owner)
   Gothic::inst().setupVmCommonApi(vm);
   aiDefaultPipe.reset(new GlobalOutput(*this));
   initCommon();
+  loadNativeKillNpc();
+  loadNativeNpcGlobals();
   loadNativeRoutines();
   loadNativeRoomReaction();
   loadNativeHumanPerceptions();
@@ -620,8 +622,7 @@ void GameScript::loadPerc(Serialize& fin) {
   uint32_t count = 0;
   fin.read(count);
   if(count!=PERC_Count) {
-    if(hasSymbolName("initPerceptions"))
-      vm.call_function("initPerceptions");
+    initPerceptions();
     return;
     }
   for(size_t i=0; i<PERC_Count; ++i)
@@ -1227,6 +1228,8 @@ void GameScript::invokeRefreshAtInsert(Npc& npc) {
   if(B_RefreshAtInsert==nullptr)
     return;
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && NpcDefinitionRuntime::enabled())
+    return refreshNpcAtInsert(npc);
   vm.call_function<void>(B_RefreshAtInsert);
   }
 

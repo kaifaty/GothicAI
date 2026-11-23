@@ -143,9 +143,9 @@ bool GameScript::endMonsterRoutine(Npc& npc, MonsterRoutine routine) {
   }
 
 void GameScript::removeRavensStoneGuardians(Npc& npc) {
-  // B_KILLNPC resolves the live NPC through the VM's SELF symbol.
+  // The stock rule resolves the live guardian through the SELF alias.
   if(npc.handle().guild==GIL_Stoneguardian && findSymbol("RAVENISDEAD")->get_int()==1)
-    vm.call_function<void>("B_KILLNPC",int32_t(vm.global_self()->index()));
+    invokeKillNpc(int32_t(vm.global_self()->index()));
   }
 
 bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe) {

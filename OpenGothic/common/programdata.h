@@ -64,6 +64,8 @@ struct Index {
   // findVfs, findHost and server throw std::runtime_error when the matched source is skipped.
   };
 
+const Source* fightProgram(const Index& index);
+
 // Throws std::runtime_error("program data: <file>: <reason>") on missing, corrupt or
 // unsupported data.
 Index readIndex(const std::filesystem::path& dir);   // dir/programs.json
