@@ -9,6 +9,7 @@
 #include "commandline.h"
 #include "game/definitions/basescripts.h"
 #include "game/gamesession.h"
+#include "game/npcactivityhost.h"
 #include "gothic.h"
 #include "gamemusic.h"
 #include "programdata.h"
@@ -690,19 +691,26 @@ static void diegoRouteBoundaries(World& world,Npc& context) {
   vm.global_self()->set_instance(std::static_pointer_cast<daedalus::INpc>(context.handlePtr()));
   struct Site { const WayPoint* point; int32_t offset, tolerance, region; };
   for(const Site site : {Site{angar,3999,0,1}, Site{angar,4000,0,0}, Site{angar,4000,1000,1}, Site{ice,0,0,2}}) {
-    hero->setPosition(site.point->position()+Tempest::Vec3(float(site.offset),0,0));
+    const auto center=hero->centerPosition()-hero->position();
+    hero->setPosition(site.point->position()+Tempest::Vec3(float(site.offset),0,0)-center);
+    require(NpcEngineCalls::distanceToWaypoint(*hero,site.point)==site.offset,
+            "Diego's route fixture must position the measured center at the requested distance");
     int32_t original=0;
     for(bool native : {false,true}) {
       enabled=native;
       tolerance->set_int(-1);
       size_t instructions=0;
       vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==check->address(); });
-      const auto region=vm.call_function<int32_t>(check,site.tolerance);
+      vm.push_int(site.tolerance);
+      vm.unsafe_call_bl(check);
+      const auto region=vm.pop_int();
       vm.observe_instructions({});
       require(instructions==size_t(!native) && tolerance->get_int()==site.tolerance,
               "Diego's route query preserves its argument and uses the selected executor");
       if(site.region!=0)
-        require(region==site.region,"Diego's route preserves the original nonzero region code");
+        require(region==site.region,("Diego's route at "+site.point->name+" + "+std::to_string(site.offset)+
+                " cm with tolerance "+std::to_string(site.tolerance)+" returned "+std::to_string(region)+
+                " instead of "+std::to_string(site.region)+(native ? " in the engine" : " in the VM")).c_str());
       else
         require(region!=1,"Diego's route excludes the strict Angar radius boundary");
       if(native) require(region==original,"Diego's route agrees with the original at each position and tolerance");
