@@ -348,7 +348,7 @@ class GameScript final : public GameRules {
       bool enters = false;
       };
     void refreshNpcAtInsert(Npc& npc);
-    void loadNativeKillNpc();
+    void loadNativeNpcDeath();
     void loadNativeNpcGlobals();
     void loadNativeMonsterAttitudes();
     void loadNativeWorldEntry();
@@ -357,6 +357,8 @@ class GameScript final : public GameRules {
     void changeChapter(int32_t chapter, int32_t level);
     void invokeKillNpc(int32_t symbol);
     void killNpc(int32_t symbol);
+    void removeNpc(int32_t symbol);
+    int32_t countDragonDeaths(const std::shared_ptr<daedalus::INpc>& actor);
     void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
     bool startHotkeyPotion(Npc& pl, bool mana);

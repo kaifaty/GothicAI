@@ -1,5 +1,116 @@
 // World contracts for death, unconsciousness, healing and equipment.
 
+void dragonDeathBranches(Gothic& gothic, bool native) {
+  auto& world = *gothic.world();
+  auto& script = world.script();
+  auto& vm = script.getVm();
+  const auto symbol = [&](std::string_view name) { return script.findSymbol(name); };
+  const auto* point = world.findWayPoint("NW_FARM4_BALTHASAR");
+  require(point!=nullptr,"dragon death: need a waypoint for the disposable cast");
+  const auto spawn = [&](std::string_view name) -> Npc& {
+    auto* npc = world.addNpc(script.findSymbolIndex(name),point->position());
+    require(npc!=nullptr,"dragon death: stock actor must be present");
+    return *npc;
+    };
+  const auto handle = [](const Npc& npc) { return std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()); };
+  auto& raven = spawn("BDT_1090_ADDON_RAVEN");
+  auto& myxir = spawn("KDW_14030_ADDON_MYXIR_ADW");
+  auto& biff = spawn("DJG_713_BIFF");
+  auto& swamp = spawn("DRAGON_SWAMP");
+  auto& undead = spawn("DRAGON_UNDEAD");
+  require(!myxir.isDead() && !biff.isDead() && swamp.handle().guild==GIL_DRAGON,
+          "dragon death: need living witnesses and the stock dragon guild");
+  myxir.handle().flags = NpcFlag::IMMORTAL;
+  symbol("MYXIR_ADW")->set_instance(handle(myxir));
+  symbol("BIFF")->set_instance(handle(biff));
+  for(auto name : {"RAVENISDEAD","SWAPDRAGNISDEAD","MIS_ALLDRAGONSDEAD","DJG_BIFFSURVIVEDLASTDRAGON","UNDEADDRAGONISDEAD"})
+    symbol(name)->set_int(0);
+  symbol("MIS_KILLEDDRAGONS")->set_int(3);
+  symbol("DJG_BIFFPARTY")->set_int(1);
+  world.player()->handle().guild = GIL_DJG;
+
+  struct Videos {
+    Gothic& gothic;
+    std::vector<std::string> played;
+    explicit Videos(Gothic& engine) : gothic(engine) { gothic.onVideo.bind(this,&Videos::record); }
+    ~Videos() { gothic.onVideo.ubind(this,&Videos::record); }
+    void record(std::string_view name,bool) { played.emplace_back(name); }
+    } videos(gothic);
+  const auto* configuredRecords = std::getenv("OPENGOTHIC_NPC_RECORDS");
+  const auto previousRecords = configuredRecords ? std::optional<std::string>(configuredRecords) : std::nullopt;
+  setenv("OPENGOTHIC_NPC_RECORDS",native ? "1" : "0",1);
+
+  const auto* counter = symbol("B_DRAGONKILLCOUNTER");
+  const auto* remove = symbol("B_REMOVENPC");
+  bool counterVm = false, removeVm = false;
+  std::vector<std::string> calls;
+  vm.observe_instructions([&](const auto&) {
+    counterVm |= vm.pc()==counter->address();
+    removeVm |= vm.pc()==remove->address();
+    });
+  vm.observe_externals([&](const auto& fn) {
+    const auto& name = fn.name();
+    if(name=="PLAYVIDEOEX" || name=="AI_TELEPORT" || name=="NPC_CHANGEATTRIBUTE" ||
+       name=="LOG_CREATETOPIC" || name=="LOG_SETTOPICSTATUS")
+      calls.push_back(name);
+    });
+  const auto always = vm.add_call_observer([&](const auto& fn) {
+    if(fn.name()=="B_REMOVENPC" || fn.name()=="B_STARTOTHERROUTINE" || fn.name()=="B_LOGENTRY")
+      calls.push_back(fn.name());
+    });
+  const auto call = [&](Npc& actor) {
+    const auto context = vm.unsafe_get_gi();
+    vm.push_int(0x12345678);
+    vm.push_instance(handle(actor));
+    vm.unsafe_call_bl(counter);
+    const auto result = vm.pop_int();
+    require(vm.pop_int()==0x12345678 && vm.unsafe_get_gi()==context,
+            "dragon death: every exit restores the caller stack and member context");
+    return result;
+    };
+  const auto restore = [&] {
+    if(previousRecords) setenv("OPENGOTHIC_NPC_RECORDS",previousRecords->c_str(),1);
+    else unsetenv("OPENGOTHIC_NPC_RECORDS");
+    vm.remove_call_observer(always);
+    vm.observe_instructions({});
+    vm.observe_externals({});
+    };
+  try {
+    require(call(raven)==1 && symbol("RAVENISDEAD")->get_int()==1 && myxir.attribute(ATR_HITPOINTS)==0 &&
+            myxir.handle().flags==NpcFlag::NONE && symbol("B_REMOVENPC.NPC")->get_instance()==handle(myxir) &&
+            symbol("B_REMOVENPC.NPCINSTANCE")->get_int()==int32_t(symbol("MYXIR_ADW")->index()),
+            "dragon death: Raven's movie result is returned and the live Myxir alias is removed");
+    require(calls==std::vector<std::string>{"PLAYVIDEOEX","B_REMOVENPC","AI_TELEPORT","B_STARTOTHERROUTINE",
+                                            "NPC_CHANGEATTRIBUTE","AI_TELEPORT"},
+            "dragon death: Raven's movie, routine, damage and the two teleports keep the stock order");
+    calls.clear();
+    require(call(raven)==0 && calls.empty(),"dragon death: Raven's latch suppresses replay and removal");
+    require(call(swamp)==0 && call(swamp)==0 && symbol("SWAPDRAGNISDEAD")->get_int()==1 &&
+            symbol("MIS_KILLEDDRAGONS")->get_int()==4 && symbol("MIS_ALLDRAGONSDEAD")->get_int()==1 &&
+            symbol("DJG_BIFFSURVIVEDLASTDRAGON")->get_int()==1 && calls.empty(),
+            "dragon death: the final counted dragon is counted once and a living Biff is credited");
+
+    require(call(undead)==1 && symbol("UNDEADDRAGONISDEAD")->get_int()==1 &&
+            calls==std::vector<std::string>{"LOG_CREATETOPIC","LOG_SETTOPICSTATUS","B_LOGENTRY","AI_TELEPORT","PLAYVIDEOEX"} &&
+            videos.played==std::vector<std::string>{symbol("$17823")->get_string(),symbol("$17826")->get_string()},
+            "dragon death: the undead dragon records the journal and queues the exit before playing the hero's guild movie");
+    const auto& log = script.questLog();
+    bool foundTopic = false;
+    for(size_t i=0;i<log.questCount();++i) {
+      const auto& quest = log.quest(i);
+      if(quest.name==symbol("TOPIC_BACKTOSHIP")->get_string())
+        foundTopic = quest.section==QuestLog::Mission && quest.status==QuestLog::Status::Running &&
+                     !quest.entry.empty() && quest.entry.back()==symbol("PRINT_DRAGKILLCOUNT")->get_string();
+      }
+    require(foundTopic && counterVm!=native && removeVm!=native,
+            "dragon death: both executors reach the original journal result and the expected function bodies");
+    } catch(...) {
+    restore();
+    throw;
+    }
+  restore();
+  }
+
 void npcDeathLifecycle(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   constexpr auto* actor="BAU_951_HILDA";
@@ -95,6 +206,7 @@ void npcDeathLifecycle(Gothic& gothic) {
       npc->setStateTime(750);
       corpse=save("inside death state");
       }
+    dragonDeathBranches(gothic,native);
     }
 
   load(corpse);

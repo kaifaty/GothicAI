@@ -1,5 +1,6 @@
 #include "gamescript.h"
 
+#include <bit>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -79,11 +80,19 @@ void GameScript::initPerceptions() {
   perc_setrange(PERC_OBSERVESUSPECT,      100);
   }
 
-void GameScript::loadNativeKillNpc() {
+void GameScript::loadNativeNpcDeath() {
   if(!nativeRoutineProgram)
     return;
+  using NpcRef = std::shared_ptr<daedalus::INpc>;
   vm.override_function("B_KILLNPC",std::function<void(int32_t)>{[this](int32_t symbol) { killNpc(symbol); }},
                        NpcDefinitionRuntime::enabled);
+  vm.override_function("B_REMOVENPC",std::function<void(int32_t)>{[this](int32_t symbol) { removeNpc(symbol); }},
+                       NpcDefinitionRuntime::enabled);
+  vm.override_function("B_DRAGONKILLCOUNTER",std::function<int32_t(NpcRef)>{[this](NpcRef actor) {
+    return countDragonDeaths(actor);
+    }},[this] {
+    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+    });
   }
 
 void GameScript::invokeKillNpc(int32_t symbol) {
@@ -128,6 +137,162 @@ void GameScript::killNpc(int32_t symbol) {
   vm.push_int(ATR_HITPOINTS);
   vm.push_int(target ? -target->attribute[ATR_HITPOINTS] : 0);
   vm.unsafe_call_external(findSymbol("NPC_CHANGEATTRIBUTE"));
+  }
+
+void GameScript::removeNpc(int32_t symbol) {
+  auto* parameter = findSymbol("B_REMOVENPC.NPCINSTANCE");
+  auto* actor = findSymbol("B_REMOVENPC.NPC");
+  parameter->set_int(symbol);
+  vm.push_reference(parameter);
+  vm.unsafe_call_external(findSymbol("HLP_GETNPC"));
+  actor->set_instance(vm.pop_instance());
+
+  vm.push_reference(actor);
+  vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
+  const bool dead = vm.pop_int()!=0;
+  vm.push_reference(actor);
+  vm.unsafe_call_external(findSymbol("HLP_ISVALIDNPC"));
+  const bool valid = vm.pop_int()!=0;
+  if(dead || !valid)
+    return;
+
+  const auto initial = std::static_pointer_cast<daedalus::INpc>(actor->get_instance());
+  vm.unsafe_set_gi(initial);
+  initial->flags = NpcFlag::NONE;
+  vm.push_reference(actor);
+  vm.push_reference(findSymbol("$13017")); // Stock TOT destination.
+  vm.unsafe_call_external(findSymbol("AI_TELEPORT"));
+  vm.push_reference(actor);
+  vm.push_reference(findSymbol("$13018")); // Stock TOT routine.
+  vm.unsafe_call_bl(findSymbol("B_STARTOTHERROUTINE"));
+
+  const auto target = std::static_pointer_cast<daedalus::INpc>(actor->get_instance());
+  vm.unsafe_set_gi(target);
+  const auto maximumHp = target ? target->attribute[ATR_HITPOINTSMAX] : 0;
+  vm.push_reference(actor);
+  vm.push_reference(findSymbol("ATR_HITPOINTS"));
+  vm.push_int(std::bit_cast<int32_t>(0u-uint32_t(maximumHp)));
+  vm.unsafe_call_external(findSymbol("NPC_CHANGEATTRIBUTE"));
+  vm.push_reference(actor);
+  vm.push_reference(findSymbol("$13019"));
+  vm.unsafe_call_external(findSymbol("AI_TELEPORT"));
+  }
+
+int32_t GameScript::countDragonDeaths(const std::shared_ptr<daedalus::INpc>& actor) {
+  auto* current = findSymbol("B_DRAGONKILLCOUNTER.CURRENT_DRAGON");
+  auto* raven = findSymbol("B_DRAGONKILLCOUNTER.RAVN");
+  auto* ravenDead = findSymbol("RAVENISDEAD");
+  auto* count = findSymbol("MIS_KILLEDDRAGONS");
+  auto* yes = findSymbol("TRUE");
+  auto* no = findSymbol("FALSE");
+  const auto findNpc = [&](std::string_view name, daedalus::DaedalusSymbol* local) {
+    vm.push_int(int32_t(findSymbolIndex(name)));
+    vm.unsafe_call_external(findSymbol("HLP_GETNPC"));
+    local->set_instance(vm.pop_instance());
+    };
+  const auto instanceId = [&](daedalus::DaedalusSymbol* npc) {
+    vm.push_reference(npc);
+    vm.unsafe_call_external(findSymbol("HLP_GETINSTANCEID"));
+    return vm.pop_int();
+    };
+  const auto matchesCurrent = [&](daedalus::DaedalusSymbol* npc) {
+    const auto id = instanceId(npc);
+    return id==instanceId(current);
+    };
+  const auto memberNpc = [&](daedalus::DaedalusSymbol* symbol) {
+    const auto npc = std::static_pointer_cast<daedalus::INpc>(symbol->get_instance());
+    vm.unsafe_set_gi(npc);
+    return npc;
+    };
+  bool moviePlayed = false;
+  const auto play = [&](std::string_view movie) {
+    vm.push_reference(findSymbol(movie));
+    vm.push_reference(yes);
+    vm.push_reference(no);
+    vm.unsafe_call_external(findSymbol("PLAYVIDEOEX"));
+    moviePlayed = true;
+    };
+
+  current->set_instance(actor);
+  findNpc("BDT_1090_ADDON_RAVEN",raven);
+  if(matchesCurrent(raven) && ravenDead->get_int()==no->get_int()) {
+    play("$17823"); // Raven.
+    ravenDead->set_int(yes->get_int());
+    vm.push_int(int32_t(findSymbolIndex("MYXIR_ADW")));
+    vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
+    }
+
+  const auto dragon = memberNpc(current);
+  if(dragon && dragon->guild==GIL_DRAGON) {
+    struct DragonDeath {
+      std::string_view source, local, latch;
+      };
+    constexpr DragonDeath dragons[] = {
+      {"DRAGON_SWAMP","B_DRAGONKILLCOUNTER.SWAPDRAGN","SWAPDRAGNISDEAD"},
+      {"DRAGON_ROCK", "B_DRAGONKILLCOUNTER.RCKDRAGN", "RCKDRAGNISDEAD"},
+      {"DRAGON_FIRE", "B_DRAGONKILLCOUNTER.FREDRAGN", "FREDRAGNISDEAD"},
+      {"DRAGON_ICE",  "B_DRAGONKILLCOUNTER.ICDRAGN",  "ICDRAGNISDEAD"},
+      };
+    for(const auto& entry : dragons)
+      findNpc(entry.source,findSymbol(entry.local));
+    for(const auto& entry : dragons) {
+      auto* latch = findSymbol(entry.latch);
+      const bool pending = latch->get_int()==no->get_int();
+      // The instance comparisons run even when the dragon is already counted.
+      const bool same = matchesCurrent(findSymbol(entry.local));
+      if(pending && same) {
+        count->set_int(std::bit_cast<int32_t>(uint32_t(count->get_int())+1u));
+        latch->set_int(yes->get_int());
+        }
+      }
+    }
+
+  if(count->get_int()==4) {
+    findSymbol("MIS_ALLDRAGONSDEAD")->set_int(yes->get_int());
+    vm.push_reference(findSymbol("BIFF"));
+    vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
+    const bool biffAlive = vm.pop_int()==no->get_int();
+    const bool biffInParty = findSymbol("DJG_BIFFPARTY")->get_int()==yes->get_int();
+    if(biffAlive && biffInParty)
+      findSymbol("DJG_BIFFSURVIVEDLASTDRAGON")->set_int(yes->get_int());
+    }
+
+  constexpr size_t monsterId = 43; // Stock AIVAR slot.
+  const auto defeated = memberNpc(current);
+  if(defeated && defeated->aivar[monsterId]==findSymbol("ID_DRAGON_UNDEAD")->get_int()) {
+    findSymbol("UNDEADDRAGONISDEAD")->set_int(yes->get_int());
+    auto* topic = findSymbol("TOPIC_BACKTOSHIP");
+    vm.push_reference(topic);
+    vm.push_reference(findSymbol("LOG_MISSION"));
+    vm.unsafe_call_external(findSymbol("LOG_CREATETOPIC"));
+    vm.push_reference(topic);
+    vm.push_reference(findSymbol("LOG_RUNNING"));
+    vm.unsafe_call_external(findSymbol("LOG_SETTOPICSTATUS"));
+    vm.push_reference(topic);
+    vm.push_reference(findSymbol("PRINT_DRAGKILLCOUNT"));
+    vm.unsafe_call_bl(findSymbol("B_LOGENTRY"));
+    vm.push_reference(vm.global_hero());
+    vm.push_reference(findSymbol("$17824")); // Undead dragon exit waypoint.
+    vm.unsafe_call_external(findSymbol("AI_TELEPORT"));
+
+    const auto guildIs = [&](int32_t guild) {
+      const auto hero = memberNpc(vm.global_hero());
+      return hero && hero->guild==guild;
+      };
+    const bool paladin = guildIs(GIL_PAL);
+    const bool militia = guildIs(GIL_MIL);
+    if(paladin || militia) {
+      play("$17825");
+      } else {
+      const bool dragonHunter = guildIs(GIL_DJG);
+      const bool mercenary = guildIs(GIL_SLD);
+      play(dragonHunter || mercenary ? "$17826" : "$17827");
+      }
+    }
+
+  // PLAYVIDEOEX leaves its result on the stock stack. The call frame returns
+  // the latest movie result, or the VM's default INT when no movie was played.
+  return moviePlayed ? vm.pop_int() : 0;
   }
 
 void GameScript::loadNativeNpcGlobals() {
