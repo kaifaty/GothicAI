@@ -1288,6 +1288,26 @@ int32_t GameScript::playerCrime(const std::shared_ptr<daedalus::INpc>& self) {
   return recordedLevel<currentAbsolutionLevel(self) ? none : crime;
   }
 
+void GameScript::memorizePlayerCrime(const std::shared_ptr<daedalus::INpc>& witness,
+                                     const std::shared_ptr<daedalus::INpc>& offender, int32_t crime) {
+  findSymbol("B_MEMORIZEPLAYERCRIME.CRIME")->set_int(crime);
+  findSymbol("B_MEMORIZEPLAYERCRIME.TAETER")->set_instance(offender);
+  findSymbol("B_MEMORIZEPLAYERCRIME.SLF")->set_instance(witness);
+  if(!npc_isplayer(offender) || witness==nullptr || witness->guild==GIL_DMT)
+    return;
+
+  if(crime>playerCrime(witness)) {
+    vm.call_function<void>("B_DELETEPETZCRIME",witness);
+    vm.call_function<void>("B_ADDPETZCRIME",witness,crime);
+    }
+  if(crime>=playerCrime(witness)) {
+    constexpr size_t crimeType = 1, crimeDay = 2, crimeAbsolution = 46;
+    witness->aivar[crimeType] = crime;
+    witness->aivar[crimeDay] = wld_getday();
+    witness->aivar[crimeAbsolution] = currentAbsolutionLevel(witness);
+    }
+  }
+
 int32_t GameScript::currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>& self) {
   findSymbol("B_GETCURRENTABSOLUTIONLEVEL.SLF")->set_instance(self);
   findSymbol("C_NPCBELONGSTOOLDCAMP.SLF")->set_instance(self);
@@ -1364,7 +1384,7 @@ void GameScript::startNpcAttack(const std::shared_ptr<daedalus::INpc>& attacker,
 
   const auto hasReason = [&](std::string_view name) { return self()->aivar[attackReason]==value(name); };
   const auto memorize = [&](std::string_view name) {
-    vm.call_function<void>("B_MEMORIZEPLAYERCRIME",self(),other(),value(name));
+    memorizePlayerCrime(self(),other(),value(name));
     };
   if(hasReason("AR_SHEEPKILLER"))
     memorize("CRIME_SHEEPKILLER");

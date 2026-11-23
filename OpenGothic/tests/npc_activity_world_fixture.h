@@ -1530,10 +1530,11 @@ void humanReactionPhases(World& world,Npc& npc,Npc& hero) {
     Contract::outputOrder(script)=order;
     script.setSeed(73106);
     ActivityStream stream(world,npc);
-    size_t calls=0,attacks=0,invocations=0;
+    size_t calls=0,attacks=0,crimes=0,invocations=0;
     const auto countVm=vm.add_call_observer([&](const auto& symbol) {
       calls+=symbol.name().starts_with("ZS_REACTTODAMAGE") || symbol.name().starts_with("ZS_REACTTOWEAPON");
       attacks+=symbol.name()=="B_ATTACK";
+      crimes+=symbol.name()=="B_MEMORIZEPLAYERCRIME";
       });
     const auto invoke=[&](size_t phase,int time=0) {
       ++invocations;
@@ -1574,7 +1575,7 @@ void humanReactionPhases(World& world,Npc& npc,Npc& hero) {
             next->i0==1 && next->target==&hero,"human reactions: weapon End queues observation of the same player");
     hero.setToFistMode();
     require(invoke(weapon.loop,11000)==LOOP_CONTINUE && attacks==size_t(!native) && npc.target()==&hero &&
-            aivar[9]==weaponReason && aivar[1]==attackCrime,
+            aivar[9]==weaponReason && aivar[1]==attackCrime && crimes==size_t(!native),
             "human reactions: escalation enters the shared attack policy and records the crime");
     hero.closeWeapon(true);
     vm.remove_call_observer(countVm);

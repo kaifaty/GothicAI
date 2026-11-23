@@ -372,6 +372,7 @@ class GameScript final : public GameRules {
     void runClearRoomTalk();
     bool wantsToAttackRoomIntruder(const std::shared_ptr<daedalus::INpc>& self);
     int32_t playerCrime(const std::shared_ptr<daedalus::INpc>& self);
+    void memorizePlayerCrime(const std::shared_ptr<daedalus::INpc>& witness, const std::shared_ptr<daedalus::INpc>& offender, int32_t crime);
     int32_t currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>& self);
     bool isToughGuy(const std::shared_ptr<daedalus::INpc>& self);
     void startNpcAttack(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
