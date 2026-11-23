@@ -97,6 +97,17 @@ bool GameScript::applyStockItemUseEffect(std::string_view callback) {
     if(external("PRINTSCREEN"))
       (void)vm.pop_int();
     };
+  const auto read = [&](const char* name) {
+    return vm.get_int(vm.unsafe_get_gi(),findSymbol(name),0);
+    };
+  const auto setFlag = [&](const char* flag) {
+    vm.set_int(vm.unsafe_get_gi(),findSymbol(flag),0,read("TRUE"));
+    };
+  struct RestoreContext {
+    daedalus::DaedalusVm& vm;
+    std::shared_ptr<daedalus::DaedalusInstance> caller;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+    };
 
   if(callback=="USE_MEATSOUP") {
     text("NAME_BONUS_STR","STR_MEATSOUP","USE_MEATSOUP.CONCATTEXT");
@@ -137,27 +148,82 @@ bool GameScript::applyStockItemUseEffect(std::string_view callback) {
     external("MDL_APPLYOVERLAYMDSTIMED");
     return true;
     }
-  if(callback=="USEITPO_GEIST_01") {
+  if(callback=="USEITPO_GEIST_01" || callback=="USESCHLAFHAMMER") {
     const auto actor = self->get_instance();
-    struct RestoreContext {
-      daedalus::DaedalusVm& vm;
-      std::shared_ptr<daedalus::DaedalusInstance> caller;
-      ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
-      } restore{vm,vm.unsafe_get_gi()};
+    RestoreContext restore{vm,vm.unsafe_get_gi()};
     vm.unsafe_set_gi(actor);
     auto* attributes = findSymbol("C_NPC.ATTRIBUTE");
     const auto hp = vm.get_int(actor,attributes,ATR_HITPOINTS);
-    vm.set_int(actor,attributes,ATR_HITPOINTS,std::bit_cast<int32_t>(uint32_t(hp)-1000u));
+    if(callback=="USEITPO_GEIST_01") {
+      vm.set_int(actor,attributes,ATR_HITPOINTS,std::bit_cast<int32_t>(uint32_t(hp)-1000u));
+      } else if(hp>2) {
+      vm.set_int(actor,attributes,ATR_HITPOINTS,vm.get_int(actor,attributes,ATR_HITPOINTS)/2);
+      }
     return true;
     }
   if(callback=="USEITPO_GEIST_02") {
     vm.push_reference(self);
     external("NPC_ISPLAYER");
     if(vm.pop_int()!=0) {
-      const auto xp = vm.get_int(vm.unsafe_get_gi(),findSymbol("XP_AMBIENT"),0);
+      const auto xp = read("XP_AMBIENT");
       vm.push_int(std::bit_cast<int32_t>(uint32_t(xp)*5u));
       vm.unsafe_call_bl(findSymbol("B_GIVEPLAYERXP"));
       }
+    return true;
+    }
+
+  if(callback=="USELOUHAMMER") {
+    const auto alreadyRaised = read("HAMMER_ONCE");
+    if(alreadyRaised==read("FALSE")) {
+      raise("ATR_MANA_MAX","MANA_LOUSHAMMER");
+      setFlag("HAMMER_ONCE");
+      }
+    return true;
+    }
+  if(callback=="USESCHNELLERHERING") {
+    vm.push_int(int32_t(findSymbol("PC_HERO")->index()));
+    external("HLP_GETNPC");
+    auto* hero = findSymbol("USESCHNELLERHERING.HER");
+    hero->set_instance(vm.pop_instance());
+    vm.push_reference(hero);
+    external("HLP_GETINSTANCEID");
+    vm.push_reference(self);
+    external("HLP_GETINSTANCEID");
+    const auto actorId = vm.pop_int();
+    const auto heroId = vm.pop_int();
+    if(actorId==heroId) {
+      vm.push_reference(self);
+      reference("$13165"); // Stock HUMANS_SPRINT.MDS for this food.
+      vm.push_int(120000);
+      external("MDL_APPLYOVERLAYMDSTIMED");
+      }
+    setFlag("PLAYER_KNOWSSCHNELLERHERING");
+    return true;
+    }
+  if(callback=="USEITPO_MEGADRINK") {
+    const auto actor = self->get_instance();
+    RestoreContext restore{vm,vm.unsafe_get_gi()};
+    vm.unsafe_set_gi(actor);
+    auto* attributes = findSymbol("C_NPC.ATTRIBUTE");
+    const auto strength = vm.get_int(actor,attributes,ATR_STRENGTH);
+    const auto dexterity = vm.get_int(actor,attributes,ATR_DEXTERITY);
+    raise(strength<dexterity ? "ATR_DEXTERITY" : "ATR_STRENGTH","STRORDEX_MEGADRINK");
+    attribute("ATR_MANA");
+    // The stock mana delta is the negated ATR_MANA index.
+    vm.push_int(std::bit_cast<int32_t>(0u-uint32_t(read("ATR_MANA"))));
+    external("NPC_CHANGEATTRIBUTE");
+    reference("$14675"); // Stock DEM_Warn sound.
+    external("SND_PLAY");
+    return true;
+    }
+  if(callback=="USE_DRAGONEGGDRINKNEORAS") {
+    change("ATR_HITPOINTS","HP_ELIXIER");
+    attribute("ATR_STRENGTH");
+    vm.push_int(3);
+    vm.unsafe_call_bl(findSymbol("B_RAISEATTRIBUTE"));
+    reference("$16012"); // Stock DEM_Warn sound.
+    external("SND_PLAY");
+    setFlag("NEORAS_SCUSEDDRAGONEGGDRINK");
     return true;
     }
 
