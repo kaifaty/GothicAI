@@ -373,7 +373,8 @@ std::optional<Interpreter::Item> Interpreter::call(const Expr& e) {
     r.value = asReturned(fn->rtype(), ext.call(*fn, args));
     return r;
     }
-  if(resolveProgram && !fn->has_local_variables_enabled() && !vm.has_active_override(*fn)) {
+  const bool native = (resolveProgram || !allowUnresolvedScriptCalls) && vm.has_active_override(*fn);
+  if(resolveProgram && !fn->has_local_variables_enabled() && !native) {
     if(const auto* p = resolveProgram(*fn); p!=nullptr && p->error.empty()) {
       auto state = execute(*p, args, false);
       if(!state.error.empty())
@@ -392,6 +393,8 @@ std::optional<Interpreter::Item> Interpreter::call(const Expr& e) {
       return std::move(returned);
       }
     }
+  if(!native && !allowUnresolvedScriptCalls)
+    return failed("unresolved nested program: " + ident(fn->name()));
   // An enabled native override or a script function may return a variable, read when the value is popped.
   for(auto& a : args)
     switch(a.type) {

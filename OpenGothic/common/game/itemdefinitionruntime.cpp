@@ -42,9 +42,28 @@ ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::resolve(const ItemDefi
           }
         catch(const std::exception& e) { throw std::runtime_error(std::string(field)+": "+e.what()); }
         });
+      if(record.on_state[0]>0)
+        definitions.itemUsePrograms.insert(uint32_t(record.on_state[0]));
       definitions.items.emplace(symbol->index(),std::move(record));
       }
     catch(const std::exception& e) { throw std::runtime_error("item definitions: "+name+": "+e.what()); }
+    }
+  for(const auto& [name,document]:library.documents) {
+    const auto* root=script.find_symbol_by_name(name);
+    const auto* handle=script.find_symbol_by_name(document.handle);
+    using Type=daedalus::DaedalusDataType;
+    if(root==nullptr || !definitions.itemUsePrograms.contains(root->index()) || handle==nullptr ||
+       handle->name()!=root->name()+".NDOCID" || handle->type()!=Type::INT || handle->count()!=1 ||
+       handle->is_const() || handle->is_member())
+      throw std::runtime_error("invalid item document "+name);
+    Document resolved{handle->index(),document.map,{}};
+    for(const auto& call:document.calls) {
+      const auto* external=script.find_symbol_by_name(call.function);
+      if(external==nullptr || !external->is_external() || external->count()!=call.arguments.size()+1 || external->has_return())
+        throw std::runtime_error("invalid document action "+call.function);
+      resolved.calls.push_back({external->index(),call.arguments});
+      }
+    definitions.documents.emplace(root->index(),std::move(resolved));
     }
   return definitions;
   }
@@ -70,10 +89,55 @@ bool ItemDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::shar
       static_cast<ItemRecord&>(*item)=found->second;
       return true;
       }
+    if(definitions.brokenEye==symbol->index()) {
+      // This constructor samples the current language/story setting, including on each recreation.
+      // Its two generated literals are bound by the verified stock program fingerprint.
+      const auto get=[&](std::string_view name) { return vm.find_symbol_by_name(name); };
+      vm.allocate_instance(item,symbol);
+      item->name=get("$15687")->get_string();
+      item->main_flag=get("ITEM_KAT_MAGIC")->get_int();
+      item->flags=ItemFlag(get("ITEM_AMULET")->get_int() | get("ITEM_MISSION")->get_int());
+      item->value=0;
+      item->visual=get("$15688")->get_string();
+      item->material=get("MAT_STONE")->get_int();
+      item->description=item->name;
+      item->on_equip=int32_t(get("EQUIP_ITMI_INNOSEYE_BROKEN_MIS")->index());
+      item->text[0]=get("TEXT_INNOSEYE_SETTING")->get_string();
+      item->text[1]=get("TEXT_INNOSEYE_GEM")->get_string();
+      item->inv_zbias=get("INVCAM_ENTF_AMULETTE_STANDARD")->get_int();
+      return true;
+      }
     }
   LoadProbe::Items::Constructor probe;
   vm.init_instance(item,symbol);
   return false;
+  }
+
+bool ItemDefinitionRuntime::showDocument(daedalus::DaedalusVm& vm,uint32_t function,const Definitions& definitions) {
+  const auto it=definitions.documents.find(function);
+  if(it==definitions.documents.end())
+    return false;
+  const auto& doc=it->second;
+  const auto invoke=[&](const daedalus::DaedalusSymbol* external) {
+    if(!vm.unsafe_call_external(external))
+      throw std::runtime_error("missing engine action for an item document");
+    };
+  invoke(vm.find_symbol_by_name(doc.map ? "DOC_CREATEMAP" : "DOC_CREATE"));
+  const auto id=vm.pop_int();
+  vm.find_symbol_by_index(doc.handle)->set_int(id);
+  for(const auto& call:doc.calls) {
+    vm.push_int(id);
+    for(const auto& arg:call.arguments) {
+      if(const auto* str=std::get_if<std::string>(&arg))
+        vm.push_string(*str);
+      else
+        vm.push_int(std::get<int32_t>(arg));
+      }
+    invoke(vm.find_symbol_by_index(call.function));
+    }
+  vm.push_int(id);
+  invoke(vm.find_symbol_by_name("DOC_SHOW"));
+  return true;
   }
 
 void ItemDefinitionRuntime::registerStockRestoreEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {

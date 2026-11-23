@@ -632,7 +632,10 @@ std::string_view Gothic::menuMain() const {
   }
 
 std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
-  auto sc = loadScript(datFile, lang);
+  return createPhoenixVm(loadScript(datFile,lang));
+  }
+
+std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(daedalus::DaedalusScript sc) {
   setupCommonScriptClasses(sc);
 
   auto vm = std::make_unique<daedalus::DaedalusVm>(std::move(sc), daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);

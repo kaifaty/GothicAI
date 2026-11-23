@@ -1,4 +1,5 @@
 #include "gamescript.h"
+#include "gamescript_programs.h"
 #include "world/npcactivityprobe.h"
 
 #include <Tempest/Log>
@@ -9,10 +10,10 @@
 #include <sstream>
 
 #include "game/definitions/basescripts.h"
+#include "game/definitions/gameplaydefinitions.h"
 #include "game/definitions/spelldefinitions.h"
 #include "game/serialize.h"
 #include "game/herodeed.h"
-#include "game/healing.h"
 #include "utils/string_frm.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
@@ -25,8 +26,8 @@
 #include "settings.h"
 #include "loadprobe.h"
 #include "outputunits.h"
+#include "programdata.h"
 #include "navdemos.h"
-#include "world/benchhooks.h"
 
 using namespace Tempest;
 
@@ -336,13 +337,18 @@ void GameScript::initCommon() {
 
   // vm.validateExternals();
 
-  spells               = std::make_unique<SpellDefinitions>(vm);
-  svm                  = std::make_unique<SvmDefinitions>(vm);
+  const auto gameplay = nativeRoutineProgram && NpcDefinitionRuntime::enabled() ?
+                        GameplayDefinitions::load(baseProgramIndex().dir.parent_path()) : nullptr;
+  spells               = std::make_unique<SpellDefinitions>(vm,gameplay.get());
+  svm                  = std::make_unique<SvmDefinitions>(vm,gameplay);
 
-  cFocusNorm           = findFocus("Focus_Normal");
-  cFocusMelee          = findFocus("Focus_Melee");
-  cFocusRange          = findFocus("Focus_Ranged");
-  cFocusMage           = findFocus("Focus_Magic");
+  const auto focus = [&](std::string_view name) {
+    return gameplay ? *gameplay->init<daedalus::IFocus>(vm,vm.find_symbol_by_name(name)) : findFocus(name);
+    };
+  cFocusNorm           = focus("FOCUS_NORMAL");
+  cFocusMelee          = focus("FOCUS_MELEE");
+  cFocusRange          = focus("FOCUS_RANGED");
+  cFocusMage           = focus("FOCUS_MAGIC");
 
   ZS_Dead              = aiState(findSymbolIndex("ZS_Dead")).funcIni;
   ZS_Unconscious       = aiState(findSymbolIndex("ZS_Unconscious")).funcIni;
@@ -388,7 +394,7 @@ void GameScript::initCommon() {
 
   auto id = vm.find_symbol_by_name("Gil_Values");
   if(id!=nullptr){
-    cGuildVal = vm.init_instance<daedalus::IGuildValues>(id);
+    cGuildVal = gameplay ? gameplay->init<daedalus::IGuildValues>(vm,id) : vm.init_instance<daedalus::IGuildValues>(id);
     for(size_t i=0;i<Guild::GIL_PUBLIC;++i){
       cGuildVal->water_depth_knee   [i]=cGuildVal->water_depth_knee   [Guild::GIL_HUMAN];
       cGuildVal->water_depth_chest  [i]=cGuildVal->water_depth_chest  [Guild::GIL_HUMAN];
@@ -995,22 +1001,14 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
     }
   }
 
-int32_t GameScript::dialogFunction(daedalus::DaedalusSymbol* fn, bool returns) {
-  int32_t r = 0;
-  if(fn!=nullptr && Gothic::inst().dialogScriptFn && Gothic::inst().dialogScriptFn(*fn,r))
-    return r;
-  if(returns)
-    return vm.call_function<int>(fn);
-  vm.call_function(fn);
-  return 0;
-  }
-
 void GameScript::printCannotUseError(Npc& npc, int32_t atr, int32_t nValue) {
   auto id = vm.find_symbol_by_name("G_CanNotUse");
   if(id==nullptr)
     return;
 
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockHeroEquipDenial(npc.isPlayer(),atr,nValue);
   vm.call_function<void>(id, npc.isPlayer(), atr, nValue);
   }
 
@@ -1020,6 +1018,8 @@ void GameScript::printCannotCastError(Npc &npc, int32_t plM, int32_t itM) {
     return;
 
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockHeroCastDenial(npc.isPlayer(),itM,plM);
   vm.call_function<void>(id, npc.isPlayer(), itM, plM);
   }
 
@@ -1028,6 +1028,8 @@ void GameScript::printCannotBuyError(Npc &npc) {
   if(id==nullptr)
     return;
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockHeroFeedback("PRINT_TRADE_NOT_ENOUGH_GOLD");
   vm.call_function<void>(id);
   }
 
@@ -1037,6 +1039,8 @@ void GameScript::printMobMissingItem(Npc &npc) {
     return;
     }
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockHeroFeedback("PRINT_MISSINGITEM","$MISSINGITEM",true);
   vm.call_function<void>(id);
   }
 
@@ -1046,6 +1050,8 @@ void GameScript::printMobMissingKey(Npc& npc) {
     return;
     }
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockHeroFeedback("PRINT_KEYMISSING","$KEYMISSING",true);
   vm.call_function<void>(id);
   }
 
@@ -1055,6 +1061,8 @@ void GameScript::printMobAnotherIsUsing(Npc &npc) {
     return;
     }
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockHeroFeedback("PRINT_ANOTHERUSER",{},true);
   vm.call_function<void>(id);
   }
 
@@ -1064,6 +1072,8 @@ void GameScript::printMobMissingKeyOrLockpick(Npc& npc) {
     return;
     }
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockHeroFeedback("PRINT_PICKLOCK_OR_KEYMISSING","$PICKLOCKORKEYMISSING",true);
   vm.call_function<void>(id);
   }
 
@@ -1073,6 +1083,8 @@ void GameScript::printMobMissingLockpick(Npc& npc) {
     return;
     }
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockHeroMissingLockpick();
   vm.call_function<void>(id);
   }
 
@@ -1083,6 +1095,8 @@ void GameScript::printMobTooFar(Npc& npc) {
     return;
     }
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockHeroFeedback("PRINT_TOOFAR_AWAY",{},true);
   vm.call_function<void>(id);
   }
 
@@ -1214,7 +1228,8 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
       }
     if(applyCumulativeFoodEffect(functionSymbol->name()) || applyStockItemUseEffect(functionSymbol->name()) ||
        applyArmorSetEffect(*npc,functionSymbol->index()) || applyFightSkillItemEffect(*npc,functionSymbol->index()) ||
-       applyEquipmentStatEffect(*npc,functionSymbol->index()) || applyStatefulEquipmentEffect(*npc,functionSymbol->name()))
+       applyEquipmentStatEffect(*npc,functionSymbol->index()) || applyStatefulEquipmentEffect(*npc,functionSymbol->name()) ||
+       invokeStockItemProgram(*functionSymbol))
       return;
     }
   vm.call_function<void>(functionSymbol);
@@ -1341,7 +1356,7 @@ int GameScript::playerHotKeyScreenMap(Npc& pl) {
     }
 
   ScopeVar self(*vm.global_self(), pl.handlePtr());
-  int map = vm.call_function<int>(fn);
+  const int map = nativeRoutineProgram && nativeHumanPerceptionsEnabled() ? stockHeroMap() : vm.call_function<int>(fn);
   if(map>=0)
     pl.useItem(size_t(map));
   return map;
@@ -1360,6 +1375,8 @@ void GameScript::playerHotLamePotion(Npc& pl) {
     return;
 
   ScopeVar self(*vm.global_self(), pl.handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockLegacyPotionKey(true);
   vm.call_function<void>(fn);
   }
 
@@ -1376,53 +1393,9 @@ void GameScript::playerHotLameHeal(Npc& pl) {
     return;
 
   ScopeVar self(*vm.global_self(), pl.handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockLegacyPotionKey(false);
   vm.call_function<void>(fn);
-  }
-
-bool GameScript::startHotkeyPotion(Npc& pl, bool mana) {
-  const char* kind = mana ? "mana" : "health";
-  auto note = [kind](std::string_view item) {
-    if(Bench::isActive())
-      Bench::note(string_frm("heal hotkey ",kind,": ",item).c_str());
-    };
-  if(pl.isDown()) {
-    note("none");
-    return true;
-    }
-  if(pl.hasState(BS_ITEMINTERACT) || pl.hasQueuedItemUse())
-    return true;
-
-  const char* healthItems[] = {"ITPO_HEALTH_01","ITPO_HEALTH_02","ITPO_HEALTH_03"};
-  const char* manaItems[] = {"ITPO_MANA_01","ITPO_MANA_02","ITPO_MANA_03"};
-  const char* healthAmounts[] = {"HP_ESSENZ","HP_EXTRAKT","HP_ELIXIER"};
-  const char* manaAmounts[] = {"MANA_ESSENZ","MANA_EXTRAKT","MANA_ELIXIER"};
-  Healing::Potion candidates[3] = {};
-  for(size_t i=0; i<3; ++i) {
-    auto* item = vm.find_symbol_by_name(mana ? manaItems[i] : healthItems[i]);
-    auto* amount = vm.find_symbol_by_name(mana ? manaAmounts[i] : healthAmounts[i]);
-    if(item==nullptr || amount==nullptr)
-      throw std::runtime_error("Missing potion hotkey item or amount symbol");
-    candidates[i] = {item->index(),amount->get_int(),pl.itemCount(item->index())>0};
-    }
-  const auto missing = pl.attribute(mana ? ATR_MANAMAX : ATR_HITPOINTSMAX) -
-                       pl.attribute(mana ? ATR_MANA : ATR_HITPOINTS);
-  // PLAYER_HOTKEY_LAME_* uses the strongest dose that fits the missing amount,
-  // otherwise the weakest available dose. Its no-item/full-gauge messages still run below.
-  const auto selected = Healing::choosePotion(candidates,missing);
-  if(selected==Healing::NoPotion) {
-    note("none");
-    return false;
-    }
-  note(vm.find_symbol_by_index(uint32_t(selected))->name());
-  if(pl.weaponState()!=WeaponState::NoWeapon && pl.itemUseInHandAnimation(*pl.getItem(selected)).empty()) {
-    if(Bench::isActive())
-      Bench::note(("item use "+std::string(Bench::who(&pl))+": "+
-                      vm.find_symbol_by_index(uint32_t(selected))->name()+" holster path: no compatible in-hand clip or deferred effect").c_str());
-    pl.stopAnim("");
-    pl.aiPush(AiQueue::aiRemoveWeapon());
-    }
-  pl.aiPush(AiQueue::aiUseItem(int32_t(selected)));
-  return true;
   }
 
 std::string_view GameScript::spellCastAnim(Npc&, Item &it) {
@@ -1532,6 +1505,8 @@ void GameScript::printNothingToGet() {
     return;
     }
   ScopeVar self(*vm.global_self(), owner.player()->handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockHeroEmptyLoot();
   vm.call_function<void>(id);
   }
 

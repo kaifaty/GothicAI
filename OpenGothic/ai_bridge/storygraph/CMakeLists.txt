@@ -46,11 +46,7 @@ set(STORYGRAPH_SOURCES
   program.cpp  program.h
   vocab.h
   ../textcodec.cpp ../textcodec.h)
-if(PROJECT_IS_TOP_LEVEL)
-  add_library(StoryGraph STATIC ${STORYGRAPH_SOURCES})
-else()
-  add_library(StoryGraph OBJECT ${STORYGRAPH_SOURCES})
-endif()
+add_library(StoryGraph STATIC ${STORYGRAPH_SOURCES})
 target_link_libraries(StoryGraph PUBLIC gothic-daedalus)
 target_include_directories(StoryGraph PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
 # rapidjson 1.1 trips modern clang warnings; treat it as a system header

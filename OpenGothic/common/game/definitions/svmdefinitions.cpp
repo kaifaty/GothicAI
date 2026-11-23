@@ -1,7 +1,9 @@
 #include "svmdefinitions.h"
+#include "gameplaydefinitions.h"
 #include "utils/string_frm.h"
 
-SvmDefinitions::SvmDefinitions(daedalus::DaedalusVm& vm):vm(vm) {
+SvmDefinitions::SvmDefinitions(daedalus::DaedalusVm& vm, std::shared_ptr<const GameplayDefinitions> records)
+  :vm(vm), records(std::move(records)) {
   }
 
 SvmDefinitions::~SvmDefinitions() {
@@ -19,7 +21,13 @@ std::string_view SvmDefinitions::find(std::string_view speech, int intId) {
       auto* i = vm.find_symbol_by_name(name);
       if (i == nullptr)
           return "";
-      svm[id] = vm.init_opaque_instance(i);
+      if(records) {
+        const auto& cls = GameplayDefinitions::instanceClass(vm,*i);
+        auto instance = std::make_shared<daedalus::DaedalusOpaqueInstance>(cls,vm.find_class_members(cls));
+        svm[id] = records->init(vm,i,std::move(instance));
+        } else {
+        svm[id] = vm.init_opaque_instance(i);
+        }
       }
 
     speech = speech.substr(1);

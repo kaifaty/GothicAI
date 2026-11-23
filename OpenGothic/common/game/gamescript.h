@@ -32,6 +32,7 @@
 #include "asset/worldtypes.h"
 
 class GameSession;
+class GameStoryExternals;
 class World;
 class Npc;
 class Item;
@@ -105,6 +106,8 @@ class GameScript final : public GameRules {
 
     inline auto& getVm() { return vm; }
     bool         usesVerifiedNpcProgram() const { return nativeRoutineProgram; }
+    // The caller binds script context. A rejected root can use the compatibility VM.
+    bool         invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed = nullptr);
     // symbols of ours: the AI director's story variables and npc's
     inline auto& ownSymbols() { return own; }
     auto         questLog() const -> const QuestLog&;
@@ -251,6 +254,8 @@ class GameScript final : public GameRules {
     enum MonsterRoutine { MonsterSleep, MonsterRest, MonsterRoam, MonsterEatGround, MonsterWusel, MonsterOrcSit };
     friend struct NpcDefinitionContract;
     friend class StoryRuntime;
+    friend class GameStoryExternals;
+    class StockPrograms;
     bool invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe);
     bool invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);
     bool runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -457,6 +462,14 @@ class GameScript final : public GameRules {
     void storeItem(Item* it);
     bool invokeNativeMobState(const daedalus::DaedalusSymbol& symbol);
     void runStockPickLock(int32_t success, int32_t brokenOrOpen);
+    void runStockHeroFeedback(std::string_view message, std::string_view line={}, bool gesture=false);
+    void runStockHeroMissingLockpick();
+    void runStockHeroEmptyLoot();
+    void runStockHeroEquipDenial(bool player, int32_t attribute, int32_t required);
+    void runStockHeroCastDenial(bool player, int32_t requiredCircle, int32_t actualCircle);
+    void runStockHeroWeaponPenalty();
+    auto stockHeroMap() -> int32_t;
+    void runStockLegacyPotionKey(bool mana);
 
     bool aiOutput   (Npc &from, std::string_view name, bool overlay);
     bool aiOutputSvm(Npc &from, std::string_view name, std::string_view svm, Npc* target, bool overlay);
@@ -519,6 +532,7 @@ class GameScript final : public GameRules {
     bool applyFightSkillItemEffect(Npc& npc, uint32_t callback);
     bool applyEquipmentStatEffect(Npc& npc, uint32_t callback);
     bool applyStatefulEquipmentEffect(Npc& npc, std::string_view callback);
+    bool invokeStockItemProgram(const daedalus::DaedalusSymbol& function);
     void applyWispEquipmentEffect(bool equip);
     bool applyQuestEquipmentEffect(std::string_view item, bool equip);
     void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
@@ -843,6 +857,7 @@ class GameScript final : public GameRules {
       int32_t attackWarn=0;
       } ghostProgress;
     daedalus::DaedalusVm                                          vm;
+    std::unique_ptr<StockPrograms>                                stockPrograms;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};
     int32_t                                                     vmLang = -1;

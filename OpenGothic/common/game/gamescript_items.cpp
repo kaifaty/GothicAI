@@ -1,6 +1,7 @@
 #include "gamescript.h"
 
 #include "game/definitions/baseprogram.h"
+#include "game/definitions/gameplaydefinitions.h"
 #include "game/definitions/basescripts.h"
 #include "gothic.h"
 #include "loadprobe.h"
@@ -21,9 +22,10 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
   placements=PlacementDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
   activities=ActivityDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
   // Native behavior is verified against this particular stock Night of the Raven program.
-  static constexpr std::string_view stockNotrProgram="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c";
-  nativeRoutineProgram=sha256==stockNotrProgram;
+  nativeRoutineProgram=sha256==GameplayDefinitions::stockProgram;
   if(nativeRoutineProgram) {
+    if(!items.items.empty())
+      items.brokenEye=script.find_symbol_by_name("ITMI_INNOSEYE_BROKEN_MIS")->index();
     ItemDefinitionRuntime::registerStockRestoreEffects(items,script);
     ItemDefinitionRuntime::registerStockArmorSetEffects(items,script);
     ItemDefinitionRuntime::registerStockFightSkillEffects(items,script);
@@ -55,4 +57,11 @@ void GameScript::initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& 
     return;
     }
   ItemDefinitionRuntime::initialize(vm,item,symbol,itemDefinitions);
+  }
+
+bool GameScript::invokeStockItemProgram(const daedalus::DaedalusSymbol& function) {
+  if(!itemDefinitions.itemUsePrograms.contains(function.index()))
+    return false;
+  int32_t result=0;
+  return ItemDefinitionRuntime::showDocument(vm,function.index(),itemDefinitions) || invokeStockProgram(function,result);
   }

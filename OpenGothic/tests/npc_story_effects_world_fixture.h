@@ -99,25 +99,49 @@ void assessTalkEntry(World& world,Npc& npc,Npc& player) {
 
 void nestedStockDialogue(World& world, Npc& npc, Npc& player) {
   auto& gothic=Gothic::inst();
-  auto& vm=world.script().getVm();
+  auto& script=world.script();
+  auto& vm=script.getVm();
   auto* condition=vm.find_symbol_by_name("DIA_ADDON_CAVALORN_LETSKILLBANDITS_CONDITION");
   auto* helper=vm.find_symbol_by_name("C_BRAGOBANDITSDEAD");
   require(condition && helper,"nested dialogue needs the stock Cavalorn condition and bandit check");
-  StoryRuntime runtime(nullptr);
-  std::optional<DialogGraph> bridge;
-  if(!gothic.dialogScriptFn)
-    bridge.emplace([](std::string&&) {},nullptr,runtime);
+
+  struct Restore {
+    decltype(gothic.dialogScriptFn)& hook;
+    decltype(gothic.dialogScriptFn) savedHook;
+    std::optional<std::string> setting;
+    ~Restore() {
+      hook = std::move(savedHook);
+      if(setting)
+        setenv("GOTHIC_AI_STORYEXEC",setting->c_str(),1);
+      else
+        unsetenv("GOTHIC_AI_STORYEXEC");
+      }
+    };
+  const auto* configured=std::getenv("GOTHIC_AI_STORYEXEC");
+  Restore restore{gothic.dialogScriptFn,std::exchange(gothic.dialogScriptFn,{}),
+                  configured ? std::optional<std::string>(configured) : std::nullopt};
   StoryRuntime::Bind context(vm,&npc,&player);
-  size_t entries=0;
-  vm.observe_instructions([&](const auto&) { entries+=vm.pc()==helper->address(); });
-  const auto original=vm.call_function<int32_t>(condition);
-  const auto originalEntries=entries;
-  entries=0;
-  int32_t lifted=0;
-  const auto handled=gothic.dialogScriptFn(*condition,lifted);
+  size_t entries=0,instructions=0;
+  vm.observe_instructions([&](const auto&) { ++instructions; entries+=vm.pc()==helper->address(); });
+
+  setenv("GOTHIC_AI_STORYEXEC","0",1);
+  const auto original=NpcDefinitionContract::dialogCondition(script,condition);
+  require(entries==1 && instructions>0,"the compatibility switch must run the original dialogue bytecode");
+
+  unsetenv("GOTHIC_AI_STORYEXEC");
+  instructions=0;
+  const auto stock=NpcDefinitionContract::dialogCondition(script,condition);
+  require(stock==original && instructions==0,"the game session must resolve nested stock dialogue without a bridge");
+
+  gothic.dialogScriptFn=[&](const auto& fn,int32_t& result) {
+    if(&fn!=condition)
+      return false;
+    result=original+11;
+    return true;
+    };
+  require(NpcDefinitionContract::dialogCondition(script,condition)==original+11 && instructions==0,
+          "the director's replacement must take priority over the stock programme");
   vm.observe_instructions({});
-  require(originalEntries==1 && handled && lifted==original && entries==0,
-          "the live StoryGraph must evaluate the stock nested bandit check without executing its bytecode");
   }
 
 void talkPhases(Gothic& gothic) {

@@ -117,6 +117,88 @@ void khorinisCryptTriggers(World& world) {
   std::puts("World triggers: crypt waves, Yarkendar's first entry and Bilgot's later departure match Daedalus");
   }
 
+void heroStoryInteractions(World& world) {
+  auto& script=world.script();
+  if(!script.usesVerifiedNpcProgram())
+    return;
+  auto& vm=script.getVm();
+  auto& hero=*world.player();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  auto& queue=NpcDefinitionContract::queue(hero);
+  auto* production=script.findSymbol("PLAYER_MOBSI_PRODUCTION");
+  auto* library=script.findSymbol("HEROWASINLIBRARY");
+  auto* alchemyHero=script.findSymbol("POTIONALCHEMY_S1.HER");
+  auto* bookHero=script.findSymbol("USE_BOOKSTAND_KREISE_01_S1.HER");
+  auto* bookDocument=script.findSymbol("USE_BOOKSTAND_KREISE_01_S1.NDOCID");
+  auto& invincible=hero.handle().aivar[script.intSymbol("AIV_INVINCIBLE",4)];
+  auto& order=NpcDefinitionContract::outputOrder(script);
+  const auto initial=std::tuple{events,queue,production->get_int(),library->get_int(),alchemyHero->get_instance(),
+                               bookHero->get_instance(),bookDocument->get_int(),invincible,order};
+  const auto* configured=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
+  const auto previous=configured ? std::optional<std::string>(configured) : std::nullopt;
+
+  struct DocumentTrace {
+    using Page=std::tuple<std::string,std::string,std::string,Tempest::Margin,DocumentMenu::Flags>;
+    std::vector<Page> pages;
+    std::string font;
+    size_t shown=0;
+    void show(const DocumentMenu::Show& document) {
+      ++shown;
+      font=document.font;
+      for(const auto& page:document.pages)
+        pages.emplace_back(page.img,page.text,page.font,page.margins,page.flg);
+      }
+    } trace;
+  auto& documents=Gothic::inst().onShowDocument;
+  documents.bind(&trace,&DocumentTrace::show);
+  const auto restore=[&] {
+    documents.ubind(&trace,&DocumentTrace::show);
+    vm.observe_instructions({});
+    int32_t productionValue=0, libraryValue=0, bookId=0;
+    std::shared_ptr<daedalus::DaedalusInstance> alchemyActor, bookActor;
+    std::tie(events,queue,productionValue,libraryValue,alchemyActor,bookActor,bookId,invincible,order)=initial;
+    production->set_int(productionValue);
+    library->set_int(libraryValue);
+    alchemyHero->set_instance(alchemyActor);
+    bookHero->set_instance(bookActor);
+    bookDocument->set_int(bookId);
+    if(previous) setenv("OPENGOTHIC_PLACEMENT_RECORDS",previous->c_str(),1);
+    else unsetenv("OPENGOTHIC_PLACEMENT_RECORDS");
+    };
+  const auto capture=[&](bool native) {
+    events=native;
+    setenv("OPENGOTHIC_PLACEMENT_RECORDS",native ? "1" : "0",1);
+    queue.clear();
+    production->set_int(-1);
+    library->set_int(script.intSymbol("FALSE",-1));
+    invincible=script.intSymbol("FALSE",-1);
+    trace.pages.clear();
+    trace.shown=0;
+    size_t instructions=0;
+    vm.observe_instructions([&](const auto&) { ++instructions; });
+    script.useInteractive(hero.handlePtr(),"POTIONALCHEMY_S1");
+    script.useInteractive(hero.handlePtr(),"USE_BOOKSTAND_KREISE_01_S1");
+    script.invokeWorldTrigger("EVT_SC_ENTER_LIBRARY");
+    vm.observe_instructions({});
+    require((instructions==0)==native && queue.size()==1 && queue.front()->act==AI_ProcessInfo &&
+            queue.front()->target==&hero && production->get_int()==script.intSymbol("MOBSI_POTIONALCHEMY",-1) &&
+            invincible==script.intSymbol("TRUE",-1) && trace.shown==1 && trace.pages.size()==2 &&
+            library->get_int()==script.intSymbol("TRUE",-1),
+            "Hero interactions must open alchemy and the rune book, mark the library and use the selected executor");
+    return std::pair{trace.pages,trace.font};
+    };
+  try {
+    const auto stock=capture(false);
+    require(capture(true)==stock,"Hero rune book: page order, text, backgrounds, fonts and margins must match Daedalus");
+    }
+  catch(...) {
+    restore();
+    throw;
+    }
+  restore();
+  std::puts("Hero interactions: alchemy queue, rune book and library trigger match Daedalus");
+  }
+
 void khorinisLateChapters(World& world) {
   if(NpcSnapshot::load(baseProgramIndex().dir.parent_path()).sha256!=
      "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
@@ -547,6 +629,7 @@ std::vector<std::string> placementFirstWorld(Gothic& gothic) {
     routineSwitchWorld(*gothic.world());
     khorinisLateChapters(*gothic.world());
     khorinisCryptTriggers(*gothic.world());
+    heroStoryInteractions(*gothic.world());
     std::printf("First-world NEWWORLD placement: %s NPCs, %s items; %zu saved/global state entries, %zu differences; STARTUP_NEWWORLD=%s\n",
                 actual.at("NPC count").c_str(),actual.at("item count").c_str(),expected.size(),differences.size(),
                 startup && NpcDefinitionContract::placements(gothic.world()->script()).placements.contains(startup->index()) ? "record" : "VM");

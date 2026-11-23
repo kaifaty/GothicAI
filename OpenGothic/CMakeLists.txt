@@ -86,7 +86,10 @@ list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/graphics
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/npchelperdefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/asset/npchelperdefinitions.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/common/import/npchelperdefinitions.cpp")
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/fightdefinitiondata.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/fightdefinitions.cpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/fightdefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/gameplaydefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/menudefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/menudefinitions.cpp")
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/meshclusterlod.cpp")
 if(NOT OPENGOTHIC_ENABLE_FRAME_PROFILE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/frameprofile.cpp")
@@ -298,6 +301,11 @@ if(WIN32)
   target_sources(Gothic2Notr PRIVATE icon.rc)
 endif()
 target_link_libraries(Gothic2Notr PRIVATE OpenGothic)
+
+# The authored game runs StoryGraph even when the networking bridge is disabled.
+set(STORYGRAPH_TOOL OFF CACHE BOOL "" FORCE)
+add_subdirectory(ai_bridge/storygraph)
+target_link_libraries(${PROJECT_NAME} StoryGraph)
 
 # external AI control bridge (fork-specific, see ai_bridge/)
 add_subdirectory(ai_bridge)

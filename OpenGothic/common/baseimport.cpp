@@ -779,6 +779,8 @@ void build(const fs::path& gothic, const fs::path& out, const Progress& progress
   require(convertFonts(gothic,out/"fonts",false)==0,"font import failed");
   if(progress) progress("base import: programs");
   require(convertPrograms(gothic,out/"programs",false)==0,"program import failed");
+  if(progress) progress("base import: menu definitions");
+  convertMenuDefinitions(out);
   if(progress) progress("base import: fight definitions");
   convertFightDefinitions(out);
   if(progress) progress("base import: item definitions");
@@ -793,6 +795,8 @@ void build(const fs::path& gothic, const fs::path& out, const Progress& progress
   require(convertPlacementDefinitions(out)==0,"placement definition import failed");
   if(progress) progress("base import: activity definitions");
   require(convertActivityDefinitions(out)==0,"activity definition import failed");
+  if(progress) progress("base import: gameplay definitions");
+  convertGameplayDefinitions(out);
   if(progress) progress("base import: dialog line library");
   require(convertOutputUnits(gothic,out/"outputunits",false)==0,"dialog line library import failed");
   if(progress) progress("base import: sounds and speech");

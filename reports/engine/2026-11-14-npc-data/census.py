@@ -74,8 +74,8 @@ def read_program(path: Path):
 
 def phase_routes(base, program):
     """Match the native dispatcher and this base's captured activity records."""
-    game_sources = (GAME / "gamescript_items.cpp").read_text()
-    stock_sha = re.search(r'stockNotrProgram="([0-9a-f]{64})"', game_sources)[1]
+    records_source = (GAME / "definitions/gameplaydefinitions.h").read_text()
+    stock_sha = re.search(r'stockProgram\s*=\s*"([0-9a-f]{64})"', records_source)[1]
     if program != stock_sha:
         return set(), set(), "program is outside the verified NotR route"
 

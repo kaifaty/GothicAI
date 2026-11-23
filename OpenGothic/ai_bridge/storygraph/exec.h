@@ -36,6 +36,8 @@ class Interpreter final {
 
     // A supported nested script function's program, kept alive until the enclosing run ends.
     std::function<const Program*(const daedalus::DaedalusSymbol&)> resolveProgram;
+    // Verified authored roots reject any nested script that cannot run as a program or a native override.
+    bool allowUnresolvedScriptCalls = true;
 
     // a line of its own (Step::Say with text): the speaker's symbol and the text in the game codepage -> the id
     // of a line AI_Output plays; empty if it can't be had. Original lines need nothing.

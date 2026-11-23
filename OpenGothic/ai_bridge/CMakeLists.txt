@@ -14,10 +14,6 @@ FetchContent_Declare(ixwebsocket
   SYSTEM)
 FetchContent_MakeAvailable(ixwebsocket)
 
-# the story graph (lifting and evaluating dialog conditions); it brings textcodec.cpp along
-set(STORYGRAPH_TOOL OFF CACHE BOOL "" FORCE)
-add_subdirectory(storygraph)
-
 file(GLOB AIBRIDGE_SOURCES CONFIGURE_DEPENDS "*.h" "*.cpp")
 list(REMOVE_ITEM AIBRIDGE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/textcodec.cpp)
 

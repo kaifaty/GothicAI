@@ -701,6 +701,11 @@ and an absolute census/output path. `world <ZEN> [waypoint]` requests the existi
 Successful benchmark music selection logs `Dx8 music: <SGT>` after the mixer accepts it.
 A normal startup logs `Main menu ready: <id>` after menu initialization; no keyboard driver is needed.
 
+`hero-script-probe` uses the normal hero input for a map and the legacy healing shortcut, then
+uses a quest item. Run it with `GOTHIC_AI=0 MELEE_HEAL_INTERRUPT=0 WORLD=NEWWORLD.ZEN`.
+The [migration report](../../reports/engine/2026-11-14-npc-data/README.md#игровая-приёмка)
+records the instruction comparison from the separately instrumented revisions.
+
 A run takes the game start (~10 s from a save) plus the scenario time. On Mac the game window is minimized,
 does not take the focus and plays no sound, so it can run while someone works on the same machine.
 The time step is fixed (30 fps), so a run does not depend on the frame rate and repeats (up to the

@@ -235,6 +235,7 @@ class Gothic final : public GameServices, public GameHost {
 
     static std::u16string                 nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type);
     std::unique_ptr<daedalus::DaedalusVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
+    std::unique_ptr<daedalus::DaedalusVm>   createPhoenixVm(daedalus::DaedalusScript sc);
     daedalus::DaedalusScript                loadScript(std::string_view datFile, const ScriptLang lang);
     void                                  setupCommonScriptClasses(daedalus::DaedalusScript &sc);
     void                                  setupVmCommonApi(daedalus::DaedalusVm &vm);
@@ -331,6 +332,7 @@ class Gothic final : public GameServices, public GameHost {
 
     auto                                    getDocument(int id) -> std::unique_ptr<DocumentMenu::Show>&;
 
+    friend class MenuRoot;
     static void                             notImplementedRoutine(std::string_view fn);
 
     static std::string                      concatstrings     (std::string_view a, std::string_view b);
