@@ -441,7 +441,7 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
     if(player)
       player->aivar[invincible] = 1;
 
-    if(self->guild<GIL_SEPERATOR_HUM) {
+    if(self->guild<int32_t(GIL_SEPERATOR_HUM)) {
       if(seated(self)) {
         const auto target = npc_getlookattarget(self);
         findSymbol("ZS_TALK.TARGET")->set_instance(target);
@@ -460,7 +460,7 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
         ai_dodge(other());
       }
 
-    if(self->guild<GIL_SEPERATOR_HUM) {
+    if(self->guild<int32_t(GIL_SEPERATOR_HUM)) {
       const auto attitude = npc_getattitude(self,other());
       if(attitude==ATT_HOSTILE || attitude==ATT_ANGRY) {
         const bool bandit = self->guild==GIL_BDT;
@@ -508,7 +508,7 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
       player->aivar[invincible] = 0;
     self->aivar[startedTalk] = 0;
     self->aivar[talkedToPlayer] = 1;
-    if(self->guild<GIL_SEPERATOR_HUM) {
+    if(self->guild<int32_t(GIL_SEPERATOR_HUM)) {
       vm.call_function<void>("B_STOPLOOKAT",self);
       mdl_startfaceani(self,"S_NEUTRAL",1.f,-1.f);
       }
