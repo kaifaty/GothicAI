@@ -34,7 +34,7 @@ void GameScript::runQuietSoundReaction(Npc& listener) {
     return;
   const auto height = NpcEngineCalls::heightDifference(listener,*source);
   if(height>quietSound.heightLimit ||
-     (height>quietSound.indoorHeightLimit && wld_getplayerportalguild()>=GIL_NONE))
+     (height>quietSound.indoorHeightLimit && wld_getplayerportalguild()>=int32_t(GIL_NONE)))
     return;
 
   // The room helper also handles trespass and is shared with the other perceptions.

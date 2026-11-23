@@ -1425,9 +1425,9 @@ void quietSoundRooms(Gothic& gothic) {
       if(i!=PERC_ASSESSQUIETSOUND) npc->setPerceptionDisable(PercType(i));
     test.only({npc});
     test.stepUntil(120,[&] {
-      return world.guildOfRoom(npc->portalName())==GIL_PUBLIC &&
+      return world.guildOfRoom(npc->portalName())==int32_t(GIL_PUBLIC) &&
              ((npc->portalName()==hero.portalName())==sameRoom) &&
-             (sameRoom || world.guildOfRoom(hero.portalName())<GIL_NONE) && npc->isAiQueueEmpty();
+             (sameRoom || world.guildOfRoom(hero.portalName())<int32_t(GIL_NONE)) && npc->isAiQueueEmpty();
       },"quiet sound: the listener and source settle in the requested rooms");
     npc->setDirection(hero.position()-npc->position());
     npc->updateTransform();
@@ -1446,7 +1446,7 @@ void quietSoundRooms(Gothic& gothic) {
         position.y=std::nextafter(npc->position().y+float(site.height),std::numeric_limits<float>::infinity());
         test.moveHero(position,hero.rotation());
         require(int32_t(std::abs(hero.position().y-npc->position().y))==site.height &&
-                world.guildOfRoom(hero.portalName())==GIL_PUBLIC,
+                world.guildOfRoom(hero.portalName())==int32_t(GIL_PUBLIC),
                 "quiet sound: the elevated source retains its indoors portal for the height gate");
         }
       if(!site.sameRoom) {
