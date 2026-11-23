@@ -131,7 +131,7 @@ void GameScript::runWorldInit(std::string_view fn) {
   vm.unsafe_call_bl(findSymbol("B_INITMONSTERATTITUDES"));
   vm.unsafe_call_bl(findSymbol("B_INITGUILDATTITUDES"));
   vm.unsafe_call_bl(npcGlobals);
-  findSymbol("CURRENTLEVEL")->set_int(findSymbol("DRAGONISLAND_ZEN")->get_int());
+  currentStoryWorld=findSymbol("DRAGONISLAND_ZEN")->get_int();
 
   const auto key = int32_t(findSymbolIndex("ITKE_SHIP_LEVELCHANGE_MIS"));
   vm.push_reference(vm.global_hero());
@@ -154,6 +154,7 @@ void GameScript::loadNativeWorldEntry() {
   if(!nativeRoutineProgram)
     return;
 
+  findSymbol("CURRENTLEVEL")->bind_global_int(currentStoryWorld);
   static constexpr std::pair<const char*,ChapterWorld> worlds[]={
     {"B_ENTER_NEWWORLD",ChapterWorld::New}, {"B_ENTER_OLDWORLD",ChapterWorld::Old}, {"B_ENTER_ADDONWORLD",ChapterWorld::Addon},
     };
@@ -171,12 +172,15 @@ void GameScript::loadNativeWorldEntry() {
     {"B_ENTER_ADDONWORLD_KAPITEL_5","ENTERADW_KAPITEL5"},
     {"B_ENTER_ADDONWORLD_KAPITEL_6","ENTERADW_KAPITEL6"},
     };
-  for(const auto& [name,flag]:latches)
-    vm.override_function(name,std::function<void()>{[this,flag] {
-      auto* latch=findSymbol(flag);
-      if(latch->get_int()==findSymbol("FALSE")->get_int())
-        latch->set_int(findSymbol("TRUE")->get_int());
+  static_assert(std::size(latches)==std::tuple_size_v<decltype(worldEntryLatches)>);
+  for(size_t i=0;i<std::size(latches);++i) {
+    const auto& [name,flag]=latches[i];
+    findSymbol(flag)->bind_global_int(worldEntryLatches[i]);
+    vm.override_function(name,std::function<void()>{[this,i] {
+      if(worldEntryLatches[i]==findSymbol("FALSE")->get_int())
+        worldEntryLatches[i]=findSymbol("TRUE")->get_int();
       }},PlacementDefinitionRuntime::enabled);
+    }
   for(const auto* stage:{"INIT_SUB_ADDON_PART_PIRATESCAMP_01", "INIT_SUB_ADDON_PART_ENTRANCE_01",
                          "INIT_SUB_ADDON_PART_GOLDMINE_01", "INIT_SUB_ADDON_PART_CANYON_01",
                          "INIT_SUB_ADDON_PART_VALLEY_01", "INIT_SUB_ADDON_PART_ADANOSTEMPLE_01"})
@@ -220,7 +224,7 @@ void GameScript::enterChapterWorld(ChapterWorld region) {
       vm.unsafe_call_bl(findSymbol(entry.chapters[i]));
     }
   const auto number=[&](std::string_view name) { return findSymbol(name)->get_int(); };
-  findSymbol("CURRENTLEVEL")->set_int(number(entry.level));
+  currentStoryWorld=number(entry.level);
   vm.unsafe_call_bl(npcGlobals);
   if(region!=ChapterWorld::Old)
     return;

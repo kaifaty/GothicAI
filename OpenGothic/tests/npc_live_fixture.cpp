@@ -1152,6 +1152,25 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
     }
   for(const auto& [name,value]:before)
     script.findSymbol(name)->set_int(value);
+  std::vector<uint8_t> legacyBytes;
+  Tempest::MemWriter writer(legacyBytes);
+  {
+    Serialize out(writer);
+    out.setEntry("game/daedalus");
+    out.write(uint32_t(2));
+    out.write(uint32_t(daedalus::DaedalusDataType::INT),std::string("CURRENTLEVEL"),uint32_t(1),khorinis);
+    out.write(uint32_t(daedalus::DaedalusDataType::INT),std::string("ENTERADW_KAPITEL2"),uint32_t(1),int32_t(7));
+  }
+  Tempest::MemReader reader(legacyBytes);
+  Serialize in(reader);
+  require(in.setEntry("game/daedalus"),"world entry: the legacy save entry must be present");
+  script.loadVar(in);
+  require(NpcDefinitionContract::currentStoryWorld(script)==khorinis &&
+          std::ranges::count(NpcDefinitionContract::worldEntryLatches(script),7)==1 &&
+          script.intSymbol("ENTERADW_KAPITEL2",0)==7,
+          "world entry: the legacy variables restore the current world and the engine latch");
+  level->set_int(before.at("CURRENTLEVEL"));
+  script.findSymbol("ENTERADW_KAPITEL2")->set_int(before.at("ENTERADW_KAPITEL2"));
   std::puts("Addon World entry: Init order, live chapter, room assignments, NPC aliases and eight chapter latches match stock");
   }
 

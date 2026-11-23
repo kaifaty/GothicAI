@@ -780,7 +780,8 @@ class GameScript final : public GameRules {
     ScriptFn                                                    restartTentacleCallback;
     std::unordered_map<uint32_t,NativeRoutinePhase>              nativeRoutinePhases;
     // The stock VM aliases this storage and is destroyed before it.
-    int32_t                                                     storyChapter = 0;
+    int32_t                                                     storyChapter = 0, currentStoryWorld = 0;
+    std::array<int32_t,8>                                       worldEntryLatches{};
     std::array<int32_t,5>                                       crimeAbsolutionLevels{};
     std::array<int32_t,19>                                      petzCrimeCounters{};
     daedalus::DaedalusVm                                          vm;

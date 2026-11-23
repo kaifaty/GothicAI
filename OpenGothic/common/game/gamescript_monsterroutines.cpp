@@ -247,7 +247,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
   regenerateDragon(*self);
   removeRavensStoneGuardians(npc);
 
-  const bool atOldWorldRamp = findSymbol("CURRENTLEVEL")->get_int()==findSymbol("OLDWORLD_ZEN")->get_int() &&
+  const bool atOldWorldRamp = currentStoryWorld==findSymbol("OLDWORLD_ZEN")->get_int() &&
                               npc_getdisttowp(self,"OC_RAMP_07")<=500;
   if(atOldWorldRamp || distanceToTarget()>findSymbol("FIGHT_DIST_CANCEL")->get_int()) {
     stop();

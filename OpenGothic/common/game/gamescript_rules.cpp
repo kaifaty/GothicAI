@@ -171,7 +171,7 @@ bool GameScript::isPlayerFakeBandit(const std::shared_ptr<daedalus::INpc>& self,
     }
 
   return findSymbol("PLAYER_HASTALKEDTOBANDITCAMP")->get_int()==1 &&
-         findSymbol("CURRENTLEVEL")->get_int()==findSymbol("ADDONWORLD_ZEN")->get_int() && guild==GIL_BDT;
+         currentStoryWorld==findSymbol("ADDONWORLD_ZEN")->get_int() && guild==GIL_BDT;
   }
 
 bool GameScript::isPlayerFakePirate(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {

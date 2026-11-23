@@ -248,9 +248,8 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
           npc.aiPush(AiQueue::aiWait(uint64_t(wait)*1000));
           npc.aiPush(AiQueue::aiUseItemToState(int32_t(scroll),-1));
           npc.setStateTime(0);
-          const auto level = findSymbol("CURRENTLEVEL")->get_int();
           if(findSymbol("RAVENISDEAD")->get_int()==0 && npc.handle().guild==GIL_KDW &&
-             ((level==4 && eventRoll==1) || (level==1 && eventRoll<5)))
+             ((currentStoryWorld==4 && eventRoll==1) || (currentStoryWorld==1 && eventRoll<5)))
             runPortalEarthquake(npc);
           }
         }
