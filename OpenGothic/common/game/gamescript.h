@@ -486,6 +486,7 @@ class GameScript final : public GameRules {
     bool isUndeadNpc(const std::shared_ptr<daedalus::INpc>& npc);
     bool isEvilNpc(const std::shared_ptr<daedalus::INpc>& npc);
     void loadNativeTalkReaction();
+    void endProductionDialog();
     bool canRunNativeTalkReaction();
     bool invokeNativeTalkPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
     void runAssessTalk();
@@ -518,6 +519,7 @@ class GameScript final : public GameRules {
     void turnToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void lookAtNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void stopLookAtNpc(const std::shared_ptr<daedalus::INpc>& self);
+    void queueItemUse(const std::shared_ptr<daedalus::INpc>& self, int32_t item);
     static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                        RoutineDefinitionRuntime::Definitions& routines,
                                        NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,

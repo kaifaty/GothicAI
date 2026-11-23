@@ -448,7 +448,7 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
         if(!hlp_isvalidnpc(target))
           ai_lookatnpc(self,other());
         } else {
-        vm.call_function<void>("B_LOOKATNPC",self,other());
+        lookAtNpc(self,other());
         }
       ai_removeweapon(self);
       }
@@ -509,7 +509,7 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
     self->aivar[startedTalk] = 0;
     self->aivar[talkedToPlayer] = 1;
     if(self->guild<int32_t(GIL_SEPERATOR_HUM)) {
-      vm.call_function<void>("B_STOPLOOKAT",self);
+      stopLookAtNpc(self);
       mdl_startfaceani(self,"S_NEUTRAL",1.f,-1.f);
       }
     if(self->guild==GIL_DRAGON)
@@ -529,6 +529,16 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
     return true;
     }
   return false;
+  }
+
+void GameScript::endProductionDialog() {
+  constexpr size_t invincible = 4; // AIV_INVINCIBLE
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  ai_stopprocessinfos(self);
+  wld_stopeffect("DEMENTOR_FX");
+  if(self)
+    self->aivar[invincible] = 0;
+  findSymbol("PLAYER_MOBSI_PRODUCTION")->set_int(findSymbol("MOBSI_NONE")->get_int());
   }
 
 void GameScript::loadNativeTalkReaction() {

@@ -280,6 +280,21 @@ void GameScript::stopLookAtNpc(const std::shared_ptr<daedalus::INpc>& self) {
     ai_stoplookat(self);
   }
 
+void GameScript::queueItemUse(const std::shared_ptr<daedalus::INpc>& self, int32_t item) {
+  findSymbol("B_USEITEM.ITMINSTANCE")->set_int(item);
+  findSymbol("B_USEITEM.SLF")->set_instance(self);
+  if(npcBodyStateContains(self,BS_SIT))
+    return;
+  const auto target = npc_getlookattarget(self);
+  findSymbol("B_USEITEM.TARGET")->set_instance(target);
+  const bool looking = hlp_isvalidnpc(target);
+  if(looking)
+    stopLookAtNpc(self);
+  ai_useitem(self,item);
+  if(looking)
+    lookAtNpc(self,target);
+  }
+
 void GameScript::resetRoutineNpc(const std::shared_ptr<daedalus::INpc>& self) {
   findSymbol("B_RESETALL.SLF")->set_instance(self);
   stopLookAtNpc(self);
@@ -512,6 +527,14 @@ void GameScript::loadNativeHumanPerceptions() {
   vm.override_function("B_FINISHINGMOVE",std::function<void(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     queueFinishingMove(self,other);
     }},enabled);
+  vm.override_function("B_ENDPRODUCTIONDIALOG",std::function<void()>{[this] { endProductionDialog(); }},enabled);
+  vm.override_function("B_USEITEM",std::function<void(Actor,int32_t)>{[this](const Actor& self, int32_t item) {
+    queueItemUse(self,item);
+    }},enabled);
+  vm.override_function("B_LOOKATNPC",std::function<void(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    lookAtNpc(self,other);
+    }},enabled);
+  vm.override_function("B_STOPLOOKAT",std::function<void(Actor)>{[this](const Actor& self) { stopLookAtNpc(self); }},enabled);
   vm.override_function("C_NPCISGATEGUARD",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return isGateGuard(npc);
     }},enabled);
@@ -2835,7 +2858,7 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
 
   self->aivar[ransacked] = 0;
   self->aivar[partyMember] = 0;
-  vm.call_function<void>("B_STOPLOOKAT",self);
+  stopLookAtNpc(self);
   ai_stoppointat(self);
 
   const auto winner = other();
@@ -2944,7 +2967,7 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
     self->aivar[guardPassage] = number("GP_NONE");
     npc_setrefusetalk(self,0);
     npc_settempattitude(self,npc_getpermattitude(self,hero()));
-    vm.call_function<void>("B_STOPLOOKAT",self);
+    stopLookAtNpc(self);
     ai_stoppointat(self);
     if(npc_isplayer(other()) && self->guild<int32_t(GIL_SEPERATOR_HUM)) {
       self->aivar[defeatedByPlayer] = 1;

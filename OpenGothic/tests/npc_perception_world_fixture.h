@@ -1,5 +1,7 @@
 // World contracts for NPC talk, combat and room perceptions.
 
+#include "npc_player_assessment_world_fixture.h"
+
 void assessTalkEntry(World& world,Npc& npc,Npc& player) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -231,6 +233,7 @@ void talkPhases(Gothic& gothic) {
   auto& npc=*actor;
   auto& player=*world.player();
   stockDialogMetadata(world,npc,player);
+  productionDialogEnd(world,npc,player);
   auto& effects=Contract::activityEventsOn(script);
   const bool savedEffects=effects;
   const auto savedNpcQueue=Contract::queue(npc);
@@ -605,6 +608,7 @@ void observePlayerPhases(World& world,Npc& npc,Npc& hero,bool seated) {
   npc.handle().senses_range=beforeRange;
   Contract::previousState(npc)=beforeState;
   npc.setStateTime(int64_t(beforeTime));
+  itemUseRoutes(world,npc,hero,seated);
   std::printf("D5.2 %s observation: Init, timed Loop, End and random stream match the VM\n",seated ? "seated" : "standing");
   }
 
@@ -1766,8 +1770,6 @@ void enemyPerceptions(World& world,Npc& npc,Npc& hero) {
   hero.handle().aivar[4]=savedInvincible;
   std::puts("Enemy perception: direct, player and talk assessment match the VM for delay, observation, guild and override");
   }
-
-#include "npc_player_assessment_world_fixture.h"
 
 void propertyCrimePerceptions(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;

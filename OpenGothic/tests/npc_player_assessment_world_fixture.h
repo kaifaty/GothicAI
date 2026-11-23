@@ -1,5 +1,158 @@
 #pragma once
 
+void productionDialogEnd(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  auto& production=*vm.find_symbol_by_name("PLAYER_MOBSI_PRODUCTION");
+  auto& count=*vm.find_symbol_by_name("TRUEMMER_COUNT");
+  auto& savedHero=*vm.find_symbol_by_name("GOLDHACKEN_S1.HER");
+  const auto previousMode=production.get_int();
+  const auto previousCount=count.get_int();
+  const auto previousHero=savedHero.get_instance();
+  const auto previousOrder=Contract::outputOrder(script);
+  const auto previousInvincible=hero.handle().aivar[4];
+  const auto previousQueue=Contract::queue(hero);
+  const auto previousContext=vm.unsafe_get_gi();
+  const auto context=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto player=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  auto* close=vm.find_symbol_by_name("B_ENDPRODUCTIONDIALOG");
+  StoryRuntime story(nullptr);
+  story.ensureLifter();
+  const auto program=storygraph::liftProgram(vm,story.bytecode(),script.findFunction("PC_GOLDHACKEN_END_INFO").ptr);
+  require(program.error.empty(),program.error.c_str());
+  StoryRuntime::Bind binding(vm,&hero,&hero);
+  vm.unsafe_set_gi(context);
+  for(bool native:{false,true}) {
+    if(native && (!wasEnabled || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+      continue;
+    enabled=native;
+    Contract::queue(hero).clear();
+    hero.handle().aivar[4]=0;
+    production.set_int(script.intSymbol("MOBSI_NONE",-1));
+    script.useInteractive(hero.handlePtr(),"GOLDHACKEN_S1");
+    const auto* open=hero.aiQueueFront();
+    require(production.get_int()==script.intSymbol("MOBSI_GOLDHACKEN",-1) && hero.handle().aivar[4]==1 && open &&
+            open->act==AI_ProcessInfo && open->target==&hero,"production dialog: the stock work callback opens the hero's menu");
+    count.set_int(7);
+    vm.push_int(173);
+    size_t bytecode=0;
+    vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==close->address(); });
+    const auto result=story.interpreter(vm).run(program);
+    vm.observe_instructions({});
+    require(result.ok,result.error.c_str());
+    auto queue=Contract::queue(hero);
+    require(queue.size()==2 && queue.pop().act==AI_ProcessInfo,"production dialog: opening precedes the close command");
+    const auto stop=queue.pop();
+    require(stop.act==AI_StopProcessInfo && stop.i0==0 && Contract::outputOrder(script)==1 && count.get_int()==0 &&
+            production.get_int()==script.intSymbol("MOBSI_NONE",-1) && hero.handle().aivar[4]==0,
+            "production dialog: the real menu choice closes the menu, clears protection and preserves command order");
+    require(bytecode==size_t(!native) && vm.global_self()->get_instance()==player && vm.global_other()->get_instance()==player &&
+            vm.unsafe_get_gi()==context && vm.pop_int()==173,"production dialog: the chosen executor preserves the VM context");
+    }
+  enabled=wasEnabled;
+  production.set_int(previousMode);
+  count.set_int(previousCount);
+  savedHero.set_instance(previousHero);
+  hero.handle().aivar[4]=previousInvincible;
+  Contract::queue(hero)=previousQueue;
+  Contract::outputOrder(script)=previousOrder;
+  vm.unsafe_set_gi(previousContext);
+  std::puts("Production dialog: the hero's stock work menu closes through the chosen executor");
+  }
+
+void itemUseRoutes(World& world,Npc& npc,Npc& hero,bool seated) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  auto* use=vm.find_symbol_by_name("B_USEITEM");
+  const auto stopPc=vm.find_symbol_by_name("B_STOPLOOKAT")->address();
+  const auto lookPc=vm.find_symbol_by_name("B_LOOKATNPC")->address();
+  const auto actor=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto target=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  auto& itemSlot=*vm.find_symbol_by_name("B_USEITEM.ITMINSTANCE");
+  const auto previousItem=itemSlot.get_int();
+  const auto item=int32_t(script.findSymbolIndex("ITFO_APPLE"));
+  auto& state=*vm.find_symbol_by_name("C_BODYSTATECONTAINS.BODYSTATE");
+  const auto previousState=state.get_int();
+  std::array slots={vm.find_symbol_by_name("B_USEITEM.SLF"),vm.find_symbol_by_name("B_USEITEM.TARGET"),
+                    vm.find_symbol_by_name("B_STOPLOOKAT.SLF"),vm.find_symbol_by_name("B_STOPLOOKAT.TARGET"),
+                    vm.find_symbol_by_name("B_LOOKATNPC.SLF"),vm.find_symbol_by_name("B_LOOKATNPC.OTH"),
+                    vm.find_symbol_by_name("C_BODYSTATECONTAINS.SLF")};
+  std::array<std::shared_ptr<daedalus::DaedalusInstance>,slots.size()> previousSlots;
+  std::ranges::transform(slots,previousSlots.begin(),[](auto* slot) { return slot->get_instance(); });
+  const auto previousQueue=Contract::queue(npc);
+  auto* previousLook=npc.lookAtTarget();
+  const auto previousContext=vm.unsafe_get_gi();
+  StoryRuntime::Bind binding(vm,&hero,&npc);
+  vm.unsafe_set_gi(target);
+  for(bool looking:{false,true}) {
+    const bool resumesLook=looking && !seated;
+    for(bool native:{false,true}) {
+      enabled=native;
+      Contract::queue(npc).clear();
+      npc.aiPush(looking ? AiQueue::aiLookAtNpc(&hero) : AiQueue::aiStopLookAt());
+      Contract::nextAiAction(npc);
+      require(npc.lookAtTarget()==(looking ? &hero : nullptr),"use item: the current look is set in the engine before calling the helper");
+      for(auto* slot:slots)
+        slot->set_instance(nullptr);
+      slots[1]->set_instance(target);
+      itemSlot.set_int(-1);
+      state.set_int(-1);
+      vm.push_int(173);
+      vm.push_instance(actor);
+      vm.push_int(item);
+      size_t useBytecode=0,stopBytecode=0,lookBytecode=0;
+      vm.observe_instructions([&](const auto&) {
+        useBytecode+=vm.pc()==use->address();
+        stopBytecode+=vm.pc()==stopPc;
+        lookBytecode+=vm.pc()==lookPc;
+        });
+      vm.unsafe_call_bl(use);
+      vm.observe_instructions({});
+      require(useBytecode==size_t(!native) && stopBytecode==2u*size_t(!native && resumesLook) &&
+              lookBytecode==size_t(!native && resumesLook) && vm.pop_int()==173 &&
+              vm.global_self()->get_instance()==target && vm.global_other()->get_instance()==actor &&
+              vm.unsafe_get_gi()==target,"use item: original and native paths retain the caller's stack and actor context");
+      require(itemSlot.get_int()==item && slots[0]->get_instance()==actor && slots[6]->get_instance()==actor &&
+              state.get_int()==BS_SIT && slots[1]->get_instance()==(seated || looking ? target : nullptr),
+              "use item: the seated early return preserves the previous target and records the original formals");
+      if(!resumesLook)
+        require(!slots[2]->get_instance() && !slots[3]->get_instance() && !slots[4]->get_instance() && !slots[5]->get_instance(),
+                "use item: missing and seated looks leave both helper arguments alone");
+      auto queue=Contract::queue(npc);
+      require(queue.size()==(seated ? 0u : resumesLook ? 4u : 1u),"use item: only standing NPCs use the item");
+      if(!seated) {
+        if(resumesLook)
+          require(queue.pop().act==AI_StopLookAt,"use item: stop looking before using the item");
+        const auto useAction=queue.pop();
+        require(useAction.act==AI_UseItem && useAction.i0==item,"use item: queue the same item instance");
+        if(resumesLook) {
+          require(queue.pop().act==AI_StopLookAt,"use item: the resumed look adds its own stop command");
+          const auto look=queue.pop();
+          require(look.act==AI_LookAtNpc && look.target==&hero && slots[2]->get_instance()==actor &&
+                  slots[3]->get_instance()==target && slots[4]->get_instance()==actor && slots[5]->get_instance()==target,
+                  "use item: restore the original look and its saved arguments");
+          }
+        }
+      }
+    }
+  Contract::queue(npc).clear();
+  npc.aiPush(previousLook ? AiQueue::aiLookAtNpc(previousLook) : AiQueue::aiStopLookAt());
+  Contract::nextAiAction(npc);
+  Contract::queue(npc)=previousQueue;
+  enabled=wasEnabled;
+  vm.unsafe_set_gi(previousContext);
+  itemSlot.set_int(previousItem);
+  state.set_int(previousState);
+  for(size_t i=0;i<slots.size();++i)
+    slots[i]->set_instance(previousSlots[i]);
+  }
+
 void fakeGuildAssessment(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
