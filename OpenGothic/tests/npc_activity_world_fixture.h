@@ -1800,6 +1800,56 @@ void seatedActivitiesWorld(Gothic& gothic,bool events) {
   if(!output) std::filesystem::remove_all(directory);
   }
 
+void sleepRoutineWorld(Gothic& gothic,bool events) {
+  using Contract=NpcDefinitionContract;
+  ActivityEventsWorld test(gothic);
+  auto& world=test.world();
+  auto* matteo=activityNpc(world,"VLK_416_MATTEO");
+  require(matteo!=nullptr,"sleep routine: the authored bed user must exist");
+  auto bedtime=test.actor("ZS_GOTOBED","BEDHIGH",matteo);
+  const auto sleep=activityPhases(world.script(),"ZS_SLEEP");
+  const auto* approach=test.awayFrom(*bedtime.point,200.f);
+  test.only({matteo});
+  test.moveHero(bedtime.point->position()+Tempest::Vec3(150,0,0),0);
+  test.start(bedtime,approach->position(),matteo,false);
+  const auto deadline=Contract::aiState(*matteo).eTime;
+  Contract::tickRoutine(*matteo);
+  matteo->setPerceptionDisable(PERC_ASSESSPLAYER);
+  const auto approaches=activityQueue(*matteo);
+  require(approaches.size()>=2 && approaches.back().starts_with("StartState "),
+          "sleep routine: the approach queues the sleep transition last");
+
+  auto& vm=world.script().getVm();
+  size_t vmLoops=0;
+  const auto observer=vm.add_call_observer([&](const auto& function) {
+    vmLoops+=function.name()=="ZS_SLEEP_LOOP";
+    });
+  const auto settled=[&] {
+    const auto* object=matteo->interactive();
+    return matteo->isInState(ScriptFn(sleep.init)) && object && object->checkMobName("BEDHIGH") &&
+           object->userCount()==1 && object->isStaticState() && matteo->isAiQueueEmpty() &&
+           ActivityDefinitions::bodyStateContains(int32_t(matteo->bodyState()),BS_LIE);
+    };
+  test.stepUntil(1200,settled,"Matteo sleeps in a bed after approaching his routine waypoint");
+  require(Contract::aiState(*matteo).eTime==deadline,"sleep routine: the transition preserves the row's end time");
+  test.step(90);
+  require(settled() && (vmLoops==0)==events,"sleep routine: a held bed remains settled with the selected executor");
+  vm.remove_call_observer(observer);
+
+  Contract::aiState(*matteo).eTime=world.time();
+  Contract::tickRoutine(*matteo);
+  auto tail=Contract::queue(*matteo);
+  require(tail.size()!=0,"sleep routine: waking queues a bed release");
+  while(tail.size()>1)
+    tail.pop();
+  const auto release=tail.pop();
+  require(release.act==AI_UseMob && release.s0=="BEDHIGH" && release.i0==-1,
+          "sleep routine: the end requests the normal get-up animation");
+  test.stepUntil(600,[&] { return matteo->interactive()==nullptr; },"Matteo leaves his bed");
+  std::printf("Sleep routine (events=%d): %zu VM Loop calls; approach, handoff, held bed and release verified\n",
+              int(events),vmLoops);
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
@@ -1807,6 +1857,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     setenv("OPENGOTHIC_ACTIVITY_EVENTS",events ? "1" : "0",1);
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
     const auto save=pointActivitiesWorld(gothic,events);
+    sleepRoutineWorld(gothic,events);
     gothic.clearGame().reset();
     seatedActivitiesWorld(gothic,events);
     if(events) {
