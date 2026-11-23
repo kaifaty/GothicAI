@@ -124,36 +124,39 @@ void GameScript::invokeKillNpc(int32_t symbol) {
   }
 
 void GameScript::killNpc(int32_t symbol) {
-  findSymbol("B_KILLNPC.NPCINSTANCE")->set_int(symbol);
-  auto* local=findSymbol("B_KILLNPC.NPC");
-  // Use the registered engine calls so a death during world init still runs
-  // the startup floor barrier for the affected NPC and its neighbours.
-  vm.push_int(symbol);
+  auto* parameter = findSymbol("B_KILLNPC.NPCINSTANCE");
+  auto* local = findSymbol("B_KILLNPC.NPC");
+  vm.set_int(vm.unsafe_get_gi(),parameter,0,symbol);
+
+  // Use the engine bindings to keep the startup floor barrier for these NPC calls.
+  vm.push_reference(parameter);
   vm.unsafe_call_external(findSymbol("HLP_GETNPC"));
-  const auto npc=std::static_pointer_cast<daedalus::INpc>(vm.pop_instance());
-  local->set_instance(npc);
-  vm.push_instance(npc);
+  local->set_instance(vm.pop_instance());
+  vm.push_reference(local);
   vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
-  const bool dead=vm.pop_int()!=0;
-  vm.push_instance(npc);
+  vm.push_int(vm.pop_int()==0);
+  vm.push_reference(local);
   vm.unsafe_call_external(findSymbol("HLP_ISVALIDNPC"));
-  const bool valid=vm.pop_int()!=0;
-  if(dead || !valid)
+  const bool valid = vm.pop_int()!=0;
+  const bool alive = vm.pop_int()!=0;
+  if(!alive || !valid)
     return;
 
   // The dispatch frame restores the member context on return.
+  const auto npc = local->get_instance();
   vm.unsafe_set_gi(npc);
-  npc->flags=NpcFlag::NONE;
-  vm.push_instance(npc);
+  vm.set_int(npc,findSymbol("C_NPC.FLAGS"),0,0);
+  vm.push_reference(local);
   vm.push_int(int32_t(findSymbolIndex("ITMI_OLDCOIN")));
   vm.unsafe_call_external(findSymbol("CREATEINVITEM"));
 
-  // The script reads its instance local and current HP after creating the item.
-  const auto target=std::static_pointer_cast<daedalus::INpc>(local->get_instance());
+  // The stock damage reads the saved actor's maximum HP after the inventory call.
+  vm.push_reference(local);
+  vm.push_reference(findSymbol("ATR_HITPOINTS"));
+  const auto target = local->get_instance();
   vm.unsafe_set_gi(target);
-  vm.push_instance(target);
-  vm.push_int(ATR_HITPOINTS);
-  vm.push_int(target ? -target->attribute[ATR_HITPOINTS] : 0);
+  const auto maximum = vm.get_int(target,findSymbol("C_NPC.ATTRIBUTE"),ATR_HITPOINTSMAX);
+  vm.push_int(std::bit_cast<int32_t>(0u-uint32_t(maximum)));
   vm.unsafe_call_external(findSymbol("NPC_CHANGEATTRIBUTE"));
   }
 
