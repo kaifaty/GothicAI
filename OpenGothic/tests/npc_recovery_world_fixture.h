@@ -308,15 +308,23 @@ auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& rese
   auto* scroll=actor.addItem(scrollId,1);
   require(scroll && actor.drawSpell(fire) && actor.activeWeapon()==scroll,"equipment: the actor has the stock scroll drawn");
   const auto scrollRef=std::static_pointer_cast<daedalus::IItem>(scroll->handlePtr());
-  require(useSpell(int32_t(scrollId),26).size()==0 && attributes[ATR_MANA]==49 && attributes[ATR_MANAMAX]==51 &&
-          vm.global_item()->get_instance()==scrollRef,"equipment: refill before the drawing check and keep its ITEM");
-  require(useSpell(fire,20).size()==0 && vm.global_item()->get_instance()==scrollRef,
-          "equipment: the active spell is not queued twice");
+  auto& scrollSymbol=*script.findSymbol(scrollId);
+  vm.global_item()->set_instance(previousAmmo);
+  const auto publishesScroll=[&] {
+    return scrollSymbol.get_instance()==scrollRef && vm.global_item()->get_instance()==previousAmmo;
+    };
+  scrollSymbol.set_instance(nullptr);
+  require(useSpell(int32_t(scrollId),26).size()==0 && attributes[ATR_MANA]==49 && attributes[ATR_MANAMAX]==51 && publishesScroll(),
+          "equipment: prepare mana before publishing the drawn scroll on its own symbol");
+  scrollSymbol.set_instance(nullptr);
+  require(useSpell(fire,20).size()==0 && publishesScroll(),
+          "equipment: the already active spell is published without queuing it twice");
+  scrollSymbol.set_instance(nullptr);
   auto next=useSpell(ice,20);
   require(next.size()==2 && next.pop().act==AI_RemoveWeapon,"equipment: remove an active spell before switching");
   const auto drawNext=next.pop();
-  require(drawNext.act==AI_DrawSpell && drawNext.i0==ice && drawNext.i1==20 && vm.global_item()->get_instance()==scrollRef,
-          "equipment: spell switch queues the replacement and preserves the active scroll in ITEM");
+  require(drawNext.act==AI_DrawSpell && drawNext.i0==ice && drawNext.i1==20 && publishesScroll(),
+          "equipment: a spell switch publishes the active scroll and queues the replacement");
 
   for(const auto* reason:{"AR_NONE","AR_KILL","AR_GUILDENEMY","AR_GUARDCALLEDTOKILL","AR_GUARDSTOPSINTRUDER","AR_HUMANMURDEREDHUMAN"}) {
     actor.handle().aivar[9]=script.findSymbol(reason)->get_int();
