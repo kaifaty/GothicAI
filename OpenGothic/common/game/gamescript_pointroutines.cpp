@@ -250,3 +250,62 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
     }
   return true;
   }
+
+bool GameScript::runBanditCamp(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const std::string_view name = symbol.name();
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  auto& stage = npc.handle().aivar[PositionStage];
+  result = LOOP_CONTINUE;
+
+  if(name=="ZS_BANDIT") {
+    setPerceptionPreset(true);
+    findSymbol("B_RESETALL.SLF")->set_instance(self);
+    stopLookAtNpc(self);
+    ai_removeweapon(self);
+    NpcEngineCalls::setWalkMode(npc,1);
+    const auto& waypoint = npc.handle().wp;
+    if(NpcEngineCalls::distanceToWaypoint(world(),npc,waypoint)>ApproachDistance)
+      NpcEngineCalls::gotoWaypoint(world(),npc,waypoint);
+    stage = NeedsPose;
+    return true;
+    }
+
+  if(name=="ZS_BANDIT_LOOP" && stage==NeedsPose) {
+    const auto* fire = world().findFreePoint(npc,"CAMPFIRE");
+    if(fire!=nullptr && !npc.isOnFreePoint("CAMPFIRE")) {
+      npc.aiPush(AiQueue::aiGoToPoint(*fire));
+      npc.aiPush(AiQueue::aiAlignToFp());
+      npc.aiPush(AiQueue::aiPlayAnimBs("T_STAND_2_SIT",BS_SIT));
+      }
+    else if(const auto* stand = world().findFreePoint(npc,"STAND"); stand!=nullptr && !npc.isOnFreePoint("STAND")) {
+      npc.aiPush(AiQueue::aiGoToPoint(*stand));
+      npc.aiPush(AiQueue::aiAlignToFp());
+      npc.aiPush(AiQueue::aiPlayAnim("T_STAND_2_HGUARD"));
+      }
+    else {
+      npc.aiPush(AiQueue::aiAlignToWp());
+      npc.aiPush(AiQueue::aiPlayAnim("T_STAND_2_HGUARD"));
+      }
+    stage = InPose;
+    }
+  findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(int32_t(BS_SIT));
+  findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self);
+  const auto seated = ActivityDefinitions::bodyStateContains(npc_getbodystate(self),int32_t(BS_SIT));
+
+  if(name=="ZS_BANDIT_END") {
+    if(seated)
+      npc.aiPush(AiQueue::aiPlayAnimBs("T_SIT_2_STAND",BS_STAND));
+    else
+      npc.aiPush(AiQueue::aiPlayAnim("T_HGUARD_2_STAND"));
+    return true;
+    }
+
+  if(!seated && stage==InPose && npc_getstatetime(self)>5) {
+    const auto roll = int32_t(rollRandom(3,&npc,true));
+    findSymbol("ZS_BANDIT_LOOP.RANDOM")->set_int(roll);
+    if(roll==0)
+      npc.aiPush(AiQueue::aiPlayAnim("T_HGUARD_LOOKAROUND"));
+    npc_setstatetime(self,0);
+    }
+  return true;
+  }

@@ -87,6 +87,7 @@ struct NpcDefinitionContract {
   static auto& activityEvents(Npc& npc) { return npc.activityEvents; }
   static bool& activityEventsOn(GameScript& script) { return script.activityEvents; }
   static auto& previousState(Npc& npc) { return npc.aiPrevState; }
+  static uint64_t perceptionInterval(const Npc& npc) { return npc.perceptionTime; }
   static void tickRoutine(Npc& npc) { npc.aiState.loopNextTime=npc.world().tickCount(); npc.tickRoutine(); }
   static void tickScheduledRoutine(Npc& npc) { npc.tickRoutine(); }
   // The engine's next queued action, as the NPC's tick takes it.

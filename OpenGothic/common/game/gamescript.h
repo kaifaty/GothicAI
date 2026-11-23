@@ -248,6 +248,9 @@ class GameScript final : public GameRules {
     bool runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runBanditCamp(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runDormantGolem(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool invokeNativeGolemPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
     bool runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
