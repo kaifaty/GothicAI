@@ -1575,6 +1575,92 @@ void seatedGestureAtObject(Npc& npc,uint32_t range) {
   require(full && silent,"seated gesture: the fixed seed covers a full chain and a silent outcome");
   }
 
+void workMobActivitiesWorld(ActivityEventsWorld& test,bool events) {
+  using Contract=NpcDefinitionContract;
+  struct Site { const char* state; const char* actor; const char* scheme; int body; int seconds; };
+  constexpr std::array sites={
+    Site{"ZS_SIT_THRONE","BAU_910_MARIA","THRONE",65547,0},
+    Site{"ZS_SAW","BAU_964_BAUER","BAUMSAEGE",32784,15},
+    Site{"ZS_REPAIR_HUT","VLK_480_FELLAN","REPAIR",32784,5},
+    Site{"ZS_PRAY_INNOS","PAL_299_SERGIO","INNOS",32784,5},
+    Site{"ZS_ROAST_SCAVENGER",nullptr,"BARBQ",32784,0},
+    };
+  auto& world=test.world();
+  auto& script=world.script();
+  ActivityCalls calls;
+  for(const auto& site:sites) {
+    EventActor activity;
+    if(site.actor) {
+      auto* npc=activityNpc(world,site.actor);
+      require(npc!=nullptr,"work MOB: the routine actor must exist");
+      activity=test.actor(site.state,site.scheme,npc);
+      } else {
+      // The roast has a real object in NEWWORLD but no actor in its normal day.
+      activity.npc=test.extra();
+      activity.phases=activityPhases(script,site.state);
+      activity.point=world.findWayPoint("NW_TROLLAREA_PORTAL_KDWWAIT_04");
+      require(activity.point!=nullptr,"work MOB: the roasting waypoint must exist");
+      activity.pointName=activity.point->name;
+      activity.state=site.state;
+      activity.scheme=site.scheme;
+      }
+    auto& npc=*activity.npc;
+    const auto at=activity.point->position();
+    test.only({&npc});
+    test.moveHero(at+Tempest::Vec3(350,0,0),0);
+    test.start(activity,at,&npc,false);
+    Contract::tickRoutine(npc);
+    npc.setPerceptionDisable(PERC_ASSESSPLAYER);
+    auto* object=world.availableMob(npc,site.scheme);
+    require(object!=nullptr,(activity.state+": the routine has a free object").c_str());
+    test.stepUntil(750,[&] {
+      return npc.interactive()==object && object->userCount()==1 && object->isStaticState() && npc.isAiQueueEmpty() &&
+             ActivityDefinitions::bodyStateContains(int32_t(npc.bodyState()),site.body) &&
+             (!events || test.stage(npc)==ActivityEvents::Stage::Hold);
+      },activity.state+" holds the real object");
+    const auto loop=activity.state+"_LOOP";
+    if(site.seconds>0) {
+      const auto boundary=uint64_t(site.seconds+1)*1000;
+      npc.setStateTime(boundary-1);
+      Contract::tickRoutine(npc);
+      require(npc.stateTime()==boundary-1 && npc.isAiQueueEmpty(),"work MOB: the timer waits for the whole second");
+      auto* repair=script.getVm().find_symbol_by_name(loop+".ZUFALL");
+      script.setSeed(73106);
+      auto expected=Contract::random(script);
+      bool animated=false,silent=false;
+      for(size_t i=0;i<(repair ? 32u : 1u);++i) {
+        const int32_t roll=repair ? int32_t(expected()%100) : -1;
+        npc.setStateTime(boundary);
+        Contract::tickRoutine(npc);
+        require(npc.stateTime()==0 && Contract::random(script)==expected,"work MOB: reset and expected random stream");
+        if(repair)
+          require(repair->get_int()==roll,"repair: the saved roll is the draw from this perception beat");
+        const auto* action=npc.aiQueueFront();
+        if(roll>=0 && roll<50) {
+          require(action && action->act==AI_PlayAnimBs && action->s0=="T_REPAIR_RANDOM_1" && action->i0==site.body,
+                  "repair: a successful draw queues the original gesture");
+          animated=true;
+          } else {
+          require(action==nullptr,"work MOB: a silent timer reset queues no command");
+          silent=true;
+          }
+        npc.clearAiQueue();
+        if(animated && silent)
+          break;
+        }
+      require(silent && (!repair || animated),"work MOB: fixed draws cover the required outcomes");
+      }
+    const auto count=calls.phase(npc,loop);
+    std::printf("Work MOB %s (events=%d): object %u, %zu Loop calls\n",site.state,int(events),object->zenId(),count);
+    require((count==0)==events,"work MOB: the routine uses the requested executor");
+    npc.clearState(false);
+    require(object->isAttached(npc) && npc.aiQueueFront() && npc.aiQueueFront()->act==AI_UseMob &&
+            npc.aiQueueFront()->i0==-1,"work MOB: queue the original leave before releasing ownership");
+    test.stepUntil(650,[&] { return !object->isAttached(npc) && !test.places().reserved(npc); },activity.state+" releases its object");
+    test.stop(npc);
+    }
+  }
+
 void seatedActivitiesWorld(Gothic& gothic,bool events) {
   using Contract=NpcDefinitionContract;
   using ActivityEvents::Stage;
@@ -1708,6 +1794,7 @@ void seatedActivitiesWorld(Gothic& gothic,bool events) {
       test.stepUntil(600,[&] { return !object->isAttached(*npc) && !test.places().reserved(*npc); },
                      std::string(site.state)+" releases its seat");
       }
+    workMobActivitiesWorld(test,events);
   }
   gothic.clearGame().reset();
   if(!output) std::filesystem::remove_all(directory);
