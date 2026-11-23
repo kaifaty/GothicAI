@@ -3,6 +3,7 @@
 #include "daedalus/vm.h"
 #include "daedalus/classes.h"
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <set>
@@ -433,6 +434,7 @@ class GameScript final : public GameRules {
     bool invokeNativeRoomPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
     void loadNativeRoomReaction();
     void loadNativeHumanPerceptions();
+    void bindCrimeGlobals();
     bool nativeHumanPerceptionsEnabled() const;
     bool invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase);
     int32_t runDrawWeaponReaction();
@@ -756,7 +758,10 @@ class GameScript final : public GameRules {
     ScriptFn                                                    stopShortZapCallback;
     ScriptFn                                                    restartTentacleCallback;
     std::unordered_map<uint32_t,NativeRoutinePhase>              nativeRoutinePhases;
-    int32_t                                                     storyChapter = 0; // Outlives the stock KAPITEL binding in vm.
+    // The stock VM aliases this storage and is destroyed before it.
+    int32_t                                                     storyChapter = 0;
+    std::array<int32_t,5>                                       crimeAbsolutionLevels{};
+    std::array<int32_t,19>                                      petzCrimeCounters{};
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};
