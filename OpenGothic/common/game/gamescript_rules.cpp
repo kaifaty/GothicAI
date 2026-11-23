@@ -434,7 +434,7 @@ bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& s
   lastSecond = npc_getstatetime(self);
   const auto hp = self->attribute[NpcAttribute::hitpoints];
   const auto fullDamage = number(spell->damage);
-  vm.call_function<void>("B_MAGICHURTNPC",other(),self,hp>fullDamage ? fullDamage : hp-1);
+  magicHurtNpc(std::dynamic_pointer_cast<daedalus::INpc>(other()),self,hp>fullDamage ? fullDamage : hp-1);
   if(drain && hp>fullDamage)
     npc_changeattribute(std::dynamic_pointer_cast<daedalus::INpc>(other()),ATR_HITPOINTS,fullDamage);
   return true;
