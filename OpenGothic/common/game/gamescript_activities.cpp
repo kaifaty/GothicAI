@@ -9,6 +9,10 @@ void GameScript::loadNativeRoutines() {
   if(!nativeRoutineProgram || !activityEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return;
 
+  vm.override_function("B_MM_ASSESSENEMY",std::function<void()>{[this] { runMonsterAssessEnemy(); }},[this] {
+    return nativeMonsterPerceptionsEnabled();
+    });
+
   static constexpr NativeRoutinePhase routines[] = {
     {"ZS_GOTOBED",            &GameScript::runMovementRoutine},
     {"ZS_SLEEP",              &GameScript::runMovementRoutine, 0, RoutineWake::Sleep},
@@ -55,6 +59,15 @@ void GameScript::loadNativeRoutines() {
     {"ZS_GREENTENTACLE",       &GameScript::runControlSpell},
     {"ZS_SHORTZAPPED",         &GameScript::runControlSpell},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
+    {"ZS_MM_ATTACK",         &GameScript::runMonsterAttack},
+    {"ZS_MM_THREATENENEMY",   &GameScript::runMonsterThreat},
+    {"ZS_MM_FLEE",            &GameScript::runMonsterFlee},
+    {"ZS_MM_HUNT",            &GameScript::runMonsterHunt},
+    {"ZS_MM_EATBODY",         &GameScript::runMonsterEatBody},
+    {"ZS_MM_RTN_DRAGONREST",  &GameScript::runMonsterDragonRest},
+    {"ZS_MM_RTN_FOLLOW_SHEEP", &GameScript::runMonsterSheepFollow},
+    {"ZS_MM_RTN_FOLLOW_SHEEP_BALTHASAR", &GameScript::runMonsterSheepFollow},
+    {"ZS_MM_RTN_SUMMONED",    &GameScript::runMonsterSummoned},
     {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_REST",        &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_ROAM",        &GameScript::runRoamingRoutine},
