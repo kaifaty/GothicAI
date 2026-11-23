@@ -652,6 +652,8 @@ bool GameScript::invokeNativeMonsterPerception(const daedalus::DaedalusSymbol& s
     {"B_MM_ASSESSPLAYER",       &GameScript::runMonsterAssessPlayer},
     {"B_MM_ASSESSWARN",         &GameScript::runMonsterAssessWarn},
     {"B_MM_ASSESSSURPRISE",     &GameScript::runMonsterAssessSurprise},
+    {"B_MM_ASSESSQUIETSOUND_SLEEP", &GameScript::runMonsterAssessQuietSoundSleep},
+    {"B_SUMMONEDASSESSTALK",        &GameScript::runMonsterSummonedAssessTalk},
     };
   for(const auto& [name,callback] : callbacks) {
     if(symbol.name()!=name)
@@ -890,6 +892,18 @@ void GameScript::runMonsterAssessWarn() {
 void GameScript::runMonsterAssessSurprise() {
   npc_settarget(std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()),
                 std::static_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()));
+  }
+
+void GameScript::runMonsterAssessQuietSoundSleep() {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::static_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  if(wld_getguildattitude(self->guild,other->guild)==ATT_HOSTILE)
+    runMonsterAssessEnemy();
+  }
+
+void GameScript::runMonsterSummonedAssessTalk() {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  npc_changeattribute(self,ATR_HITPOINTS,-self->attribute[ATR_HITPOINTSMAX]);
   }
 
 bool GameScript::monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey) {

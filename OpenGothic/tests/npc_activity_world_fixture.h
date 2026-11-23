@@ -2875,7 +2875,8 @@ void monsterEnemyPerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
   const auto handler=script.findFunction("B_MM_ASSESSENEMY");
   const auto sleepingHandler=script.findFunction("B_MM_ASSESSQUIETSOUND_SLEEP");
   const auto handlerPc=script.findSymbol(size_t(handler.ptr))->address();
-  const auto sleepingPc=script.findSymbol(size_t(sleepingHandler.ptr))->address();
+  const auto* sleepingSymbol=script.findSymbol(size_t(sleepingHandler.ptr));
+  const auto sleepingPc=sleepingSymbol->address();
   const auto origin=wolf.position()+Tempest::Vec3(0,500,0);
   const std::array actors={&wolf,&sheep,&hero};
   struct ActorState {
@@ -2895,10 +2896,11 @@ void monsterEnemyPerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
       handle.aivar[slot]=0;
     handle.aivar[26]=1;
     }
-  struct Scene { Npc& listener; Npc& source; int distance; const char* next; };
+  struct Scene { Npc& listener; Npc& source; int distance; const char* next; bool sleeping=false; };
   const std::array scenes={Scene{wolf,sheep,250,nullptr},Scene{wolf,hero,250,"ZS_MM_ATTACK"},
                            Scene{wolf,hero,250,"ZS_MM_THREATENENEMY"},Scene{wolf,sheep,250,"ZS_MM_HUNT"},
-                           Scene{sheep,wolf,250,"ZS_MM_FLEE"},Scene{sheep,wolf,400,nullptr}};
+                           Scene{sheep,wolf,250,"ZS_MM_FLEE"},Scene{sheep,wolf,400,nullptr},
+                           Scene{wolf,hero,250,"ZS_MM_ATTACK",true},Scene{wolf,sheep,250,nullptr,true}};
   for(size_t i=0;i<scenes.size();++i) {
     const auto& scene=scenes[i];
     auto& listener=scene.listener;
@@ -2908,28 +2910,39 @@ void monsterEnemyPerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
     source.setPosition(origin+Tempest::Vec3(float(scene.distance),0,0));
     source.updateTransform();
     require(listener.canSeeNpc(source,true),"monster enemy perception: the target must be visible to the listener");
+    const auto sourceGuild=source.handle().guild;
+    if(scene.sleeping && !scene.next)
+      source.handle().guild=listener.handle().guild;
+    if(scene.sleeping)
+      require((script.guildAttitude(listener,source)==ATT_HOSTILE)==(scene.next!=nullptr),
+              "sleeping monster perception: the fixture must have the intended guild reaction");
+    const auto perception=scene.sleeping ? PERC_ASSESSQUIETSOUND : PERC_ASSESSENEMY;
+    const auto callback=scene.sleeping ? sleepingHandler : handler;
+    const auto entryPc=scene.sleeping ? sleepingPc : handlerPc;
     std::vector<std::string> original;
     for(bool native:{false,true}) {
       events=native;
       source.handle().aivar[71]=i==0 ? 1 : 0;
-      listener.handle().aivar[26]=i==1 ? 0 : 1;
+      listener.handle().aivar[26]=i==1 || scene.sleeping ? 0 : 1;
       listener.setTarget(nullptr);
       listener.clearAiQueue();
       listener.aiPush(AiQueue::aiWait(173));
-      listener.setPerceptionEnable(PERC_ASSESSENEMY,handler.ptr);
-      size_t handlerEntries=0;
-      vm.observe_instructions([&](const auto&) { handlerEntries+=vm.pc()==handlerPc; });
-      const bool delivered=listener.perceptionProcess(source,nullptr,listener.qDistTo(source),PERC_ASSESSENEMY);
+      listener.setPerceptionEnable(perception,callback.ptr);
+      size_t handlerEntries=0,enemyEntries=0;
+      vm.observe_instructions([&](const auto&) { handlerEntries+=vm.pc()==entryPc; enemyEntries+=vm.pc()==handlerPc; });
+      const bool delivered=listener.perceptionProcess(source,nullptr,listener.qDistTo(source),perception);
       vm.observe_instructions({});
       require(delivered && handlerEntries==(native ? 0u : 1u),"monster enemy perception: the world uses the selected handler");
+      if(scene.sleeping)
+        require(enemyEntries==(!native && scene.next ? 1u : 0u),"sleeping monster perception: only a hostile source reaches the enemy handler");
       const auto* front=listener.aiQueueFront();
       if(scene.next) {
         require(front && front->act==AI_StartState && front->func==script.findFunction(scene.next) && front->target==&source &&
-                !listener.hasPerc(PERC_ASSESSENEMY),"monster enemy perception: the reaction replaces the queue and clears perceptions");
+                !listener.hasPerc(perception),"monster enemy perception: the reaction replaces the queue and clears perceptions");
         require(listener.target()==(i==2 ? nullptr : &source),"monster enemy perception: threatening leaves the current target unchanged");
         }
       else
-        require(front && front->act==AI_Wait && listener.hasPerc(PERC_ASSESSENEMY),"monster enemy perception: rejecting the source leaves the queue and perceptions intact");
+        require(front && front->act==AI_Wait && listener.hasPerc(perception),"monster enemy perception: rejecting the source leaves the queue and perceptions intact");
       const auto queue=activityQueue(listener);
       if(native)
         require(queue==original,"monster enemy perception: original and native leave the same queue");
@@ -2937,8 +2950,13 @@ void monsterEnemyPerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
         original=queue;
       }
     source.handle().aivar[71]=0;
+    source.handle().guild=sourceGuild;
     }
+  // Force the original wrapper so the VM's actual nested BL dispatch is exercised too.
   require(script.guildAttitude(wolf,hero)==ATT_HOSTILE,"monster enemy perception: the sleeping wolf must treat the hero as hostile");
+  const auto previousSelf=vm.global_self()->get_instance(),previousOther=vm.global_other()->get_instance();
+  vm.global_self()->set_instance(std::static_pointer_cast<daedalus::INpc>(wolf.handlePtr()));
+  vm.global_other()->set_instance(std::static_pointer_cast<daedalus::INpc>(hero.handlePtr()));
   for(bool native:{false,true}) {
     events=native;
     hero.handle().aivar[71]=1;
@@ -2947,11 +2965,13 @@ void monsterEnemyPerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
       sleepingEntries+=vm.pc()==sleepingPc;
       enemyEntries+=vm.pc()==handlerPc;
       });
-    script.invokeState(&wolf,&hero,nullptr,sleepingHandler);
+    vm.call_function<void>(sleepingSymbol);
     vm.observe_instructions({});
     require(sleepingEntries==1 && enemyEntries==(native ? 0u : 1u),
             "monster enemy perception: the sleeping callback must use the same handler through a nested VM call");
     }
+  vm.global_self()->set_instance(previousSelf);
+  vm.global_other()->set_instance(previousOther);
   events=previousEvents;
   for(size_t i=0;i<actors.size();++i) {
     auto& npc=*actors[i];
@@ -2966,6 +2986,42 @@ void monsterEnemyPerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
       }
     }
   std::puts("Monster enemy perception: original and native reject, attack, threaten, hunt and flee identically");
+  }
+
+void monsterSummonedDismissal(World& world, Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& events=Contract::activityEventsOn(script);
+  auto& vm=script.getVm();
+  const auto previousEvents=events;
+  const auto summoned=script.findFunction("ZS_MM_RTN_SUMMONED");
+  const auto handler=script.findFunction("B_SUMMONEDASSESSTALK");
+  const auto handlerPc=script.findSymbol(size_t(handler.ptr))->address();
+  std::vector<std::string> original;
+  for(bool native:{false,true}) {
+    events=native;
+    auto* wolf=world.addNpc(script.findSymbolIndex("SUMMONED_WOLF"),hero.position()+Tempest::Vec3(100,0,0));
+    require(wolf && wolf->attribute(ATR_HITPOINTS)>0 && wolf->handle().guild==GIL_SUMMONED_WOLF,
+            "summoned dismissal: the original summoned wolf starts alive");
+    wolf->setProcessPolicy(NpcProcessPolicy::AiNormal);
+    require(wolf->startState(summoned,""),"summoned dismissal: the wolf must enter its summoned routine");
+    Contract::tickRoutine(*wolf);
+    require(wolf->hasPerc(PERC_ASSESSTALK),"summoned dismissal: the routine registers its actual talk callback");
+    wolf->clearAiQueue();
+    size_t entries=0;
+    vm.observe_instructions([&](const auto&) { entries+=vm.pc()==handlerPc; });
+    const bool delivered=wolf->perceptionProcess(hero,nullptr,wolf->qDistTo(hero),PERC_ASSESSTALK);
+    vm.observe_instructions({});
+    require(delivered && entries==(native ? 0u : 1u) && wolf->isDead() && wolf->attribute(ATR_HITPOINTS)==0,
+            "summoned dismissal: talking dismisses the wolf through the original health path");
+    if(native)
+      require(activityQueue(*wolf)==original,"summoned dismissal: original and native leave the same queue");
+    else
+      original=activityQueue(*wolf);
+    world.removeNpc(*wolf);
+    }
+  events=previousEvents;
+  std::puts("Monster perception: sleeping hostility and summoned dismissal agree in both executors");
   }
 
 void monsterHuntAndEatBodyPhases(World& world, Npc& monster, Npc& target) {
@@ -3614,6 +3670,7 @@ std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   monsterAttackPhases(world,*wolf,hero);
   monsterThreatAndFleePhases(world,*wolf,hero);
   monsterEnemyPerception(world,*wolf,sheep,hero);
+  monsterSummonedDismissal(world,hero);
   monsterHuntAndEatBodyPhases(world,*wolf,sheep);
   monsterBodyPerception(world,*wolf,sheep);
   specialMonsterRoutines(session,world,*wolf,sheep,hero);

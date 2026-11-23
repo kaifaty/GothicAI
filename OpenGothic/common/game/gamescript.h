@@ -270,6 +270,8 @@ class GameScript final : public GameRules {
     void runMonsterAssessPlayer();
     void runMonsterAssessWarn();
     void runMonsterAssessSurprise();
+    void runMonsterAssessQuietSoundSleep();
+    void runMonsterSummonedAssessTalk();
     bool monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monster, const std::shared_ptr<daedalus::INpc>& body);
     bool monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey);
     bool monsterTargetHasBodyState(const std::shared_ptr<daedalus::INpc>& target, int32_t state);
