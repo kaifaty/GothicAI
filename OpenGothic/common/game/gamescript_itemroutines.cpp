@@ -8,6 +8,7 @@
 #include <array>
 #include <bit>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -1607,10 +1608,207 @@ void GameScript::runStockPickLock(int32_t success, int32_t brokenOrOpen) {
     }
   }
 
+namespace {
+
+void giveMobXp(daedalus::DaedalusVm& vm, const char* amount) {
+  vm.push_reference(vm.find_symbol_by_name(amount));
+  vm.unsafe_call_bl(vm.find_symbol_by_name("B_GIVEPLAYERXP"));
+  }
+
+struct MayaBook {
+  std::string_view callback;
+  const char* studied;
+  int32_t art;
+  };
+
+constexpr MayaBook mayaBooks[] = {
+  {"USE_BOOKSTANDMAYAHIERCHARY_01_S1","BOOKSTANDMAYAHIERCHARY_1_PERMANENT",1},
+  {"USE_BOOKSTANDMAYAHIERCHARY_02_S1","BOOKSTANDMAYAHIERCHARY_2_PERMANENT",2},
+  {"USE_BOOKSTANDMAYAHIERCHARY_03_S1","BOOKSTANDMAYAHIERCHARY_3_PERMANENT",3},
+  {"USE_BOOKSTANDMAYAHIERCHARY_04_S1","BOOKSTANDMAYAHIERCHARY_4_PERMANENT",4},
+  {"USE_BOOKSTANDMAYAHIERCHARY_05_S1","BOOKSTANDMAYAHIERCHARY_5_PERMANENT",5},
+  };
+
+void readMayaBookForNpc(daedalus::DaedalusVm& vm, const MayaBook& book,
+                        const std::shared_ptr<daedalus::INpc>& hero) {
+  const auto context=vm.unsafe_get_gi();
+  auto* art=vm.find_symbol_by_name("BOOKSTANDMAYAART");
+  vm.set_int(context,art,0,book.art);
+  vm.find_symbol_by_name("INITUSE_BOOKSTANDMAYA.HER")->set_instance(hero);
+  vm.set_int(context,art,0,0);
+
+  auto* studied=vm.find_symbol_by_name(book.studied);
+  if(studied->get_int()!=vm.find_symbol_by_name("FALSE")->get_int())
+    return;
+  const auto* languages=vm.find_symbol_by_name("PLAYER_TALENT_FOREIGNLANGUAGE");
+  const auto known=vm.find_symbol_by_name("TRUE")->get_int();
+  for(uint16_t i:{uint16_t(0),uint16_t(1),uint16_t(2)}) {
+    if(languages->get_int(i)==known) {
+      giveMobXp(vm,"XP_AMBIENT");
+      vm.set_int(context,studied,0,known);
+      return;
+      }
+    }
+  }
+
+struct MobSpawn {
+  const char* npc;
+  const char* waypointLiteral;
+  };
+
+void spawnAtMob(daedalus::DaedalusVm& vm, const MobSpawn& spawn) {
+  vm.push_int(int32_t(vm.find_symbol_by_name(spawn.npc)->index()));
+  vm.push_reference(vm.find_symbol_by_name(spawn.waypointLiteral));
+  vm.unsafe_call_external(vm.find_symbol_by_name("WLD_INSERTNPC"));
+  }
+
+bool runMobEvent(daedalus::DaedalusVm& vm, std::string_view name) {
+  const auto symbol=[&](std::string_view name) { return vm.find_symbol_by_name(name); };
+  const auto context=vm.unsafe_get_gi();
+  const auto truth=symbol("TRUE")->get_int();
+  const auto falsity=symbol("FALSE")->get_int();
+  const auto mark=[&](daedalus::DaedalusSymbol* flag) { vm.set_int(context,flag,0,truth); };
+  const auto sound=[&](const char* literal) {
+    vm.push_reference(symbol(literal));
+    vm.unsafe_call_external(symbol("SND_PLAY"));
+    };
+
+  // Stock waypoints are immutable literals in the verified program.
+  static constexpr MobSpawn libraryDoor[] = {
+    {"SKELETON","$52124"}, {"SKELETON","$52125"},
+    {"SKELETON","$52126"}, {"DEMON","$52127"},
+    {"DEMON","$52128"}, {"DEMONLORD","$52129"},
+    };
+  static constexpr MobSpawn chamberChest[] = {
+    {"GOBBO_BLACK","$52176"}, {"GOBBO_BLACK","$52177"},
+    {"GOBBO_BLACK","$52178"}, {"GOBBO_BLACK","$52179"},
+    {"ORCWARRIOR_REST","$52180"},
+    };
+  static constexpr MobSpawn skeletonChest[] = {{"LESSER_SKELETON","$51976"}};
+  static constexpr struct Trap {
+    std::string_view callback;
+    const char* flag;
+    const char* sound;
+    std::span<const MobSpawn> spawns;
+    bool markBeforeSpawn;
+    } traps[] = {
+    {"EVT_OPEN_DOOR_LIBRARY_S1","EVT_OPEN_DOOR_LIBRARY_S1_ONETIME","$52123",libraryDoor,false},
+    {"EVT_TRUHE_OW_01_S1","TRUHESFX","$52175",chamberChest,true},
+    {"B_SPAWN_SKELETON_S1","SKELETT_SPAWN",nullptr,skeletonChest,false},
+    };
+  if(const auto* trap=std::ranges::find(traps,name,&Trap::callback); trap!=std::end(traps)) {
+    auto* flag=symbol(trap->flag);
+    if(flag->get_int()==falsity) {
+      if(trap->sound)
+        sound(trap->sound);
+      if(trap->markBeforeSpawn)
+        mark(flag);
+      for(const auto& spawn:trap->spawns)
+        spawnAtMob(vm,spawn);
+      if(!trap->markBeforeSpawn)
+        mark(flag);
+      }
+    return true;
+    }
+
+  if(name=="OPEN_ADANOSTEMPELCHEST_01_FUNC_S1" || name=="OPEN_ADANOSTEMPELCHEST_02_FUNC_S1") {
+    const bool first=name=="OPEN_ADANOSTEMPELCHEST_01_FUNC_S1";
+    auto* flag=symbol(first ? "OPEN_ADANOSTEMPELCHEST_01_FUNC_ONETIME" : "OPEN_ADANOSTEMPELCHEST_02_FUNC_ONETIME");
+    if(flag->get_int()!=falsity)
+      return true;
+    static constexpr std::string_view firstGuardians[] = {"STONEGUARDIAN_TREASUREPITS_05C","STONEGUARDIAN_TREASUREPITS_05E"};
+    static constexpr std::string_view secondGuardians[] = {
+      "STONEGUARDIAN_TREASUREPITS_09A","STONEGUARDIAN_TREASUREPITS_09C","STONEGUARDIAN_TREASUREPITS_09E"
+      };
+    const auto guardians=first ? std::span<const std::string_view>(firstGuardians) : std::span<const std::string_view>(secondGuardians);
+    for(auto guard:guardians) {
+      vm.push_reference(symbol(guard));
+      vm.unsafe_call_bl(symbol("B_AWAKE_STONEGUARDIAN"));
+      }
+    bool alive=false;
+    for(auto guard=guardians.rbegin(); guard!=guardians.rend(); ++guard) {
+      vm.push_reference(symbol(*guard));
+      vm.unsafe_call_external(symbol("NPC_ISDEAD"));
+      alive|=vm.pop_int()==falsity;
+      }
+    if(alive)
+      sound(first ? "$52008" : "$52009");
+    mark(flag);
+    return true;
+    }
+
+  if(name=="EVT_ORKOBERST_SWITCH_S1") {
+    mark(symbol("EVT_ORKOBERST_SWITCH_FOUND"));
+    return true;
+    }
+  if(name=="EVT_VINOSKELLEREI_FUNC_S1") {
+    auto* flag=symbol("FOUNDVINOSKELLEREI");
+    if(flag->get_int()==falsity) {
+      mark(flag);
+      giveMobXp(vm,"XP_FOUNDVINOSKELLEREI");
+      }
+    return true;
+    }
+
+  if(name=="EVT_MONASTERY_SECRETLIBRARY_S1") {
+    auto* flag=symbol("SECRETLIBRARYISOPEN");
+    if(flag->get_int()==falsity) {
+      giveMobXp(vm,"XP_OPENSECRETLIBRARY");
+      mark(flag);
+      for(const auto* point:{
+          "$52074","$52075","$52076","$52077",
+          "$52078","$52079","$52080","$52081",
+          "$52082","$52083","$52084","$52085",
+          "$52086","$52087","$52088"})
+        spawnAtMob(vm,{"SKELETON",point});
+      spawnAtMob(vm,{"SECRETLIBRARYSKELETON","$52089"});
+      }
+    // The original clears the message even after the one-time activation.
+    vm.push_reference(symbol("$52090"));
+    vm.push_int(-1);
+    vm.push_int(-1);
+    vm.push_reference(symbol("FONT_SCREEN"));
+    vm.push_int(0);
+    if(vm.unsafe_call_external(symbol("PRINTSCREEN")))
+      (void)vm.pop_int();
+    return true;
+    }
+
+  if(name=="GREGISBACK_S1") {
+    auto* flag=symbol("GREGISBACK");
+    if(flag->get_int()==falsity) {
+      spawnAtMob(vm,{"PIR_1320_ADDON_GREG","$27605"});
+      for(const auto& [npc,routine]:{std::pair{"BILL","$27606"},std::pair{"MORGAN","$27607"},
+                                     std::pair{"ALLIGATORJACK","$27608"}}) {
+        vm.push_reference(symbol(npc));
+        vm.push_reference(symbol(routine));
+        vm.unsafe_call_bl(symbol("B_STARTOTHERROUTINE"));
+        }
+      static constexpr MobSpawn canyon[] = {
+        {"CANYONRAZOR07","$27609"}, {"CANYONRAZOR08","$27610"},
+        {"CANYONRAZOR09","$27611"}, {"CANYONRAZOR10","$27612"},
+        };
+      for(const auto& spawn:canyon)
+        spawnAtMob(vm,spawn);
+      }
+    mark(flag);
+    return true;
+    }
+  return false;
+  }
+
+} // namespace
+
 bool GameScript::invokeNativeMobState(const daedalus::DaedalusSymbol& symbol) {
   if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
      ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return false;
+
+  const auto& name = symbol.name();
+  if(name=="B_SCGETTREASURE_S1") {
+    // Digging is conditional on the HERO global and changes nothing for other actors.
+    return hlp_getinstanceid(vm.global_self()->get_instance())!=hlp_getinstanceid(vm.global_hero()->get_instance());
+    }
 
   // Ordinary NPCs bind the hero without opening documents or production menus.
   // Sleep also checks the diagnostic Rockefeller instance. Smithing updates recipe captions.
@@ -1624,14 +1822,19 @@ bool GameScript::invokeNativeMobState(const daedalus::DaedalusSymbol& symbol) {
     "USE_BOOKSTAND_KREISE_01_S1", "USE_BOOKSTAND_KREISE_02_S1", "USE_BOOKSTAND_KREISE_03_S1",
     "USE_BOOKSTAND_KREISE_04_S1", "USE_BOOKSTAND_KREISE_05_S1", "USE_BOOKSTAND_KREISE_06_S1",
     "BOOKSTAND_MILTEN_01_S1", "BOOKSTAND_MILTEN_02_S1", "BOOKSTAND_MILTEN_03_S1", "BOOKSTAND_ENGOR_01_S1",
+    "USE_FINALDRAGONEQUIPMENT_S1",
     };
-  const auto& name = symbol.name();
-  if(std::ranges::find(callbacks,name)==std::end(callbacks))
-    return false;
+  const auto book=std::ranges::find(mayaBooks,name,&MayaBook::callback);
+  if(book==std::end(mayaBooks) && std::ranges::find(callbacks,name)==std::end(callbacks))
+    return runMobEvent(vm,name);
   const auto self = hlp_getinstanceid(vm.global_self()->get_instance());
   const auto hero = hlp_getnpc(int32_t(findSymbolIndex("PC_HERO")));
   if(self==hlp_getinstanceid(hero))
     return false;
+  if(book!=std::end(mayaBooks)) {
+    readMayaBookForNpc(vm,*book,hero);
+    return true;
+    }
   if(name=="SLEEPABIT_S1") {
     const auto rock = hlp_getnpc(int32_t(findSymbolIndex("PC_ROCKEFELLER")));
     if(self==hlp_getinstanceid(rock))

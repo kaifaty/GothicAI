@@ -1112,7 +1112,8 @@ int32_t GameScript::runEnemyReaction() {
 void GameScript::runMoveMobReaction() {
   const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const auto scheme = npc_getdetectedmob(self);
-  findSymbol("B_MOVEMOB.DOOR")->set_string(scheme);
+  vm.push_string(scheme);
+  vm.set_string(vm.unsafe_get_gi(),findSymbol("B_MOVEMOB.DOOR"),0,vm.pop_string());
   if(scheme!="DOOR")
     return;
   if(wld_getmobstate(self,scheme)==0) {
