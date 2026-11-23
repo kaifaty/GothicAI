@@ -183,12 +183,14 @@ auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& rese
   vm.global_self()->set_instance(self);
   auto& create=*script.findSymbol("B_CREATEAMMO");
   auto& select=*script.findSymbol("B_SELECTWEAPON");
+  auto& spellChoice=*script.findSymbol("B_SELECTSPELL");
   auto& ready=*script.findSymbol("B_READYSPELL");
   auto& kill=*script.findSymbol("C_NPCHASATTACKREASONTOKILL");
-  size_t createBody=0,selectBody=0,readyBody=0,killBody=0;
+  size_t createBody=0,selectBody=0,spellChoiceBody=0,readyBody=0,killBody=0;
   vm.observe_instructions([&](const auto&) {
     createBody+=vm.pc()==create.address();
     selectBody+=vm.pc()==select.address();
+    spellChoiceBody+=vm.pc()==spellChoice.address();
     readyBody+=vm.pc()==ready.address();
     killBody+=vm.pc()==kill.address();
     });
@@ -251,6 +253,8 @@ auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& rese
     require(locals("B_SELECTWEAPON.SLF")==self && locals("B_SELECTWEAPON.OTH")==other &&
             locals("C_BODYSTATECONTAINS.SLF")==self && script.findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->get_int()==BS_FALL,
             "equipment: select preserves the original NPC and final body-check arguments");
+    require(locals("B_SELECTSPELL.SLF")==self && locals("B_SELECTSPELL.OTH")==other,
+            "equipment: spell choice saves both original NPC arguments");
     return Contract::queue(actor);
     };
   actor.setToFightMode(sword);
@@ -274,13 +278,35 @@ auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& rese
   require(Contract::random(script)==random && script.findSymbol("B_SELECTSPELL.DK_RND")->get_int()==expectedRoll &&
           actor.handle().aivar[20]==expectedRoll,
           "equipment: the spell-selection branch preserves the original seeded draw and saved local");
-  require(createBody==(native ? 0u : 4u) && selectBody==(native ? 0u : 5u),
-          "equipment: the selected executor runs both helpers through their normal BL entry");
+  require(createBody==(native ? 0u : 4u) && selectBody==(native ? 0u : 5u) && spellChoiceBody==(native ? 0u : 5u),
+          "equipment: the stock weapon path runs ammo, weapon and spell choice in the selected executor");
   std::vector<size_t> inventory;
   for(auto item=actor.inventory().iterator(Inventory::T_Ransack);item.isValid();++item)
     inventory.push_back(item->clsId());
   const auto darkMageQueue=activityQueue(actor);
   require(native ? readyBody==0 : readyBody>0,"equipment: the spell selector reaches the selected ready-spell executor");
+
+  actor.handle().guild=GIL_SKELETON_MAGE;
+  actor.handle().aivar[51]=0;
+  actor.handle().aivar[20]=6;
+  actor.clearAiQueue();
+  const auto previousChoiceBody=spellChoiceBody;
+  vm.push_int(0x12345678);
+  vm.push_instance(self);
+  vm.push_instance(other);
+  vm.unsafe_call_bl(&spellChoice);
+  const auto choice=vm.pop_int(),stack=vm.pop_int();
+  auto summon=Contract::queue(actor);
+  require(choice==1 && stack==0x12345678 && spellChoiceBody-previousChoiceBody==(native ? 0u : 1u) &&
+          actor.handle().aivar[20]==1 && summon.size()==1,
+          "equipment: a direct skeleton spell choice wraps the saved ordinal through the selected executor");
+  const auto summons=summon.pop();
+  require(summons.act==AI_DrawSpell && summons.i0==script.findSymbol("SPL_SUMMONSKELETON")->get_int() &&
+          summons.i1==script.findSymbol("SPL_COST_SUMMONSKELETON")->get_int() && Contract::random(script)==random,
+          "equipment: the wrapped skeleton choice prepares the stock summon without another RNG draw");
+  actor.handle().guild=GIL_DMT;
+  actor.handle().aivar[51]=script.findSymbol("MAGIC_ALWAYS")->get_int();
+  actor.handle().aivar[20]=expectedRoll;
 
   const auto previousReadyBody=readyBody,previousKillBody=killBody;
   const auto fire=script.findSymbol("SPL_FIREBOLT")->get_int();

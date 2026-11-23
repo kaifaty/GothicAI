@@ -2514,6 +2514,9 @@ void GameScript::loadNativeEquipment() {
   vm.override_function("B_SELECTWEAPON",std::function<void(NpcRef,NpcRef)>{[this](NpcRef self,NpcRef other) {
     selectWeapon(self,other);
     }},enabled);
+  vm.override_function("B_SELECTSPELL",std::function<bool(NpcRef,NpcRef)>{[this](NpcRef self,NpcRef other) {
+    return chooseCombatSpell(self,other);
+    }},enabled);
   vm.override_function("B_READYSPELL",std::function<void(NpcRef,int32_t,int32_t)>{[this](NpcRef self,int32_t spell,int32_t mana) {
     readySpell(self,spell,mana);
     }},enabled);
@@ -2550,7 +2553,7 @@ void GameScript::selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const
   if(ActivityDefinitions::bodyStateContains(body,BS_DIVE) || ActivityDefinitions::bodyStateContains(body,BS_SWIM) ||
      ActivityDefinitions::bodyStateContains(body,BS_FALL))
     return;
-  if(vm.call_function<int32_t>("B_SELECTSPELL",self,other)!=0)
+  if(chooseCombatSpell(self,other))
     return;
 
   const auto mode = [&](FightMode value) { return npc_isinfightmode(self,int32_t(value)); };
@@ -2585,6 +2588,145 @@ void GameScript::selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const
     }
   if(mode(FightMode::FMODE_NONE))
     ready(!melee && ranged);
+  }
+
+bool GameScript::chooseCombatSpell(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("B_SELECTSPELL.OTH")->set_instance(other);
+  findSymbol("B_SELECTSPELL.SLF")->set_instance(self);
+  constexpr size_t selection = 20; // AIV_SELECTSPELL
+  constexpr size_t species = 43;   // AIV_MM_REAL_ID
+  constexpr size_t magicUser = 51;  // AIV_MAGICUSER
+  const auto number = [&](std::string_view name) { return findSymbol(name)->get_int(); };
+  const auto grant = [&](std::initializer_list<std::string_view> items) {
+    for(const auto name:items) {
+      const auto item = int32_t(findSymbolIndex(name));
+      if(npc_hasitems(self,item)==0)
+        createinvitems(self,item,1);
+      }
+    };
+  const auto ready = [&](std::string_view spell, std::string_view cost) {
+    readySpell(self,number(spell),number(cost));
+    return true;
+    };
+  const auto distance = [&] { return npc_getdisttonpc(self,other); };
+  const auto frozen = [&] { return npc_isinstate(other,int32_t(findSymbolIndex("ZS_MAGICFREEZE"))); };
+
+  const auto guild = self ? self->guild : 0;
+  const auto otherGuild = other ? other->guild : 0;
+  const auto magic = self && self->aivar[magicUser]==number("MAGIC_ALWAYS");
+  const auto player = npc_isplayer(other);
+  if(otherGuild<int32_t(GIL_SEPERATOR_HUM) && player && self && self->type==NpcType::G2_FRIEND) {
+    if(!magic && guild!=GIL_KDF)
+      return false;
+    grant({"ITRU_SLEEP"});
+    return ready("SPL_SLEEP","SPL_COST_SLEEP");
+    }
+
+  if(magic && guild==GIL_DMT) {
+    grant({"ITRU_INSTANTFIREBALL","ITRU_DEATHBOLT","ITRU_DEATHBALL","ITRU_FIRERAIN",
+           "ITRU_THUNDERSTORM","ITRU_LIGHTNINGFLASH","ITRU_FIRESTORM","ITRU_SKULL"});
+    if(hlp_getinstanceid(findSymbol("DMT_1299_OBERDEMENTOR_DI")->get_instance())==hlp_getinstanceid(self))
+      return ready("SPL_SKULL","SPL_COST_SKULL");
+    if(npc_isdrawingweapon(self)!=0)
+      return true;
+    auto& ordinal = self->aivar[selection];
+    if(ordinal<=0) {
+      const auto roll = hlp_random(10);
+      findSymbol("B_SELECTSPELL.DK_RND")->set_int(roll);
+      ordinal+=roll;
+      }
+    if(ordinal<10) {
+      const auto chapter = number("KAPITEL");
+      if(chapter<=3)
+        return ready("SPL_INSTANTFIREBALL","SPL_COST_INSTANTFIREBALL");
+      if(chapter<=4)
+        return ready("SPL_DEATHBOLT","SPL_COST_DEATHBOLT");
+      return ready("SPL_DEATHBALL","SPL_COST_DEATHBALL");
+      }
+    if(ordinal==10) {
+      ordinal=11;
+      const auto roll = hlp_random(100);
+      findSymbol("B_SELECTSPELL.DK_MEGA")->set_int(roll);
+      if(roll<=2)
+        return ready("SPL_FIRERAIN","SPL_COST_FIRERAIN");
+      if(roll<=5)
+        return ready("SPL_THUNDERSTORM","SPL_COST_THUNDERSTORM");
+      if(roll<=10)
+        return ready("SPL_LIGHTNINGFLASH","SPL_COST_LIGHTNINGFLASH");
+      return ready("SPL_FIRESTORM","SPL_COST_FIRESTORM");
+      }
+    if(ordinal==12)
+      ordinal=0;
+    return true;
+    }
+
+  if(magic || guild==GIL_KDF) {
+    grant({"ITRU_CONCUSSIONBOLT","ITRU_INSTANTFIREBALL","ITRU_DEATHBALL","ITRU_FULLHEAL"});
+    // Some stock checks intentionally read the invocation's SELF and OTHER.
+    const auto current = vm.global_self()->get_instance();
+    if(vm.get_int(current,findSymbol("C_NPC.ATTRIBUTE"),ATR_HITPOINTS)<100)
+      return ready("SPL_FULLHEAL","SPL_COST_FULLHEAL");
+    if(!hasAttackReasonToKill(std::dynamic_pointer_cast<daedalus::INpc>(current)))
+      return ready("SPL_CONCUSSIONBOLT","SPL_COST_CONCUSSIONBOLT");
+    const auto raven = hlp_getinstanceid(findSymbol("RAVEN")->get_instance());
+    const auto currentTarget = hlp_getinstanceid(vm.global_other()->get_instance());
+    const auto immortal = vm.get_int(current,findSymbol("C_NPC.FLAGS"),0)==number("NPC_FLAG_IMMORTAL");
+    if(raven==currentTarget || immortal)
+      return ready("SPL_DEATHBALL","SPL_COST_DEATHBALL");
+    return ready("SPL_INSTANTFIREBALL","SPL_COST_INSTANTFIREBALL");
+    }
+
+  if(guild==GIL_PAL) {
+    if(int32_t(self->fight_tactic)==number("FAI_NAILED"))
+      return false;
+    grant({"ITRU_PALHOLYBOLT"});
+    vm.push_instance(other);
+    vm.unsafe_call_bl(findSymbol("C_NPCISEVIL"));
+    const auto evil = vm.pop_int()!=0;
+    const auto far = distance()>number("FIGHT_DIST_MELEE");
+    return evil && far && ready("SPL_PALHOLYBOLT","SPL_COST_PALHOLYBOLT");
+    }
+
+  if(guild==GIL_SKELETON_MAGE) {
+    grant({"ITRU_SUMSKEL","ITRU_ICECUBE","ITRU_ICEBOLT"});
+    auto& ordinal = self->aivar[selection];
+    if(ordinal>=6)
+      ordinal=1;
+    const auto targetFrozen = frozen();
+    if(ordinal==0 && !targetFrozen)
+      return ready("SPL_ICECUBE","SPL_COST_ICECUBE");
+    if(ordinal==1)
+      return ready("SPL_SUMMONSKELETON","SPL_COST_SUMMONSKELETON");
+    return ready("SPL_ICEBOLT","SPL_COST_ICEBOLT");
+    }
+
+  if(guild==GIL_ICEGOLEM) {
+    grant({"ITRU_ICECUBE"});
+    const auto targetFrozen = frozen();
+    const auto close = distance()<number("FIGHT_DIST_MELEE");
+    return !targetFrozen && !close && ready("SPL_ICECUBE","SPL_COST_ICECUBE");
+    }
+  if(guild==GIL_FIREGOLEM) {
+    grant({"ITRU_INSTANTFIREBALL"});
+    return distance()>number("FIGHT_DIST_MELEE") && ready("SPL_INSTANTFIREBALL","SPL_COST_INSTANTFIREBALL");
+    }
+
+  const auto kind = self ? self->aivar[species] : 0;
+  if(kind==number("ID_DRAGON_SWAMP") || kind==number("ID_DRAGON_ROCK") ||
+     kind==number("ID_DRAGON_FIRE") || kind==number("ID_DRAGON_ICE")) {
+    grant({"ITRU_INSTANTFIREBALL"});
+    return distance()>number("FIGHT_DIST_DRAGON_MAGIC") && ready("SPL_INSTANTFIREBALL","SPL_COST_INSTANTFIREBALL");
+    }
+  if(kind==number("ID_DRAGON_UNDEAD")) {
+    npc_clearaiqueue(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
+    grant({"ITRU_DEATHBALL"});
+    return distance()>number("FIGHT_DIST_DRAGON_MAGIC") && ready("SPL_DEATHBALL","SPL_COST_DEATHBALL");
+    }
+  if(kind==number("ID_ORCSHAMAN")) {
+    grant({"ITRU_INSTANTFIREBALL"});
+    return distance()>number("FIGHT_DIST_MELEE") && ready("SPL_INSTANTFIREBALL","SPL_COST_INSTANTFIREBALL");
+    }
+  return false;
   }
 
 void GameScript::readySpell(const std::shared_ptr<daedalus::INpc>& self, int32_t spell, int32_t mana) {

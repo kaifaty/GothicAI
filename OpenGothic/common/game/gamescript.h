@@ -475,6 +475,7 @@ class GameScript final : public GameRules {
     bool applyFightSkillItemEffect(Npc& npc, uint32_t callback);
     void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
     void selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool chooseCombatSpell(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void loadNativeTalkReaction();
     bool canRunNativeTalkReaction();
     bool invokeNativeTalkPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
