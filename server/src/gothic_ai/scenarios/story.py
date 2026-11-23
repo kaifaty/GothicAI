@@ -358,10 +358,10 @@ async def graph_programs(
     deeper = [c["text"] for c in await link.dialog_choices(npc, "DIR_CHOICE_TEST.2")]
     check("choice_offers_more", deeper == ["Опыт"], str(deeper))
 
-    # A streamed line can hold the window for over 45 wall seconds at one frame per second.
-    # Opening, choosing and closing share a single budget within the 240-second scenario.
+    # At one frame per second the preceding speech can delay opening, then the new
+    # streamed line can hold the choices for another 50 seconds. Share one budget.
     await link.debug("teleport", near=npc, distance=150)
-    window_deadline = time.monotonic() + 90
+    window_deadline = time.monotonic() + 110
 
     async def menu(ok: Callable[[list[str]], bool]) -> list[str]:
         seen: list[str] = []

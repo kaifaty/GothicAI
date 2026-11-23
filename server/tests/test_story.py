@@ -126,14 +126,17 @@ async def test_programs_saves_after_the_slow_dialog_window_closes(monkeypatch):
     ]
     title, exit_topic = "Проверка вариантов", "Конец"
     topics = [title, exit_topic]
-    menus = iter([topics, [], [], ["Золото", "Дальше"], ["Опыт"], topics])
+    menus = iter([
+        (22, []), (20, []), (0, topics),  # the previous line holds up the opening
+        (28, []), (24, []), (0, ["Золото", "Дальше"]),  # the new line holds up the choices
+        (0, ["Опыт"]), (0, topics),
+    ])
     wall = 0.0
 
     async def menu():
         nonlocal wall
-        seen = next(menus)
-        if not seen:
-            wall += 20  # the menu stays empty during the line on the slow window
+        waited, seen = next(menus)
+        wall += waited
         return seen
 
     link.dialog_menu.side_effect = menu
