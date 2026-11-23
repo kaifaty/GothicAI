@@ -2,6 +2,7 @@
 #include "npc_world_contract_access.h"
 #include "npcdayjournal.h"
 #include "npcdaymeasurement.h"
+#include "storygraph/eval.h"
 
 #include "baseidentity.h"
 #include "baseimport.h"
@@ -888,6 +889,142 @@ void fightSoundPerceptions(World& world,Npc& npc,Npc& hero) {
 void oldWorldNpcCases(World& world,Npc& npc) {
   oldWorldEntry(world,npc);
   diegoRouteBoundaries(world,npc);
+  }
+
+void dragonIslandChapterWorld(World& world) {
+  std::puts("Dragon Island placement: four captain and crew combinations match the original calls and world state");
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto* root=script.findSymbol("B_KAPITELWECHSEL");
+  auto* savedChapter=script.findSymbol("B_KAPITELWECHSEL.NEUES_KAPITEL");
+  auto* savedLevel=script.findSymbol("B_KAPITELWECHSEL.AKTUELLES_LEVEL_ZEN");
+  auto* chapter=script.findSymbol("KAPITEL");
+  auto* ambient=script.findSymbol("XP_AMBIENT");
+  auto* alchemy=script.findSymbol("PLAYER_TALENT_ALCHEMY");
+  auto* hero=world.player();
+  auto* pedro=activityNpc(world,"NOV_600_PEDRO_DI");
+  require(root && savedChapter && savedLevel && chapter && ambient && alchemy && hero && pedro,
+          "chapter switch fixture needs the stock actors and symbols");
+  const auto heroHandle=std::static_pointer_cast<daedalus::INpc>(hero->handlePtr());
+  const auto pedroHandle=std::static_pointer_cast<daedalus::INpc>(pedro->handlePtr());
+  const auto oldWorld=script.intSymbol("OLDWORLD_ZEN",0), newWorld=script.intSymbol("NEWWORLD_ZEN",0);
+  const auto island=script.intSymbol("DRAGONISLAND_ZEN",0);
+  // The world is disposed after this fixture. Observe the UI arguments without opening a chapter screen.
+  vm.register_external("INTRODUCECHAPTER",[](std::string_view,std::string_view,std::string_view,std::string_view,int32_t) {});
+  vm.override_function("B_ENTER_OLDWORLD",[&vm,root,newWorld] {
+    vm.push_int(5);
+    vm.push_int(newWorld);
+    vm.unsafe_call_bl(root);
+    });
+  vm.override_function("B_ENTER_NEWWORLD",[] {});
+
+  const auto journal=[&] {
+    std::vector<uint8_t> bytes;
+    Tempest::MemWriter writer(bytes);
+    {
+      Serialize out(writer);
+      out.setEntry("game/quests");
+      script.saveQuests(out);
+    }
+    return bytes;
+    };
+  const auto initialJournal=journal();
+  const auto* configured=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
+  const auto previous=configured ? std::optional<std::string>(configured) : std::nullopt;
+
+  using Notice=std::array<std::string,4>;
+  for(int32_t requested:{1,2,3,4,5,6,7}) {
+    for(bool nested:{false,true}) {
+      if(nested && requested!=4)
+        continue;
+      const auto run=[&](bool native) {
+        setenv("OPENGOTHIC_PLACEMENT_RECORDS",native ? "1" : "0",1);
+        Tempest::MemReader reader(initialJournal);
+        Serialize in(reader);
+        require(in.setEntry("game/quests"),"chapter fixture must save the initial journal");
+        script.loadQuests(in);
+        auto* rescue=script.findSymbol("TOPIC_RESCUEBENNET");
+        vm.push_reference(rescue);
+        vm.push_int(int32_t(QuestLog::Status::Running));
+        vm.unsafe_call_external(script.findSymbol("LOG_SETTOPICSTATUS"));
+        script.findSymbol("MIS_RESCUEBENNET")->set_int(int32_t(QuestLog::Status::Failed));
+        script.findSymbol("SEKOB")->set_instance(heroHandle);
+        script.findSymbol("BENGAR")->set_instance(pedroHandle);
+        hero->handle().flags=NpcFlag::IMMORTAL;
+        pedro->handle().flags=NpcFlag::IMMORTAL;
+        ambient->set_int(-1);
+        alchemy->set_int(0,12);
+        alchemy->set_int(9,11);
+        vm.unsafe_set_gi(heroHandle);
+
+        std::vector<Notice> notices;
+        std::vector<std::string> calls;
+        size_t entries=0;
+        const auto observer=vm.add_call_observer([&](const auto& symbol) {
+          if(symbol.name()=="B_CHECKLOG") {
+            require(vm.unsafe_get_gi()==(requested==2 ? pedroHandle : heroHandle),
+                    "the journal must inherit the original chapter context");
+            calls.push_back(symbol.name());
+            }
+          if(symbol.name()=="B_ENTER_NEWWORLD" || symbol.name()=="B_ENTER_OLDWORLD")
+            calls.push_back(symbol.name());
+          });
+        vm.observe_instructions([&](const auto&) { if(vm.pc()==root->address()) ++entries; });
+        vm.observe_externals([&](const auto& symbol) {
+          if(symbol.name()!="INTRODUCECHAPTER")
+            return;
+          require(std::get<int32_t>(vm.stack_frame(0).value)==6000,"chapter card must last six seconds");
+          Notice notice;
+          for(uint16_t i=0;i<notice.size();++i) {
+            const auto& arg=vm.stack_frame(uint16_t(4-i));
+            notice[i]=std::get<daedalus::DaedalusSymbol*>(arg.value)->get_string();
+            }
+          notices.push_back(std::move(notice));
+          });
+        const auto pc=vm.pc();
+        vm.push_int(0x12345678);
+        std::string error;
+        const auto result=storygraph::callFunction(vm,*root,{storygraph::Value::integer(requested),
+                                                           storygraph::Value::integer(nested ? oldWorld : island)},error);
+        const auto sentinel=vm.pop_int();
+        vm.observe_externals({});
+        vm.observe_instructions({});
+        vm.remove_call_observer(observer);
+
+        const auto finalChapter=nested ? 5 : requested;
+        const auto finalLevel=nested ? newWorld : island;
+        const auto xp=finalChapter<=6 ? script.intSymbol("XP_AMBIENTKAP"+std::to_string(finalChapter),-1) : -1;
+        require(result.has_value(),error.c_str());
+        require(entries==(native ? 0u : nested ? 2u : 1u) && sentinel==0x12345678 &&
+                vm.pc()==pc && vm.unsafe_get_gi()==heroHandle && savedChapter->get_int()==finalChapter &&
+                savedLevel->get_int()==finalLevel && chapter->get_int()==finalChapter,
+                "chapter switch must preserve the call frame and the final live saved arguments");
+        const auto flags=requested==2 ? NpcFlag::NONE : NpcFlag::IMMORTAL;
+        require(hero->handle().flags==flags && pedro->handle().flags==flags &&
+                alchemy->get_int(12)==(requested>=4 && requested<=6) && alchemy->get_int(11)==9 &&
+                ambient->get_int()==xp && notices.size()==size_t(requested<=2),
+                "the chapter-specific effects must preserve flags, alchemy, ambient XP and UI");
+        const std::vector<std::string> expected=nested ?
+          std::vector<std::string>{"B_CHECKLOG","B_ENTER_OLDWORLD","B_CHECKLOG","B_ENTER_NEWWORLD","B_ENTER_NEWWORLD"} :
+          std::vector<std::string>{"B_CHECKLOG"};
+        require(calls==expected,"chapter switch must update the journal before entering the worlds");
+        std::map<std::string,QuestLog::Status> statuses;
+        const auto& quests=script.questLog();
+        for(size_t i=0;i<quests.questCount();++i) {
+          const auto& quest=quests.quest(i);
+          statuses.emplace(quest.name,quest.status);
+          }
+        require(statuses.at(rescue->get_string())==QuestLog::Status::Failed,
+                "chapter switch must apply the journal's live mission outcome");
+        return std::pair(notices,statuses);
+        };
+      const auto stock=run(false);
+      require(run(true)==stock,"the native chapter switch must use the original UI arguments and update the same quests");
+      }
+    }
+  if(previous) setenv("OPENGOTHIC_PLACEMENT_RECORDS",previous->c_str(),1);
+  else unsetenv("OPENGOTHIC_PLACEMENT_RECORDS");
+  std::puts("Chapter switch: chapter branches, UI, NPC flags, journal order and nested world dispatch match stock");
   }
 
 } // namespace NpcWorldFixture
