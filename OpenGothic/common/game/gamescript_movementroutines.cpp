@@ -266,3 +266,68 @@ void GameScript::sayMagicReaction(Npc& npc, std::string_view line, bool overlay)
     ai_outputsvm(self,other,line);
     }
   }
+
+bool GameScript::runFreezeOrWhirlwindSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const std::string_view name = symbol.name();
+  const bool freeze = name.starts_with("ZS_MAGICFREEZE");
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  constexpr size_t freezeSecond=53, whirlwindSecond=76; // AIV_FREEZESTATETIME and AIV_WHIRLWINDSTATETIME
+  auto& lastSecond = npc.handle().aivar[freeze ? freezeSecond : whirlwindSecond];
+  result = LOOP_CONTINUE;
+  if(name=="ZS_MAGICFREEZE" || name=="ZS_WHIRLWIND") {
+    npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction(freeze ? "B_RESTARTFREEZE" : "B_RESTARTWHIRLWIND").ptr);
+    npc.stopAnim(freeze ? "S_FIRE_VICTIM" : "S_WHIRLWIND_VICTIM");
+    if(!freeze) {
+      npc.clearAiQueue();
+      npc.aiPush(AiQueue::aiStandup());
+      }
+    findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(int32_t(BS_UNCONSCIOUS));
+    findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self);
+    if(!inBodyState(npc,BS_UNCONSCIOUS)) {
+      const auto pose = freeze ? "T_STAND_2_FREEZE_VICTIM" : "T_STAND_2_WHIRLWIND_VICTIM";
+      npc.aiPush(AiQueue::aiPlayAnimBs(pose,BS_UNCONSCIOUS));
+      }
+    lastSecond = 0;
+    }
+  else if(name.ends_with("_LOOP")) {
+    const auto seconds = npc_getstatetime(self);
+    if(seconds>(freeze ? 19 : 10)) {
+      stopFreezeOrWhirlwindSpell(npc);
+      result = LOOP_END;
+      return true;
+      }
+    if(seconds==lastSecond)
+      return true;
+    lastSecond = seconds;
+
+    int32_t damage = 0;
+    if(freeze) {
+      // The stock guard compares HP to HP minus the positive base damage.
+      constexpr int32_t freezeDamage=2, fireDragon=38, fireLizard=12, iceDragon=39;
+      const auto species = npc.handle().aivar[43]; // AIV_MM_REAL_ID
+      const auto guild = npc.handle().guild;
+      if(species==fireDragon || species==fireLizard || guild==GIL_FIREGOLEM)
+        damage = freezeDamage*2;
+      else if(species==iceDragon || guild==GIL_ICEGOLEM)
+        damage = freezeDamage/2;
+      else
+        damage = freezeDamage;
+      }
+    else if(const auto hp = npc.attribute(ATR_HITPOINTS); hp<=0) {
+      damage = hp-1;
+      }
+    // Whirlwind still invokes the damage helper when its damage is zero.
+    vm.call_function<void>("B_MAGICHURTNPC",vm.global_other()->get_instance(),self,damage);
+    }
+  return true;
+  }
+
+void GameScript::stopFreezeOrWhirlwindSpell(Npc& npc) {
+  npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction("B_ASSESSMAGIC").ptr);
+  npc.clearAiQueue();
+  npc.aiPush(AiQueue::aiStandup());
+  if(npc.handle().guild<GIL_SEPERATOR_HUM)
+    vm.call_function<void>("B_ASSESSDAMAGE");
+  else
+    npc_settempattitude(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),int32_t(ATT_HOSTILE));
+  }

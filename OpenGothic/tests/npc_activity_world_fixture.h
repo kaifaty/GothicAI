@@ -3315,6 +3315,57 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
         vm.observe_instructions({});
         require(events ? calls==0 : calls>0,"the loaded spell must use the selected callback executor");
       }
+      if(state=="ZS_MAGICFREEZE" || state=="ZS_WHIRLWIND") {
+        const bool freeze=state=="ZS_MAGICFREEZE";
+        auto* hero=world.player();
+        const auto* loop=script.findSymbol(std::string(state)+"_LOOP");
+        const auto* restart=script.findSymbol(freeze ? "B_RESTARTFREEZE" : "B_RESTARTWHIRLWIND");
+        const auto* stop=script.findSymbol(freeze ? "B_STOPMAGICFREEZE" : "B_STOPWHIRLWIND");
+        require(hero && loop && restart && stop &&
+                Contract::perceptionCallback(*actor,PERC_ASSESSMAGIC)==ScriptFn(restart->index()),
+                "ordinary load must preserve the spell's restart perception");
+        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
+        actor->setExternalControl(false);
+        size_t calls=0;
+        vm.observe_instructions([&](const auto&) {
+          if(vm.pc()==loop->address() || vm.pc()==restart->address() || vm.pc()==stop->address())
+            ++calls;
+          });
+        actor->clearAiQueue();
+        auto& lastSecond=actor->handle().aivar[freeze ? 53 : 76];
+        const auto hp=[&] { return actor->attribute(ATR_HITPOINTS); };
+        const auto pulse=[&](uint64_t time, int damage) {
+          const auto before=hp();
+          actor->setStateTime(time);
+          require(script.invokeState(actor,hero,nullptr,ScriptFn(loop->index()))==LOOP_CONTINUE &&
+                  lastSecond==int32_t(time/1000) && hp()==before-damage,
+                  "the spell must sample one damage pulse when its whole second changes");
+          };
+        pulse(1000,freeze ? 2 : 0);
+        pulse(1700,0);
+        actor->handle().guild=GIL_FIREGOLEM;
+        pulse(4000,freeze ? 4 : 0);
+        actor->handle().guild=GIL_ICEGOLEM;
+        pulse(5000,freeze ? 1 : 0);
+        Contract::lastHitSpell(*actor,freeze ? 71 : 33);
+        require(actor->passPerception(*hero,nullptr,PERC_ASSESSMAGIC) && actor->stateTime()==5000 && lastSecond==5,
+                "a different spell must not restart the current timer");
+        Contract::lastHitSpell(*actor,freeze ? 39 : 71);
+        require(actor->passPerception(*hero,nullptr,PERC_ASSESSMAGIC) && actor->stateTime()==0 && lastSecond==5,
+                "a matching spell must restart the clock and preserve the last damage sample");
+        pulse(freeze ? 19999 : 10999,freeze ? 1 : 0);
+        actor->aiPush(AiQueue::aiWait(1337));
+        actor->setTempAttitude(ATT_FRIENDLY);
+        actor->setStateTime(freeze ? 20000 : 11000);
+        require(script.invokeState(actor,hero,nullptr,ScriptFn(loop->index()))==LOOP_END &&
+                actor->aiQueueFront() && actor->aiQueueFront()->act==AI_StandUp && Contract::queue(*actor).size()==1 &&
+                actor->tempAttitude()==ATT_HOSTILE &&
+                Contract::perceptionCallback(*actor,PERC_ASSESSMAGIC)==ScriptFn(script.findSymbolIndex("B_ASSESSMAGIC")),
+                "the spell must restore normal magic perception and stand up at expiry");
+        vm.observe_instructions({});
+        require(events ? calls==0 : calls>0,"freeze and whirlwind must use the selected callback executor");
+        witness.continuation=activityQueue(*actor);
+      }
       if(state=="ZS_PAL_ZOMBIE") {
         auto* hero=world.player();
         const auto* rise=script.findSymbol("B_PAL_ZOMBIE_RISE");
@@ -3367,6 +3418,8 @@ void remainingRoutineWitnesses(Gothic& gothic) {
     {"ZS_FOLLOW_PLAYER",       "BAU_931_TILL",                     "NW_BIGFARM_KITCHEN_02"},
     {"ZS_GUARD_PASSAGE",       "KDF_507_TALAMON",                  "NW_MONASTERY_CELLAR_15"},
     {"ZS_GUIDE_PLAYER",        "VLK_440_BARTOK",                    "NW_FARM1_CITYWALL_FOREST_07"},
+    {"ZS_MAGICFREEZE",         "VLK_408_JORA",                      "NW_CITY_MERCHANT_PATH_38"},
+    {"ZS_WHIRLWIND",           "VLK_413_BOSPER",                    "NW_CITY_MERCHANT_SHOP01_IN_02"},
     {"ZS_MAGICFLEE",           "VLK_425_REGIS",                     "NW_CITY_REGIS"},
     {"ZS_MAGICSLEEP",          "MIL_311_ANDRE",                     "NW_CITY_HABOUR_KASERN_MAIN_ENTRY"},
     {"ZS_PRACTICE_MAGIC",      "TA_TESTMODELL",                    "NW_CITY_PATH_HABOUR_03"},

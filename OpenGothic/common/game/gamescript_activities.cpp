@@ -46,6 +46,8 @@ void GameScript::loadNativeRoutines() {
     {"ZS_CLEARROOM",          &GameScript::runClearRoom},
     {"ZS_MAGICFLEE",          &GameScript::runFearOrSleepSpell},
     {"ZS_MAGICSLEEP",         &GameScript::runFearOrSleepSpell},
+    {"ZS_MAGICFREEZE",        &GameScript::runFreezeOrWhirlwindSpell},
+    {"ZS_WHIRLWIND",          &GameScript::runFreezeOrWhirlwindSpell},
     {"ZS_PAL_ZOMBIE",         &GameScript::runMonsterRoutine},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
     {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
@@ -161,7 +163,8 @@ bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::Daedalus
                                               NpcActivityProbe::Phase& phase) {
   const std::string_view name = symbol.name();
   if((name!="B_STOPMAGICFLEE" && name!="B_STOPMAGICSLEEP" && name!="B_ASSESSMAGICSLEEPTALK" &&
-      name!="B_PAL_ZOMBIE_RISE") || !nativeRoomReactionsEnabled())
+      name!="B_PAL_ZOMBIE_RISE" && name!="B_RESTARTFREEZE" && name!="B_RESTARTWHIRLWIND") ||
+     !nativeRoomReactionsEnabled())
     return false;
   phase.fromRecord();
   if(name=="B_STOPMAGICFLEE")
@@ -172,8 +175,16 @@ bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::Daedalus
     sayMagicReaction(npc,"$YOUDISTURBEDMYSLUMBER",false);
     ai_startstate(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),int(findFunction("ZS_OBSERVEPLAYER").ptr),1,"");
     }
-  else
+  else if(name=="B_PAL_ZOMBIE_RISE") {
     raisePaladinZombie(npc);
+    }
+  else {
+    constexpr int32_t iceCube=33, iceWave=39, whirlwind=71; // Spell IDs in the verified program.
+    const auto spell = npc.lastHitSpellId();
+    const bool matches = name=="B_RESTARTFREEZE" ? spell==iceCube || spell==iceWave : spell==whirlwind;
+    if(matches)
+      npc.setStateTime(0);
+    }
   return true;
   }
 
