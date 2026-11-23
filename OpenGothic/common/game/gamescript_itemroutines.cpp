@@ -1199,6 +1199,33 @@ void refreshSmithWeaponDescriptions(daedalus::DaedalusVm& vm) {
   }
 }
 
+void GameScript::runStockPickLock(int32_t success, int32_t brokenOrOpen) {
+  vm.set_int(nullptr,findSymbol("G_PICKLOCK.BBROKENOPEN"),0,brokenOrOpen);
+  vm.set_int(nullptr,findSymbol("G_PICKLOCK.BSUCCESS"),0,success);
+
+  static constexpr std::pair<std::string_view,std::string_view> feedback[] = {
+    {"$27342", "PRINT_PICKLOCK_FAILURE"}, // Wrong move.
+    {"$27341", "PRINT_PICKLOCK_BROKEN"},  // Broken pick.
+    {"$27340", "PRINT_PICKLOCK_SUCCESS"}, // Correct move.
+    {"$27339", "PRINT_PICKLOCK_UNLOCK"},  // Open lock.
+    };
+  const auto& [sound,message] = feedback[2*size_t(success!=0)+size_t(brokenOrOpen!=0)];
+  vm.push_reference(vm.global_self());
+  vm.push_reference(findSymbol(sound));
+  vm.unsafe_call_external(findSymbol("SND_PLAY3D"));
+  vm.push_reference(findSymbol(message));
+  vm.unsafe_call_external(findSymbol("PRINT"));
+
+  if(success || !brokenOrOpen)
+    return;
+  const auto roll = hlp_random(100);
+  vm.set_int(nullptr,findSymbol("G_PICKLOCK.RND"),0,roll);
+  if(roll<=25) {
+    const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+    npc_sendpassiveperc(hero,PERC_ASSESSQUIETSOUND,hero,hero);
+    }
+  }
+
 bool GameScript::invokeNativeMobState(const daedalus::DaedalusSymbol& symbol) {
   if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
      ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)

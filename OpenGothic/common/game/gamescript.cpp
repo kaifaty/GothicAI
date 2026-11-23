@@ -1291,6 +1291,11 @@ void GameScript::invokePickLock(Npc& npc, int bSuccess, int bBrokenOpen) {
   if(fn==nullptr)
     return;
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && activityEvents && !floorDefer.active() &&
+     ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off) {
+    runStockPickLock(bSuccess,bBrokenOpen);
+    return;
+    }
   vm.call_function<void>(fn, bSuccess, bBrokenOpen);
   }
 

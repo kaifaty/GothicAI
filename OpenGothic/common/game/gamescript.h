@@ -442,6 +442,7 @@ class GameScript final : public GameRules {
 
     void storeItem(Item* it);
     bool invokeNativeMobState(const daedalus::DaedalusSymbol& symbol);
+    void runStockPickLock(int32_t success, int32_t brokenOrOpen);
 
     bool aiOutput   (Npc &from, std::string_view name, bool overlay);
     bool aiOutputSvm(Npc &from, std::string_view name, std::string_view svm, Npc* target, bool overlay);
