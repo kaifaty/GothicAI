@@ -1,5 +1,6 @@
 #include "gamescript.h"
 
+#include <algorithm>
 #include <array>
 #include <initializer_list>
 #include <stdexcept>
@@ -295,6 +296,37 @@ PlacementDefinitionRuntime::Definitions dragonIslandPlacement(daedalus::Daedalus
   return PlacementDefinitionRuntime::resolve(library,vm);
   }
 }
+
+void GameScript::invokeWorldTrigger(std::string_view fn) {
+  const auto* symbol = findSymbol(fn);
+  if(symbol!=nullptr && nativeRoutineProgram && PlacementDefinitionRuntime::enabled()) {
+    struct Room {
+      std::string_view trigger;
+      uint32_t         spawnCount;
+      };
+    static constexpr Room rooms[] = {{"EVT_CRYPT_01",7}, {"EVT_CRYPT_02",7},
+                                     {"EVT_CRYPT_03",7}, {"EVT_CRYPT_FINAL",6}};
+    const auto room = std::ranges::find(rooms,symbol->name(),&Room::trigger);
+    if(room!=std::end(rooms)) {
+      auto* once = findSymbol(symbol->name()+"_ONETIME");
+      if(vm.get_int(nullptr,once,0)==findSymbol("FALSE")->get_int()) {
+        // The stock comparison and conditional jump precede the literal spawn calls.
+        auto pc = symbol->address()+16u;
+        for(uint32_t i=0;i<room->spawnCount;++i) {
+          const auto spawn = readLiteralPlacement(vm,pc,symbol->name());
+          if(spawn.external->name()!="WLD_INSERTNPC")
+            throw std::runtime_error("Stock crypt trigger: expected NPC placement");
+          vm.push_int(int32_t(spawn.instance->index()));
+          vm.push_reference(spawn.point);
+          vm.unsafe_call_external(spawn.external);
+          }
+        vm.set_int(nullptr,once,0,findSymbol("TRUE")->get_int());
+        }
+      return;
+      }
+    }
+  vm.call_function(symbol);
+  }
 
 void GameScript::runStartup(std::string_view fn) {
   const auto* function = vm.find_symbol_by_name(fn);

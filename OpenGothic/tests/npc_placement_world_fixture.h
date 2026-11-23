@@ -1,5 +1,64 @@
 // Live world contracts for startup, world entry and story routine switches.
 
+void khorinisCryptTriggers(World& world) {
+  if(!world.script().usesVerifiedNpcProgram())
+    return;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  const auto baseline=placementSnapshot(world,true);
+  const auto random=NpcDefinitionContract::random(script);
+  const auto* configured=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
+  const auto previous=configured ? std::optional<std::string>(configured) : std::nullopt;
+  const auto restore=[&] {
+    vm.observe_externals({});
+    vm.observe_instructions({});
+    placementRestore(world,baseline);
+    NpcDefinitionContract::random(script)=random;
+    if(previous) setenv("OPENGOTHIC_PLACEMENT_RECORDS",previous->c_str(),1);
+    else unsetenv("OPENGOTHIC_PLACEMENT_RECORDS");
+    };
+  const auto capture=[&](bool native) {
+    restore();
+    setenv("OPENGOTHIC_PLACEMENT_RECORDS",native ? "1" : "0",1);
+    constexpr std::array<std::string_view,4> names={"EVT_CRYPT_01","EVT_CRYPT_02","EVT_CRYPT_03","EVT_CRYPT_FINAL"};
+    std::vector<std::pair<int32_t,std::string>> spawns;
+    vm.observe_externals([&](const auto& symbol) {
+      if(symbol.name()=="WLD_INSERTNPC") {
+        const auto& point=vm.stack_frame(0);
+        const auto* literal=std::get<daedalus::DaedalusSymbol*>(point.value);
+        spawns.emplace_back(std::get<int32_t>(vm.stack_frame(1).value),literal->get_string(point.index));
+        }
+      });
+    for(const auto name:names) {
+      const auto* root=script.findSymbol(name);
+      auto* once=script.findSymbol(std::string(name)+"_ONETIME");
+      once->set_int(script.intSymbol("FALSE",-1));
+      size_t entries=0;
+      vm.observe_instructions([&](const auto&) { entries+=vm.pc()==root->address(); });
+      const auto before=spawns.size();
+      script.invokeWorldTrigger(name);
+      const auto after=spawns.size();
+      script.invokeWorldTrigger(name);
+      vm.observe_instructions({});
+      require(entries==(native ? 0u : 2u) && once->get_int()==script.intSymbol("TRUE",-1) &&
+              after-before==(name==names.back() ? 6u : 7u) && spawns.size()==after,
+              "Khorinis crypt: each trigger inserts its wave only once through the selected executor");
+      }
+    vm.observe_externals({});
+    return std::pair{spawns,archiveEntries(placementSnapshot(world,false))};
+    };
+  try {
+    const auto stock=capture(false);
+    require(capture(true)==stock,"Khorinis crypt: ordered spawn calls and world state match Daedalus");
+    }
+  catch(...) {
+    restore();
+    throw;
+    }
+  restore();
+  std::puts("Khorinis crypt: four waves, 27 ordered insertions, saved gates and world state match Daedalus");
+  }
+
 void khorinisLateChapters(World& world) {
   if(NpcSnapshot::load(baseProgramIndex().dir.parent_path()).sha256!=
      "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
@@ -429,6 +488,7 @@ std::vector<std::string> placementFirstWorld(Gothic& gothic) {
             "default NEWWORLD startup must replay a captured placement record");
     routineSwitchWorld(*gothic.world());
     khorinisLateChapters(*gothic.world());
+    khorinisCryptTriggers(*gothic.world());
     std::printf("First-world NEWWORLD placement: %s NPCs, %s items; %zu saved/global state entries, %zu differences; STARTUP_NEWWORLD=%s\n",
                 actual.at("NPC count").c_str(),actual.at("item count").c_str(),expected.size(),differences.size(),
                 startup && NpcDefinitionContract::placements(gothic.world()->script()).placements.contains(startup->index()) ? "record" : "VM");
