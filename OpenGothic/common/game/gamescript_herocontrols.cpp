@@ -38,6 +38,19 @@ int32_t subtract(int32_t left, int32_t right) {
   return std::bit_cast<int32_t>(uint32_t(left)-uint32_t(right));
   }
 
+// The formatting externals also update the VM's serialized temporary string slots.
+void pushHeroNumber(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol* number) {
+  vm.push_reference(number);
+  vm.unsafe_call_external(vm.find_symbol_by_name("INTTOSTRING"));
+  }
+
+void appendHeroMessage(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol* text, daedalus::DaedalusSymbol* suffix) {
+  vm.push_reference(text);
+  vm.push_reference(suffix);
+  vm.unsafe_call_external(vm.find_symbol_by_name("CONCATSTRINGS"));
+  text->set_string(vm.pop_string());
+  }
+
 } // namespace
 
 void GameScript::runStockHeroFeedback(std::string_view message, std::string_view line, bool gesture) {
@@ -79,13 +92,21 @@ void GameScript::runStockHeroWeaponPenalty() {
   const auto lost = subtract(hp,next);
   findSymbol("B_BLITZINARSCH.CURRENTHITPOINTS")->set_int(hp);
   findSymbol("B_BLITZINARSCH.BLITZINARSCH_HITPOINTS")->set_int(next);
-  findSymbol("B_BLITZINARSCH.ABZUG")->set_int(lost);
+  auto* loss = findSymbol("B_BLITZINARSCH.ABZUG");
+  loss->set_int(lost);
   if(lost<=0)
     return;
-  const auto suffix = " "+findSymbol("NAME_DAMAGE")->get_string();
-  findSymbol("B_BLITZINARSCH.CONCATTEXT1")->set_string(suffix);
+  vm.push_reference(findSymbol("$18925"));
+  vm.push_reference(findSymbol("NAME_DAMAGE"));
+  vm.unsafe_call_external(findSymbol("CONCATSTRINGS"));
+  auto* suffix = findSymbol("B_BLITZINARSCH.CONCATTEXT1");
+  suffix->set_string(vm.pop_string());
+
+  pushHeroNumber(vm,loss);
+  vm.push_reference(suffix);
+  vm.unsafe_call_external(findSymbol("CONCATSTRINGS"));
   auto* message = findSymbol("B_BLITZINARSCH.CONCATTEXT2");
-  message->set_string(std::to_string(lost)+suffix);
+  message->set_string(vm.pop_string());
   ai_printscreen(message->get_string(),-1,findSymbol("YPOS_GOLDTAKEN")->get_int(),
                  findSymbol("FONT_SCREENSMALL")->get_string(),2);
   wld_playeffect("spellFX_BELIARSRAGE",hero,hero,0,0,0,findSymbol("FALSE")->get_int());
@@ -109,21 +130,23 @@ void GameScript::runStockHeroEquipDenial(bool player, int32_t attribute, int32_t
       "PRINT_MANA_MAX_MISSING", "PRINT_STRENGTH_MISSING", "PRINT_DEXTERITY_MISSING",
       };
     int32_t current = 0;
-    std::string_view reason;
+    auto* reason = findSymbol("$27337");
     if(attribute>=0 && size_t(attribute)<std::size(text)) {
       const auto self = vm.global_self()->get_instance();
       current = vm.get_int(self,findSymbol("C_NPC.ATTRIBUTE"),uint16_t(attribute));
-      reason = findSymbol(text[attribute])->get_string();
+      reason = findSymbol(text[attribute]);
       }
-    const auto missing = subtract(required,current);
-    const auto number = std::to_string(missing);
-    findSymbol("G_CANNOTUSE.STRATTRIBUTEMISSING")->set_string(reason);
+    auto* savedReason = findSymbol("G_CANNOTUSE.STRATTRIBUTEMISSING");
+    savedReason->set_string(reason->get_string());
     findSymbol("G_CANNOTUSE.NATTRIBUTEVALUE")->set_int(current);
-    findSymbol("G_CANNOTUSE.NDIFFERENCE")->set_int(missing);
-    findSymbol("G_CANNOTUSE.STRDIFFERENCE")->set_string(number);
-    auto combined = number+" ";
-    combined += reason;
-    message->set_string(combined);
+    auto* missing = findSymbol("G_CANNOTUSE.NDIFFERENCE");
+    missing->set_int(subtract(required,current));
+    pushHeroNumber(vm,missing);
+    auto* number = findSymbol("G_CANNOTUSE.STRDIFFERENCE");
+    number->set_string(vm.pop_string());
+    message->set_string(number->get_string());
+    appendHeroMessage(vm,message,findSymbol("$27338"));
+    appendHeroMessage(vm,message,savedReason);
     }
   if(player)
     Gothic::inst().onPrint(message->get_string());
@@ -133,12 +156,17 @@ void GameScript::runStockHeroCastDenial(bool player, int32_t requiredCircle, int
   findSymbol("G_CANNOTCAST.BISPLAYER")->set_int(player);
   findSymbol("G_CANNOTCAST.NCIRCLENEEDED")->set_int(requiredCircle);
   findSymbol("G_CANNOTCAST.NCIRCLEPOSSESSED")->set_int(actualCircle);
-  const auto missing = subtract(requiredCircle,actualCircle);
-  const auto number = std::to_string(missing);
-  findSymbol("G_CANNOTCAST.NDIFFERENCE")->set_int(missing);
-  findSymbol("G_CANNOTCAST.STRDIFFERENCE")->set_string(number);
+  auto* missing = findSymbol("G_CANNOTCAST.NDIFFERENCE");
+  missing->set_int(subtract(requiredCircle,actualCircle));
+  pushHeroNumber(vm,missing);
+  auto* number = findSymbol("G_CANNOTCAST.STRDIFFERENCE");
+  number->set_string(vm.pop_string());
   auto* message = findSymbol("G_CANNOTCAST.STRMESSAGE");
-  message->set_string(number+" "+findSymbol("PRINT_MAGCIRCLES_MISSING")->get_string());
+  vm.push_reference(number);
+  vm.push_reference(findSymbol("$27336"));
+  vm.unsafe_call_external(findSymbol("CONCATSTRINGS"));
+  message->set_string(vm.pop_string());
+  appendHeroMessage(vm,message,findSymbol("PRINT_MAGCIRCLES_MISSING"));
   if(player)
     Gothic::inst().onPrint(message->get_string());
   }
