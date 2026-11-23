@@ -80,5 +80,6 @@ struct Stats final {
 Stats&      stats();
 void        reset(); // zero counters, and count the wakes from now on
 void        countWakes(std::string_view state, uint16_t wakes, bool step);
+std::string_view wakeName(size_t index);
 std::string json();
 }

@@ -425,7 +425,7 @@ bool NpcDayJournal::start(World& w, const Options& options, std::string& error) 
   if(j.arrivals!=nullptr)
     std::fprintf(j.arrivals,"t_min,key,world_tick_ms,start_tick_ms,start_t_min,start_observed,kind,destination,target_id,target_key,"
                             "target_x,target_y,target_z,x,y,z,zs,queue_head,body,executor\n");
-  if(options.scriptProbe && !NpcDayMeasurement::start(w,options.directory,options.seed,options.isolate,options.traceNpcs,error)) {
+  if((options.scriptProbe || !options.traceNpcs.empty()) && !NpcDayMeasurement::start(w,options,error)) {
     for(auto** f:{&j.samples,&j.events,&j.cost,&j.heights,&j.arrivals})
       if(*f) { std::fclose(*f); *f=nullptr; }
     return false;

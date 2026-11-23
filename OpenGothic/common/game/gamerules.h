@@ -15,6 +15,7 @@
 #include <Tempest/Vec>
 #include <array>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -75,6 +76,7 @@ class GameRules {
     virtual bool isAttack(const Npc& npc) const = 0;
     virtual ScriptFn playerPercAssessMagic() = 0;
     virtual const PerDist& percRanges() const = 0;
+    virtual std::optional<int32_t> quietSoundHeightLimit(ScriptFn) const { return {}; }
 
     // Guilds and attitudes.
     virtual const GuildTraits& guildTraits() const = 0;

@@ -4,6 +4,7 @@
 #include "game/bodycontroller.h"
 #include "game/npcactivityhost.h"
 #include "world/mobreservations.h"
+#include "world/npcactivityprobe.h"
 #include "world/objects/interactive.h"
 #include "world/waymatrix.h"
 #include "world/world.h"
@@ -74,6 +75,8 @@ void Npc::stopActivityEvents(uint16_t why) {
     return; // nothing set up: no reservation, no wait
   const auto* record=activityEvents.activity;
   const bool atPoint=record && record->point;
+  const auto before=activityEvents.stage;
+  auto* probe=record && aiState.started && why!=0 ? NpcActivityProbe::instance : nullptr;
   // Point activities take and count their final step before End.
   if(record && aiState.started && why!=0 && !(atPoint && why==ActivityEvents::RowEnd))
     ActivityEvents::countWakes(aiState.hint,why,false);
@@ -93,6 +96,7 @@ void Npc::stopActivityEvents(uint16_t why) {
       activityEvents=ActivityEvents::State();
       activityEvents.activity=record;
       activityEvents.init=aiState.funcIni.ptr;
+      if(probe) probe->activityTransition(*this,why,before);
       return;
       }
     dropActivityCommand();
@@ -104,10 +108,12 @@ void Npc::stopActivityEvents(uint16_t why) {
     places.unwait(*this);
     }
   activityEvents = ActivityEvents::State();
+  if(probe) probe->activityTransition(*this,why,before);
   }
 
 void Npc::startActivityEvents(const ActivityEvents::Record* activity) {
   // Init ran: a state with its record and events on starts at the approach, a return starts over
+  const auto before=activityEvents.stage;
   activityEvents.init     = aiState.funcIni.ptr;
   activityEvents.activity = activity;
   if(activityEvents.activity==nullptr)
@@ -116,6 +122,8 @@ void Npc::startActivityEvents(const ActivityEvents::Record* activity) {
   activityEvents.awaitQueue = true;
   activityEvents.deadline   = after(owner.time(),ActivityEvents::WatchdogMs);
   ActivityEvents::countWakes(aiState.hint,ActivityEvents::Entered,false);
+  if(auto* probe=NpcActivityProbe::instance)
+    probe->activityTransition(*this,ActivityEvents::Entered,before);
   }
 
 void Npc::restoreActivityEvents(const ActivityEvents::Record* activity) {
@@ -151,7 +159,11 @@ void Npc::tickActivityEvents(bool runLoop) {
     s.retry   = false;
     if(wakes!=0)
       ActivityEvents::countWakes(aiState.hint,wakes,false);
-    stepActivityEvents(retry ? uint16_t(wakes|ActivityEvents::Watchdog) : wakes);
+    const auto reasons=retry ? uint16_t(wakes|ActivityEvents::Watchdog) : wakes;
+    const auto before=s.stage;
+    stepActivityEvents(reasons);
+    if(auto* probe=NpcActivityProbe::instance)
+      probe->activityTransition(*this,reasons,before);
     }
   // Arrivals and releases are independent of the routine clock. The new timed poses
   // draw only on the perception beat that would have run their Loop.
@@ -418,5 +430,8 @@ void Npc::tickPointGesture() {
   if(int32_t(stateTime()/1000)<=a.timerSeconds || hnpc->aivar[19]!=a.poseStage)
     return;
   countWakes(aiState.hint,Gesture,false);
+  const auto before=s.stage;
   owner.rules().runPointGesture(*this,a);
+  if(auto* probe=NpcActivityProbe::instance)
+    probe->activityTransition(*this,Gesture,before);
   }

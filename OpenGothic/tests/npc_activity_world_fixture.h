@@ -1387,6 +1387,155 @@ void loadCampfireGroup(Gothic& gothic,const CampfireSave& save) {
               save.edge.c_str(),double(std::hypot(step.x,step.z)));
   }
 
+void quietSoundAtPost(Gothic& gothic) {
+  constexpr auto* state="ZS_STAND_ARMSCROSSED";
+  constexpr auto* actor="VLK_412_HARAD";
+  constexpr auto* point="FP_STAND_CITY_20";
+  constexpr uint32_t seed=73106;
+  std::string program;
+  loadBaseProgram(gothic.defaultGameDatFile(),Settings::getI("GAME","language"),&program);
+  if(program!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
+    std::puts("SKIP quiet sound: the high-source fixture is for the verified NotR program");
+    return;
+    }
+  const auto directory=std::filesystem::temp_directory_path()/("gothic-quiet-sound-"+std::to_string(getpid()));
+  std::filesystem::create_directories(directory);
+  NpcDayJournal::Options trace;
+  trace.directory=directory.string();
+  trace.seed=seed;
+  trace.isolate=false;
+  trace.traceNpcs={actor};
+  const auto settled=[&](const Npc& npc, const WayPoint& post) {
+    return npc.activityStage()==ActivityEvents::Stage::Hold && npc.currentWayPoint()==&post &&
+           npc.isAiQueueEmpty() && npc.animProgress("S_LGUARD")>=0;
+    };
+  const auto run=[&](const char* leg, float height, bool expectVm, bool checkReturn) {
+    ActivityEventsWorld test(gothic);
+    auto& world=test.world();
+    auto& script=world.script();
+    auto* npc=activityNpc(world,actor);
+    const auto* post=world.findPoint(point,false);
+    require(npc && post && settled(*npc,*post),"quiet sound: the listener holds the original post and pose");
+    test.only({npc});
+    script.setSeed(seed);
+    npc->setStateTime(0);
+    auto& hero=*world.player();
+    auto source=npc->position()+Tempest::Vec3(0,height,0);
+    source.y=std::nextafter(source.y,std::numeric_limits<float>::infinity());
+    test.moveHero(source,hero.rotation());
+    require(int32_t(std::abs(hero.position().y-npc->position().y))==int32_t(height),
+            "quiet sound: the source has the exact integer height difference");
+    require(npc->hasPerc(PERC_ASSESSQUIETSOUND),"quiet sound: the listener still has its callback");
+    const auto start=npc->rotation();
+    float excursion=0;
+    const auto offset=[&] { return std::abs(std::remainder(npc->rotation()-start,360.f)); };
+    auto& vm=script.getVm();
+    const auto observers=vm.call_observer_count();
+    std::string error;
+    if(!NpcDayMeasurement::start(world,trace,error)) throw std::runtime_error(error);
+    require(vm.call_observer_count()==observers,"quiet sound: trace-only must not attach a VM observer");
+    size_t vmCalls=0,quietCalls=0;
+    const auto observer=vm.add_call_observer([&](const auto& symbol) {
+      ++vmCalls;
+      if(symbol.name()=="B_ASSESSQUIETSOUND") ++quietCalls;
+      });
+    PhysicsNoise impact;
+    impact.culprit=&hero;
+    impact.position=npc->position()+Tempest::Vec3(-post->dir.z,0,post->dir.x)*300.f;
+    require(npc->hearPhysicsNoise(impact),"quiet sound: the impact from a known source is heard");
+    if(checkReturn) {
+      const auto until=world.tickCount()+2000;
+      test.stepUntil(120,[&] {
+        return world.tickCount()>=until && settled(*npc,*post) && offset()<1.f && excursion>20.f;
+        },"quiet sound: the listener turns and realigns on the same post",[&] {
+        require(npc->currentWayPoint()==post && post->useCounter()==1,"quiet sound: the post must retain its sole owner");
+        excursion=std::max(excursion,offset());
+        NpcDayMeasurement::tick(world);
+        });
+      }
+    vm.remove_call_observer(observer);
+    NpcDayMeasurement::stop(world);
+    require(quietCalls==(expectVm ? 1u : 0u) && (expectVm ? vmCalls>0 : vmCalls==0),
+            "quiet sound: the observed VM dispatch must match the expected reaction");
+    require(!std::filesystem::exists(directory/"npc-day-script.json"),"quiet sound: trace-only writes no VM summary");
+    std::ifstream rows(directory/"npc-day-activity.jsonl");
+    bool noiseRow=false,returnRow=false;
+    for(std::string line;std::getline(rows,line);) {
+      rapidjson::Document row;
+      row.Parse(line.c_str());
+      require(!row.HasParseError() && row.IsObject() && row.HasMember("kind"),"quiet sound: every trace row must be valid JSON");
+      const std::string_view kind=row["kind"].GetString();
+      if(kind=="header") continue;
+      require(row["symbol"].GetString()==std::string_view(actor),"quiet sound: only the requested actor is traced");
+      if(kind=="physics_noise") {
+        noiseRow=row["executor"].GetString()==std::string_view(expectVm ? "vm" : "engine");
+        std::printf("D5 %s %s\n",leg,line.c_str());
+        }
+      if(kind=="activity_transition" && row["to"].GetString()==std::string_view("hold") &&
+         row["queue_head"].GetString()==std::string_view(AiQueue::actionName(AI_AlignToFp))) {
+        returnRow=row["place"].GetString()==std::string_view(point) && row["owner"].IsUint() &&
+                  row["owner"].GetUint()==world.npcId(npc);
+        std::printf("D5 %s %s\n",leg,line.c_str());
+        }
+      }
+    require(noiseRow && (!checkReturn || returnRow),"quiet sound: trace identifies the executor and the return to the owned post");
+    std::printf("D5 %s: %zu VM calls (%zu quiet callbacks), maximum turn %.1f degrees\n",leg,vmCalls,quietCalls,double(excursion));
+    };
+
+  gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+  std::vector<uint8_t> save;
+  {
+    ActivityEventsWorld test(gothic);
+    auto& world=test.world();
+    auto* npc=activityNpc(world,actor);
+    const auto* post=world.findPoint(point,false);
+    require(npc && post,"quiet sound: the listener and his post must exist");
+    test.freePoint(post);
+    test.moveHero(post->position()+Tempest::Vec3(400,0,0),0);
+    test.only({npc});
+    world.script().setSeed(seed);
+    EventActor activity;
+    activity.npc=npc;
+    activity.state=state;
+    activity.phases=activityPhases(world.script(),state);
+    activity.pointName="NW_CITY_HABOUR_POOR_AREA_PATH_20";
+    test.start(activity,post->position(),npc,false);
+    npc->attachToPoint(post);
+    npc->setDirection(post->direction());
+    npc->updateTransform();
+    test.stepUntil(300,[&] { return settled(*npc,*post); },"quiet sound: Harad settles on the post");
+    // Isolate the reaction from unrelated ambient perceptions throughout the comparison.
+    for(size_t i=0;i<PERC_Count;++i)
+      if(i!=PERC_ASSESSQUIETSOUND) npc->setPerceptionDisable(PercType(i));
+    Tempest::MemWriter writer(save);
+    Serialize out(writer);
+    Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+    std::memset(preview.data(),0,4);
+    gothic.gameSession()->save(out,"quiet sound before impact",preview);
+  }
+  run("first",1100.f,false,true);
+  gothic.clearGame().reset();
+  {
+    Tempest::MemReader reader(save);
+    Serialize in(reader);
+    gothic.setGame(std::make_unique<GameSession>(in));
+  }
+  {
+    ActivityEventsWorld test(gothic);
+    auto* npc=activityNpc(test.world(),actor);
+    const auto* post=test.world().findPoint(point,false);
+    require(npc && post,"quiet sound: the ordinary load restores the listener and the post");
+    test.only({npc});
+    test.stepUntil(120,[&] { return settled(*npc,*post); },"quiet sound: the loaded listener restores his pose");
+  }
+  run("reloaded",1100.f,false,true);
+  // The cooldown is one tick longer than the native turn. Keep the same stance for the boundary check.
+  ActivityEventsWorld(gothic).step();
+  run("threshold",1000.f,true,false);
+  gothic.clearGame().reset();
+  std::filesystem::remove_all(directory);
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
@@ -1398,6 +1547,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     if(events) {
       loadCampfireGroup(gothic,save);
       gothic.clearGame().reset();
+      quietSoundAtPost(gothic);
       }
     }
   if(previousEvents) setenv("OPENGOTHIC_ACTIVITY_EVENTS",previousEvents->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_EVENTS");

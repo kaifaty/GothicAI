@@ -21,6 +21,12 @@ ScriptFn GameScript::findFunction(std::string_view name) {
   return ScriptFn(symbol->index());
   }
 
+std::optional<int32_t> GameScript::quietSoundHeightLimit(ScriptFn callback) const {
+  if(callback.isValid() && callback==quietSoundHeight.callback)
+    return quietSoundHeight.limit;
+  return {};
+  }
+
 int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {
   auto* symbol = findSymbol(name);
   if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT)

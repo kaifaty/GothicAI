@@ -1,4 +1,5 @@
 #include "npc_definition_fixture.h"
+#include "npcdayjournal.h"
 #include "npcdaymeasurement.h"
 
 #include "baseidentity.h"
@@ -126,7 +127,12 @@ void npcDayRandom(World& world) {
   const auto state=vm.find_symbol_by_name("ZS_TEST")->index();
   const auto observers=vm.call_observer_count();
   std::string error;
-  if(!NpcDayMeasurement::start(world,directory.string(),0,false,{"NPC_NO_ID"},error)) throw std::runtime_error(error);
+  NpcDayJournal::Options options;
+  options.directory=directory.string();
+  options.isolate=false;
+  options.scriptProbe=true;
+  options.traceNpcs={"NPC_NO_ID"};
+  if(!NpcDayMeasurement::start(world,options,error)) throw std::runtime_error(error);
   check(vm.call_observer_count()==observers+1,"starting a day measurement must install its call observer");
   script.invokeState(npc,nullptr,nullptr,state);
   npc->aiPush(AiQueue::aiUseMob("SMITH_ANVIL",1));
@@ -164,7 +170,8 @@ void npcDayRandom(World& world) {
     ++commands;
     }
   check(commands==2,"both regular and overlay aiPush commands must reach JSONL");
-  if(!NpcDayMeasurement::start(world,directory.string(),0,false,{},error)) throw std::runtime_error(error);
+  options.traceNpcs.clear();
+  if(!NpcDayMeasurement::start(world,options,error)) throw std::runtime_error(error);
   check(vm.call_observer_count()==observers+1,"starting the second interval must install one call observer");
   script.invokeState(npc,nullptr,nullptr,state);
   NpcDayMeasurement::stop(world);

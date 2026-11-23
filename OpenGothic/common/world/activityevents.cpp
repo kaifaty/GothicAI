@@ -36,6 +36,10 @@ void ActivityEvents::countWakes(std::string_view state, uint16_t wakes, bool ste
     ++st.watchdog;
   }
 
+std::string_view ActivityEvents::wakeName(size_t index) {
+  return wakeNames[index];
+  }
+
 std::string ActivityEvents::json() {
   const auto& st = stats();
   std::string ret = "{\"watchdog\":"+std::to_string(st.watchdog)+",\"reservation_expired\":"+std::to_string(st.expired)+
