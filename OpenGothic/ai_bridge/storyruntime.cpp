@@ -25,13 +25,17 @@ class StoryProgramExternals final : public storygraph::Externals {
 
     storygraph::Value call(const daedalus::DaedalusSymbol& fn, const std::vector<storygraph::Value>& args) override {
       using storygraph::Value;
-      if(fn.name()=="NPC_SETREFUSETALK" && !fn.has_return() && args.size()==2 &&
+      const std::string_view name=fn.name();
+      if((name=="NPC_SETREFUSETALK" || name=="NPC_SETATTITUDE") && !fn.has_return() && args.size()==2 &&
          args[0].type==Value::Inst && args[1].type==Value::Int) {
         if(!args[0].inst)
           return Value::integer(0);
         const auto record=std::dynamic_pointer_cast<daedalus::INpc>(args[0].inst);
         if(auto* npc=script.findNpc(static_cast<NpcRecord*>(record.get()))) {
-          npc->setRefuseTalkSeconds(args[1].i);
+          if(name=="NPC_SETREFUSETALK")
+            npc->setRefuseTalkSeconds(args[1].i);
+          else
+            npc->setAttitude(Attitude(args[1].i));
           return Value::integer(0);
           }
         }

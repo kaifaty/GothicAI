@@ -390,6 +390,27 @@ async def graph_programs(
         await link.pick_in_menu(window[-1][-1])  # the last one ends the talk
         await menu(lambda m: not m, 15)
 
+    # A relationship written by a director program is read by the original NPC query before and after loading.
+    attitude = ["call", "NPC_GETATTITUDE", ["inst", "SELF"], ["inst", "OTHER"]]
+    old_attitude, friendly, neutral = await link.story_eval(
+        npc, [attitude, ["var", "ATT_FRIENDLY"], ["var", "ATT_NEUTRAL"]]
+    )
+    target_attitude = neutral if old_attitude == friendly else friendly
+    attitude_node = {
+        "id": "DIR_ATTITUDE_TEST",
+        "npc": npc,
+        "description": "Проверка отношения к герою",
+        "nr": 52,
+        "program": [
+            {"do": "call", "call": ["call", "NPC_SETATTITUDE", ["inst", "SELF"], ["int", target_attitude]]},
+        ],
+    }
+    await story.apply({"op": "add_node", "node": attitude_node})
+    chosen = asyncio.ensure_future(wait_message(link, DialogChosen, lambda m: m.node == attitude_node["id"], 10))
+    await link.choose_dialog(npc, attitude_node["id"])
+    await chosen
+    [written_attitude] = await link.story_eval(npc, [attitude])
+
     # a program in place of a condition, made before a save, comes back after loading it
     await story.apply({"op": "program", "node": cond, "part": "condition", "steps": never})
     await asyncio.sleep(0.5)  # the game has the memory head of that change
@@ -402,6 +423,12 @@ async def graph_programs(
     offered = await link.offered_dialogs(npc)
     kept = await link.story_program(cond, "condition")
     check("after_load", cond not in offered and kept.get("patched") is True, " ".join(offered))
+    [loaded_attitude] = await link.story_eval(npc, [attitude])
+    check(
+        "attitude",
+        old_attitude != target_attitude == written_attitude == loaded_attitude,
+        f"{old_attitude} -> {written_attitude}, loaded {loaded_attitude}, expected {target_attitude}",
+    )
 
     live = await link.check_conditions()
     counts = live.get("programs") or {}
@@ -409,13 +436,12 @@ async def graph_programs(
 
     # A director program may use the same timed refusal effect as a lifted stock dialogue.
     refusal = ["call", "NPC_REFUSETALK", ["inst", "SELF"]]
-    attitude = ["call", "NPC_GETATTITUDE", ["inst", "SELF"], ["inst", "OTHER"]]
     before = await link.story_eval(npc, [refusal, attitude])
     refuse_node = {
         "id": "DIR_REFUSE_TEST",
         "npc": npc,
         "description": "Проверка отказа от разговора",
-        "nr": 52,
+        "nr": 53,
         "program": [
             {"do": "call", "call": ["call", "NPC_SETREFUSETALK", ["inst", "SELF"], ["int", 15]]},
         ],
