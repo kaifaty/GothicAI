@@ -127,9 +127,9 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
         npc.aiPush(AiQueue::aiPlayAnim("T_PLUNDER"));
         if(move)
           npc.setStateTime(0);
-        if(!takeNext)
-          NpcEngineCalls::setWalkMode(npc,1);
         }
+      if(seconds>=7)
+        NpcEngineCalls::setWalkMode(npc,1);
       if(!onPoint) {
         if(const auto* point = world().findFreePoint(npc,"PICK"))
           npc.aiPush(AiQueue::aiGoToPoint(*point));
@@ -215,8 +215,8 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
         if(seated()) {
           npc.aiPush(AiQueue::aiStandup());
           npc.aiPush(AiQueue::aiTurnToNpc(findNpc(vm.global_hero())));
-          npc.aiPush(AiQueue::aiRemoveWeapon());
           }
+        npc.aiPush(AiQueue::aiRemoveWeapon());
         constexpr std::array<std::string_view,3> poses = {
           "T_LGUARD_SCRATCH", "T_LGUARD_STRETCH", "T_LGUARD_CHANGELEG",
           };
