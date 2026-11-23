@@ -2781,6 +2781,72 @@ void shrinkSpellCast(World& world) {
   std::puts("Shrink cast: stock mana, target eligibility, perceptions, queued state and saved locals match");
   }
 
+void stockSpellCastAccounting(World& world) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  const auto previousEvents=events;
+  auto* hero=script.findSymbol("PC_HERO");
+  auto& target=*world.player();
+  const auto oldHero=hero->get_instance();
+  const auto oldItem=vm.global_item()->get_instance();
+  const auto targetHp=target.attribute(ATR_HITPOINTS);
+  auto& level=*script.findSymbol("SPELL_CAST_ZAP.SPELLLEVEL");
+  const auto oldLevel=level.get_int();
+  const auto* point=world.findWayPoint("NW_FARM4_BALTHASAR");
+  require(point!=nullptr,"cast accounting: need a live stock caster spawn point");
+
+  const struct Cast {
+    const char* item;
+    int32_t cost;
+    bool leveled=false;
+    } cases[] = {
+    {"ITSC_ICEBOLT",5},
+    {"ITRU_ICEBOLT",10},
+    {"ITSC_ZAP",5,true},
+    {"ITSC_SLEEP",0},
+    };
+  for(const auto& row:cases) {
+    auto& symbol=*script.findSymbol(row.item);
+    const auto savedItem=symbol.get_instance();
+    for(bool native:{false,true}) {
+      auto* caster=world.addNpc(hero->index(),point->position());
+      require(caster!=nullptr,"cast accounting: the stock caster must spawn");
+      auto* item=caster->addItem(symbol.index(),1);
+      require(item && caster->drawSpell(item->spellId()) && caster->activeWeapon()==item,
+              "cast accounting: the actual test item must be active");
+      caster->handle().attribute[ATR_MANA]=3;
+      caster->handle().aivar[20]=9;
+      const auto casterQueue=activityQueue(*caster),targetQueue=activityQueue(target);
+      const auto callSelf=vm.global_self()->get_instance(),callOther=vm.global_other()->get_instance();
+      const auto callItem=vm.global_item()->get_instance(),callGi=vm.unsafe_get_gi();
+      level.set_int(71);
+      events=native;
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { ++instructions; });
+      vm.push_int(0x12345678);
+      script.invokeSpell(*caster,&target,*item);
+      const auto stack=vm.pop_int();
+      vm.observe_instructions({});
+      require(stack==0x12345678 && (instructions==0)==native && caster->attribute(ATR_MANA)==3-row.cost &&
+              caster->handle().aivar[20]==10 && level.get_int()==(row.leveled ? 0 : 71),
+              "cast accounting: selected executor keeps the raw mana debit, counter and optional level");
+      require(vm.global_self()->get_instance()==callSelf && vm.global_other()->get_instance()==callOther &&
+              vm.global_item()->get_instance()==callItem && vm.unsafe_get_gi()==callGi &&
+              target.attribute(ATR_HITPOINTS)==targetHp && activityQueue(*caster)==casterQueue && activityQueue(target)==targetQueue,
+              "cast accounting: the numeric callback preserves the actor context and queues");
+      world.removeNpc(*caster);
+      hero->set_instance(oldHero);
+      symbol.set_instance(savedItem);
+      vm.global_item()->set_instance(oldItem);
+      }
+    }
+  level.set_int(oldLevel);
+  events=previousEvents;
+  std::puts("Spell cast accounting: rune, scroll, level and counter-only callbacks match both executors");
+  }
+
 void shrinkSpellStates(World& world) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -3434,6 +3500,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
                                     "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c";
     if(stockMagic) {
       shrinkSpellStates(*gothic.world());
+      stockSpellCastAccounting(*gothic.world());
       magicHurtStates(*gothic.world());
       }
     ActivityEventsWorld paired(gothic);

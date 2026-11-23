@@ -1197,8 +1197,11 @@ void GameScript::invokeSpell(Npc &npc, Npc* target, Item &it) {
   try {
     if(fn->name()=="SPELL_CAST_SHRINK" && usesNativeShrinkSpell(&it)) {
       castShrink(npc,target);
+      return;
       }
-    else if(fn->count()==1) {
+    if(runStockSpellCast(npc,fn->name(),splLevel))
+      return;
+    if(fn->count()==1) {
       // this is a leveled spell
       vm.call_function<void>(fn, splLevel);
       } else {
