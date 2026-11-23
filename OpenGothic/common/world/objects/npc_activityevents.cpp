@@ -429,9 +429,20 @@ void Npc::tickPointGesture() {
   const auto& a = *s.activity->point;
   if(int32_t(stateTime()/1000)<=a.timerSeconds || hnpc->aivar[19]!=a.poseStage)
     return;
-  countWakes(aiState.hint,Gesture,false);
-  const auto before=s.stage;
-  owner.rules().runPointGesture(*this,a);
+  playActivityGesture();
+  }
+
+void Npc::tickSeatedGesture() {
+  const auto& mob=*activityEvents.activity->mob;
+  if(mob.seated && int32_t(stateTime()/1000)>mob.seated->timerSeconds &&
+     ActivityDefinitions::bodyStateContains(int32_t(bodyState()),mob.busyBodyState))
+    playActivityGesture();
+  }
+
+void Npc::playActivityGesture() {
+  ActivityEvents::countWakes(aiState.hint,ActivityEvents::Gesture,false);
+  const auto before=activityEvents.stage;
+  owner.rules().runActivityGesture(*this,*activityEvents.activity);
   if(auto* probe=NpcActivityProbe::instance)
-    probe->activityTransition(*this,Gesture,before);
+    probe->activityTransition(*this,ActivityEvents::Gesture,before);
   }

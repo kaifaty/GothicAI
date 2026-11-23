@@ -190,8 +190,12 @@ void Npc::tickRoutine() {
       static const float MAX_DIST = 300;
       const bool fastPath = aiPolicy==NpcProcessPolicy::AiFar2 && routines.empty();
       runLoop = !(fastPath && currentFp!=nullptr && qDistTo(currentFp)<MAX_DIST*MAX_DIST);
-      if(!events && runLoop)
-        loop = invokeRoutine(aiState.funcLoop);
+      if(runLoop) {
+        if(!events)
+          loop = invokeRoutine(aiState.funcLoop);
+        else if(!atPoint)
+          tickSeatedGesture(); // the seated Loop also draws before End on the final perception beat
+        }
       }
     else if(!events) {
       // ZS_DEATH   have no loop-function, in G1, G2-classic

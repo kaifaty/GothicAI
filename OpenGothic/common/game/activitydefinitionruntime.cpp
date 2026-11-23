@@ -11,9 +11,7 @@
 namespace {
 using Type = daedalus::DaedalusDataType;
 
-// Accepted states: their day parity with the VM is proven, each on its own trace (D4.1 the anvil,
-// D4.2 the other six). A table in code, so accepting another captured state changes the game, not
-// the base. ZS_ROAST_SCAVENGER is captured but never runs in a NEWWORLD day: no parity, not accepted.
+// Accepted untimed states. ZS_ROAST_SCAVENGER is captured but never runs in a NEWWORLD day.
 constexpr std::array<std::string_view,7> acceptedStates = {
   "ZS_SMITH_ANVIL",
   "ZS_SMITH_COOL",
@@ -48,6 +46,8 @@ bool ActivityDefinitionRuntime::events() {
   }
 
 bool ActivityDefinitionRuntime::accepted(std::string_view state) {
+  if(ActivityDefinitions::seatedState(state))
+    return true;
   for(auto name:acceptedStates)
     if(name==state)
       return true;
@@ -68,7 +68,7 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
         std::pair{function(script,name+"_END",false),ActivityDefinitions::Phase::End},
         };
       for(const auto& [symbol,phase]:phases) {
-        if(record.point && phase==ActivityDefinitions::Phase::Loop)
+        if(phase==ActivityDefinitions::Phase::Loop && (record.point || record.mob->seated))
           continue; // explicit calls and the events-off fallback still use the script Loop
         definitions.phases.emplace(symbol->index(),Phase{record,phase,helper->index()});
         }
@@ -76,6 +76,8 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
     catch(const std::exception& e) { throw std::runtime_error("activity definitions: "+name+": "+e.what()); }
     };
   for(const auto& [name,activity]:library.activities) {
+    if(ActivityDefinitions::seatedState(name)!=activity.seated.has_value())
+      continue; // old records for a different seated script stay on the VM
     if(mode==Mode::Accepted && !accepted(name))
       continue;
     const auto& stored = definitions.activities.emplace(name,activity).first->second;

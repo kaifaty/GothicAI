@@ -1,10 +1,12 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -14,14 +16,28 @@
 // template walk below instead of the script. Both sides share this file, so the call stream the
 // import compares with the VM is the stream the game issues.
 namespace ActivityDefinitions {
-inline constexpr int FormatVersion = 3;
+inline constexpr int FormatVersion = 4;
 enum class Phase : uint8_t { Init, Loop, End };
 enum class Approach : uint8_t { NearestWaypoint, Distance };
+
+inline bool seatedState(std::string_view state) {
+  return state=="ZS_SIT_BENCH" || state=="ZS_SIT_CHAIR";
+  }
 
 // "An activity at a world object": approach the routine point, use the named object whenever it
 // is free and the body is not already busy with it, leave the object at the end. The perception
 // set stays a script helper executed by the VM at its place (reactions are step D5).
 struct MobActivity {
+  struct Seated {
+    int32_t timerSeconds = 0;
+    int32_t rollRange = 0;
+    // Each animation has its index as an inclusive upper limit for the same roll.
+    std::vector<std::string> animations;
+    std::span<const std::string> animationsFor(size_t roll) const {
+      return std::span<const std::string>(animations).subspan(std::min(roll,animations.size()));
+      }
+    bool operator==(const Seated&) const = default;
+    };
   std::string perceptions;          // deferred helper without arguments, first in Init
   int32_t     walkMode = 0;         // AI_SetWalkMode argument
   Approach    approach = Approach::NearestWaypoint;
@@ -31,6 +47,7 @@ struct MobActivity {
   int32_t     useState = 0;         // AI_UseMob state in Loop
   int32_t     leaveState = 0;       // AI_UseMob state in End
   int32_t     loopResult = 0;       // Loop result
+  std::optional<Seated> seated;
   bool operator==(const MobActivity&) const = default;
   };
 
@@ -181,6 +198,8 @@ inline int run(const MobActivity& activity, Phase phase, Host& host) {
   switch(phase) {
     case Phase::Init: {
       resetForActivity(host,activity.perceptions);
+      if(activity.seated && bodyStateContains(host.bodyState(),activity.busyBodyState))
+        return 0;
       host.setWalkMode(activity.walkMode);
       bool away = false;
       if(activity.approach==Approach::NearestWaypoint) {

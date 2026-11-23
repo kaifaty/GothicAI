@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-void GameScript::runPointGesture(Npc& npc, const ActivityDefinitions::PointActivity& point) {
+void GameScript::runActivityGesture(Npc& npc, const ActivityEvents::Record& activity) {
   const auto& loop=findSymbol(npc.aiState.funcLoop.ptr)->name();
   auto draw=[&](int32_t range,const char* variable) {
     const auto value=int32_t(rollRandom(uint32_t(range),&npc,true));
@@ -12,6 +12,15 @@ void GameScript::runPointGesture(Npc& npc, const ActivityDefinitions::PointActiv
       local->set_int(value);
     return value;
     };
+  if(const auto* mob=activity.mob) {
+    const auto& seated=*mob->seated;
+    const auto roll=draw(seated.rollRange,".RANDOM");
+    for(const auto& animation:seated.animationsFor(roll))
+      npc.pushActivityCommand(AiQueue::aiPlayAnimBs(animation,BodyState(mob->busyBodyState)));
+    npc.setStateTime(0);
+    return;
+    }
+  const auto& point=*activity.point;
   const auto& gesture=point.gestures[size_t(draw(point.rollRange,".RANDOM"))];
   if(!gesture.animation.empty())
     npc.pushActivityCommand(AiQueue::aiPlayAnim(gesture.animation));
@@ -33,7 +42,7 @@ bool GameScript::invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::P
   if(floorDefer.active())
     return false;
   const auto* phase = ActivityDefinitionRuntime::find(activityDefinitions,function);
-  if(phase==nullptr || (phase->record.point && !activityEvents))
+  if(phase==nullptr || (!activityEvents && (phase->record.point || phase->record.mob->seated)))
     return false;
   probe.fromRecord();
   probe.result = ActivityDefinitionRuntime::run(vm,world(),npc,*phase);

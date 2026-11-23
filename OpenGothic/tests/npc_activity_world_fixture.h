@@ -1536,6 +1536,166 @@ void quietSoundAtPost(Gothic& gothic) {
   std::filesystem::remove_all(directory);
   }
 
+void seatedGestureAtObject(Npc& npc,uint32_t range) {
+  using Contract=NpcDefinitionContract;
+  auto& script=npc.world().script();
+  const auto loop=Contract::aiState(npc).funcLoop;
+  auto& local=*script.getVm().find_symbol_by_name(std::string(script.symbolName(loop))+".RANDOM");
+  script.setSeed(73106);
+  local.set_int(-1);
+  auto expected=Contract::random(script);
+  npc.setStateTime(5999);
+  Contract::tickRoutine(npc);
+  require(local.get_int()==-1 && Contract::random(script)==expected && npc.isAiQueueEmpty(),
+          "seated gesture: no draw before six whole seconds");
+  constexpr std::array clips={"R_CHAIR_RANDOM_1","R_CHAIR_RANDOM_2","R_CHAIR_RANDOM_3","R_CHAIR_RANDOM_4"};
+  bool full=false,silent=false;
+  for(size_t i=0;i<64 && !(full && silent);++i) {
+    const auto draw=uint32_t(expected()%range);
+    npc.setStateTime(6000);
+    Contract::tickRoutine(npc);
+    require(Contract::random(script)==expected && local.get_int()==int32_t(draw) && npc.stateTime()==0,
+            "seated gesture: one draw, the original saved local and a reset on every outcome");
+    auto queue=Contract::queue(npc);
+    for(size_t j=draw;j<clips.size();++j) {
+      require(queue.size()>0,"seated gesture: every animation for the same draw must be queued");
+      const auto action=queue.pop();
+      require(action.act==AI_PlayAnimBs && action.s0==clips[j] && action.i0==65547,
+              "seated gesture: retain the order of the cumulative animations and the sitting body state");
+      }
+    require(queue.size()==0,"seated gesture: the draw queues no other actions");
+    full|=draw==0;
+    silent|=draw>=clips.size();
+    npc.clearAiQueue();
+    }
+  require(full && silent,"seated gesture: the fixed seed covers a full chain and a silent outcome");
+  }
+
+void seatedActivitiesWorld(Gothic& gothic,bool events) {
+  using Contract=NpcDefinitionContract;
+  using ActivityEvents::Stage;
+  struct Site { const char* state; const char* actor; const char* scheme; uint32_t range; };
+  constexpr std::array sites={Site{"ZS_SIT_BENCH","VLK_468_CANTHAR","BENCH",8},
+                              Site{"ZS_SIT_CHAIR","MIL_313_BOLTAN","CHAIR",10}};
+  struct Saved { uint32_t object=0; Tempest::Vec3 position; float heading=0; uint32_t pose=0; };
+  std::array<Saved,sites.size()> seats;
+  std::vector<uint8_t> save;
+  const auto sitting=[](const Npc& npc,const Interactive& object) {
+    return npc.interactive()==&object && object.userCount()==1 &&
+           ActivityDefinitions::bodyStateContains(int32_t(npc.bodyState()),65547) && npc.isAiQueueEmpty();
+    };
+  const auto* output=std::getenv("OPENGOTHIC_BENCH_OUT");
+  const auto directory=output ? std::filesystem::path(output)/(events ? "seated-events" : "seated-vm") :
+      std::filesystem::temp_directory_path()/("gothic-seated-"+std::to_string(getpid()));
+  std::filesystem::create_directories(directory);
+  gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+  {
+    ActivityEventsWorld test(gothic);
+    auto& world=test.world();
+    auto& vm=world.script().getVm();
+    NpcDayJournal::Options trace;
+    trace.directory=directory.string();
+    trace.seed=73106;
+    trace.isolate=false;
+    trace.scriptProbe=true;
+    for(const auto& site:sites) trace.traceNpcs.emplace_back(site.actor);
+    std::string error;
+    if(!NpcDayMeasurement::start(world,trace,error)) throw std::runtime_error(error);
+    std::array<size_t,sites.size()> loopCalls{};
+    const auto observer=vm.add_call_observer([&](const auto& function) {
+      for(size_t i=0;i<sites.size();++i)
+        if(function.name()==std::string(sites[i].state)+"_LOOP") ++loopCalls[i];
+      });
+    ActivityEvents::reset();
+    for(size_t i=0;i<sites.size();++i) {
+      const auto& site=sites[i];
+      auto* actor=activityNpc(world,site.actor);
+      require(actor!=nullptr,"seated activity: the original routine actor must exist");
+      auto activity=test.actor(site.state,site.scheme,actor);
+      const auto spot=activity.point->position();
+      test.only({actor});
+      test.moveHero(spot+Tempest::Vec3(350,0,0),0);
+      test.start(activity,spot,actor,false);
+      auto* object=world.availableMob(*actor,site.scheme);
+      require(object!=nullptr,"seated activity: the original routine has a free object");
+      if(i==0) {
+        auto& blocker=*test.extra();
+        test.only({});
+        test.occupy(blocker,*object,site.scheme,spot);
+        require(world.availableMob(*actor,site.scheme)==nullptr,"seated activity: the contested bench is the only seat in reach");
+        test.only({actor});
+        test.stepUntil(180,[&] {
+          return events ? test.stage(*actor)==Stage::Wait : loopCalls[i]>0;
+          },"the routine waits for the occupied bench");
+        require(object->userCount()==1 && object->isAttached(blocker) && actor->interactive()==nullptr,
+                "seated activity: the waiter cannot take the occupied bench");
+        test.leave(blocker,site.scheme,*test.awayFrom(*activity.point));
+        test.stepUntil(180,[&] {
+          const auto* head=actor->aiQueueFront();
+          return head && head->act==AI_UseMob && head->i0==1;
+          },"the freed bench wakes the waiter and queues one use");
+        loadSavedNpc(*actor,savedNpc(*actor));
+        require(actor->aiQueueFront() && actor->aiQueueFront()->act==AI_UseMob && !test.places().reserved(*actor),
+                "seated activity: a saved use survives without a saved reservation");
+        }
+      test.stepUntil(600,[&]{ return sitting(*actor,*object) && (!events || test.stage(*actor)==Stage::Hold); },
+                     std::string(site.state)+" holds the real object");
+      seatedGestureAtObject(*actor,site.range);
+      seats[i].object=world.mobsiId(object);
+      std::printf("Seated %s (events=%d): object %u, %zu VM Loop calls\n",
+                  site.state,int(events),object->zenId(),loopCalls[i]);
+      require((loopCalls[i]==0)==events,"seated activity: the runtime selects the requested executor");
+      }
+    for(size_t i=0;i<sites.size();++i) {
+      auto& npc=*activityNpc(world,sites[i].actor);
+      require(sitting(npc,*world.mobsiById(seats[i].object)),"seated activity: both actors remain seated at save time");
+      seats[i].position=npc.position();
+      seats[i].heading=npc.rotation();
+      seats[i].pose=npc.bodyStateMasked();
+      }
+    vm.remove_call_observer(observer);
+    NpcDayMeasurement::stop(world);
+    Tempest::MemWriter writer(save);
+    Serialize out(writer);
+    Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+    std::memset(preview.data(),0,4);
+    gothic.gameSession()->save(out,"bench and chair",preview);
+  }
+  gothic.clearGame().reset();
+  {
+    Tempest::MemReader reader(save);
+    Serialize in(reader);
+    ActivityCalls calls;
+    gothic.setGame(std::make_unique<GameSession>(in));
+    ActivityEventsWorld test(gothic);
+    for(size_t i=0;i<sites.size();++i) {
+      const auto& site=sites[i];
+      auto* npc=activityNpc(test.world(),site.actor);
+      auto* object=test.world().mobsiById(seats[i].object);
+      require(npc && object && sitting(*npc,*object) && npc->position()==seats[i].position &&
+              npc->rotation()==seats[i].heading && npc->bodyStateMasked()==seats[i].pose,
+              "seated activity: the whole-game load restores the exact object, position, facing and pose");
+      test.only({npc});
+      test.moveHero(npc->position()+Tempest::Vec3(350,0,0),0);
+      Contract::tickRoutine(*npc);
+      require(sitting(*npc,*object) && calls.phase(*npc,site.state)==0 && calls.uses(*npc)==0,
+              "seated activity: loading does not repeat Init or queue another use");
+      if(i==0)
+        npc->clearState(false);
+      else {
+        Contract::aiState(*npc).eTime=test.world().time();
+        Contract::tickRoutine(*npc);
+        }
+      require(object->isAttached(*npc) && npc->aiQueueFront() && npc->aiQueueFront()->act==AI_UseMob &&
+              npc->aiQueueFront()->i0==-1,"seated activity: leaving is queued before releasing ownership");
+      test.stepUntil(600,[&] { return !object->isAttached(*npc) && !test.places().reserved(*npc); },
+                     std::string(site.state)+" releases its seat");
+      }
+  }
+  gothic.clearGame().reset();
+  if(!output) std::filesystem::remove_all(directory);
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
@@ -1544,6 +1704,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
     const auto save=pointActivitiesWorld(gothic,events);
     gothic.clearGame().reset();
+    seatedActivitiesWorld(gothic,events);
     if(events) {
       loadCampfireGroup(gothic,save);
       gothic.clearGame().reset();

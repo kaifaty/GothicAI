@@ -252,8 +252,10 @@ class ScriptRun {
         "HLP_STRCMP","NPC_GETDISTTOWP","AI_GOTOWP","WLD_ISMOBAVAILABLE","NPC_GETBODYSTATE","AI_USEMOB"};
       const auto& name=function.name();
       static const std::set<std::string> pointCalls={"NPC_ISONFP","WLD_ISFPAVAILABLE","AI_GOTOFP","AI_STANDUP",
-        "AI_ALIGNTOFP","AI_ALIGNTOWP","AI_PLAYANI","AI_PLAYANIBS","NPC_GETSTATETIME","NPC_SETSTATETIME","HLP_RANDOM"};
-      if(!known.contains(name) && !(points && pointCalls.contains(name))) throw Stop("unsupported_external",name);
+        "AI_ALIGNTOFP","AI_ALIGNTOWP","AI_PLAYANI"};
+      static const std::set<std::string> poseCalls={"AI_PLAYANIBS","NPC_GETSTATETIME","NPC_SETSTATETIME","HLP_RANDOM"};
+      if(!known.contains(name) && !(points && pointCalls.contains(name)) &&
+         !((points || random) && poseCalls.contains(name))) throw Stop("unsupported_external",name);
       const auto parameters=vm.find_parameters_for_function(&function);
       Event event{name,name+"(",{}};
       std::vector<std::string> texts(parameters.size());
@@ -334,6 +336,19 @@ std::vector<std::string> walk(const MobActivity& activity,Phase phase,const Situ
   StubHost stub(situation);
   Recorder recorder(stub,[&](std::string event) { events.push_back(std::move(event)); });
   result=run(activity,phase,recorder);
+  if(phase==Phase::Loop && activity.seated) {
+    const auto& seated=*activity.seated;
+    events.push_back("NPC_GETSTATETIME(self)->"+std::to_string(situation.seconds));
+    const bool sitting=bodyStateContains(recorder.bodyState(),activity.busyBodyState);
+    if(situation.seconds>seated.timerSeconds && sitting) {
+      const auto roll=std::to_string(situation.roll);
+      events.push_back("HLP_RANDOM("+std::to_string(seated.rollRange)+")->"+roll);
+      events.push_back("RANDOM="+roll);
+      for(const auto& animation:seated.animationsFor(situation.roll))
+        events.push_back("AI_PLAYANIBS(self,"+Recorder::text(animation)+","+std::to_string(activity.busyBodyState)+")");
+      events.push_back("NPC_SETSTATETIME(self,0)");
+      }
+    }
   return events;
   }
 
@@ -366,6 +381,8 @@ class Recognizer {
       try {
         ScriptRun script(program);
         const auto phases=phasesOf(script.script());
+        if(seatedState(state))
+          script.watchRollWrites(*phases.loop);
         result.activity=extract(script,phases);
         result.situations=compare(script,phases,result.activity);
         }
@@ -716,7 +733,35 @@ class Recognizer {
       const auto* leave=firstEvent(end,"AI_USEMOB");
       if(leave==nullptr || leave->args.size()!=2) throw Stop("no_mob_leave",state);
       activity.leaveState=std::get<int32_t>(leave->args.at(1));
+      if(seatedState(state))
+        activity.seated=extractSeated(script,*phases.loop,activity.busyBodyState);
       return activity;
+      }
+
+    MobActivity::Seated extractSeated(ScriptRun& script,const DaedalusSymbol& loop,int32_t body) const {
+      MobActivity::Seated seated;
+      Situation s;
+      s.body=body;
+      seated.timerSeconds=lastBefore([&](int32_t seconds) {
+        s.seconds=seconds;
+        return firstEvent(script.run(loop,s),"HLP_RANDOM")!=nullptr;
+        });
+      if(seated.timerSeconds<0 || seated.timerSeconds==std::numeric_limits<int32_t>::max())
+        throw Stop("template_mismatch",loop.name()+" seated gesture timer");
+      s.seconds=seated.timerSeconds+1;
+      const auto timed=script.run(loop,s);
+      const auto* draw=firstEvent(timed,"HLP_RANDOM");
+      if(!draw) throw Stop("template_mismatch",loop.name()+" missing seated gesture draw");
+      seated.rollRange=std::get<int32_t>(draw->args.at(0));
+      // Bench and chair use at most ten outcomes. Every one is checked below.
+      if(seated.rollRange<1 || seated.rollRange>10)
+        throw Stop("template_mismatch",loop.name()+" seated gesture range");
+      for(const auto& event:timed.events)
+        if(event.name=="AI_PLAYANIBS")
+          seated.animations.push_back(std::get<std::string>(event.args.at(0)));
+      if(seated.animations.empty() || seated.animations.size()>size_t(seated.rollRange))
+        throw Stop("template_mismatch",loop.name()+" seated animations");
+      return seated;
       }
 
     // Last non-negative distance/time before the script issues a command.
@@ -742,6 +787,7 @@ class Recognizer {
     // or around the distance limit), object free or not, each body-state bit of the condition.
     size_t compare(ScriptRun& script,const Phases& phases,const MobActivity& activity) const {
       std::vector<std::pair<Phase,Situation>> situations;
+      const auto busy=activity.busyBodyState;
       std::vector<int32_t> distances={0,std::numeric_limits<int32_t>::max()};
       for(int64_t value:{int64_t(activity.approachDistance)-1,int64_t(activity.approachDistance),int64_t(activity.approachDistance)+1})
         if(value>=0 && value<=std::numeric_limits<int32_t>::max()) distances.push_back(int32_t(value));
@@ -752,14 +798,25 @@ class Recognizer {
               Situation s;
               s.waypoint=waypoint; s.lookAt=lookAt; s.nearest=nearest; s.distance=distance;
               situations.emplace_back(Phase::Init,s);
+              if(activity.seated) {
+                s.body=busy;
+                situations.emplace_back(Phase::Init,s);
+                }
               }
-      const auto busy=activity.busyBodyState;
       for(bool available:{false,true})
         for(int32_t body:{0,busy,busy^0x10000,busy^0x8000,busy^0x10,busy^0x1,busy|0x40000,busy|0x40000000,
                           std::numeric_limits<int32_t>::max()}) {
           Situation s;
           s.available=available; s.body=body;
           situations.emplace_back(Phase::Loop,s);
+          if(activity.seated) {
+            const auto& seated=*activity.seated;
+            for(auto seconds:{seated.timerSeconds,seated.timerSeconds+1,std::numeric_limits<int32_t>::max()}) {
+              s.seconds=seconds;
+              for(s.roll=0;s.roll<seated.rollRange;++s.roll)
+                situations.emplace_back(Phase::Loop,s);
+              }
+            }
           }
       situations.emplace_back(Phase::End,Situation{});
       for(const auto& [phase,situation]:situations) {
@@ -886,6 +943,15 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
   put(parameters,"use_state",Json(a.useState),allocator);
   put(parameters,"leave_state",Json(a.leaveState),allocator);
   put(parameters,"loop_result",Json(a.loopResult),allocator);
+  if(a.seated) {
+    Json seated(rapidjson::kObjectType),animations(rapidjson::kArrayType);
+    put(seated,"timer_seconds",Json(a.seated->timerSeconds),allocator);
+    put(seated,"roll_range",Json(a.seated->rollRange),allocator);
+    for(const auto& animation:a.seated->animations)
+      animations.PushBack(text(encode(animation),allocator),allocator);
+    put(seated,"animations",std::move(animations),allocator);
+    put(parameters,"seated",std::move(seated),allocator);
+    }
   put(json,"template",text("mob",allocator),allocator);
   put(json,"parameters",std::move(parameters),allocator);
   return json;
