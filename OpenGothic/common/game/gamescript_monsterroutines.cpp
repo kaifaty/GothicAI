@@ -21,6 +21,7 @@ enum MonsterCombatVar : size_t {
   followInWater = 28,
   monsterPriority = 29,
   realId = 43,
+  lastBody = 44,
   maxDistanceToWaypoint = 59,
   originalFightTactic = 60,
   enemyOverride = 61,
@@ -412,6 +413,70 @@ bool GameScript::runMonsterFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol
     }
   ai_flee(self);
   result = LOOP_CONTINUE;
+  return true;
+  }
+
+bool GameScript::runMonsterHunt(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const auto phase = symbol.name();
+  if(phase=="ZS_MM_HUNT") {
+    const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+    const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+    enableMonsterRoutinePerceptions(npc);
+    ai_standup(self);
+    ai_turntonpc(self,other);
+    ai_setwalkmode(self,int(WalkBit::WM_Walk));
+    ai_gotonpc(self,other);
+    result = 0;
+    return true;
+    }
+  if(phase=="ZS_MM_HUNT_LOOP") {
+    result = LOOP_END;
+    return true;
+    }
+  if(phase!="ZS_MM_HUNT_END")
+    return false;
+  result = 0;
+  return true;
+  }
+
+bool GameScript::runMonsterEatBody(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const auto phase = symbol.name();
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  auto& ai = self->aivar;
+  if(phase=="ZS_MM_EATBODY") {
+    npc.setPerceptionTime(1000);
+    npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction("B_ASSESSMAGIC").ptr);
+    npc.setPerceptionEnable(PERC_ASSESSDAMAGE,findFunction("B_MM_ASSESSDAMAGE").ptr);
+    const auto othersDamage = findFunction("B_MM_ASSESSOTHERSDAMAGE").ptr;
+    npc.setPerceptionEnable(PERC_ASSESSOTHERSDAMAGE,othersDamage);
+    npc.setPerceptionEnable(PERC_ASSESSMURDER,othersDamage);
+    ai_gotonpc(self,other);
+    ai_turntonpc(self,other);
+    ai_playani(self,"T_STAND_2_EAT");
+    ai[monsterPriority] = findSymbol("PRIO_EAT")->get_int();
+    ai[lastBody] = hlp_getinstanceid(other);
+    ai[routinePosition] = findSymbol("NOTINPOS")->get_int();
+    result = 0;
+    return true;
+    }
+  if(phase=="ZS_MM_EATBODY_LOOP") {
+    if(ai[routinePosition]==findSymbol("NOTINPOS")->get_int()) {
+      npc.setPerceptionEnable(PERC_ASSESSENEMY,findFunction("B_MM_ASSESSENEMY").ptr);
+      ai[routinePosition] = findSymbol("ISINPOS")->get_int();
+      }
+    if(!hlp_isvalidnpc(other)) {
+      npc_clearaiqueue(self);
+      result = LOOP_END;
+      } else {
+      result = LOOP_CONTINUE;
+      }
+    return true;
+    }
+  if(phase!="ZS_MM_EATBODY_END")
+    return false;
+  ai_playani(self,"T_EAT_2_STAND");
+  result = 0;
   return true;
   }
 

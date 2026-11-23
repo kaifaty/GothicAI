@@ -52,6 +52,8 @@ void GameScript::loadNativeRoutines() {
     {"ZS_MM_ATTACK",         &GameScript::runMonsterAttack},
     {"ZS_MM_THREATENENEMY",   &GameScript::runMonsterThreat},
     {"ZS_MM_FLEE",            &GameScript::runMonsterFlee},
+    {"ZS_MM_HUNT",            &GameScript::runMonsterHunt},
+    {"ZS_MM_EATBODY",         &GameScript::runMonsterEatBody},
     {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_REST",        &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_ROAM",        &GameScript::runRoamingRoutine},

@@ -2968,6 +2968,69 @@ void monsterEnemyPerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
   std::puts("Monster enemy perception: original and native reject, attack, threaten, hunt and flee identically");
   }
 
+void monsterHuntAndEatBodyPhases(World& world, Npc& monster, Npc& target) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  auto& ai=monster.handle().aivar;
+  const auto previousVars=std::to_array(ai);
+  const auto hunt=activityPhases(script,"ZS_MM_HUNT");
+  const auto eat=activityPhases(script,"ZS_MM_EATBODY");
+  struct Step { size_t function; Npc* other; int result; };
+  const std::array steps={Step{hunt.init,&target,0},Step{hunt.loop,&target,LOOP_END},Step{hunt.end,&target,0},
+                          Step{eat.init,&target,0},Step{eat.loop,&target,LOOP_CONTINUE},
+                          Step{eat.loop,nullptr,LOOP_END},Step{eat.end,nullptr,0}};
+  constexpr std::array perceptions={PERC_ASSESSENEMY,PERC_ASSESSBODY,PERC_ASSESSMAGIC,PERC_ASSESSDAMAGE,
+                                    PERC_ASSESSOTHERSDAMAGE,PERC_ASSESSMURDER,PERC_ASSESSWARN};
+  std::array<std::vector<std::string>,steps.size()> original;
+  for(bool native:{false,true}) {
+    events=native;
+    std::copy(previousVars.begin(),previousVars.end(),ai);
+    ai[29]=99;
+    for(const auto perception:perceptions)
+      monster.setPerceptionDisable(perception);
+    for(size_t i=0;i<steps.size();++i) {
+      const auto& step=steps[i];
+      monster.clearAiQueue();
+      if(i==3)
+        monster.setPerceptionDisable(PERC_ASSESSENEMY);
+      if(i==5)
+        monster.aiPush(AiQueue::aiWait(100));
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { ++instructions; });
+      const auto result=script.invokeState(&monster,step.other,nullptr,ScriptFn(step.function));
+      vm.observe_instructions({});
+      require(result==step.result && (instructions==0)==native,"monster hunt and eat body: phase result and selected executor must agree");
+      auto witness=activityQueue(monster);
+      for(auto slot:{19,29,44})
+        witness.push_back(std::to_string(ai[slot]));
+      for(const auto perception:perceptions)
+        witness.push_back(std::to_string(monster.hasPerc(perception)));
+      if(native)
+        require(witness==original[i],"monster hunt and eat body: original and native leave the same commands, perceptions and state");
+      else
+        original[i]=std::move(witness);
+      const auto* front=monster.aiQueueFront();
+      if(i==0)
+        require(monster.hasPerc(PERC_ASSESSENEMY) && monster.hasPerc(PERC_ASSESSWARN),"monster hunt: Init restores its ambient perceptions");
+      if(i==3)
+        require(front && front->act==AI_GoToNpc && front->target==&target && !monster.hasPerc(PERC_ASSESSENEMY) && ai[19]==1 &&
+                ai[29]==0 && ai[44]==int32_t(target.instanceSymbol()),"monster eat body: Init walks to the target and records it");
+      if(i==4)
+        require(monster.hasPerc(PERC_ASSESSENEMY) && ai[19]==0,"monster eat body: the first Loop restores enemy perception");
+      if(i==5)
+        require(!front,"monster eat body: a missing target clears the existing queue");
+      if(i==6)
+        require(front && front->s0=="T_EAT_2_STAND","monster eat body: End queues the standing animation");
+      }
+    }
+  events=previousEvents;
+  std::copy(previousVars.begin(),previousVars.end(),ai);
+  monster.clearAiQueue();
+  std::puts("Monster hunt and eat body: original and native approach, perception and missing-target phases agree");
+  }
+
 std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -3123,6 +3186,7 @@ std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   monsterAttackPhases(world,*wolf,hero);
   monsterThreatAndFleePhases(world,*wolf,hero);
   monsterEnemyPerception(world,*wolf,sheep,hero);
+  monsterHuntAndEatBodyPhases(world,*wolf,sheep);
   const auto attack=script.findFunction("ZS_MM_ATTACK");
   require(wolf->startState(attack,site->name),"the wolf must enter attack before saving");
   wolf->setTarget(&hero);
