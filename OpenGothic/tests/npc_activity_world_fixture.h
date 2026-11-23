@@ -7878,8 +7878,8 @@ void dragonIslandPlacement(Gothic& gothic) {
     require(captured(true,crew)==vmResult,
             ("Dragon Island placement: crew case "+std::to_string(crew)+" matches stock calls and saved world").c_str());
     }
+  NpcWorldFixture::dragonIslandChapterWorld(world);
   gothic.clearGame().reset();
-  std::puts("Dragon Island placement: four captain and crew combinations match the original calls and world state");
   }
 
 void routineSwitchWorld(World& world) {

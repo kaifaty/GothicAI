@@ -348,6 +348,7 @@ class GameScript final : public GameRules {
     void loadNativeNpcGlobals();
     void loadNativeWorldEntry();
     void enterChapterWorld(bool oldWorld);
+    void changeChapter(int32_t chapter, int32_t level);
     void invokeKillNpc(int32_t symbol);
     void killNpc(int32_t symbol);
     void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);

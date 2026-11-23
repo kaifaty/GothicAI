@@ -148,6 +148,8 @@ void GameScript::loadNativeWorldEntry() {
                        PlacementDefinitionRuntime::enabled);
   vm.override_function("B_ENTER_OLDWORLD",std::function<void()>{[this] { enterChapterWorld(true); }},
                        PlacementDefinitionRuntime::enabled);
+  vm.override_function("B_KAPITELWECHSEL",std::function<void(int32_t,int32_t)>{
+    [this](int32_t chapter,int32_t level) { changeChapter(chapter,level); }},PlacementDefinitionRuntime::enabled);
   }
 
 void GameScript::enterChapterWorld(bool oldWorld) {
@@ -188,4 +190,46 @@ void GameScript::enterChapterWorld(bool oldWorld) {
   const bool bilgotDead=isDead("BILGOT")==number("TRUE");
   if(rescueRunning && bilgotDead)
     findSymbol("MIS_RESCUEBILGOT")->set_int(number("LOG_FAILED"));
+  }
+
+void GameScript::changeChapter(int32_t chapter, int32_t level) {
+  auto* savedLevel=findSymbol("B_KAPITELWECHSEL.AKTUELLES_LEVEL_ZEN");
+  savedLevel->set_int(level);
+  findSymbol("B_KAPITELWECHSEL.NEUES_KAPITEL")->set_int(chapter);
+  storyChapter=chapter;
+
+  if(chapter==2) {
+    for(const auto* name:{"SEKOB","BENGAR"}) {
+      const auto actor=findSymbol(name)->get_instance();
+      vm.unsafe_set_gi(actor);
+      if(actor)
+        findSymbol("C_NPC.FLAGS")->set_int(0,0,actor.get());
+      }
+    }
+  if(chapter==1 || chapter==2) {
+    static constexpr std::array introductions={
+      std::array{"KAPWECHSEL_1","KAPWECHSEL_1_TEXT","$28527","$28528"},
+      std::array{"KAPWECHSEL_2","KAPWECHSEL_2_TEXT","$28529","$28530"},
+      };
+    for(const auto* name:introductions[size_t(chapter)-1])
+      vm.push_reference(findSymbol(name));
+    vm.push_int(6000);
+    vm.unsafe_call_external(findSymbol("INTRODUCECHAPTER"));
+    }
+  else if(chapter>=4 && chapter<=6) {
+    findSymbol("PLAYER_TALENT_ALCHEMY")->set_int(findSymbol("TRUE")->get_int(),12);
+    }
+
+  vm.unsafe_call_bl(findSymbol("B_CHECKLOG"));
+  // Nested story calls can update the parameter symbols and the chapter.
+  if(savedLevel->get_int()==findSymbol("OLDWORLD_ZEN")->get_int())
+    vm.unsafe_call_bl(findSymbol("B_ENTER_OLDWORLD"));
+  if(savedLevel->get_int()==findSymbol("NEWWORLD_ZEN")->get_int())
+    vm.unsafe_call_bl(findSymbol("B_ENTER_NEWWORLD"));
+
+  static constexpr std::array ambientXp={
+    "XP_AMBIENTKAP1","XP_AMBIENTKAP2","XP_AMBIENTKAP3","XP_AMBIENTKAP4","XP_AMBIENTKAP5","XP_AMBIENTKAP6",
+    };
+  if(storyChapter>=1 && storyChapter<=int32_t(ambientXp.size()))
+    findSymbol("XP_AMBIENT")->set_int(findSymbol(ambientXp[size_t(storyChapter)-1])->get_int());
   }
