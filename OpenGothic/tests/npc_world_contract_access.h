@@ -158,7 +158,7 @@ inline std::vector<std::string> activityQueue(const Npc& npc) {
   return actions;
   }
 
-void diegoRouteBoundaries(World& world,Npc& context);
+void oldWorldNpcCases(World& world,Npc& context);
 void companionPlayerPerceptions(World& world,Npc& npc,Npc& hero);
 void fightSoundPerceptions(World& world,Npc& npc,Npc& hero);
 

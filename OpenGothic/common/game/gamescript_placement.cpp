@@ -1,5 +1,6 @@
 #include "gamescript.h"
 
+#include <array>
 #include <initializer_list>
 #include <stdexcept>
 
@@ -137,4 +138,54 @@ void GameScript::runWorldInit(std::string_view fn) {
   // The stock void root discards the removal result on return.
   if(hasKey)
     (void)vm.pop_int();
+  }
+
+void GameScript::loadNativeWorldEntry() {
+  if(!nativeRoutineProgram)
+    return;
+
+  vm.override_function("B_ENTER_NEWWORLD",std::function<void()>{[this] { enterChapterWorld(false); }},
+                       PlacementDefinitionRuntime::enabled);
+  vm.override_function("B_ENTER_OLDWORLD",std::function<void()>{[this] { enterChapterWorld(true); }},
+                       PlacementDefinitionRuntime::enabled);
+  }
+
+void GameScript::enterChapterWorld(bool oldWorld) {
+  static constexpr std::array newWorldChapters={
+    "B_ENTER_NEWWORLD_KAPITEL_1", "B_ENTER_NEWWORLD_KAPITEL_2", "B_ENTER_NEWWORLD_KAPITEL_3",
+    "B_ENTER_NEWWORLD_KAPITEL_4", "B_ENTER_NEWWORLD_KAPITEL_5", "B_ENTER_NEWWORLD_KAPITEL_6",
+    };
+  static constexpr std::array oldWorldChapters={
+    "B_ENTER_OLDWORLD_KAPITEL_1", "B_ENTER_OLDWORLD_KAPITEL_2", "B_ENTER_OLDWORLD_KAPITEL_3",
+    "B_ENTER_OLDWORLD_KAPITEL_4", "B_ENTER_OLDWORLD_KAPITEL_5", "B_ENTER_OLDWORLD_KAPITEL_6",
+    };
+  const auto& chapters=oldWorld ? oldWorldChapters : newWorldChapters;
+  const auto* npcGlobals=findSymbol("B_INITNPCGLOBALS");
+  vm.unsafe_call_bl(npcGlobals);
+  for(size_t i=0;i<chapters.size();++i) {
+    if(storyChapter>=int32_t(i)+1)
+      vm.unsafe_call_bl(findSymbol(chapters[i]));
+    }
+  const auto number=[&](std::string_view name) { return findSymbol(name)->get_int(); };
+  findSymbol("CURRENTLEVEL")->set_int(number(oldWorld ? "OLDWORLD_ZEN" : "NEWWORLD_ZEN"));
+  vm.unsafe_call_bl(npcGlobals);
+  if(!oldWorld)
+    return;
+
+  const auto isDead=[&](std::string_view alias) {
+    vm.push_reference(findSymbol(alias));
+    vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
+    return vm.pop_int();
+    };
+  const bool biffAlive=isDead("BIFF")==number("FALSE");
+  const bool biffParty=number("DJG_BIFFPARTY")==number("TRUE");
+  if(biffAlive && biffParty) {
+    vm.push_reference(findSymbol("BIFF"));
+    vm.push_int(number("DJG_BIFF_HALBEHALBE")==number("TRUE") ? 500 : 300);
+    vm.unsafe_call_external(findSymbol("NPC_SETREFUSETALK"));
+    }
+  const bool rescueRunning=number("MIS_RESCUEBILGOT")==number("LOG_RUNNING");
+  const bool bilgotDead=isDead("BILGOT")==number("TRUE");
+  if(rescueRunning && bilgotDead)
+    findSymbol("MIS_RESCUEBILGOT")->set_int(number("LOG_FAILED"));
   }

@@ -6,6 +6,7 @@
 #include "baseidentity.h"
 #include "baseimport.h"
 #include "commandline.h"
+#include "game/definitions/basescripts.h"
 #include "game/gamesession.h"
 #include "gothic.h"
 #include "gamemusic.h"
@@ -28,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -477,7 +479,106 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
 
 namespace NpcWorldFixture {
 
-void diegoRouteBoundaries(World& world,Npc& context) {
+static void oldWorldEntry(World& world,Npc& living) {
+  if(NpcSnapshot::load(baseProgramIndex().dir.parent_path()).sha256!=
+     "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
+    return;
+
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto* root=script.findSymbol("B_ENTER_OLDWORLD");
+  auto* biff=script.findSymbol("DJG_713_BIFF");
+  auto* bilgot=script.findSymbol("VLK_4120_BILGOT");
+  auto* biffAlias=script.findSymbol("BIFF");
+  auto* bilgotAlias=script.findSymbol("BILGOT");
+  const auto biffBefore=biff->get_instance(), bilgotBefore=bilgot->get_instance();
+  const auto biffAliasBefore=biffAlias->get_instance(), bilgotAliasBefore=bilgotAlias->get_instance();
+  auto& refusal=NpcDefinitionContract::refusalDeadline(living);
+  const auto refusalBefore=refusal;
+  std::map<std::string_view,int32_t> before;
+  for(const auto* name:{"KAPITEL","CURRENTLEVEL","DJG_BIFFPARTY","DJG_BIFF_HALBEHALBE","MIS_RESCUEBILGOT",
+                        "ENTEROW_KAPITEL1","ENTEROW_KAPITEL2"})
+    before.emplace(name,script.findSymbol(name)->get_int());
+  const auto* configured=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
+  const auto oldSetting=configured ? std::optional<std::string>(configured) : std::nullopt;
+  Npc dead(world,bilgot->index(),"OW_DJG_ROCKCAMP_01");
+  require(dead.startState(script.findFunction("ZS_DEAD"),""),"Old World entry fixture must set up a dead NPC");
+  const auto livingHandle=std::static_pointer_cast<daedalus::INpc>(living.handlePtr());
+  const auto deadHandle=std::static_pointer_cast<daedalus::INpc>(dead.handlePtr());
+  auto* chapter=script.findSymbol("KAPITEL");
+  auto* level=script.findSymbol("CURRENTLEVEL");
+  auto* rescue=script.findSymbol("MIS_RESCUEBILGOT");
+  const auto oldLevel=script.intSymbol("OLDWORLD_ZEN",0), newLevel=script.intSymbol("NEWWORLD_ZEN",0);
+
+  const auto run=[&](bool native,int refusalSeconds,bool bilgotDead) {
+    setenv("OPENGOTHIC_PLACEMENT_RECORDS",native ? "1" : "0",1);
+    biff->set_instance(livingHandle);
+    bilgot->set_instance(bilgotDead ? deadHandle : livingHandle);
+    refusal=0;
+    chapter->set_int(1);
+    level->set_int(newLevel);
+    script.findSymbol("ENTEROW_KAPITEL1")->set_int(1);
+    script.findSymbol("ENTEROW_KAPITEL2")->set_int(1);
+    script.findSymbol("DJG_BIFFPARTY")->set_int(refusalSeconds!=0);
+    script.findSymbol("DJG_BIFF_HALBEHALBE")->set_int(refusalSeconds==500);
+    rescue->set_int(refusalSeconds==0 ? 0 : script.intSymbol("LOG_RUNNING",0));
+
+    std::vector<std::pair<std::string,int32_t>> calls;
+    const auto observer=vm.add_call_observer([&](const auto& symbol) {
+      if(symbol.name()=="B_INITNPCGLOBALS" || symbol.name().starts_with("B_ENTER_OLDWORLD_KAPITEL_"))
+        calls.emplace_back(symbol.name(),level->get_int());
+      if(symbol.name()=="B_ENTER_OLDWORLD_KAPITEL_1")
+        chapter->set_int(2);
+      });
+    vm.observe_externals([&](const auto& symbol) {
+      if(symbol.name()!="NPC_ISDEAD" && symbol.name()!="NPC_SETREFUSETALK")
+        return;
+      const uint16_t depth=symbol.name()=="NPC_ISDEAD" ? 0 : 1;
+      auto* alias=std::get<daedalus::DaedalusSymbol*>(vm.stack_frame(depth).value);
+      calls.emplace_back(symbol.name()+":"+alias->name(),level->get_int());
+      });
+    size_t entries=0;
+    vm.observe_instructions([&](const auto&) { if(vm.pc()==root->address()) ++entries; });
+    const auto pc=vm.pc();
+    const auto context=vm.unsafe_get_gi();
+    vm.push_int(0x12345678);
+    vm.unsafe_call_bl(root);
+    const auto sentinel=vm.pop_int();
+    vm.observe_instructions({});
+    vm.observe_externals({});
+    vm.remove_call_observer(observer);
+
+    require(entries==(native ? 0u : 1u) && sentinel==0x12345678 && vm.pc()==pc && vm.unsafe_get_gi()==context,
+            "Old World entry must use the selected executor and preserve VM context");
+    const auto quest=refusalSeconds==0 ? 0 : script.intSymbol(bilgotDead ? "LOG_FAILED" : "LOG_RUNNING",0);
+    require(chapter->get_int()==2 && level->get_int()==oldLevel &&
+            rescue->get_int()==quest && refusal==(refusalSeconds==0 ? 0 : world.tickCount()+uint64_t(refusalSeconds)*1000),
+            "Old World entry must apply the live chapter, Biff refusal time and Bilgot rescue result");
+    return calls;
+    };
+  for(const auto [seconds,deadBilgot]:{std::pair{500,true},std::pair{300,false},std::pair{0,true}}) {
+    std::vector<std::pair<std::string,int32_t>> expected={
+      {"B_INITNPCGLOBALS",newLevel},{"B_ENTER_OLDWORLD_KAPITEL_1",newLevel},
+      {"B_ENTER_OLDWORLD_KAPITEL_2",newLevel},{"B_INITNPCGLOBALS",oldLevel},{"NPC_ISDEAD:BIFF",oldLevel}};
+    if(seconds!=0) expected.emplace_back("NPC_SETREFUSETALK:BIFF",oldLevel);
+    expected.emplace_back("NPC_ISDEAD:BILGOT",oldLevel);
+    require(run(false,seconds,deadBilgot)==expected && run(true,seconds,deadBilgot)==expected,
+            "Old World entry: stock and native must preserve both alias passes, chapter order and eager death checks");
+    }
+
+  refusal=refusalBefore;
+  biff->set_instance(biffBefore);
+  bilgot->set_instance(bilgotBefore);
+  biffAlias->set_instance(biffAliasBefore);
+  bilgotAlias->set_instance(bilgotAliasBefore);
+  for(const auto& [name,value]:before)
+    script.findSymbol(name)->set_int(value);
+  if(oldSetting) setenv("OPENGOTHIC_PLACEMENT_RECORDS",oldSetting->c_str(),1);
+  else unsetenv("OPENGOTHIC_PLACEMENT_RECORDS");
+  std::puts("Old World entry: live chapter gates, eager death checks, Biff refusal and Bilgot rescue match stock");
+  }
+
+static void diegoRouteBoundaries(World& world,Npc& context) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
   auto& vm=script.getVm();
@@ -732,6 +833,11 @@ void fightSoundPerceptions(World& world,Npc& npc,Npc& hero) {
   restore();
   enabled=savedEnabled;
   std::puts("Fight sound: direct, guide and follower perception preserve source, victim, party filters and action");
+  }
+
+void oldWorldNpcCases(World& world,Npc& npc) {
+  oldWorldEntry(world,npc);
+  diegoRouteBoundaries(world,npc);
   }
 
 } // namespace NpcWorldFixture

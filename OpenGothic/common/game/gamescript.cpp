@@ -97,6 +97,7 @@ GameScript::GameScript(GameSession &owner)
   initCommon();
   loadNativeKillNpc();
   loadNativeNpcGlobals();
+  loadNativeWorldEntry();
   loadNativeRoutineExchange();
   loadNativeRoutines();
   loadNativeRoomReaction();
