@@ -345,6 +345,7 @@ void GameScript::loadNativeHumanPerceptions() {
   drawWeaponCallback = findFunction("B_ASSESSDRAWWEAPON");
   threatCallback = findFunction("B_ASSESSTHREAT");
   damageCallback = findFunction("B_ASSESSDAMAGE");
+  stopShortZapCallback = findFunction("B_STOPSHORTZAPPED");
   const auto enabled = [this] { return nativeHumanPerceptionsEnabled(); };
   vm.override_function("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }},enabled);
   vm.override_function("B_ASSESSDAMAGE",std::function<void()>{[this] { runDamageReaction(); }},enabled);
@@ -358,13 +359,16 @@ void GameScript::loadNativeHumanPerceptions() {
   }
 
 bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase) {
-  if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=damageCallback) || !nativeHumanPerceptionsEnabled())
+  const bool stopShortZap = fn==stopShortZapCallback;
+  if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=damageCallback && !stopShortZap) || !nativeHumanPerceptionsEnabled())
     return false;
   phase.fromRecord();
   if(fn==drawWeaponCallback)
     phase.result = runDrawWeaponReaction();
   else if(fn==threatCallback)
     runThreatReaction();
+  else if(stopShortZap)
+    stopControlSpell(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()),true);
   else
     runDamageReaction();
   return true;
@@ -494,6 +498,70 @@ void GameScript::runDamageReaction() {
       }
     }
   startNpcAttack(self,attacker,findSymbol("AR_REACTTODAMAGE")->get_int(),0);
+  }
+
+void GameScript::stopControlSpell(const std::shared_ptr<daedalus::INpc>& self, bool continueRoutine) {
+  npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction("B_ASSESSMAGIC").ptr));
+  npc_clearaiqueue(self);
+  ai_standup(self);
+  if(int32_t(self->guild)<findSymbol("GIL_SEPERATOR_HUM")->get_int())
+    runDamageReaction();
+  else
+    npc_settempattitude(self,ATT_HOSTILE);
+  if(continueRoutine)
+    ai_continueroutine(self);
+  }
+
+bool GameScript::runControlSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const std::string_view name = symbol.name();
+  result = 0;
+  if(name=="ZS_GREENTENTACLE") {
+    npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction("B_RESTARTGREENTENTACLE").ptr));
+    npc_percenable(self,PERC_ASSESSDAMAGE,int(damageCallback.ptr));
+    npc_stopani(self,"s_GreententacleA_Victim");
+    npc_stopani(self,"s_GreententacleB_Victim");
+    npc_stopani(self,"s_GreententacleC_Victim");
+    npc_clearaiqueue(self);
+    ai_standup(self);
+    if(vm.call_function<int32_t>("C_BODYSTATECONTAINS",self,int32_t(BS_UNCONSCIOUS))!=0)
+      return true;
+    if(int32_t(self->guild)<findSymbol("GIL_SEPERATOR_HUM")->get_int()) {
+      static constexpr std::string_view humanPoses[] = {
+        "T_STAND_2_GREENTENTACLEA_VICTIM", "T_STAND_2_GREENTENTACLEB_VICTIM", "T_STAND_2_GREENTENTACLEC_VICTIM",
+        };
+      const auto pose = findSymbol("ZS_GREENTENTACLE.RANDY")->get_int();
+      if(size_t(pose)<std::size(humanPoses))
+        ai_playanibs(self,humanPoses[size_t(pose)],BS_UNCONSCIOUS);
+      } else {
+      ai_playanibs(self,"T_STAND_2_FREEZE_VICTIM",BS_UNCONSCIOUS);
+      }
+    return true;
+    }
+  if(name=="ZS_GREENTENTACLE_LOOP") {
+    result = LOOP_CONTINUE;
+    if(npc_getstatetime(self)>findSymbol("SPL_TIME_GREENTENTACLE")->get_int()) {
+      stopControlSpell(self,false);
+      result = LOOP_END;
+      }
+    return true;
+    }
+  if(name=="ZS_SHORTZAPPED") {
+    npc_percenable(self,PERC_ASSESSSTOPMAGIC,int(stopShortZapCallback.ptr));
+    if(npc_hasbodyflag(self,findSymbol("BS_FLAG_INTERRUPTABLE")->get_int()))
+      ai_standupquick(self);
+    else
+      ai_standup(self);
+    if(int32_t(self->guild)<findSymbol("GIL_SEPERATOR_HUM")->get_int())
+      ai_playani(self,"T_STAND_2_LIGHTNING_VICTIM");
+    return true;
+    }
+  if(name=="ZS_SHORTZAPPED_LOOP") {
+    if(npc_getstatetime(self)>findSymbol("SPL_TIME_SHORTZAPPED")->get_int())
+      stopControlSpell(self,true);
+    return true;
+    }
+  return name=="ZS_GREENTENTACLE_END" || name=="ZS_SHORTZAPPED_END";
   }
 
 void GameScript::validateCombatTarget(const std::shared_ptr<daedalus::INpc>& self) {

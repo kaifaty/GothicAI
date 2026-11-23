@@ -257,6 +257,8 @@ class GameScript final : public GameRules {
     bool runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runFakeGuildComment(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanPlunder(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runControlSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    void stopControlSpell(const std::shared_ptr<daedalus::INpc>& self, bool continueRoutine);
     void validateCombatTarget(const std::shared_ptr<daedalus::INpc>& self);
     bool runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -633,6 +635,7 @@ class GameScript final : public GameRules {
     ScriptFn                                                    drawWeaponCallback;
     ScriptFn                                                    threatCallback;
     ScriptFn                                                    damageCallback;
+    ScriptFn                                                    stopShortZapCallback;
     std::unordered_map<uint32_t,NativeRoutinePhase>              nativeRoutinePhases;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};

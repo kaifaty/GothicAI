@@ -1683,7 +1683,7 @@ void damagePerceptions(World& world,Npc& npc,Npc& hero) {
   const auto damagePc=vm.find_symbol_by_name("B_ASSESSDAMAGE")->address();
   const auto attack=script.findFunction("ZS_ATTACK");
   const auto warn=script.findFunction("ZS_REACTTODAMAGE");
-  const auto stopZap=script.findFunction("B_STOPSHORTZAPPED");
+  const auto stopBurn=script.findFunction("B_STOPMAGICBURNSHORT");
   const auto reactReason=script.intSymbol("AR_REACTTODAMAGE",-1);
   const auto noneReason=script.intSymbol("AR_NONE",-1);
   const auto crimeAttack=script.intSymbol("CRIME_ATTACK",-1);
@@ -1729,7 +1729,7 @@ void damagePerceptions(World& world,Npc& npc,Npc& hero) {
         require(npc.perceptionProcess(attacker,&npc,0,PERC_ASSESSDAMAGE),"damage perception: the stock callback is delivered");
         };
       if(hit==Hit::SpellEnd)
-        script.invokeState(&npc,&attacker,nullptr,stopZap);
+        script.invokeState(&npc,&attacker,nullptr,stopBurn);
       else
         deliver();
       if(attacker.isPlayer())
@@ -2079,6 +2079,120 @@ void humanPlunderAndArmorPhases(World& world,Npc& npc,Npc& hero) {
   std::puts("Armor and plunder: comments, meat, quest item and gold match the VM");
   }
 
+void controlSpellPhases(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto tentacle=activityPhases(script,"ZS_GREENTENTACLE");
+  const auto zap=activityPhases(script,"ZS_SHORTZAPPED");
+  const auto warn=script.findFunction("ZS_REACTTODAMAGE");
+  auto& pose=*vm.find_symbol_by_name("ZS_GREENTENTACLE.RANDY");
+  const auto savedPose=pose.get_int();
+  const auto savedGuild=npc.handle().guild;
+  const auto savedAttitude=npc.attitude();
+  const auto savedTempAttitude=npc.tempAttitude();
+  const auto savedTime=npc.stateTime();
+  auto& aivar=npc.handle().aivar;
+  const auto savedAivar=std::to_array(aivar);
+  const auto wolfGuild=script.intSymbol("GIL_WOLF",-1);
+  std::vector<std::string> original;
+  auto originalRandom=Contract::random(script);
+  npc.setAttitude(ATT_FRIENDLY);
+  const auto expectWarning=[&](bool resume,const Npc* victim) {
+    auto queue=Contract::queue(npc);
+    require(queue.size()==(resume ? 2u : 1u),"spell control: the stop callback keeps the original continuation count");
+    const auto reaction=queue.pop();
+    require(reaction.act==AI_StartState && reaction.func==warn && reaction.target==&hero && reaction.victim==victim &&
+            reaction.i0==0,"spell control: a human stop calls damage assessment with the live attacker and victim");
+    if(resume) require(queue.pop().act==AI_ContinueRoutine,"spell control: lightning queues routine continuation last");
+    };
+  for(bool native:{false,true}) {
+    enabled=native;
+    npc.handle().guild=savedGuild;
+    npc.setTempAttitude(savedTempAttitude);
+    std::copy(savedAivar.begin(),savedAivar.end(),aivar);
+    npc.clearAiQueue();
+    npc.setStateTime(0);
+    pose.set_int(2);
+    script.setSeed(73106);
+    ActivityStream stream(world,npc);
+    size_t phases=0,stopCalls=0,damageCalls=0,invocations=0;
+    const auto observer=vm.add_call_observer([&](const auto& sym) {
+      phases+=sym.name().starts_with("ZS_GREENTENTACLE") || sym.name().starts_with("ZS_SHORTZAPPED");
+      stopCalls+=sym.name()=="B_STOPGREENTENTACLE" || sym.name()=="B_STOPSHORTZAPPED";
+      damageCalls+=sym.name()=="B_ASSESSDAMAGE";
+      });
+    const auto invoke=[&](size_t phase,int time=0) {
+      ++invocations;
+      npc.setStateTime(time);
+      return script.invokeState(&npc,&hero,nullptr,ScriptFn(phase));
+      };
+    invoke(tentacle.init);
+    auto queue=Contract::queue(npc);
+    require(npc.hasPerc(PERC_ASSESSMAGIC) && npc.hasPerc(PERC_ASSESSDAMAGE) &&
+            queue.size()==2 && queue.pop().act==AI_StandUp,"green tentacle: Init stands up and activates both perceptions");
+    const auto humanPose=queue.pop();
+    require(humanPose.act==AI_PlayAnimBs && humanPose.s0=="T_STAND_2_GREENTENTACLEC_VICTIM" &&
+            humanPose.i0==BS_UNCONSCIOUS && pose.get_int()==2,"green tentacle: Init keeps the spell's selected pose");
+    npc.clearAiQueue();
+    require(invoke(tentacle.loop,20999)==LOOP_CONTINUE && npc.isAiQueueEmpty() &&
+            invoke(tentacle.loop,21000)==LOOP_END,"green tentacle: the timeout compares whole seconds");
+    expectWarning(false,nullptr);
+    invoke(tentacle.end);
+    npc.clearAiQueue();
+
+    invoke(zap.init);
+    queue=Contract::queue(npc);
+    const auto stand=npc.hasStateFlag(BS_FLAG_INTERRUPTABLE) ? AI_StandUpQuick : AI_StandUp;
+    require(npc.hasPerc(PERC_ASSESSSTOPMAGIC) && queue.size()==2 && queue.pop().act==stand &&
+            queue.pop().s0=="T_STAND_2_LIGHTNING_VICTIM","short zap: Init registers cancellation and queues the original animation");
+    npc.clearAiQueue();
+    require(invoke(zap.loop,2999)==LOOP_CONTINUE && npc.isAiQueueEmpty() && invoke(zap.loop,3000)==LOOP_CONTINUE,
+            "short zap: stop is queued above two whole seconds while the Loop result stays zero");
+    expectWarning(true,nullptr);
+    invoke(zap.end);
+    npc.clearAiQueue();
+
+    invoke(zap.init);
+    require(npc.perceptionProcess(hero,&npc,0,PERC_ASSESSSTOPMAGIC),"short zap: the stock stop-magic perception is delivered");
+    expectWarning(true,&npc);
+    npc.clearAiQueue();
+
+    npc.handle().guild=uint32_t(wolfGuild);
+    invoke(tentacle.init);
+    queue=Contract::queue(npc);
+    require(queue.size()==2 && queue.pop().act==AI_StandUp && queue.pop().s0=="T_STAND_2_FREEZE_VICTIM",
+            "green tentacle: a nonhuman guild uses the freeze animation");
+    require(invoke(tentacle.loop,21000)==LOOP_END && npc.tempAttitude()==ATT_HOSTILE && npc.hasPerc(PERC_ASSESSMAGIC) &&
+            Contract::queue(npc).size()==1 && npc.aiQueueFront()->act==AI_StandUp,
+            "green tentacle: a nonhuman stop restores magic perception and sets hostility");
+    vm.remove_call_observer(observer);
+    require(phases==(native ? 0u : invocations) && stopCalls==(native ? 0u : 4u) && damageCalls==(native ? 0u : 3u) &&
+            stream.records==(native ? invocations+1 : 0u),"spell control: all phases and the routed stop use the selected executor");
+    std::erase_if(stream.events,[](const auto& event) {
+      return !(event.starts_with("phase ") || event.starts_with("result ") ||
+               event.starts_with("queue ") || event.starts_with("random "));
+      });
+    if(!native) {
+      original=std::move(stream.events);
+      originalRandom=Contract::random(script);
+      } else {
+      require(original==stream.events && originalRandom==Contract::random(script),
+              "spell control: phase results, queue and RNG match the original");
+      }
+    }
+  enabled=wasEnabled;
+  pose.set_int(savedPose);
+  npc.handle().guild=savedGuild;
+  npc.setAttitude(savedAttitude);
+  npc.setTempAttitude(savedTempAttitude);
+  npc.setStateTime(int64_t(savedTime));
+  std::copy(savedAivar.begin(),savedAivar.end(),aivar);
+  std::puts("Spell control: green tentacle and short zap match the VM including timed and perceived stops");
+  }
+
 void quietSoundRooms(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -2258,6 +2372,7 @@ void quietSoundRooms(Gothic& gothic) {
   humanAttackPhases(world,*npc,hero);
   fleeAndWatchPhases(world,*npc,hero);
   humanPlunderAndArmorPhases(world,*npc,hero);
+  controlSpellPhases(world,*npc,hero);
   for(bool privateRoom:{false,true}) {
     std::vector<std::string> original;
     for(bool native:{false,true}) {

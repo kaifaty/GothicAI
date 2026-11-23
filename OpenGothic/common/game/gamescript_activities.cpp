@@ -52,6 +52,8 @@ void GameScript::loadNativeRoutines() {
     {"ZS_COMMENTFAKEGUILD",    &GameScript::runFakeGuildComment},
     {"ZS_GETMEAT",             &GameScript::runHumanPlunder},
     {"ZS_RANSACKBODY",         &GameScript::runHumanPlunder},
+    {"ZS_GREENTENTACLE",       &GameScript::runControlSpell},
+    {"ZS_SHORTZAPPED",         &GameScript::runControlSpell},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
     {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_REST",        &GameScript::runMonsterRoutine},
