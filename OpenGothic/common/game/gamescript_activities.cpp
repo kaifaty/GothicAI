@@ -114,17 +114,10 @@ void GameScript::enableMonsterRoutinePerceptions(Npc& npc) {
 void GameScript::beginMonsterRoutine(Npc& npc, bool desynchronize, WalkBit mode) {
   npc.aiPush(AiQueue::aiSetWalkMode(mode));
   if(desynchronize)
-    desynchronizeMonster(npc);
+    desynchronizeNpc();
   const auto& waypoint = npc.handle().wp;
   if(NpcEngineCalls::nearestWaypoint(world(),npc)!=waypoint)
     NpcEngineCalls::gotoWaypoint(world(),npc,waypoint);
-  }
-
-void GameScript::desynchronizeMonster(Npc& npc) {
-  const auto delay = rollRandom(1000,&npc,true);
-  findSymbol("B_MM_DESYNCHRONIZE.MSEC")->set_int(int32_t(delay));
-  if(delay>0)
-    npc.aiPush(AiQueue::aiWait(delay));
   }
 
 bool GameScript::endMonsterRoutine(Npc& npc, MonsterRoutine routine) {

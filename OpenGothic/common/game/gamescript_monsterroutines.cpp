@@ -168,7 +168,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     validateMonsterTarget(self);
     if(self->guild==GIL_SHEEP) {
       npc_clearaiqueue(self);
-      vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+      clearPerceptions(self);
       npc_settarget(self,other());
       ai_startstate(self,int(findFunction("ZS_MM_FLEE").ptr),0,"");
       } else {
@@ -390,7 +390,7 @@ bool GameScript::runMonsterFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol
     ai_standup(self);
     ai_setwalkmode(self,int(WalkBit::WM_Run));
     npc_sendpassiveperc(self,PERC_ASSESSWARN,other(),self);
-    desynchronizeMonster(npc);
+    desynchronizeNpc();
     result = 0;
     return true;
     }
@@ -566,7 +566,7 @@ void GameScript::runMonsterAssessEnemy() {
     npc_clearaiqueue(self);
     if(setTarget)
       npc_settarget(self,other);
-    vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+    clearPerceptions(self);
     ai_startstate(self,int(findFunction(state).ptr),0,"");
     };
   if(self->aivar[partyMember]==1) {
