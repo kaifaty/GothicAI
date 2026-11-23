@@ -1126,11 +1126,70 @@ bool GameScript::applyEquipmentStatEffect(Npc& npc, uint32_t callback) {
   return true;
   }
 
+void GameScript::applyWispEquipmentEffect(bool equip) {
+  auto* detector = findSymbol("WISP_DETECTOR");
+  auto* local = findSymbol(equip ? "EQUIP_WISPDETECTOR.DETWSP" : "UNEQUIP_WISPDETECTOR.DETWSP");
+  auto* no = findSymbol("FALSE");
+  const auto external = [&](const char* name) { vm.unsafe_call_external(findSymbol(name)); };
+  const auto sound = [&](const char* name) {
+    vm.push_reference(findSymbol(name));
+    external("SND_PLAY");
+    };
+  const auto teleport = [&](const char* destination) {
+    vm.push_reference(local);
+    vm.push_reference(findSymbol(destination));
+    external("AI_TELEPORT");
+    };
+  if(equip) {
+    auto* initialized = findSymbol("EQUIP_WISPDETECTOR_ONETIME");
+    if(initialized->get_int()==no->get_int()) {
+      const auto yes = findSymbol("TRUE")->get_int();
+      findSymbol("PLAYER_TALENT_WISPDETECTOR")->set_int(yes,0);
+      findSymbol("WISPSEARCHING")->set_int(findSymbol("WISPSEARCH_NF")->get_int());
+      initialized->set_int(yes);
+      }
+    }
+  vm.push_int(int32_t(detector->index()));
+  external("HLP_GETNPC");
+  local->set_instance(vm.pop_instance());
+  if(equip) {
+    teleport("$16475"); // Stock TOT destination.
+    vm.push_reference(vm.global_self());
+    vm.push_int(int32_t(detector->index()));
+    vm.push_int(1);
+    vm.push_int(std::bit_cast<int32_t>(500.f));
+    external("WLD_SPAWNNPCRANGE");
+
+    vm.push_reference(findSymbol("$16476")); // Stock spellFX_LIGHTSTAR_WHITE.
+    vm.push_reference(detector);
+    vm.push_reference(detector);
+    vm.push_int(0);
+    vm.push_int(0);
+    vm.push_int(0);
+    vm.push_reference(no);
+    external("WLD_PLAYEFFECT");
+    sound("$16477"); // Stock MFX_Transform_Cast.
+    } else {
+    vm.push_reference(local);
+    external("NPC_ISDEAD");
+    if(vm.pop_int()==no->get_int())
+      sound("$16478"); // Stock WSP_Dead_A1.
+    teleport("$16479"); // Stock TOT destination before removal.
+    vm.push_int(int32_t(local->index()));
+    vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
+    teleport("$16480"); // Stock TOT destination after removal.
+    }
+  }
+
 bool GameScript::applyStatefulEquipmentEffect(Npc& npc, std::string_view callback) {
   const bool equip = callback.starts_with("EQUIP_");
   if(!equip && !callback.starts_with("UNEQUIP_"))
     return false;
   const auto item = callback.substr(equip ? 6 : 8);
+  if(item=="WISPDETECTOR") {
+    applyWispEquipmentEffect(equip);
+    return true;
+    }
   static constexpr struct Belt {
     std::string_view item;
     const char* equipped;
