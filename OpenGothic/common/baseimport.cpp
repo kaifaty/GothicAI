@@ -779,6 +779,8 @@ void build(const fs::path& gothic, const fs::path& out, const Progress& progress
   require(convertFonts(gothic,out/"fonts",false)==0,"font import failed");
   if(progress) progress("base import: programs");
   require(convertPrograms(gothic,out/"programs",false)==0,"program import failed");
+  if(progress) progress("base import: menu definitions");
+  convertMenuDefinitions(out);
   if(progress) progress("base import: fight definitions");
   convertFightDefinitions(out);
   if(progress) progress("base import: item definitions");

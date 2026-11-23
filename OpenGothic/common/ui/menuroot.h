@@ -2,13 +2,15 @@
 
 #include <Tempest/Widget>
 
-#include "daedalus/vm.h"
-#include "daedalus/classes.h"
+#include "game/definitions/menudefinitions.h"
+
+#include <memory>
 
 #include "utils/keycodec.h"
 
 class GameMenu;
 class Npc;
+namespace daedalus { class DaedalusVm; }
 
 class MenuRoot : public Tempest::Widget {
   public:
@@ -37,10 +39,18 @@ class MenuRoot : public Tempest::Widget {
     void mouseUpEvent   (Tempest::MouseEvent& event) override;
 
   private:
+    friend class GameMenu;
+
     void initSettings();
+    bool hasMenu(std::string_view name) const;
+    std::shared_ptr<MenuDefinitions::Menu> menu(std::string_view name);
+    std::shared_ptr<MenuDefinitions::MenuItem> menuItem(std::string_view name);
+    std::optional<std::pair<int32_t,int32_t>> infoPosition() const;
+    void execute(int32_t symbol);
 
     std::unique_ptr<daedalus::DaedalusVm>    vm;
-    int32_t                                vmLang = -1;
+    std::optional<MenuDefinitions::Catalog> records;
+    int32_t                                menuLanguage = -1;
 
     GameMenu*                              current=nullptr;
     std::vector<std::unique_ptr<GameMenu>> menuStack;

@@ -87,7 +87,9 @@ list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/npchelpe
   "${CMAKE_CURRENT_SOURCE_DIR}/common/asset/npchelperdefinitions.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/common/import/npchelperdefinitions.cpp")
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/fightdefinitiondata.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/fightdefinitions.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/gameplaydefinitions.cpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/gameplaydefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/menudefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/menudefinitions.cpp")
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/meshclusterlod.cpp")
 if(NOT OPENGOTHIC_ENABLE_FRAME_PROFILE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/frameprofile.cpp")

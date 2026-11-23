@@ -332,6 +332,7 @@ class Gothic final : public GameServices, public GameHost {
 
     auto                                    getDocument(int id) -> std::unique_ptr<DocumentMenu::Show>&;
 
+    friend class MenuRoot;
     static void                             notImplementedRoutine(std::string_view fn);
 
     static std::string                      concatstrings     (std::string_view a, std::string_view b);

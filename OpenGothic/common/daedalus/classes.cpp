@@ -662,58 +662,58 @@ void daedalus::ISvm::register_(DaedalusScript& s) {
 
 void daedalus::IMenu::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_MENU", "IMenu");
-	s.register_member("C_MENU.BACKPIC", &IMenu::back_pic);
-	s.register_member("C_MENU.BACKWORLD", &IMenu::back_world);
-	s.register_member("C_MENU.POSX", &IMenu::pos_x);
-	s.register_member("C_MENU.POSY", &IMenu::pos_y);
-	s.register_member("C_MENU.DIMX", &IMenu::dim_x);
-	s.register_member("C_MENU.DIMY", &IMenu::dim_y);
-	s.register_member("C_MENU.ALPHA", &IMenu::alpha);
-	s.register_member("C_MENU.MUSICTHEME", &IMenu::music_theme);
-	s.register_member("C_MENU.EVENTTIMERMSEC", &IMenu::event_timer_msec);
-	s.register_member("C_MENU.ITEMS", &IMenu::items);
-	s.register_member("C_MENU.FLAGS", &IMenu::flags);
-	s.register_member("C_MENU.DEFAULTOUTGAME", &IMenu::default_outgame);
-	s.register_member("C_MENU.DEFAULTINGAME", &IMenu::default_ingame);
+	s.register_member<IMenu>("C_MENU.BACKPIC", &IMenu::back_pic);
+	s.register_member<IMenu>("C_MENU.BACKWORLD", &IMenu::back_world);
+	s.register_member<IMenu>("C_MENU.POSX", &IMenu::pos_x);
+	s.register_member<IMenu>("C_MENU.POSY", &IMenu::pos_y);
+	s.register_member<IMenu>("C_MENU.DIMX", &IMenu::dim_x);
+	s.register_member<IMenu>("C_MENU.DIMY", &IMenu::dim_y);
+	s.register_member<IMenu>("C_MENU.ALPHA", &IMenu::alpha);
+	s.register_member<IMenu>("C_MENU.MUSICTHEME", &IMenu::music_theme);
+	s.register_member<IMenu>("C_MENU.EVENTTIMERMSEC", &IMenu::event_timer_msec);
+	s.register_member<IMenu>("C_MENU.ITEMS", &IMenu::items);
+	s.register_member<IMenu>("C_MENU.FLAGS", &IMenu::flags);
+	s.register_member<IMenu>("C_MENU.DEFAULTOUTGAME", &IMenu::default_outgame);
+	s.register_member<IMenu>("C_MENU.DEFAULTINGAME", &IMenu::default_ingame);
 }
 
 void daedalus::IMenuItem::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_MENU_ITEM", "IMenuItem");
-	s.register_member("C_MENU_ITEM.FONTNAME", &IMenuItem::fontname);
-	s.register_member("C_MENU_ITEM.TEXT", &IMenuItem::text);
-	s.register_member("C_MENU_ITEM.BACKPIC", &IMenuItem::backpic);
-	s.register_member("C_MENU_ITEM.ALPHAMODE", &IMenuItem::alphamode);
-	s.register_member("C_MENU_ITEM.ALPHA", &IMenuItem::alpha);
-	s.register_member("C_MENU_ITEM.TYPE", &IMenuItem::type);
-	s.register_member("C_MENU_ITEM.ONSELACTION", &IMenuItem::on_sel_action);
-	s.register_member("C_MENU_ITEM.ONSELACTION_S", &IMenuItem::on_sel_action_s);
-	s.register_member("C_MENU_ITEM.ONCHGSETOPTION", &IMenuItem::on_chg_set_option);
-	s.register_member("C_MENU_ITEM.ONCHGSETOPTIONSECTION", &IMenuItem::on_chg_set_option_section);
-	s.register_member("C_MENU_ITEM.ONEVENTACTION", &IMenuItem::on_event_action);
-	s.register_member("C_MENU_ITEM.POSX", &IMenuItem::pos_x);
-	s.register_member("C_MENU_ITEM.POSY", &IMenuItem::pos_y);
-	s.register_member("C_MENU_ITEM.DIMX", &IMenuItem::dim_x);
-	s.register_member("C_MENU_ITEM.DIMY", &IMenuItem::dim_y);
-	s.register_member("C_MENU_ITEM.SIZESTARTSCALE", &IMenuItem::size_start_scale);
-	s.register_member("C_MENU_ITEM.FLAGS", &IMenuItem::flags);
-	s.register_member("C_MENU_ITEM.OPENDELAYTIME", &IMenuItem::open_delay_time);
-	s.register_member("C_MENU_ITEM.OPENDURATION", &IMenuItem::open_duration);
-	s.register_member("C_MENU_ITEM.USERFLOAT", &IMenuItem::user_float);
-	s.register_member("C_MENU_ITEM.USERSTRING", &IMenuItem::user_string);
-	s.register_member("C_MENU_ITEM.FRAMESIZEX", &IMenuItem::frame_sizex);
-	s.register_member("C_MENU_ITEM.FRAMESIZEY", &IMenuItem::frame_sizey);
+	s.register_member<IMenuItem>("C_MENU_ITEM.FONTNAME", &IMenuItem::fontname);
+	s.register_member<IMenuItem>("C_MENU_ITEM.TEXT", &IMenuItem::text);
+	s.register_member<IMenuItem>("C_MENU_ITEM.BACKPIC", &IMenuItem::backpic);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ALPHAMODE", &IMenuItem::alphamode);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ALPHA", &IMenuItem::alpha);
+	s.register_member<IMenuItem>("C_MENU_ITEM.TYPE", &IMenuItem::type);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ONSELACTION", &IMenuItem::on_sel_action);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ONSELACTION_S", &IMenuItem::on_sel_action_s);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ONCHGSETOPTION", &IMenuItem::on_chg_set_option);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ONCHGSETOPTIONSECTION", &IMenuItem::on_chg_set_option_section);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ONEVENTACTION", &IMenuItem::on_event_action);
+	s.register_member<IMenuItem>("C_MENU_ITEM.POSX", &IMenuItem::pos_x);
+	s.register_member<IMenuItem>("C_MENU_ITEM.POSY", &IMenuItem::pos_y);
+	s.register_member<IMenuItem>("C_MENU_ITEM.DIMX", &IMenuItem::dim_x);
+	s.register_member<IMenuItem>("C_MENU_ITEM.DIMY", &IMenuItem::dim_y);
+	s.register_member<IMenuItem>("C_MENU_ITEM.SIZESTARTSCALE", &IMenuItem::size_start_scale);
+	s.register_member<IMenuItem>("C_MENU_ITEM.FLAGS", &IMenuItem::flags);
+	s.register_member<IMenuItem>("C_MENU_ITEM.OPENDELAYTIME", &IMenuItem::open_delay_time);
+	s.register_member<IMenuItem>("C_MENU_ITEM.OPENDURATION", &IMenuItem::open_duration);
+	s.register_member<IMenuItem>("C_MENU_ITEM.USERFLOAT", &IMenuItem::user_float);
+	s.register_member<IMenuItem>("C_MENU_ITEM.USERSTRING", &IMenuItem::user_string);
+	s.register_member<IMenuItem>("C_MENU_ITEM.FRAMESIZEX", &IMenuItem::frame_sizex);
+	s.register_member<IMenuItem>("C_MENU_ITEM.FRAMESIZEY", &IMenuItem::frame_sizey);
 
 	// switch
 	if (s.find_symbol_by_name("C_MENU_ITEM.FRAMEPOSX") != nullptr) {
-		s.register_member("C_MENU_ITEM.FRAMEPOSX", &IMenuItem::frame_posx);
-		s.register_member("C_MENU_ITEM.FRAMEPOSY", &IMenuItem::frame_posy);
+		s.register_member<IMenuItem>("C_MENU_ITEM.FRAMEPOSX", &IMenuItem::frame_posx);
+		s.register_member<IMenuItem>("C_MENU_ITEM.FRAMEPOSY", &IMenuItem::frame_posy);
 	}
 
 	// Gothic 2 only
 	if (s.find_symbol_by_name("C_MENU_ITEM.HIDEIFOPTIONSECTIONSET") != nullptr) {
-		s.register_member("C_MENU_ITEM.HIDEIFOPTIONSECTIONSET", &IMenuItem::hide_if_option_section_set);
-		s.register_member("C_MENU_ITEM.HIDEIFOPTIONSET", &IMenuItem::hide_if_option_set);
-		s.register_member("C_MENU_ITEM.HIDEONVALUE", &IMenuItem::hide_on_value);
+		s.register_member<IMenuItem>("C_MENU_ITEM.HIDEIFOPTIONSECTIONSET", &IMenuItem::hide_if_option_section_set);
+		s.register_member<IMenuItem>("C_MENU_ITEM.HIDEIFOPTIONSET", &IMenuItem::hide_if_option_set);
+		s.register_member<IMenuItem>("C_MENU_ITEM.HIDEONVALUE", &IMenuItem::hide_on_value);
 	}
 }
 
