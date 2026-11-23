@@ -11,14 +11,13 @@
 
 #include "game/gamescript.h"
 
-#include "expr.h"
+#include "eval.h"
 #include "program.h"
 
 class Npc;
 
 namespace storygraph {
   class Bytecode;
-  class Externals;
   class Interpreter;
   class Lifter;
   class Predicates;
@@ -58,6 +57,8 @@ class StoryRuntime final {
     std::string         checkProgram(daedalus::DaedalusVm& v, const storygraph::Program& p, const daedalus::DaedalusSymbol* fn,
                                      bool choices = true) const;
 
+    // A live query with SELF and OTHER bound by the caller.
+    std::optional<storygraph::Value> evaluate(const storygraph::ExprP& e, std::string& error);
     // a condition, with self and other as they are now; nullopt: it could not be computed (logged once as `what`)
     std::optional<bool> test(const storygraph::ExprP& e, std::string_view what);
     // the interpreter of the VM's programs, made again for a new VM

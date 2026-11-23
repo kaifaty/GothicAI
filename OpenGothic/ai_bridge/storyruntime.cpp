@@ -19,32 +19,47 @@ using daedalus::DaedalusDataType;
 
 namespace {
 
-class StoryProgramExternals final : public storygraph::Externals {
+class LiveStoryExternals final : public storygraph::Externals {
   public:
-    StoryProgramExternals(daedalus::DaedalusVm& vm, GameScript& script) : script(script), fallback(vm) {}
+    LiveStoryExternals(GameScript& script, bool effects)
+      : script(script), fallback(script.getVm()), effects(effects) {}
 
     storygraph::Value call(const daedalus::DaedalusSymbol& fn, const std::vector<storygraph::Value>& args) override {
       using storygraph::Value;
       const std::string_view name=fn.name();
-      if((name=="NPC_SETREFUSETALK" || name=="NPC_SETATTITUDE") && !fn.has_return() && args.size()==2 &&
-         args[0].type==Value::Inst && args[1].type==Value::Int) {
-        if(!args[0].inst)
-          return Value::integer(0);
-        const auto record=std::dynamic_pointer_cast<daedalus::INpc>(args[0].inst);
-        if(auto* npc=script.findNpc(static_cast<NpcRecord*>(record.get()))) {
-          if(name=="NPC_SETREFUSETALK")
-            npc->setRefuseTalkSeconds(args[1].i);
-          else
-            npc->setAttitude(Attitude(args[1].i));
-          return Value::integer(0);
-          }
-        }
-      return fallback.call(fn,args);
+      const bool deadQuery=name=="NPC_ISDEAD";
+      const bool query=(deadQuery || name=="NPC_KNOWSINFO" || name=="NPC_HASITEMS") &&
+                       fn.has_return() && fn.rtype()==DaedalusDataType::INT;
+      const bool effect=effects && (name=="NPC_SETREFUSETALK" || name=="NPC_SETATTITUDE") && !fn.has_return();
+      if((!query && !effect) || args.size()!=(deadQuery ? 1u : 2u) || args[0].type!=Value::Inst ||
+         (!deadQuery && args[1].type!=Value::Int))
+        return fallback.call(fn,args);
+
+      auto* record=dynamic_cast<daedalus::INpc*>(args[0].inst.get());
+      auto* npc=script.findNpc(static_cast<NpcRecord*>(record));
+      if(args[0].inst && !npc)
+        return fallback.call(fn,args);
+      if(deadQuery)
+        return Value::integer(npc==nullptr || script.isDead(*npc));
+      if(!npc)
+        return Value::integer(0);
+
+      const auto value=args[1].i;
+      if(name=="NPC_KNOWSINFO")
+        return Value::integer(script.doesNpcKnowInfo(npc->handle(),uint32_t(value)));
+      if(name=="NPC_HASITEMS")
+        return Value::integer(int32_t(npc->itemCount(uint32_t(value))));
+      if(name=="NPC_SETREFUSETALK")
+        npc->setRefuseTalkSeconds(value);
+      else
+        npc->setAttitude(Attitude(value));
+      return Value::integer(0);
       }
 
   private:
     GameScript& script;
     storygraph::VmExternals fallback;
+    bool effects;
   };
 
 }
@@ -174,7 +189,7 @@ storygraph::Interpreter& StoryRuntime::interpreter(daedalus::DaedalusVm& v) {
     return *interp;
   interp.reset();
   if(auto* sc=script(); sc!=nullptr && &sc->getVm()==&v)
-    engine = std::make_unique<StoryProgramExternals>(v,*sc);
+    engine = std::make_unique<LiveStoryExternals>(*sc,true);
   else
     engine = std::make_unique<storygraph::VmExternals>(v);
   interp = std::make_unique<storygraph::Interpreter>(v,*engine);
@@ -309,18 +324,29 @@ std::string StoryRuntime::checkProgram(daedalus::DaedalusVm& v, const storygraph
   return steps(p.steps);
   }
 
-std::optional<bool> StoryRuntime::test(const ExprP& e, std::string_view what) {
-  auto* v = vm();
-  if(v==nullptr)
+std::optional<storygraph::Value> StoryRuntime::evaluate(const ExprP& e, std::string& error) {
+  auto* sc=script();
+  if(sc==nullptr) {
+    error = "no world";
     return std::nullopt;
+    }
   ensureLifter();
   lifted->whyNotLifted(e);  // lifts the script functions it calls
-  storygraph::VmExternals engine(*v);
-  storygraph::Evaluator   ev(*v,lifted->helpers(),engine);
-  auto r = ev.eval(e);
+  LiveStoryExternals engine(*sc,false);
+  storygraph::Evaluator ev(sc->getVm(),lifted->helpers(),engine);
+  auto r=ev.eval(e);
+  error = ev.why();
+  return r;
+  }
+
+std::optional<bool> StoryRuntime::test(const ExprP& e, std::string_view what) {
+  if(vm()==nullptr)
+    return std::nullopt;
+  std::string error;
+  auto r=evaluate(e,error);
   if(!r || r->type!=storygraph::Value::Int) {
     if(once(std::string("eval:") + std::string(what)))
-      Log::e("[story] condition of ",what," not computed: ",r ? "not an int" : ev.why());
+      Log::e("[story] condition of ",what," not computed: ",r ? "not an int" : error);
     return std::nullopt;
     }
   return r->i!=0;

@@ -410,6 +410,9 @@ async def graph_programs(
     await link.choose_dialog(npc, attitude_node["id"])
     await chosen
     [written_attitude] = await link.story_eval(npc, [attitude])
+    knows = ["call", "NPC_KNOWSINFO", ["inst", "HERO"], ["sym", info]]
+    dead = ["call", "NPC_ISDEAD", ["inst", "SELF"]]
+    gates_before = await link.story_eval(npc, [knows, dead, gold])
 
     # a program in place of a condition, made before a save, comes back after loading it
     await story.apply({"op": "program", "node": cond, "part": "condition", "steps": never})
@@ -442,11 +445,20 @@ async def graph_programs(
         "npc": npc,
         "description": "Проверка отказа от разговора",
         "nr": 53,
+        "condition": ["&&", knows, ["!", dead], [">=", gold, ["int", 3]]],
         "program": [
             {"do": "call", "call": ["call", "NPC_SETREFUSETALK", ["inst", "SELF"], ["int", 15]]},
         ],
     }
     await story.apply({"op": "add_node", "node": refuse_node})
+    gates_after = await link.story_eval(npc, [knows, dead, gold])
+    visible = refuse_node["id"] in await link.offered_dialogs(npc)
+    check(
+        "npc_conditions",
+        visible and gates_after == gates_before and len(gates_after) == 3
+        and gates_after[:2] == [1, 0] and gates_after[2] >= 3,
+        f"{gates_before} -> {gates_after}, offered={visible}",
+    )
     chosen = asyncio.ensure_future(wait_message(link, DialogChosen, lambda m: m.node == refuse_node["id"], 10))
     await link.choose_dialog(npc, refuse_node["id"])
     await chosen

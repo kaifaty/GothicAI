@@ -151,6 +151,7 @@ class GameScript final : public GameRules {
     daedalus::DaedalusSymbol*     findSymbol(const size_t s);
     // the hero has heard this dialog of the npc's, as when it is played (Npc_KnowsInfo)
     void                        setNpcInfoKnown(const NpcRecord& npc, const daedalus::IInfo& info);
+    bool                        doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) const;
     size_t                      findSymbolIndex(std::string_view s) override;
     size_t                      symbolsCount() const;
 
@@ -575,7 +576,6 @@ class GameScript final : public GameRules {
     void sort(std::vector<DlgChoice>& dlg);
     // a dialog's condition, information or choice: the story graph runs it if it takes it, else the VM
     int32_t dialogFunction(daedalus::DaedalusSymbol* fn, bool returns);
-    bool doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) const;
 
     void saveSym(Serialize& fout, daedalus::DaedalusSymbol& s);
 
