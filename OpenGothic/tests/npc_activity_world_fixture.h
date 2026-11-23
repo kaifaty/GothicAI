@@ -1673,6 +1673,52 @@ void drawWeaponPerceptions(World& world,Npc& npc,Npc& hero) {
   std::puts("Draw weapon: direct perception, player assessment and threat match the VM, including the fist rejection");
   }
 
+void warnPerception(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const auto wasEnabled=enabled;
+  const auto warn=script.findFunction("B_ASSESSWARN");
+  const auto observe=script.findFunction("ZS_OBSERVEPLAYER");
+  const auto warnPc=vm.find_symbol_by_name("B_ASSESSWARN")->address();
+  auto& state=Contract::aiState(npc).funcIni;
+  const auto savedState=state;
+  const auto heroGuild=hero.handle().guild;
+  enum class Case { Warning, Victim, Observing, Weapon, Gate, Monster };
+  for(auto kind : {Case::Warning,Case::Victim,Case::Observing,Case::Weapon,Case::Gate,Case::Monster}) {
+    std::vector<std::string> original;
+    for(bool native : {false,true}) {
+      enabled=native;
+      state=kind==Case::Observing ? observe :
+            kind==Case::Weapon ? script.findFunction("ZS_REACTTOWEAPON") :
+            kind==Case::Gate ? script.findFunction("ZS_GUARD_PASSAGE") : script.findFunction("ZS_STAND_WP");
+      hero.handle().guild=kind==Case::Monster ? int32_t(GIL_WOLF) : heroGuild;
+      npc.clearAiQueue();
+      npc.aiPush(AiQueue::aiWait(713));
+      npc.setPerceptionEnable(PERC_ASSESSWARN,warn.ptr);
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==warnPc; });
+      const auto delivered=npc.passPerception(hero,kind==Case::Victim ? &npc : &hero,PERC_ASSESSWARN);
+      vm.observe_instructions({});
+      require(delivered && instructions==size_t(!native),"warn: the selected executor owns the warning callback");
+      const auto* next=npc.aiQueueFront();
+      require(next && (kind==Case::Warning
+                       ? next->act==AI_StartState && next->func==observe && next->target==&hero &&
+                         next->i0==0 && !npc.hasPerc(PERC_ASSESSWARN)
+                       : next->act==AI_Wait && npc.hasPerc(PERC_ASSESSWARN)),
+              "warn: only a new human warning replaces the queue and starts observation");
+      auto queue=activityQueue(npc);
+      if(native) require(original==queue,"warn: stock and native queues agree");
+      else original=std::move(queue);
+      }
+    }
+  state=savedState;
+  hero.handle().guild=heroGuild;
+  enabled=wasEnabled;
+  std::puts("Warn: source, victim and busy-listener gates match the original callback");
+  }
+
 void damagePerceptions(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -2515,6 +2561,7 @@ void quietSoundRooms(Gothic& gothic) {
   prepare(true);
   observePlayerPhases(world,*npc,hero,false);
   drawWeaponPerceptions(world,*npc,hero);
+  warnPerception(world,*npc,hero);
   damagePerceptions(world,*npc,hero);
   humanAttackPhases(world,*npc,hero);
   fleeAndWatchPhases(world,*npc,hero);

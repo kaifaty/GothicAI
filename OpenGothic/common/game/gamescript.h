@@ -365,6 +365,7 @@ class GameScript final : public GameRules {
     bool invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase);
     int32_t runDrawWeaponReaction();
     void runThreatReaction();
+    void runWarnReaction();
     void runDamageReaction();
     int32_t runEnemyReaction();
     void runPlayerAssessment();
@@ -636,6 +637,7 @@ class GameScript final : public GameRules {
     bool                                                        nativeRoutineProgram = false;
     ScriptFn                                                    drawWeaponCallback;
     ScriptFn                                                    threatCallback;
+    ScriptFn                                                    warnCallback;
     ScriptFn                                                    damageCallback;
     ScriptFn                                                    enemyCallback;
     ScriptFn                                                    playerCallback;

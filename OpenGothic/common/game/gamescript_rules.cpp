@@ -344,6 +344,7 @@ void GameScript::loadNativeHumanPerceptions() {
     return;
   drawWeaponCallback = findFunction("B_ASSESSDRAWWEAPON");
   threatCallback = findFunction("B_ASSESSTHREAT");
+  warnCallback = findFunction("B_ASSESSWARN");
   damageCallback = findFunction("B_ASSESSDAMAGE");
   enemyCallback = findFunction("B_ASSESSENEMY");
   playerCallback = findFunction("B_ASSESSPLAYER");
@@ -364,7 +365,7 @@ void GameScript::loadNativeHumanPerceptions() {
 
 bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase) {
   const bool stopShortZap = fn==stopShortZapCallback;
-  if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !stopShortZap) ||
+  if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=warnCallback && fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !stopShortZap) ||
      !nativeHumanPerceptionsEnabled())
     return false;
   phase.fromRecord();
@@ -376,6 +377,8 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
     phase.result = runEnemyReaction();
   else if(fn==playerCallback)
     runPlayerAssessment();
+  else if(fn==warnCallback)
+    runWarnReaction();
   else if(stopShortZap)
     stopControlSpell(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()),true);
   else
@@ -436,6 +439,20 @@ void GameScript::runThreatReaction() {
      !npc_canseenpc(self,other) || botheredByWeapon(self,other)==0)
     return;
   startHumanWarning(self,findFunction("ZS_REACTTOWEAPON"));
+  }
+
+void GameScript::runWarnReaction() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto source = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto victim = vm.global_victim()->get_instance();
+  if(hlp_getinstanceid(self)==hlp_getinstanceid(victim))
+    return;
+  const auto observe = findFunction("ZS_OBSERVEPLAYER");
+  if(npc_isinstate(self,int(observe.ptr)) || npc_isinstate(self,int(findFunction("ZS_REACTTOWEAPON").ptr)))
+    return;
+  if((source!=nullptr && source->guild>int32_t(GIL_SEPERATOR_HUM)) || isGateGuard(self))
+    return;
+  startHumanWarning(self,observe);
   }
 
 void GameScript::runDamageReaction() {
