@@ -569,7 +569,7 @@ bool GameScript::runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol,
   if(name=="ZS_WATCHFIGHT") {
     npc_percenable(self,PERC_ASSESSDEFEAT,int(findFunction("B_ASSESSDEFEAT").ptr));
     npc_percenable(self,PERC_ASSESSOTHERSDAMAGE,int(findFunction("B_CHEERFIGHT").ptr));
-    vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+    setPerceptionPreset(false);
     ai_standup(self);
     turn(victim());
     ai_removeweapon(self);
@@ -643,7 +643,7 @@ bool GameScript::runFakeGuildComment(Npc& npc, const daedalus::DaedalusSymbol& s
   const auto seated = [&](const std::shared_ptr<daedalus::INpc>& actor) {
     return vm.call_function<int32_t>("C_BODYSTATECONTAINS",actor,int32_t(BS_SIT))!=0;
     };
-  vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+  setPerceptionPreset(false);
   ai_standup(self);
   if(!seated(self))
     vm.call_function<void>("B_TURNTONPC",self,other());
@@ -684,7 +684,7 @@ bool GameScript::runHumanPlunder(Npc& npc, const daedalus::DaedalusSymbol& symbo
     };
   const std::string_view name = symbol.name();
   if(name=="ZS_GETMEAT") {
-    vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+    setPerceptionPreset(false);
     ai_standup(self);
     ai_gotonpc(self,other());
     ai_turntonpc(self,other());
@@ -698,7 +698,7 @@ bool GameScript::runHumanPlunder(Npc& npc, const daedalus::DaedalusSymbol& symbo
     return true;
     }
   if(name=="ZS_RANSACKBODY") {
-    vm.call_function<void>("PERCEPTION_SET_NORMAL");
+    setPerceptionPreset(true);
     ai_standup(self);
     ai_gotonpc(self,other());
     result = 0;
