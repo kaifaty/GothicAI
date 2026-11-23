@@ -9,6 +9,9 @@
 #include "world/objects/npc.h"
 
 #include <algorithm>
+#include <bit>
+#include <stdexcept>
+#include <variant>
 
 std::string_view GameScript::symbolName(size_t id) {
   if(auto* symbol = findSymbol(id))
@@ -2255,6 +2258,326 @@ bool GameScript::runHealSelf(Npc& npc, const daedalus::DaedalusSymbol& symbol, i
   npc.clearAiQueue();
   result = LOOP_END;
   return true;
+  }
+
+bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  enum class Kind { Inflate, Drain, Swarm };
+  struct TimedSpell {
+    Kind kind;
+    std::string_view state, restart, spellId, duration, damage, victimLoop, victimTransition;
+    size_t lastSecond;
+    };
+  static constexpr TimedSpell spells[] = {
+    {Kind::Inflate,"ZS_INFLATE","B_RESTARTINFLATE","SPL_INFLATE","SPL_TIME_INFLATE","SPL_INFLATE_DAMAGE",
+     "S_INFLATE_VICTIM","T_STAND_2_INFLATE_VICTIM",77},
+    {Kind::Drain,"ZS_SUCKENERGY","B_RESTARTSUCKENERGY","SPL_SUCKENERGY","SPL_TIME_SUCKENERGY","SPL_SUCKENERGY_DAMAGE",
+     "S_SUCKENERGY_VICTIM","T_STAND_2_SUCKENERGY_VICTIM",79},
+    {Kind::Swarm,"ZS_SWARM","B_RESTARTSWARM","SPL_SWARM","SPL_TIME_SWARM","SPL_SWARM_DAMAGE",
+     "S_SWARM_VICTIM","T_STAND_2_SWARM_VICTIM",78},
+    };
+  const std::string_view name = symbol.name();
+  const auto* spell = std::find_if(std::begin(spells),std::end(spells),[&](const auto& s) {
+    return name.starts_with(s.state) || name==s.restart;
+    });
+  if(spell==std::end(spells))
+    return false;
+
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return vm.global_other()->get_instance(); };
+  const auto number = [&](std::string_view key) { return findSymbol(key)->get_int(); };
+  const auto enableMagic = [&](std::string_view callback) {
+    npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction(callback).ptr));
+    };
+  const auto playTransition = [&] {
+    findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self);
+    findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(BS_UNCONSCIOUS);
+    if(!ActivityDefinitions::bodyStateContains(npc_getbodystate(self),BS_UNCONSCIOUS))
+      ai_playanibs(self,spell->victimTransition,BS_UNCONSCIOUS);
+    };
+  const bool drain = spell->kind==Kind::Drain;
+  result = 0;
+  if(name==spell->restart) {
+    if(npc_getlasthitspellid(self)==number(spell->spellId)) {
+      npc_setstatetime(self,0);
+      if(drain)
+        ai_playani(self,spell->victimTransition);
+      }
+    return true;
+    }
+  auto& lastSecond = self->aivar[spell->lastSecond];
+  const auto phase = name.substr(spell->state.size());
+  if(phase.empty()) {
+    enableMagic(spell->restart);
+    npc_stopani(self,spell->victimLoop);
+    if(spell->kind!=Kind::Inflate) {
+      npc_clearaiqueue(self);
+      ai_standup(self);
+      }
+    if(!drain)
+      playTransition();
+    lastSecond = drain ? 1 : 0;
+    if(drain)
+      findSymbol("TEMP_SUCKENERGY_DISTTOPLAYER")->set_int(npc_getdisttoplayer(self));
+    return true;
+    }
+  if(phase=="_END")
+    return true;
+  if(phase!="_LOOP")
+    return false;
+
+  const auto seconds = npc_getstatetime(self);
+  // Drain remembers the original distance to HERO, shared by victims in the script.
+  const bool approachedHero = drain && number("TEMP_SUCKENERGY_DISTTOPLAYER")>=int32_t(uint32_t(npc_getdisttoplayer(self))+100u);
+  if(approachedHero || seconds>number(spell->duration)) {
+    enableMagic("B_ASSESSMAGIC");
+    npc_clearaiqueue(self);
+    ai_standup(self);
+    if(self->guild<int32_t(GIL_SEPERATOR_HUM))
+      vm.call_function<void>("B_ASSESSDAMAGE");
+    else
+      npc_settempattitude(self,ATT_HOSTILE);
+    result = LOOP_END;
+    return true;
+    }
+  result = LOOP_CONTINUE;
+  if(seconds==lastSecond)
+    return true;
+
+  std::string_view line;
+  if(spell->kind==Kind::Inflate) {
+    static constexpr float fatness[] = {1,3,8,12,9,15,18,11,15,13,12,10,8,5,6,4,2,1,1};
+    if(seconds>0 && seconds<=int(std::size(fatness)))
+      mdl_setmodelfatness(self,fatness[seconds-1]);
+    switch(seconds) {
+      case 5: line="$Aargh_1"; break;
+      case 8: line="$Aargh_2"; break;
+      case 14: line="$Aargh_3"; break;
+      }
+    }
+  else if(spell->kind==Kind::Swarm) {
+    switch(seconds) {
+      case 2: line="$RunAway"; break;
+      case 6: line="$Aargh_2"; break;
+      case 7: line="$Aargh_3"; break;
+      case 8: line="$Aargh_1"; break;
+      }
+    }
+  else if(seconds==0) {
+    playTransition();
+    wld_playeffect("spellFX_SuckEnergy_BloodFly",self,vm.global_hero()->get_instance(),0,0,0,0);
+    }
+  if(!line.empty())
+    vm.call_function<void>("B_SAY",self,other(),line);
+
+  lastSecond = npc_getstatetime(self);
+  const auto hp = self->attribute[NpcAttribute::hitpoints];
+  const auto fullDamage = number(spell->damage);
+  magicHurtNpc(std::dynamic_pointer_cast<daedalus::INpc>(other()),self,hp>fullDamage ? fullDamage : hp-1);
+  if(drain && hp>fullDamage)
+    npc_changeattribute(std::dynamic_pointer_cast<daedalus::INpc>(other()),ATR_HITPOINTS,fullDamage);
+  return true;
+  }
+
+void GameScript::givePlayerXp(int32_t amount) {
+  const auto add=[](int32_t a,int32_t b) {
+    return std::bit_cast<int32_t>(uint32_t(a)+uint32_t(b));
+    };
+  const auto hero=[&] {
+    return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+    };
+  const auto print=[&](daedalus::DaedalusSymbol* text,const char* y,const char* font) {
+    vm.push_reference(text);
+    vm.push_int(-1);
+    vm.push_reference(findSymbol(y));
+    vm.push_reference(findSymbol(font));
+    vm.push_int(2);
+    vm.unsafe_call_external(findSymbol("PRINTSCREEN"));
+    };
+
+  auto* savedAmount=findSymbol("B_GIVEPLAYERXP.ADD_XP");
+  auto* text=findSymbol("B_GIVEPLAYERXP.CONCATTEXT");
+  savedAmount->set_int(amount);
+  const auto current=hero();
+  vm.unsafe_set_gi(current);
+  if(current) {
+    if(current->level==0)
+      current->exp_next=500;
+    current->exp=add(current->exp,amount);
+    }
+
+  // The original formatting calls also update the VM's temporary strings.
+  text->set_string(findSymbol("PRINT_XPGAINED")->get_string());
+  vm.push_reference(text);
+  vm.push_reference(savedAmount);
+  vm.unsafe_call_external(findSymbol("INTTOSTRING"));
+  vm.unsafe_call_external(findSymbol("CONCATSTRINGS"));
+  text->set_string(vm.pop_string());
+  print(text,"YPOS_XPGAINED","FONT_SCREENSMALL");
+
+  const auto levelUp=hero();
+  vm.unsafe_set_gi(levelUp);
+  if(!levelUp || levelUp->exp>=levelUp->exp_next) {
+    if(levelUp) {
+      levelUp->level=add(levelUp->level,1);
+      const auto threshold=std::bit_cast<int32_t>(500u*(uint32_t(levelUp->level)+1u));
+      levelUp->exp_next=add(levelUp->exp_next,threshold);
+      const auto health=findSymbol("HP_PER_LEVEL")->get_int();
+      levelUp->attribute[ATR_HITPOINTSMAX]=add(levelUp->attribute[ATR_HITPOINTSMAX],health);
+      levelUp->attribute[ATR_HITPOINTS]=add(levelUp->attribute[ATR_HITPOINTS],health);
+      levelUp->lp=add(levelUp->lp,findSymbol("LP_PER_LEVEL")->get_int());
+      }
+    print(findSymbol("PRINT_LEVELUP"),"YPOS_LEVELUP","FONT_SCREEN");
+    // Reference the verified program's LevelUp literal to preserve the temporary string slots.
+    vm.push_reference(findSymbol("$12941"));
+    vm.unsafe_call_external(findSymbol("SND_PLAY"));
+    }
+
+  vm.unsafe_call_bl(findSymbol("B_CHECKLOG"));
+  }
+
+void GameScript::closeQuestTopic(std::string_view topic, int32_t mission, int32_t common, int32_t endChapter) {
+  auto* savedTopic=findSymbol("B_CLOSETOPIC.TOPIC");
+  findSymbol("B_CLOSETOPIC.ENDCHAPTER")->set_int(endChapter);
+  findSymbol("B_CLOSETOPIC.COMMONVAR")->set_int(common);
+  findSymbol("B_CLOSETOPIC.MISSIONVAR")->set_int(mission);
+  savedTopic->set_string(topic);
+
+  using Status=QuestLog::Status;
+  auto status=Status::Running;
+  if(common==1 || mission==int32_t(Status::Success))
+    status=Status::Success;
+  else if(mission==int32_t(Status::Obsolete) || mission==int32_t(Status::Failed))
+    status=Status(mission);
+  else if((common==0 || mission==int32_t(Status::Running)) && findSymbol("KAPITEL")->get_int()>=endChapter)
+    status=Status::Obsolete;
+  if(status!=Status::Running) {
+    vm.push_reference(savedTopic);
+    vm.push_int(int32_t(status));
+    vm.unsafe_call_external(findSymbol("LOG_SETTOPICSTATUS"));
+    }
+  }
+
+void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
+  using Op=daedalus::DaedalusOpcode;
+  using Type=daedalus::DaedalusDataType;
+  using Number=std::variant<int32_t,uint32_t>; // literal or live integer symbol
+  struct Row {
+    uint32_t topic;
+    std::array<Number,3> values;
+    };
+  struct GuildRule {
+    size_t before;
+    uint32_t topic, status;
+    std::array<uint32_t,3> excluded;
+    };
+  static constexpr std::array groups{
+    std::pair{"B_CLOSETOPICS_MATTES",101u},
+    std::pair{"B_CLOSETOPICS_HOSHI",18u},
+    std::pair{"B_CLOSETOPICS_YOLY",87u}
+    };
+  const auto* closeFunction=findSymbol("B_CLOSETOPIC");
+  const auto close=closeFunction->index();
+  const auto setStatus=findSymbol("LOG_SETTOPICSTATUS")->index();
+  auto pc=findSymbol("B_CHECKLOG")->address();
+  const auto invalid=[&] {
+    return std::runtime_error("Invalid stock quest log record at "+std::to_string(pc));
+    };
+  const auto take=[&](Op expected) {
+    const auto instruction=vm.instruction_at(pc);
+    if(instruction.op!=expected)
+      throw invalid();
+    pc+=instruction.size;
+    return instruction;
+    };
+  const auto reference=[&](Type type) {
+    const auto id=take(Op::PUSHV).symbol;
+    const auto* symbol=findSymbol(id);
+    if(symbol==nullptr || symbol->type()!=type || symbol->is_member())
+      throw invalid();
+    return id;
+    };
+  const auto number=[&]() -> Number {
+    if(vm.instruction_at(pc).op==Op::PUSHI)
+      return take(Op::PUSHI).immediate;
+    return reference(Type::INT);
+    };
+
+  for(const auto& [name,count]:groups)
+    if(take(Op::BL).address!=findSymbol(name)->address())
+      throw invalid();
+  take(Op::RSR);
+
+  vm.override_function("B_CLOSETOPIC",std::function<void(std::string_view,int32_t,int32_t,int32_t)>{
+    [this](std::string_view topic,int32_t mission,int32_t common,int32_t chapter) {
+      closeQuestTopic(topic,mission,common,chapter);
+      }},enabled);
+  for(const auto& [name,count]:groups) {
+    pc=findSymbol(name)->address();
+    std::vector<Row> rows;
+    rows.reserve(count);
+    std::optional<GuildRule> guildRule;
+    while(vm.instruction_at(pc).op!=Op::RSR) {
+      const auto* first=findSymbol(vm.instruction_at(pc).symbol);
+      if(first!=nullptr && first->type()==Type::STRING) {
+        Row row{reference(Type::STRING),{number(),number(),number()}};
+        if(take(Op::BL).address!=closeFunction->address())
+          throw invalid();
+        rows.push_back(row);
+        continue;
+        }
+      // The only branch in the three groups is Yoly's guild exception.
+      if(std::string_view(name)!="B_CLOSETOPICS_YOLY" || guildRule)
+        throw invalid();
+      GuildRule rule{rows.size(),0,0,{}};
+      for(auto& guild:rule.excluded) {
+        guild=reference(Type::INT);
+        if(take(Op::GMOVI).symbol!=vm.global_hero()->index() ||
+           take(Op::PUSHV).symbol!=findSymbol("C_NPC.GUILD")->index())
+          throw invalid();
+        take(Op::NEQ);
+        }
+      take(Op::AND);
+      take(Op::AND);
+      const auto skip=take(Op::BZ).address;
+      rule.topic=reference(Type::STRING);
+      rule.status=reference(Type::INT);
+      if(take(Op::BE).symbol!=setStatus || pc!=skip)
+        throw invalid();
+      guildRule=rule;
+      }
+    const bool hasGuildRule=std::string_view(name)=="B_CLOSETOPICS_YOLY";
+    if(rows.size()!=count || guildRule.has_value()!=hasGuildRule || (guildRule && guildRule->before>=rows.size()))
+      throw invalid();
+
+    vm.override_function(name,std::function<void()>{[this, rows=std::move(rows), guildRule, close, setStatus] {
+      for(size_t i=0;i<rows.size();++i) {
+        if(guildRule && i==guildRule->before) {
+          const auto context=vm.global_hero()->get_instance();
+          vm.unsafe_set_gi(context);
+          const auto hero=std::dynamic_pointer_cast<daedalus::INpc>(context);
+          const auto guild=hero ? hero->guild : 0;
+          if(std::ranges::none_of(guildRule->excluded,[&](uint32_t id) { return findSymbol(id)->get_int()==guild; })) {
+            vm.push_reference(findSymbol(guildRule->topic));
+            vm.push_reference(findSymbol(guildRule->status));
+            vm.unsafe_call_external(findSymbol(setStatus));
+            }
+          }
+        const auto& row=rows[i];
+        vm.push_reference(findSymbol(row.topic));
+        for(const auto& value:row.values) {
+          if(const auto* literal=std::get_if<int32_t>(&value))
+            vm.push_int(*literal);
+          else
+            vm.push_reference(findSymbol(std::get<uint32_t>(value)));
+          }
+        vm.unsafe_call_bl(findSymbol(close));
+        }
+      }},enabled);
+    }
+  vm.override_function("B_CHECKLOG",std::function<void()>{[this] {
+    for(const auto& [name,count]:groups)
+      vm.unsafe_call_bl(findSymbol(name));
+    }},enabled);
   }
 
 int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {

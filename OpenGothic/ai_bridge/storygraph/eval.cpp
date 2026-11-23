@@ -118,6 +118,9 @@ std::optional<Value> storygraph::callFunction(daedalus::DaedalusVm& vm, const da
       error = "no engine function " + ident(fn.name());
       return std::nullopt;
       }
+    } else if(fn.name()=="B_GIVEPLAYERXP") {
+    // Authored XP uses the same installed rule as calls from script dialogues.
+    vm.unsafe_call_bl(&fn);
     } else {
     vm.unsafe_call(&fn);
     }
