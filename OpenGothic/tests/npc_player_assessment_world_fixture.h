@@ -46,7 +46,9 @@ void specialDamagePerceptions(World& world,Npc& npc,Npc& hero) {
     };
   require(rage && collide && fx(npc).empty() && fx(hero).empty(),
           "special damage: both original effects are available and the fixture starts clear");
-  const auto weapon=script.findSymbolIndex("ITMW_BELIARWEAPON_1H_01");
+  auto& weaponSymbol=*symbol("ITMW_BELIARWEAPON_1H_01");
+  const auto savedWeaponAlias=weaponSymbol.get_instance();
+  const auto weapon=weaponSymbol.index();
   const bool temporaryWeapon=hero.itemCount(weapon)==0;
   if(temporaryWeapon)
     hero.addItem(weapon,1);
@@ -80,6 +82,7 @@ void specialDamagePerceptions(World& world,Npc& npc,Npc& hero) {
       numbers[3]->set_int(-1);
       numbers[4]->set_int(-1);
       vm.global_item()->set_instance(nullptr);
+      weaponSymbol.set_instance(nullptr);
       script.setSeed(73106);
       auto random=Contract::random(script);
       const int expectedDamageRoll=checkClaw ? int(random()%100) : -1;
@@ -115,8 +118,9 @@ void specialDamagePerceptions(World& world,Npc& npc,Npc& hero) {
         require(pointers[7]->get_instance()==defender && pointers[8]->get_instance()==attacker,
                 "special damage: the Claw helper keeps the original arguments");
         if(checkClaw)
-          require(pointers[9]->get_instance()==claw && pointers[10]->get_instance()==claw && vm.global_item()->get_instance()==claw,
-                  "special damage: readying the real Claw preserves the saved slot and ITEM alias");
+          require(pointers[9]->get_instance()==claw && pointers[10]->get_instance()==claw &&
+                  weaponSymbol.get_instance()==claw && vm.global_item()->get_instance()==nullptr,
+                  "special damage: finding the readied Claw sets its instance symbol and saved slots, leaving ITEM clear");
         }
       for(auto* actor:{&npc,&hero}) {
         while(!fx(*actor).empty()) {
@@ -144,6 +148,7 @@ void specialDamagePerceptions(World& world,Npc& npc,Npc& hero) {
   Contract::random(script)=savedRandom;
   for(size_t i=0;i<pointers.size();++i) pointers[i]->set_instance(savedPointers[i]);
   for(size_t i=0;i<numbers.size();++i) numbers[i]->set_int(savedNumbers[i]);
+  weaponSymbol.set_instance(savedWeaponAlias);
   vm.global_item()->set_instance(savedItem);
   std::puts("Special damage: ghost warnings, the Claw and Raven agree with the VM");
   }
