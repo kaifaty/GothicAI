@@ -7,15 +7,19 @@
 
 #include <optional>
 #include <unordered_map>
+#include <variant>
 
 namespace ItemDefinitionRuntime {
 struct RestoreChange {
   Attribute attribute;
-  uint32_t amountSymbol;
+  std::variant<uint32_t,int32_t> amount; // Symbol index or literal dose.
   };
 struct RestoreEffect {
   RestoreChange first;
   std::optional<RestoreChange> second;
+  };
+struct FullRestoreEffect {
+  Attribute attribute, maximum;
   };
 struct ArmorSetEffect {
   uint32_t armorFlag;
@@ -30,6 +34,7 @@ struct FightSkillEffect {
 struct Definitions {
   std::unordered_map<uint32_t,ItemRecord> items;
   std::unordered_map<uint32_t,RestoreEffect> restoreEffects;
+  std::unordered_map<uint32_t,FullRestoreEffect> fullRestoreEffects;
   std::unordered_map<uint32_t,ArmorSetEffect> armorSetEffects;
   std::unordered_map<uint32_t,FightSkillEffect> fightSkillEffects;
   };

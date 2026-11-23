@@ -143,6 +143,25 @@ void ItemDefinitionRuntime::registerStockRestoreEffects(Definitions& definitions
     if(!definitions.restoreEffects.emplace(function->index(),effect).second)
       throw std::runtime_error("stock item restore: duplicate callback "+std::string(row.callback));
     }
+
+  const auto* meatbug=program.find_symbol_by_name("USE_MEATBUGFLESH");
+  if(meatbug==nullptr ||
+     !definitions.restoreEffects.emplace(meatbug->index(),RestoreEffect{{ATR_HITPOINTS,int32_t(10)}, {}}).second)
+    throw std::runtime_error("stock item restore: invalid USE_MEATBUGFLESH callback");
+
+  // Full elixirs assign the corresponding maximum directly to the current attribute.
+  static constexpr struct StockFullRestore {
+    std::string_view callback;
+    FullRestoreEffect effect;
+    } full[] = {
+    {"USEITPO_HEALTH_04", {ATR_HITPOINTS, ATR_HITPOINTSMAX}},
+    {"USEITPO_MANA_04",   {ATR_MANA,      ATR_MANAMAX}},
+    };
+  for(const auto& [callback,effect]:full) {
+    const auto* function=program.find_symbol_by_name(callback);
+    if(function==nullptr || !definitions.fullRestoreEffects.emplace(function->index(),effect).second)
+      throw std::runtime_error("stock item full restore: invalid callback "+std::string(callback));
+    }
   }
 
 void ItemDefinitionRuntime::registerStockArmorSetEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {

@@ -126,10 +126,12 @@ void stockItemRestoreCoverage(GameScript& script) {
   using Op=daedalus::DaedalusOpcode;
   using Type=daedalus::DaedalusDataType;
   const auto& vm=script.getVm();
-  const auto& effects=NpcDefinitionContract::items(script).restoreEffects;
+  const auto& catalog=NpcDefinitionContract::items(script);
+  const auto& effects=catalog.restoreEffects;
   const auto self=vm.find_symbol_by_name("SELF")->index();
   const auto change=vm.find_symbol_by_name("NPC_CHANGEATTRIBUTE")->index();
-  size_t health=0,mana=0,paired=0;
+  const auto attributes=vm.find_symbol_by_name("C_NPC.ATTRIBUTE")->index();
+  size_t health=0,mana=0,paired=0,full=0;
   for(const auto& fn:vm.symbols()) {
     if(!fn.name().starts_with("USE") || fn.type()!=Type::FUNCTION || fn.rtype()!=Type::VOID ||
        !fn.is_const() || fn.is_external() || fn.address()>=vm.size())
@@ -142,9 +144,21 @@ void stockItemRestoreCoverage(GameScript& script) {
       pc+=op.size;
       if(op.op==Op::RSR) break;
       }
+    const auto attributeAt=[&](size_t from) {
+      return ops[from].op==Op::GMOVI && ops[from].symbol==self && ops[from+1].symbol==attributes &&
+             (ops[from+1].op==Op::PUSHV || ops[from+1].op==Op::PUSHVV);
+      };
+    if(attributeAt(0) && attributeAt(2) && ops[4].op==Op::MOVI && ops[5].op==Op::RSR) {
+      const auto row=catalog.fullRestoreEffects.find(fn.index());
+      require(row!=catalog.fullRestoreEffects.end() && row->second.attribute==ops[3].index &&
+              row->second.maximum==ops[1].index,"stock restores: the full elixir copies the exact maximum slot");
+      ++full;
+      continue;
+      }
     const auto changeAt=[&](size_t from) {
       return ops[from].op==Op::PUSHVI && ops[from].symbol==self && ops[from+1].op==Op::PUSHV &&
-             ops[from+2].op==Op::PUSHV && ops[from+3].op==Op::BE && ops[from+3].symbol==change;
+             (ops[from+2].op==Op::PUSHV || ops[from+2].op==Op::PUSHI) &&
+             ops[from+3].op==Op::BE && ops[from+3].symbol==change;
       };
     const bool single=ops[4].op==Op::RSR;
     if(!changeAt(0) || (!single && (!changeAt(4) || ops[8].op!=Op::RSR)))
@@ -154,13 +168,21 @@ void stockItemRestoreCoverage(GameScript& script) {
             ("stock restores: exact number of changes for "+fn.name()).c_str());
     const auto check=[&](size_t from, const ItemDefinitionRuntime::RestoreChange& step) {
       const auto* attr=vm.find_symbol_by_index(ops[from+1].symbol);
-      const auto* dose=vm.find_symbol_by_index(ops[from+2].symbol);
-      require(attr && dose && attr->is_const() && dose->is_const() && attr->type()==Type::INT && dose->type()==Type::INT &&
-              attr->count()==1 && dose->count()==1 && dose->get_int()>0,
-              "stock restores: both arguments must be scalar constants and the dose positive");
+      require(attr && attr->is_const() && attr->type()==Type::INT && attr->count()==1,
+              "stock restores: current attribute must be a scalar constant");
       const auto value=attr->get_int();
-      require((value==ATR_HITPOINTS || value==ATR_MANA) && step.attribute==value && step.amountSymbol==dose->index(),
-              ("stock restores: exact attribute and dose for "+fn.name()).c_str());
+      require((value==ATR_HITPOINTS || value==ATR_MANA) && step.attribute==value,
+              ("stock restores: exact attribute for "+fn.name()).c_str());
+      const auto& operand=ops[from+2];
+      if(operand.op==Op::PUSHI) {
+        require(operand.immediate>0 && std::holds_alternative<int32_t>(step.amount) &&
+                std::get<int32_t>(step.amount)==operand.immediate,"stock restores: retain the positive literal dose");
+        } else {
+        const auto* dose=vm.find_symbol_by_index(operand.symbol);
+        require(dose && dose->is_const() && dose->type()==Type::INT && dose->count()==1 && dose->get_int()>0 &&
+                std::holds_alternative<uint32_t>(step.amount) && std::get<uint32_t>(step.amount)==operand.symbol,
+                "stock restores: retain the exact positive dose symbol");
+        }
       };
     check(0,effect->second.first);
     if(effect->second.second) {
@@ -171,8 +193,9 @@ void stockItemRestoreCoverage(GameScript& script) {
       mana+=effect->second.first.attribute==ATR_MANA;
       }
     }
-  require(effects.size()==health+mana+paired && health==29 && mana==7 && paired==5,
-          "stock restores: cover all 36 single and five paired restorations in stock instruction order");
+  require(effects.size()==health+mana+paired && health==30 && mana==7 && paired==5 &&
+          catalog.fullRestoreEffects.size()==full && full==2,
+          "stock restores: cover all 37 single, five paired and two raw full restorations");
   }
 
 auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& reserved, bool native) {
@@ -595,6 +618,7 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
       rewards+=symbol.name()=="B_GIVEPLAYERXP";
       minimalCalls+=symbol.name()=="PERCEPTION_SET_MINIMAL";
       restoreCalls+=symbol.name().starts_with("USEITPO_HEALTH_") || symbol.name()=="USEITPO_MANA_01" ||
+                    symbol.name()=="USEITPO_MANA_04" || symbol.name()=="USE_MEATBUGFLESH" ||
                     symbol.name()=="USE_CHEESE" || symbol.name()=="USE_BEER" || symbol.name()=="USE_BLUEPLANT";
       });
 
@@ -609,7 +633,9 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
                                 std::tuple{"ITPO_HEALTH_02",ATR_HITPOINTS,20,90},
                                 std::tuple{"ITPO_HEALTH_03",ATR_HITPOINTS,20,120},
                                 std::tuple{"ITPO_HEALTH_03",ATR_HITPOINTS,125,200},
-                                std::tuple{"ITPO_MANA_01",ATR_MANA,20,70}};
+                                std::tuple{"ITPO_MANA_01",ATR_MANA,20,70},
+                                std::tuple{"ITPO_HEALTH_ADDON_04",ATR_HITPOINTS,37,200},
+                                std::tuple{"ITPO_MANA_ADDON_04",ATR_MANA,220,200}};
     npc->handle().attribute[ATR_HITPOINTSMAX]=200;
     npc->handle().attribute[ATR_MANAMAX]=200;
     auto startUse=[&](std::string_view item) {
@@ -627,7 +653,8 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
       npc->handle().attribute[attribute]=before;
       const auto [id,initialItems]=startUse(item);
       require(npc->attribute(attribute)==before,"item restores: the potion has no effect before the tag");
-      if(!native && after==200) save(pendingPotion,"VM-era save with a potion in use");
+      if(!native && std::string_view(item)=="ITPO_HEALTH_03" && before==125)
+        save(pendingPotion,"VM-era save with a potion in use");
       Contract::finishItemUseAnimation(*npc);
       require(Contract::pendingItemUse(*npc)==0 && npc->attribute(attribute)==after &&
               npc->itemCount(id)==initialItems && hero.attribute(ATR_HITPOINTS)==heroHealth &&
@@ -638,7 +665,8 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     require(Settings::physicsFlags().foodOverTime,"item restores: the fixture uses gradual food effects");
     npc->handle().attribute[ATR_HITPOINTS]=20;
     npc->handle().attribute[ATR_MANA]=20;
-    const std::array foodUse={std::tuple{"ITFO_CHEESE",15,0},std::tuple{"ITFO_BEER",3,1},std::tuple{"ITPL_BLUEPLANT",5,5}};
+    const std::array foodUse={std::tuple{"ITFO_CHEESE",15,0},std::tuple{"ITFO_BEER",3,1},
+                              std::tuple{"ITPL_BLUEPLANT",5,5},std::tuple{"ITAT_MEATBUGFLESH",10,0}};
     int hp=0,mana=0;
     for(const auto& [food,healthDose,manaDose]:foodUse) {
       const auto [id,initialItems]=startUse(food);

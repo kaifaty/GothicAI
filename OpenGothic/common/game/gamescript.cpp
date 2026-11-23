@@ -1175,12 +1175,20 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
     if(it!=itemDefinitions.restoreEffects.end()) {
       const auto actor = std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
       const auto apply = [&](const ItemDefinitionRuntime::RestoreChange& change) {
-        const auto amount = vm.find_symbol_by_index(change.amountSymbol)->get_int();
+        const auto* symbol = std::get_if<uint32_t>(&change.amount);
+        const auto amount = symbol ? vm.find_symbol_by_index(*symbol)->get_int() : std::get<int32_t>(change.amount);
         npc_changeattribute(actor,change.attribute,amount);
         };
       apply(it->second.first);
       if(it->second.second)
         apply(*it->second.second);
+      return;
+      }
+    const auto full = itemDefinitions.fullRestoreEffects.find(functionSymbol->index());
+    if(full!=itemDefinitions.fullRestoreEffects.end()) {
+      const auto actor = std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
+      auto* attribute = findSymbol("C_NPC.ATTRIBUTE");
+      vm.set_int(actor,attribute,full->second.attribute,vm.get_int(actor,attribute,full->second.maximum));
       return;
       }
     if(applyArmorSetEffect(*npc,functionSymbol->index()) || applyFightSkillItemEffect(*npc,functionSymbol->index()))
