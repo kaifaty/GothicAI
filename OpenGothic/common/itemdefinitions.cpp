@@ -13,6 +13,43 @@ using DefinitionJson::require;
 using DefinitionJson::at;
 using DefinitionJson::string;
 using DefinitionJson::bytes;
+
+void readDocuments(ItemDefinitions::Library& library,const std::filesystem::path& file,std::string_view programSha256) {
+  if(!std::filesystem::exists(file))
+    return;
+  const auto doc=DefinitionJson::read(file);
+  require(string(at(doc,"format"))==ItemDefinitions::DocumentFormat,"unsupported document format");
+  require(DefinitionJson::integer(at(doc,"version"))==ItemDefinitions::DocumentVersion,"unsupported document version");
+  require(string(at(doc,"program_sha256"))==programSha256,"document program SHA differs");
+  const auto& records=at(doc,"records");
+  require(records.IsObject(),"document records must be an object");
+  for(auto it=records.MemberBegin();it!=records.MemberEnd();++it) {
+    auto name=string(it->name);
+    const auto& record=it->value;
+    ItemDefinitions::Document out;
+    out.handle=string(at(record,"handle"));
+    require(!out.handle.empty() && !name.empty(),"empty document function or handle");
+    const auto& map=at(record,"map");
+    require(map.IsBool(),"invalid document map mode");
+    out.map=map.GetBool();
+    const auto& calls=at(record,"calls");
+    require(calls.IsArray(),"document calls must be an array");
+    for(const auto& entry:calls.GetArray()) {
+      ItemDefinitions::DocumentCall call;
+      call.function=string(at(entry,"function"));
+      const auto types=ItemDefinitions::documentArguments(call.function);
+      const auto& args=at(entry,"arguments");
+      require(!types.empty() && args.IsArray() && args.Size()==types.size(),"invalid document action "+call.function);
+      for(rapidjson::SizeType i=0;i<args.Size();++i) {
+        if(types[i]=='s') call.arguments.emplace_back(bytes(args[i]));
+        else call.arguments.emplace_back(DefinitionJson::integer(args[i]));
+        }
+      out.calls.push_back(std::move(call));
+      }
+    require(library.documents.emplace(std::move(name),std::move(out)).second,"duplicate item document");
+    }
+  }
+
 template<class T> void field(T& out, const Json& value, bool function, std::vector<std::string>& names) {
   if constexpr(std::is_array_v<T>) {
     require(value.IsArray() && value.Size()==std::extent_v<T>,"array extent differs");
@@ -32,6 +69,17 @@ template<class T> void field(T& out, const Json& value, bool function, std::vect
     }
   }
 }
+
+std::string_view ItemDefinitions::documentArguments(std::string_view function) {
+  constexpr std::pair<std::string_view,std::string_view> signatures[]={
+    {"DOC_SETPAGES","i"},{"DOC_SETPAGE","isi"},{"DOC_SETFONT","is"},{"DOC_SETMARGINS","iiiiii"},
+    {"DOC_PRINTLINE","is"},{"DOC_PRINTLINES","is"},{"DOC_SETLEVEL","s"},{"DOC_SETLEVELCOORDS","iiii"},
+    };
+  for(const auto& [name,types]:signatures)
+    if(name==function)
+      return types;
+  return {};
+  }
 
 ItemDefinitions::Library ItemDefinitions::read(const std::filesystem::path& base, std::string_view programSha256) {
   const auto file=base/"definitions"/programSha256/"items.json";
@@ -83,6 +131,7 @@ ItemDefinitions::Library ItemDefinitions::read(const std::filesystem::path& base
         }
       catch(const std::exception& e) { throw std::runtime_error(name+": "+e.what()); }
       }
+    readDocuments(result,file.parent_path()/"item-documents.json",programSha256);
     return result;
     }
   catch(const std::exception& e) { throw std::runtime_error("item definitions: "+file.string()+": "+e.what()); }

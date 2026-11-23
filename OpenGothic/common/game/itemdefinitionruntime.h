@@ -7,6 +7,7 @@
 
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -48,8 +49,20 @@ struct EquipmentStatEffect {
   std::vector<EquipmentStatChange> changes;
   bool equip;
   };
+struct DocumentCall {
+  uint32_t function;
+  std::vector<ItemDefinitions::DocumentArgument> arguments;
+  };
+struct Document {
+  uint32_t handle;
+  bool map;
+  std::vector<DocumentCall> calls;
+  };
 struct Definitions {
   std::unordered_map<uint32_t,ItemRecord> items;
+  std::unordered_set<uint32_t> itemUsePrograms;
+  std::unordered_map<uint32_t,Document> documents;
+  std::optional<uint32_t> brokenEye;
   std::unordered_map<uint32_t,RestoreEffect> restoreEffects;
   std::unordered_map<uint32_t,FullRestoreEffect> fullRestoreEffects;
   std::unordered_map<uint32_t,PermanentAttributeEffect> permanentAttributeEffects;
@@ -70,4 +83,5 @@ void registerStockEquipmentStatEffects(Definitions& definitions, const daedalus:
 // Returns true when a definition supplied the fields, false after a VM constructor.
 bool initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::IItem>& item,
                 daedalus::DaedalusSymbol* symbol, const Definitions& definitions);
+bool showDocument(daedalus::DaedalusVm& vm,uint32_t function,const Definitions& definitions);
 }

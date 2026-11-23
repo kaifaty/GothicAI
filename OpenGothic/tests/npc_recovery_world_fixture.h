@@ -917,6 +917,70 @@ bool stockItemFightSkillEffects(World& world, bool native) {
   return typed;
   }
 
+std::vector<std::string> heroItemPrograms(Gothic& gothic,World& world,Npc& hero,bool native) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  struct Documents {
+    Gothic& gothic;
+    std::vector<std::string> fields;
+    size_t shown=0;
+    explicit Documents(Gothic& engine) : gothic(engine) { gothic.onShowDocument.bind(this,&Documents::show); }
+    ~Documents() { gothic.onShowDocument.ubind(this,&Documents::show); }
+    void append(const Tempest::Margin& m) {
+      for(auto v:{m.left,m.right,m.top,m.bottom})
+        fields.push_back(std::to_string(v));
+      }
+    void show(const DocumentMenu::Show& d) {
+      ++shown;
+      fields.push_back(d.font);
+      fields.push_back(d.img);
+      fields.push_back(std::to_string(d.pages.size()));
+      append(d.margins);
+      for(auto v:{d.wbounds.x,d.wbounds.y,d.wbounds.w,d.wbounds.h,int(d.showPlayer)})
+        fields.push_back(std::to_string(v));
+      for(const auto& page:d.pages) {
+        fields.push_back(page.img);
+        fields.push_back(page.text);
+        fields.push_back(page.font);
+        fields.push_back(std::to_string(page.flg));
+        append(page.margins);
+        }
+      }
+    } docs(gothic);
+
+  auto* knows=script.findSymbol("KNOWS_HALVOR");
+  const auto knew=knows->get_int();
+  knows->set_int(0);
+  const auto gold=uint32_t(script.findSymbolIndex("ITMI_GOLD"));
+  const auto initialGold=hero.itemCount(gold);
+  const auto previousItem=vm.global_item()->get_instance();
+  size_t instructions=0;
+  vm.observe_instructions([&](const auto&) { ++instructions; });
+  for(auto name:{"ITWR_BANDITLETTER_MIS","ITWR_HALVORMESSAGE","ITSE_GOLDPOCKET100"}) {
+    const auto item=script.createItemForQuery(script.findSymbolIndex(name));
+    require(item && item->on_state[0]>0,"stock item program fixture needs a real item callback");
+    script.invokeItem(&hero,ScriptFn(uint32_t(item->on_state[0])));
+    }
+  vm.observe_instructions({});
+  require((instructions==0)==native && docs.shown==2 && knows->get_int()==1 &&
+          hero.itemCount(gold)==initialGold+100,
+          "stock item programs: both readers open the documents and only the pouch awards gold");
+  knows->set_int(knew);
+  hero.delItem(gold,100);
+  vm.global_item()->set_instance(previousItem);
+
+  auto* setting=script.findSymbol("TEXT_INNOSEYE_SETTING");
+  const auto before=setting->get_string();
+  const auto broken=script.findSymbolIndex("ITMI_INNOSEYE_BROKEN_MIS");
+  for(const auto* value:{"Setting at first construction","Setting after a story change"}) {
+    setting->set_string(value);
+    auto eye=script.createItemForQuery(broken);
+    require(eye && eye->text[0]==value,"broken Eye of Innos samples the current setting at each creation");
+    }
+  setting->set_string(before);
+  return docs.fields;
+  }
+
 void npcUnconsciousLifecycle(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   constexpr auto* actor="BAU_951_HILDA";
@@ -956,6 +1020,7 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
             "healing: enqueue the strongest available potion through the item-use pipeline");
     };
   std::vector<std::string> originalInit,originalEnd;
+  std::vector<std::string> originalDocuments;
   std::vector<uint8_t> knockedOut,healing,pendingPotion;
   std::pair<std::vector<size_t>,std::vector<std::string>> stockEquipment;
   std::pair<std::array<int32_t,PROT_MAX>,std::array<int32_t,PROT_MAX>> stockArmor;
@@ -978,6 +1043,10 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     npc->handle().aivar[16]=0; // AIV_VictoryXPGiven
     Contract::activityEventsOn(script)=native;
     if(native) stockItemRestoreCoverage(script);
+    auto documents=heroItemPrograms(gothic,world,hero,native);
+    if(native)
+      require(documents==originalDocuments,"static and mixed item documents match the stock VM");
+    else originalDocuments=std::move(documents);
     const auto equipment=stockEquipmentHelpers(test,hero,*npc,native);
     if(native) require(equipment==stockEquipment,"equipment: spell preparation matches stock inventory contents and queue order");
     else stockEquipment=equipment;

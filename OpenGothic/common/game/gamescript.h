@@ -532,6 +532,7 @@ class GameScript final : public GameRules {
     bool applyFightSkillItemEffect(Npc& npc, uint32_t callback);
     bool applyEquipmentStatEffect(Npc& npc, uint32_t callback);
     bool applyStatefulEquipmentEffect(Npc& npc, std::string_view callback);
+    bool invokeStockItemProgram(const daedalus::DaedalusSymbol& function);
     void applyWispEquipmentEffect(bool equip);
     bool applyQuestEquipmentEffect(std::string_view item, bool equip);
     void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
