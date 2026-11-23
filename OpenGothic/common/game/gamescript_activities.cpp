@@ -48,6 +48,16 @@ void GameScript::loadNativeRoutines() {
     {"ZS_STAND_RANGERMEETING",&GameScript::runSocialRoutine},
     {"ZS_OBSERVEPLAYER",      &GameScript::runObservePlayer},
     {"ZS_CLEARROOM",          &GameScript::runClearRoom},
+    {"ZS_REACTTODAMAGE",       &GameScript::runHumanReaction},
+    {"ZS_REACTTOWEAPON",       &GameScript::runHumanReaction},
+    {"ZS_ATTACK",              &GameScript::runHumanAttack},
+    {"ZS_FLEE",                &GameScript::runHumanFlee},
+    {"ZS_WATCHFIGHT",          &GameScript::runWatchFight},
+    {"ZS_COMMENTFAKEGUILD",    &GameScript::runFakeGuildComment},
+    {"ZS_GETMEAT",             &GameScript::runHumanPlunder},
+    {"ZS_RANSACKBODY",         &GameScript::runHumanPlunder},
+    {"ZS_GREENTENTACLE",       &GameScript::runControlSpell},
+    {"ZS_SHORTZAPPED",         &GameScript::runControlSpell},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
     {"ZS_MM_ATTACK",         &GameScript::runMonsterAttack},
     {"ZS_MM_THREATENENEMY",   &GameScript::runMonsterThreat},
@@ -133,9 +143,9 @@ bool GameScript::endMonsterRoutine(Npc& npc, MonsterRoutine routine) {
   }
 
 void GameScript::removeRavensStoneGuardians(Npc& npc) {
-  // B_KILLNPC resolves the live NPC through the VM's SELF symbol.
+  // The stock rule resolves the live guardian through the SELF alias.
   if(npc.handle().guild==GIL_Stoneguardian && findSymbol("RAVENISDEAD")->get_int()==1)
-    vm.call_function<void>("B_KILLNPC",int32_t(vm.global_self()->index()));
+    invokeKillNpc(int32_t(vm.global_self()->index()));
   }
 
 bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe) {

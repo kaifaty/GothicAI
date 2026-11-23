@@ -461,3 +461,9 @@ std::string compare(const asset::ProgramRecord& expected, const asset::ProgramRe
   }
 
 }
+
+const ProgramData::Source* ProgramData::fightProgram(const Index& index) {
+  if(auto* source = index.findVfs("Fight.dat"))
+    return source;
+  return index.findHost("_work/Data/Scripts/_compiled/Fight.dat");
+  }
