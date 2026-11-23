@@ -1402,6 +1402,7 @@ void loadCampfireGroup(Gothic& gothic,const CampfireSave& save) {
   }
 
 #include "npc_perception_world_fixture.h"
+#include "npc_story_effects_world_fixture.h"
 
 void quietSoundAtPost(Gothic& gothic) {
   constexpr auto* state="ZS_STAND_ARMSCROSSED";
