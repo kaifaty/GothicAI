@@ -112,7 +112,17 @@ void GameScript::runStartup(std::string_view fn) {
 
 void GameScript::runWorldInit(std::string_view fn) {
   const auto* function = vm.find_symbol_by_name(fn);
-  if(!nativeRoutineProgram || !PlacementDefinitionRuntime::enabled() || !function || function->name()!="INIT_DRAGONISLAND") {
+  const bool native = nativeRoutineProgram && PlacementDefinitionRuntime::enabled() && function;
+  if(native && function->name()=="INIT_ADDONWORLD") {
+    for(const auto* stage:{"INIT_SUB_ADDON_PART_BANDITSCAMP_01", "INIT_SUB_ADDON_PART_PIRATESCAMP_01",
+                           "INIT_SUB_ADDON_PART_ENTRANCE_01", "INIT_SUB_ADDON_PART_GOLDMINE_01",
+                           "INIT_SUB_ADDON_PART_CANYON_01", "INIT_SUB_ADDON_PART_VALLEY_01",
+                           "INIT_SUB_ADDON_PART_ADANOSTEMPLE_01", "B_INITMONSTERATTITUDES",
+                           "B_INITGUILDATTITUDES", "B_INITNPCGLOBALS", "B_ENTER_ADDONWORLD"})
+      vm.unsafe_call_bl(findSymbol(stage));
+    return;
+    }
+  if(!native || function->name()!="INIT_DRAGONISLAND") {
     vm.call_function(function);
     return;
     }
@@ -144,34 +154,53 @@ void GameScript::loadNativeWorldEntry() {
   if(!nativeRoutineProgram)
     return;
 
-  vm.override_function("B_ENTER_NEWWORLD",std::function<void()>{[this] { enterChapterWorld(false); }},
-                       PlacementDefinitionRuntime::enabled);
-  vm.override_function("B_ENTER_OLDWORLD",std::function<void()>{[this] { enterChapterWorld(true); }},
-                       PlacementDefinitionRuntime::enabled);
+  static constexpr std::pair<const char*,ChapterWorld> worlds[]={
+    {"B_ENTER_NEWWORLD",ChapterWorld::New}, {"B_ENTER_OLDWORLD",ChapterWorld::Old}, {"B_ENTER_ADDONWORLD",ChapterWorld::Addon},
+    };
+  for(const auto& [name,region]:worlds)
+    vm.override_function(name,std::function<void()>{[this,region] { enterChapterWorld(region); }},
+                         PlacementDefinitionRuntime::enabled);
+
+  static constexpr std::pair<const char*,const char*> latches[]={
+    {"B_ENTER_NEWWORLD_KAPITEL_6","ENTERNW_KAPITEL6"},
+    {"B_ENTER_OLDWORLD_KAPITEL_1","ENTEROW_KAPITEL1"},
+    {"B_ENTER_OLDWORLD_KAPITEL_2","ENTEROW_KAPITEL2"},
+    {"B_ENTER_OLDWORLD_KAPITEL_6","ENTEROW_KAPITEL6"},
+    };
+  for(const auto& [name,flag]:latches)
+    vm.override_function(name,std::function<void()>{[this,flag] {
+      auto* latch=findSymbol(flag);
+      if(latch->get_int()==findSymbol("FALSE")->get_int())
+        latch->set_int(findSymbol("TRUE")->get_int());
+      }},PlacementDefinitionRuntime::enabled);
   vm.override_function("B_KAPITELWECHSEL",std::function<void(int32_t,int32_t)>{
     [this](int32_t chapter,int32_t level) { changeChapter(chapter,level); }},PlacementDefinitionRuntime::enabled);
   }
 
-void GameScript::enterChapterWorld(bool oldWorld) {
-  static constexpr std::array newWorldChapters={
-    "B_ENTER_NEWWORLD_KAPITEL_1", "B_ENTER_NEWWORLD_KAPITEL_2", "B_ENTER_NEWWORLD_KAPITEL_3",
-    "B_ENTER_NEWWORLD_KAPITEL_4", "B_ENTER_NEWWORLD_KAPITEL_5", "B_ENTER_NEWWORLD_KAPITEL_6",
+void GameScript::enterChapterWorld(ChapterWorld region) {
+  struct Entry {
+    const char* level;
+    std::array<const char*,6> chapters;
     };
-  static constexpr std::array oldWorldChapters={
-    "B_ENTER_OLDWORLD_KAPITEL_1", "B_ENTER_OLDWORLD_KAPITEL_2", "B_ENTER_OLDWORLD_KAPITEL_3",
-    "B_ENTER_OLDWORLD_KAPITEL_4", "B_ENTER_OLDWORLD_KAPITEL_5", "B_ENTER_OLDWORLD_KAPITEL_6",
+  static constexpr Entry entries[]={
+    {"NEWWORLD_ZEN",{"B_ENTER_NEWWORLD_KAPITEL_1", "B_ENTER_NEWWORLD_KAPITEL_2", "B_ENTER_NEWWORLD_KAPITEL_3",
+                    "B_ENTER_NEWWORLD_KAPITEL_4", "B_ENTER_NEWWORLD_KAPITEL_5", "B_ENTER_NEWWORLD_KAPITEL_6"}},
+    {"OLDWORLD_ZEN",{"B_ENTER_OLDWORLD_KAPITEL_1", "B_ENTER_OLDWORLD_KAPITEL_2", "B_ENTER_OLDWORLD_KAPITEL_3",
+                    "B_ENTER_OLDWORLD_KAPITEL_4", "B_ENTER_OLDWORLD_KAPITEL_5", "B_ENTER_OLDWORLD_KAPITEL_6"}},
+    {"ADDONWORLD_ZEN",{"B_ENTER_ADDONWORLD_KAPITEL_1", "B_ENTER_ADDONWORLD_KAPITEL_2", "B_ENTER_ADDONWORLD_KAPITEL_3",
+                      "B_ENTER_ADDONWORLD_KAPITEL_4", "B_ENTER_ADDONWORLD_KAPITEL_5", "B_ENTER_ADDONWORLD_KAPITEL_6"}},
     };
-  const auto& chapters=oldWorld ? oldWorldChapters : newWorldChapters;
+  const auto& entry=entries[size_t(region)];
   const auto* npcGlobals=findSymbol("B_INITNPCGLOBALS");
   vm.unsafe_call_bl(npcGlobals);
-  for(size_t i=0;i<chapters.size();++i) {
+  for(size_t i=0;i<entry.chapters.size();++i) {
     if(storyChapter>=int32_t(i)+1)
-      vm.unsafe_call_bl(findSymbol(chapters[i]));
+      vm.unsafe_call_bl(findSymbol(entry.chapters[i]));
     }
   const auto number=[&](std::string_view name) { return findSymbol(name)->get_int(); };
-  findSymbol("CURRENTLEVEL")->set_int(number(oldWorld ? "OLDWORLD_ZEN" : "NEWWORLD_ZEN"));
+  findSymbol("CURRENTLEVEL")->set_int(number(entry.level));
   vm.unsafe_call_bl(npcGlobals);
-  if(!oldWorld)
+  if(region!=ChapterWorld::Old)
     return;
 
   const auto isDead=[&](std::string_view alias) {
