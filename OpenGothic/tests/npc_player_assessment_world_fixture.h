@@ -13,9 +13,9 @@ void talkTopicAssignments(World& world,Npc& npc,Npc& hero) {
   const auto npcQueue=Contract::queue(npc),heroQueue=Contract::queue(hero);
   auto& talkFix=*vm.find_symbol_by_name("ZSTALKBUGFIX");
   const auto savedFix=talkFix.get_int();
-  enum Site { AmbientInfos, City, OldCamp, Guide, Tough, ToughNews, Ambient, Crime, Absolution, AmbientNews };
-  constexpr std::array helpers={"B_ASSIGNAMBIENTINFOS","C_NPCBELONGSTOCITY","C_NPCBELONGSTOOLDCAMP",
-      "B_ASSIGNCITYGUIDE","C_NPCISTOUGHGUY","B_ASSIGNTOUGHGUYNEWS","C_NPCHASAMBIENTNEWS",
+  enum Site { FakeBandit, AmbientInfos, City, OldCamp, Guide, Potion, Tough, ToughNews, Ambient, Crime, Absolution, AmbientNews };
+  constexpr std::array helpers={"C_PLAYERISFAKEBANDIT","B_ASSIGNAMBIENTINFOS","C_NPCBELONGSTOCITY","C_NPCBELONGSTOOLDCAMP",
+      "B_ASSIGNCITYGUIDE","B_ADDON_GIVEPOTION","C_NPCISTOUGHGUY","B_ASSIGNTOUGHGUYNEWS","C_NPCHASAMBIENTNEWS",
       "B_GETPLAYERCRIME","B_GETCURRENTABSOLUTIONLEVEL","B_ASSIGNAMBIENTNEWS"};
   std::array<daedalus::DaedalusSymbol*,helpers.size()> slots;
   std::array<std::shared_ptr<daedalus::DaedalusInstance>,helpers.size()> savedSlots;
@@ -25,26 +25,33 @@ void talkTopicAssignments(World& world,Npc& npc,Npc& hero) {
     slots[i]=vm.find_symbol_by_name(std::string(helpers[i])+".SLF");
     savedSlots[i]=slots[i]->get_instance();
     }
-  std::array topics={"DIA_CITYGUIDE","DIA_TOUGHGUY_NEWS","DIA_AMBIENT_NEWS"};
+  constexpr std::array topics={"DIA_CITYGUIDE","DIA_ADDON_GIVEPOTION","DIA_TOUGHGUY_NEWS","DIA_AMBIENT_NEWS"};
   std::array<std::shared_ptr<daedalus::IInfo>,topics.size()> infos;
   std::ranges::transform(topics,infos.begin(),[&](const auto* name) {
     return std::static_pointer_cast<daedalus::IInfo>(vm.find_symbol_by_name(name)->get_instance());
     });
-  const std::array savedOwners={infos[0]->npc,infos[1]->npc,infos[2]->npc};
+  std::array<int32_t,topics.size()> savedOwners;
+  std::ranges::transform(infos,savedOwners.begin(),[](const auto& info) { return info->npc; });
+  auto& disguiseOther=*vm.find_symbol_by_name("C_PLAYERISFAKEBANDIT.OTH");
+  const auto savedDisguiseOther=disguiseOther.get_instance();
+  auto& disguiseArmor=*vm.find_symbol_by_name("C_PLAYERISFAKEBANDIT.ITM");
+  const auto savedDisguiseArmor=disguiseArmor.get_instance();
   const auto self=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
   const auto init=script.findFunction("ZS_TALK");
   actor.guild=GIL_MIL;
   actor.voice=0; // No stock militia voice-specific assignment.
-  npc.setAttitude(ATT_FRIENDLY);
   for(bool oldCamp:{false,true}) {
     actor.type=oldCamp ? NpcType::G2_OC_AMBIENT : NpcType::G2_AMBIENT;
+    npc.setAttitude(oldCamp ? ATT_ANGRY : ATT_FRIENDLY);
     for(bool native:{false,true}) {
       if(native && (!before || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
         continue;
       events=native;
       actor.aivar[25]=actor.aivar[58]=int(oldCamp);
       actor.aivar[57]=1;
-      actor.aivar[15]=0;
+      actor.aivar[15]=int(!oldCamp);
+      actor.aivar[73]=1; // The hostile actor ignores armor, so the stock armor slot is untouched.
       actor.aivar[1]=script.intSymbol("CRIME_THEFT",-1);
       actor.aivar[2]=int32_t(world.time().day());
       actor.aivar[46]=script.intSymbol("ABSOLUTIONLEVEL_CITY",-1);
@@ -52,6 +59,7 @@ void talkTopicAssignments(World& world,Npc& npc,Npc& hero) {
       Contract::queue(npc).clear();
       Contract::queue(hero).clear();
       for(auto* slot:slots) slot->set_instance(nullptr);
+      disguiseOther.set_instance(nullptr);
       for(const auto& info:infos) info->npc=-1;
       std::vector<Site> called;
       vm.observe_instructions([&](const auto&) {
@@ -60,10 +68,9 @@ void talkTopicAssignments(World& world,Npc& npc,Npc& hero) {
         });
       script.invokeState(&npc,&hero,nullptr,init);
       vm.observe_instructions({});
-      const auto expected=oldCamp ? std::vector<Site>{AmbientInfos,City,OldCamp,Tough,Ambient} :
-          std::vector<Site>{AmbientInfos,City,OldCamp,Guide,Tough,ToughNews,Ambient,Crime,Absolution,OldCamp,City,OldCamp,AmbientNews};
-      require(called==(native ? (oldCamp ? std::vector<Site>{AmbientInfos} :
-                                   std::vector<Site>{AmbientInfos,ToughNews,AmbientNews}) : expected),
+      const auto expected=oldCamp ? std::vector<Site>{FakeBandit,AmbientInfos,City,OldCamp,Tough,Ambient} :
+          std::vector<Site>{AmbientInfos,City,OldCamp,Guide,Potion,Tough,ToughNews,Ambient,Crime,Absolution,OldCamp,City,OldCamp,AmbientNews};
+      require(called==(native ? std::vector<Site>{AmbientInfos} : expected),
               "talk topics: the assigned topics and nested crime callbacks keep their order");
       for(size_t i=0;i<slots.size();++i) {
         const bool used=std::ranges::find(expected,Site(i))!=expected.end();
@@ -71,15 +78,20 @@ void talkTopicAssignments(World& world,Npc& npc,Npc& hero) {
         }
       for(const auto& info:infos)
         require(info->npc==(oldCamp ? -1 : int32_t(npc.instanceSymbol())),"talk topics: stock info recipients agree");
+      require(disguiseOther.get_instance()==(oldCamp ? other : nullptr) && disguiseArmor.get_instance()==savedDisguiseArmor,
+              "talk topics: disguise ignores armor in the stock actor's context");
       }
     }
   for(size_t i=0;i<slots.size();++i) slots[i]->set_instance(savedSlots[i]);
   for(size_t i=0;i<infos.size();++i) infos[i]->npc=savedOwners[i];
+  disguiseOther.set_instance(savedDisguiseOther);
+  disguiseArmor.set_instance(savedDisguiseArmor);
   const auto [guild,type,voice,attitude]=originalActor;
   actor.guild=guild;
   actor.type=type;
   actor.voice=voice;
   npc.setAttitude(attitude);
+  npc.startFaceAnim("S_NEUTRAL",1.f,uint64_t(-1)); // Restore the face after the hostile talk trial.
   std::copy(npcVars.begin(),npcVars.end(),actor.aivar);
   std::copy(heroVars.begin(),heroVars.end(),player.aivar);
   Contract::queue(npc)=npcQueue;

@@ -490,22 +490,24 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
       }
 
     if(self->guild<int32_t(GIL_SEPERATOR_HUM)) {
+      const auto assignInfo = [&](std::string_view formal, std::string_view topic) {
+        findSymbol(formal)->set_instance(self);
+        const auto owner = hlp_getinstanceid(self);
+        if(auto* info = findInfo(findSymbolIndex(topic)))
+          info->npc = owner;
+        };
       const auto attitude = npc_getattitude(self,other());
       if(attitude==ATT_HOSTILE || attitude==ATT_ANGRY) {
         const bool bandit = self->guild==GIL_BDT;
-        const bool fakeBandit = vm.call_function<int32_t>("C_PLAYERISFAKEBANDIT",self,other())!=0;
+        const bool fakeBandit = isPlayerFakeBandit(self,other());
         if(!bandit || !fakeBandit)
           mdl_startfaceani(self,"S_ANGRY",1.f,-1.f);
         }
       if(self->type==NpcType::G2_TAL_AMBIENT || self->type==NpcType::G2_BL_AMBIENT ||
          self->type==NpcType::G2_OC_AMBIENT || self->type==NpcType::G2_AMBIENT) {
         vm.call_function<void>("B_ASSIGNAMBIENTINFOS",self);
-        if(belongsToCity(self)) {
-          findSymbol("B_ASSIGNCITYGUIDE.SLF")->set_instance(self);
-          const auto owner = hlp_getinstanceid(self);
-          if(auto* guide = findInfo(findSymbolIndex("DIA_CITYGUIDE")))
-            guide->npc = owner;
-          }
+        if(belongsToCity(self))
+          assignInfo("B_ASSIGNCITYGUIDE.SLF","DIA_CITYGUIDE");
         }
       static constexpr std::string_view noPartyPotion[] = {"PARDOS_NW","PARDOS","BIFF_DI","BIFF_NW","BIFF"};
       const auto selfId = hlp_getinstanceid(self);
@@ -513,16 +515,16 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
         return hlp_getinstanceid(findSymbol(instance)->get_instance())==selfId;
         });
       if(!excluded && self->aivar[partyMember]==1)
-        vm.call_function<void>("B_ADDON_GIVEPOTION",self);
+        assignInfo("B_ADDON_GIVEPOTION.SLF","DIA_ADDON_GIVEPOTION");
       const bool canOfferNews = self->aivar[toughGuyNewsOverride]==0;
       const bool toughGuy = isToughGuy(self);
       if(canOfferNews && toughGuy)
-        vm.call_function<void>("B_ASSIGNTOUGHGUYNEWS",self);
+        assignInfo("B_ASSIGNTOUGHGUYNEWS.SLF","DIA_TOUGHGUY_NEWS");
       findSymbol("C_NPCHASAMBIENTNEWS.SLF")->set_instance(self);
       if(self->aivar[ambientNewsOverride]!=1) {
         const auto noCrime = findSymbol("CRIME_NONE")->get_int();
         if(playerCrime(self)!=noCrime)
-          vm.call_function<void>("B_ASSIGNAMBIENTNEWS",self);
+          assignInfo("B_ASSIGNAMBIENTNEWS.SLF","DIA_AMBIENT_NEWS");
         }
       }
     if(self->guild==GIL_DRAGON)
