@@ -351,6 +351,8 @@ void GameScript::loadNativeHumanPerceptions() {
   playerCallback = findFunction("B_ASSESSPLAYER");
   theftCallback = findFunction("B_ASSESSTHEFT");
   useMobCallback = findFunction("B_ASSESSUSEMOB");
+  moveMobCallback = findFunction("B_MOVEMOB");
+  surpriseCallback = findFunction("B_ASSESSSURPRISE");
   stopShortZapCallback = findFunction("B_STOPSHORTZAPPED");
   const auto enabled = [this] { return nativeHumanPerceptionsEnabled(); };
   vm.override_function("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }},enabled);
@@ -371,7 +373,8 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
   const bool stopShortZap = fn==stopShortZapCallback;
   const bool propertyCrime = fn==theftCallback || fn==useMobCallback;
   if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=warnCallback && fn!=fightSoundCallback &&
-      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !propertyCrime && !stopShortZap) ||
+      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !propertyCrime && !stopShortZap &&
+      fn!=moveMobCallback && fn!=surpriseCallback) ||
      !nativeHumanPerceptionsEnabled())
     return false;
   phase.fromRecord();
@@ -385,6 +388,10 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
     runPlayerAssessment();
   else if(propertyCrime)
     runPropertyCrime(fn==useMobCallback);
+  else if(fn==moveMobCallback)
+    runMoveMobReaction();
+  else if(fn==surpriseCallback)
+    runSurpriseReaction();
   else if(fn==warnCallback)
     runWarnReaction();
   else if(fn==fightSoundCallback)
@@ -787,6 +794,31 @@ int32_t GameScript::runEnemyReaction() {
     return 1;
     }
   return 0;
+  }
+
+void GameScript::runMoveMobReaction() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto scheme = npc_getdetectedmob(self);
+  findSymbol("B_MOVEMOB.DOOR")->set_string(scheme);
+  if(scheme!="DOOR") {
+    ai_continueroutine(self);
+    return;
+    }
+  if(wld_getmobstate(self,scheme)==0) {
+    npc_clearaiqueue(self);
+    ai_usemob(self,scheme,1);
+    ai_usemob(self,scheme,-1);
+    }
+  }
+
+void GameScript::runSurpriseReaction() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  npc_settarget(self,other);
+  if(self!=nullptr) {
+    constexpr size_t attackReason = 9; // AIV_ATTACKREASON
+    self->aivar[attackReason] = findSymbol("AR_GUILDENEMY")->get_int();
+    }
   }
 
 void GameScript::runPropertyCrime(bool usingMob) {
