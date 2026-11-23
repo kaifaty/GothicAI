@@ -1372,11 +1372,16 @@ void placementDefinitionsDisabled(World& world) {
 // perception helper still runs in the VM), the queued commands and the phase results.
 class ActivityStream final : public NpcActivityProbe {
   public:
-    ActivityStream(World& world,Npc& npc):npc(npc),vm(world.script().getVm()) {
+    ActivityStream(World& world,Npc& npc,std::function<void(uint32_t)> onInstruction={}):npc(npc),vm(world.script().getVm()) {
       previous=NpcActivityProbe::instance;
       NpcActivityProbe::instance=this;
       vm.observe_externals([this](const daedalus::DaedalusSymbol& symbol) { external(symbol); });
-      vm.observe_instructions([this](const daedalus::DaedalusInstruction&) { finish(); });
+      vm.observe_instructions([this,onInstruction=std::move(onInstruction)](const daedalus::DaedalusInstruction&) {
+        // Read the external return before the next instruction changes the stack.
+        finish();
+        if(onInstruction)
+          onInstruction(vm.pc());
+        });
       ActivityDefinitionRuntime::observer=[this](const Npc& who,std::string_view event) {
         if(&who==&this->npc && depth>0 && !event.starts_with("deferred ")) events.emplace_back(event);
         };

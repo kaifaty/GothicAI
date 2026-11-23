@@ -1392,7 +1392,6 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
     aivar[63]=1000;
     Contract::outputOrder(script)=outputOrder;
     script.setSeed(73106);
-    ActivityStream stream(world,npc);
     const std::array equipmentRules={
       vm.find_symbol_by_name("B_CREATEAMMO")->address(),
       vm.find_symbol_by_name("B_SELECTWEAPON")->address(),
@@ -1400,9 +1399,9 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
       vm.find_symbol_by_name("C_NPCHASATTACKREASONTOKILL")->address(),
       };
     size_t bytecode=0,outcomeChecks=0,equipmentChecks=0;
-    vm.observe_instructions([&](const auto&) {
-      outcomeChecks+=vm.pc()==fleeCheck || vm.pc()==forcedRansack || vm.pc()==ransack;
-      equipmentChecks+=std::ranges::find(equipmentRules,vm.pc())!=equipmentRules.end();
+    ActivityStream stream(world,npc,[&](uint32_t pc) {
+      outcomeChecks+=pc==fleeCheck || pc==forcedRansack || pc==ransack;
+      equipmentChecks+=std::ranges::find(equipmentRules,pc)!=equipmentRules.end();
       });
     const auto count=vm.add_call_observer([&](const auto& symbol) {
       bytecode+=symbol.name()=="ZS_ATTACK" || symbol.name()=="ZS_ATTACK_LOOP" || symbol.name()=="ZS_ATTACK_END";
@@ -1432,7 +1431,6 @@ void humanAttackPhases(World& world,Npc& npc,Npc& hero) {
     aivar[45]=arenaRunning;
     script.invokeState(&npc,&npc,nullptr,ScriptFn(phases.end));
     vm.remove_call_observer(count);
-    vm.observe_instructions({});
     queue=Contract::queue(npc);
     require(aivar[45]==arenaAfter && npc.stateOther()==&hero && queue.size()==2 &&
             queue.pop().act==AI_RemoveWeapon,"human attack: End restores the last target, closes the arena fight and sheathes");
@@ -1737,7 +1735,9 @@ void fleeAndWatchPhases(World& world,Npc& npc,Npc& hero) {
     npc.setTarget(&hero);
     npc.clearAiQueue();
     npc.setStateTime(0);
-    ActivityStream stream(world,npc);
+    const auto overlayPc=vm.find_symbol_by_name("B_SAY_OVERLAY")->address();
+    size_t overlayInstructions=0;
+    ActivityStream stream(world,npc,[&](uint32_t pc) { overlayInstructions+=pc==overlayPc; });
     size_t vmCalls=0,validateCalls=0,invocations=0;
     const auto count=vm.add_call_observer([&](const auto& sym) {
       vmCalls+=sym.name()=="ZS_FLEE" || sym.name()=="ZS_FLEE_LOOP" || sym.name()=="ZS_FLEE_END" ||
@@ -1748,11 +1748,7 @@ void fleeAndWatchPhases(World& world,Npc& npc,Npc& hero) {
       ++invocations;
       return script.invokeState(&npc,other,victim,ScriptFn(phase));
       };
-    const auto overlayPc=vm.find_symbol_by_name("B_SAY_OVERLAY")->address();
-    size_t overlayInstructions=0;
-    vm.observe_instructions([&](const auto&) { overlayInstructions+=vm.pc()==overlayPc; });
     invoke(flee.init,&hero);
-    vm.observe_instructions({});
     require(overlayInstructions==(native ? 0u : 1u),"flee: only the original phase executes the overlay speech body");
     require(npc.hasPerc(PERC_ASSESSMAGIC) && npc.hasOverlay(overlay) && aivar[65]==0 && npc.target()==&hero,
             "flee: fresh Init applies the overlay and keeps the active target");
