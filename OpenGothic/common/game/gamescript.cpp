@@ -1446,7 +1446,8 @@ void GameScript::useInteractive(const std::shared_ptr<NpcRecord>& hnpc, std::str
 
   ScopeVar self(*vm.global_self(),hnpc);
   try {
-    vm.call_function<void>(fn);
+    if(!invokeNativeMobState(*fn))
+      vm.call_function<void>(fn);
     }
   catch (...) {
     Log::i("unable to use interactive [",func,"]");
