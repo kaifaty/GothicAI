@@ -253,7 +253,7 @@ class GameScript final : public GameRules {
     bool runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runFearOrSleepSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runFreezeOrWhirlwindSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
-    void stopFreezeOrWhirlwindSpell(Npc& npc);
+    void stopInterruptedSpell(Npc& npc, bool resumeRoutine = false);
     bool invokeNativeStatusPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
     void stopMagicFear(Npc& npc);
     void stopMagicSleep(Npc& npc);
@@ -320,6 +320,7 @@ class GameScript final : public GameRules {
     bool usesNativeShrinkSpell(const Item* item) const;
     int runShrinkMana(Npc& caster, int mana, bool release);
     void castShrink(Npc& caster, Npc* target);
+    std::optional<int> runStockSpellMana(Npc& caster, int mana);
     bool runStockSpellCast(Npc& caster, std::string_view function, int32_t level);
     void assessMagic(Npc& npc);
     void givePlayerXp(int32_t amount);

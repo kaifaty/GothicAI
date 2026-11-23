@@ -1189,6 +1189,8 @@ int GameScript::invokeMana(Npc &npc, Npc* target, int mana) {
 
   if(usesNativeShrinkSpell(npc.activeWeapon()))
     return runShrinkMana(npc,mana,false);
+  if(const auto result=runStockSpellMana(npc,mana))
+    return *result;
   return vm.call_function<int>(fn,mana);
   }
 

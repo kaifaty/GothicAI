@@ -301,7 +301,7 @@ bool GameScript::runFreezeOrWhirlwindSpell(Npc& npc, const daedalus::DaedalusSym
   else if(name.ends_with("_LOOP")) {
     const auto seconds = npc_getstatetime(self);
     if(seconds>(freeze ? 19 : 10)) {
-      stopFreezeOrWhirlwindSpell(npc);
+      stopInterruptedSpell(npc);
       result = LOOP_END;
       return true;
       }
@@ -331,14 +331,16 @@ bool GameScript::runFreezeOrWhirlwindSpell(Npc& npc, const daedalus::DaedalusSym
   return true;
   }
 
-void GameScript::stopFreezeOrWhirlwindSpell(Npc& npc) {
+void GameScript::stopInterruptedSpell(Npc& npc, bool resumeRoutine) {
   npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction("B_ASSESSMAGIC").ptr);
   npc.clearAiQueue();
   npc.aiPush(AiQueue::aiStandup());
   if(npc.handle().guild<int32_t(GIL_SEPERATOR_HUM))
-    vm.call_function<void>("B_ASSESSDAMAGE");
+    vm.unsafe_call_bl(findSymbol("B_ASSESSDAMAGE"));
   else
     npc_settempattitude(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),int32_t(ATT_HOSTILE));
+  if(resumeRoutine)
+    ai_continueroutine(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
   }
 
 void GameScript::runFollowerPlayerAssessment() {

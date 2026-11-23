@@ -220,8 +220,10 @@ bool GameScript::invokeNativeRoutineReaction(Npc& npc, const daedalus::DaedalusS
 bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol,
                                               NpcActivityProbe::Phase& phase) {
   const std::string_view name = symbol.name();
+  const bool stopDamage = name=="B_STOPMAGICBURN" || name=="B_STOPMAGICBURNSHORT" || name=="B_STOPPYRO" || name=="B_STOPZAPPED";
+  const bool restartBurn = name=="B_RESTARTBURN" || name=="B_RESTARTBURNSHORT";
   if((name!="B_ASSESSMAGIC" && name!="B_STOPMAGICFLEE" && name!="B_STOPMAGICSLEEP" && name!="B_ASSESSMAGICSLEEPTALK" &&
-      name!="B_PAL_ZOMBIE_RISE" && name!="B_RESTARTFREEZE" && name!="B_RESTARTWHIRLWIND") ||
+      name!="B_PAL_ZOMBIE_RISE" && name!="B_RESTARTFREEZE" && name!="B_RESTARTWHIRLWIND" && !stopDamage && !restartBurn) ||
      !nativeRoomReactionsEnabled())
     return false;
   phase.fromRecord();
@@ -237,6 +239,26 @@ bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::Daedalus
     }
   else if(name=="B_PAL_ZOMBIE_RISE") {
     raisePaladinZombie(npc);
+    }
+  else if(stopDamage) {
+    stopInterruptedSpell(npc,true);
+    }
+  else if(restartBurn) {
+    const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+    const auto spell = npc.lastHitSpellId();
+    const auto id = [this](std::string_view symbol) { return findSymbol(symbol)->get_int(); };
+    const bool shortBurn = name=="B_RESTARTBURNSHORT";
+    const bool sameEffect = spell==id("SPL_CHARGEFIREBALL") || (shortBurn
+      ? spell==id("SPL_FIRESTORM")
+      : spell==id("SPL_FIREBOLT") || spell==id("SPL_INSTANTFIREBALL") || spell==id("SPL_FIRERAIN"));
+    if(sameEffect) {
+      npc.setStateTime(0);
+      }
+    else if(spell==id("SPL_ICECUBE") || spell==id("SPL_ICEWAVE")) {
+      npc.clearAiQueue();
+      clearNpcPerceptions(self);
+      ai_startstate(self,int(findFunction("ZS_MAGICFREEZE").ptr),0,"");
+      }
     }
   else {
     constexpr int32_t iceCube=33, iceWave=39, whirlwind=71; // Spell IDs in the verified program.

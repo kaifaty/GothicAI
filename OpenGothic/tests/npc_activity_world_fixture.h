@@ -5342,17 +5342,21 @@ void stockSpellCastAccounting(World& world) {
   const auto targetHp=target.attribute(ATR_HITPOINTS);
   auto& level=*script.findSymbol("SPELL_CAST_ZAP.SPELLLEVEL");
   const auto oldLevel=level.get_int();
+  auto& invested=*script.findSymbol("SPELL_PROCESSMANA.MANAINVESTED");
+  auto& activeSpell=*script.findSymbol("SPELL_PROCESSMANA.ACTIVESPELL");
+  const auto oldInvested=invested.get_int(),oldActiveSpell=activeSpell.get_int();
   const auto* point=world.findWayPoint("NW_FARM4_BALTHASAR");
   require(point!=nullptr,"cast accounting: need a live stock caster spawn point");
 
   const struct Cast {
     const char* item;
     int32_t cost;
+    const char* admission=nullptr;
     bool leveled=false;
     } cases[] = {
-    {"ITSC_ICEBOLT",5},
-    {"ITRU_ICEBOLT",10},
-    {"ITSC_ZAP",5,true},
+    {"ITSC_ICEBOLT",5,"SPELL_LOGIC_ICEBOLT.MANAINVESTED"},
+    {"ITRU_ICEBOLT",10,"SPELL_LOGIC_ICEBOLT.MANAINVESTED"},
+    {"ITSC_ZAP",5,"SPELL_LOGIC_ZAP.MANAINVESTED",true},
     {"ITSC_SLEEP",0},
     };
   for(const auto& row:cases) {
@@ -5364,14 +5368,37 @@ void stockSpellCastAccounting(World& world) {
       auto* item=caster->addItem(symbol.index(),1);
       require(item && caster->drawSpell(item->spellId()) && caster->activeWeapon()==item,
               "cast accounting: the actual test item must be active");
+      events=native;
+      size_t instructions=0;
+      if(row.admission!=nullptr) {
+        auto& local=*script.findSymbol(row.admission);
+        const auto oldLocal=local.get_int();
+        for(bool enough:{false,true}) {
+          const auto available=row.cost-int32_t(!enough);
+          caster->handle().attribute[ATR_MANA]=available;
+          symbol.set_instance(nullptr);
+          invested.set_int(-1);
+          activeSpell.set_int(-1);
+          local.set_int(-1);
+          instructions=0;
+          vm.observe_instructions([&](const auto&) { ++instructions; });
+          const auto result=script.invokeMana(*caster,&target,17);
+          vm.observe_instructions({});
+          require(result==(enough ? SPL_SENDCAST : SPL_SENDSTOP) && (instructions==0)==native &&
+                  caster->attribute(ATR_MANA)==available && invested.get_int()==17 &&
+                  activeSpell.get_int()==item->spellId() && local.get_int()==17 &&
+                  symbol.get_instance()==std::static_pointer_cast<daedalus::IItem>(item->handlePtr()),
+                  "spell admission: preserve both thresholds, saved locals and the active item");
+          }
+        local.set_int(oldLocal);
+        }
       caster->handle().attribute[ATR_MANA]=3;
       caster->handle().aivar[20]=9;
       const auto casterQueue=activityQueue(*caster),targetQueue=activityQueue(target);
       const auto callSelf=vm.global_self()->get_instance(),callOther=vm.global_other()->get_instance();
       const auto callItem=vm.global_item()->get_instance(),callGi=vm.unsafe_get_gi();
       level.set_int(71);
-      events=native;
-      size_t instructions=0;
+      instructions=0;
       vm.observe_instructions([&](const auto&) { ++instructions; });
       vm.push_int(0x12345678);
       script.invokeSpell(*caster,&target,*item);
@@ -5391,8 +5418,10 @@ void stockSpellCastAccounting(World& world) {
       }
     }
   level.set_int(oldLevel);
+  invested.set_int(oldInvested);
+  activeSpell.set_int(oldActiveSpell);
   events=previousEvents;
-  std::puts("Spell cast accounting: rune, scroll, level and counter-only callbacks match both executors");
+  std::puts("Spell accounting: mana admission, rune, scroll, level and counter-only callbacks match both executors");
   }
 
 void shrinkSpellStates(World& world) {
@@ -5499,21 +5528,27 @@ void magicHurtStates(World& world) {
 
   const struct Case {
     const char* name;
+    const char* stop;
+    const char* restart;
     int32_t damage;
     bool exactSecond, shortBurn;
     } cases[]={
-    {"ZS_MAGICBURN",1,true,false},
-    {"ZS_MAGICBURNSHORT",1,true,true},
-    {"ZS_PYRO",20,false,false},
-    {"ZS_ZAPPED",2,false,false}
+    {"ZS_MAGICBURN","B_STOPMAGICBURN","B_RESTARTBURN",1,true,false},
+    {"ZS_MAGICBURNSHORT","B_STOPMAGICBURNSHORT","B_RESTARTBURNSHORT",1,true,true},
+    {"ZS_PYRO","B_STOPPYRO",nullptr,20,false,false},
+    {"ZS_ZAPPED","B_STOPZAPPED",nullptr,2,false,false}
     };
   for(const auto& c:cases) {
     const auto init=script.findFunction(c.name);
     const auto loop=script.findFunction(std::string(c.name)+"_LOOP");
     const auto end=script.findFunction(std::string(c.name)+"_END");
     require(init.isValid() && loop.isValid() && end.isValid(),"the magic damage fixture needs three stock phases");
+    const auto* stop=script.findSymbol(c.stop);
+    const auto* restart=c.restart ? script.findSymbol(c.restart) : nullptr;
+    require(stop && (!c.restart || restart),"the magic damage fixture needs its stock perceptions");
     const std::array addresses{script.findSymbol(init.ptr)->address(),script.findSymbol(loop.ptr)->address(),
-                               script.findSymbol(end.ptr)->address(),helper->address()};
+                               script.findSymbol(end.ptr)->address(),helper->address(),stop->address(),
+                               restart ? restart->address() : stop->address()};
     std::vector<uint8_t> oldSave;
     const auto run=[&](bool native) {
       events=native;
@@ -5583,6 +5618,34 @@ void magicHurtStates(World& world) {
         heroRecord.exp_next=previousNext;
         heroRecord.level=previousLevel;
         }
+      if(restart) {
+        const auto freeze=script.findFunction("ZS_MAGICFREEZE");
+        for(const auto* spell : {"SPL_WHIRLWIND",c.shortBurn ? "SPL_FIRESTORM" : "SPL_FIREBOLT","SPL_ICEWAVE"}) {
+          npc->clearAiQueue();
+          npc->aiPush(AiQueue::aiWait(173));
+          npc->setPerceptionEnable(PERC_ASSESSMAGIC,restart->index());
+          npc->setStateTime(17000);
+          Contract::lastHitSpell(*npc)=script.findSymbol(spell)->get_int();
+          script.invokeState(npc,hero,nullptr,ScriptFn(restart->index()));
+          const auto* next=npc->aiQueueFront();
+          const bool ice=std::string_view(spell)=="SPL_ICEWAVE";
+          const bool other=std::string_view(spell)=="SPL_WHIRLWIND";
+          require(npc->stateTime()==(other || ice ? 17000u : 0u) && next &&
+                  next->act==(ice ? AI_StartState : AI_Wait) &&
+                  (!ice || (next->func==freeze && !npc->hasPerc(PERC_ASSESSMAGIC))),
+                  "burn restart preserves the queue, resets its clock, or replaces the effect with freeze");
+          observations.push_back(snapshot(0));
+          }
+        }
+      npc->handle().guild=GIL_WOLF;
+      npc->setTempAttitude(ATT_NEUTRAL);
+      npc->setPerceptionDisable(PERC_ASSESSMAGIC);
+      script.invokeState(npc,hero,nullptr,ScriptFn(stop->index()));
+      auto commands=Contract::queue(*npc);
+      require(commands.size()==2 && commands.pop().act==AI_StandUp && commands.pop().act==AI_ContinueRoutine &&
+              npc->hasPerc(PERC_ASSESSMAGIC) && npc->tempAttitude()==ATT_HOSTILE,
+              "cancelled periodic damage restores perception, stands up and resumes the nonhuman routine");
+      observations.push_back(snapshot(0));
       vm.observe_instructions({});
       require((instructions==0)==native,"the selected executor must run the expected magic damage code");
       world.removeNpc(*npc);

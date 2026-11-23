@@ -6,6 +6,7 @@
 #include "gothic.h"
 
 #include "world/bodytraces.h"
+#include "world/objects/item.h"
 #include "world/objects/npc.h"
 
 #include <algorithm>
@@ -2858,6 +2859,84 @@ void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
     for(const auto& [name,count]:groups)
       vm.unsafe_call_bl(findSymbol(name));
     }},enabled);
+  }
+
+std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
+  if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
+     ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
+    return {};
+
+  const auto* active=caster.activeWeapon();
+  if(active==nullptr || !active->isSpellOrRune())
+    return {};
+
+  struct Admission {
+    int spell;
+    std::string_view invested, runeCost;
+    };
+  // Stock dispatcher IDs whose handlers only store the argument and compare mana.
+  static constexpr Admission admissions[] = {
+    { 0, "SPELL_LOGIC_PALLIGHT.MANAINVESTED", "SPL_COST_PALLIGHT"},
+    { 1, "SPELL_LOGIC_PALLIGHTHEAL.MANAINVESTED", "SPL_COST_PALLIGHTHEAL"},
+    { 2, "SPELL_LOGIC_PALHOLYBOLT.MANAINVESTED", "SPL_COST_PALHOLYBOLT"},
+    { 3, "SPELL_LOGIC_PALMEDIUMHEAL.MANAINVESTED", "SPL_COST_PALMEDIUMHEAL"},
+    { 4, "SPELL_LOGIC_PALREPELEVIL.MANAINVESTED", "SPL_COST_PALREPELEVIL"},
+    { 5, "SPELL_LOGIC_PALFULLHEAL.MANAINVESTED", "SPL_COST_PALFULLHEAL"},
+    { 6, "SPELL_LOGIC_PALDESTROYEVIL.MANAINVESTED", "SPL_COST_PALDESTROYEVIL"},
+    {18, "SPELL_LOGIC_LIGHT.MANAINVESTED", "SPL_COST_LIGHT"},
+    {19, "SPELL_LOGIC_FIREBOLT.MANAINVESTED", "SPL_COST_FIREBOLT"},
+    {20, "SPELL_LOGIC_ICEBOLT.MANAINVESTED", "SPL_COST_ICEBOLT"},
+    {21, "SPELL_LOGIC_LIGHTHEAL.MANAINVESTED", "SPL_COST_LIGHTHEAL"},
+    {22, "SPELL_LOGIC_SUMMONGOBLINSKELETON.MANAINVESTED", "SPL_COST_SUMMONGOBLINSKELETON"},
+    {23, "SPELL_LOGIC_INSTANTFIREBALL.MANAINVESTED", "SPL_COST_INSTANTFIREBALL"},
+    {24, "SPELL_LOGIC_ZAP.MANAINVESTED", "SPL_COST_ZAP"},
+    {25, "SPELL_LOGIC_SUMMONWOLF.MANAINVESTED", "SPL_COST_SUMMONWOLF"},
+    {28, "SPELL_LOGIC_MEDIUMHEAL.MANAINVESTED", "SPL_COST_MEDIUMHEAL"},
+    {29, "SPELL_LOGIC_LIGHTNINGFLASH.MANAINVESTED", "SPL_COST_LIGHTNINGFLASH"},
+    {31, "SPELL_LOGIC_SUMMONSKELETON.MANAINVESTED", "SPL_COST_SUMMONSKELETON"},
+    {32, "SPELL_LOGIC_FEAR.MANAINVESTED", "SPL_COST_FEAR"},
+    {33, "SPELL_LOGIC_ICECUBE.MANAINVESTED", "SPL_COST_ICECUBE"},
+    {35, "SPELL_LOGIC_SUMMONGOLEM.MANAINVESTED", "SPL_COST_SUMMONGOLEM"},
+    {36, "SPELL_LOGIC_DESTROYUNDEAD.MANAINVESTED", "SPL_COST_DESTROYUNDEAD"},
+    {38, "SPELL_LOGIC_FIRESTORM.MANAINVESTED", "SPL_COST_INSTANTFIRESTORM"},
+    {39, "SPELL_LOGIC_ICEWAVE.MANAINVESTED", "SPL_COST_ICEWAVE"},
+    {40, "SPELL_LOGIC_SUMMONDEMON.MANAINVESTED", "SPL_COST_SUMMONDEMON"},
+    {41, "SPELL_LOGIC_FULLHEAL.MANAINVESTED", "SPL_COST_FULLHEAL"},
+    {42, "SPELL_LOGIC_FIRERAIN.MANAINVESTED", "SPL_COST_FIRERAIN"},
+    {43, "SPELL_LOGIC_BREATHOFDEATH.MANAINVESTED", "SPL_COST_BREATHOFDEATH"},
+    {44, "SPELL_LOGIC_MASSDEATH.MANAINVESTED", "SPL_COST_MASSDEATH"},
+    {45, "SPELL_LOGIC_ARMYOFDARKNESS.MANAINVESTED", "SPL_COST_ARMYOFDARKNESS"},
+    {60, "SPELL_LOGIC_MASTEROFDISASTER.MANAINVESTED", "SPL_COST_MASTEROFDISASTER"},
+    {61, "SPELL_LOGIC_DEATHBOLT.MANAINVESTED", "SPL_COST_DEATHBOLT"},
+    {62, "SPELL_LOGIC_DEATHBALL.MANAINVESTED", "SPL_COST_DEATHBALL"},
+    {63, "SPELL_LOGIC_CONCUSSIONBOLT.MANAINVESTED", "SPL_COST_CONCUSSIONBOLT"},
+    {70, "SPELL_LOGIC_THUNDERSTORM.MANAINVESTED", "SPL_COST_THUNDERSTORM"},
+    {71, "SPELL_LOGIC_WHIRLWIND.MANAINVESTED", "SPL_COST_WHIRLWIND"},
+    {72, "SPELL_LOGIC_WATERFIST.MANAINVESTED", "SPL_COST_WATERFIST"},
+    {73, "SPELL_LOGIC_ICELANCE.MANAINVESTED", "SPL_COST_ICELANCE"},
+    {75, "SPELL_LOGIC_GEYSER.MANAINVESTED", "SPL_COST_GEYSER"},
+    {82, "SPELL_LOGIC_GREENTENTACLE.MANAINVESTED", "SPL_COST_GREENTENTACLE"},
+    {84, "SPELL_LOGIC_SUMMONGUARDIAN.MANAINVESTED", "SPL_COST_SUMMONGUARDIAN"},
+    {85, "SPELL_LOGIC_ENERGYBALL.MANAINVESTED", "SPL_COST_ENERGYBALL"},
+    {87, "SPELL_LOGIC_SKULL.MANAINVESTED", "SPL_COST_SKULL"},
+    {88, "SPELL_LOGIC_SUMMONZOMBIE.MANAINVESTED", "SPL_COST_SUMMONZOMBIE"},
+    {89, "SPELL_LOGIC_SUMMONMUD.MANAINVESTED", "SPL_COST_SUMMONMUD"},
+    };
+  const auto rule=std::ranges::find(admissions,active->spellId(),&Admission::spell);
+  if(rule==std::end(admissions))
+    return {};
+
+  const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
+  findSymbol("SPELL_PROCESSMANA.MANAINVESTED")->set_int(mana);
+  // This external also publishes the active item on its stock instance symbol.
+  findSymbol("SPELL_PROCESSMANA.ACTIVESPELL")->set_int(npc_getactivespell(self));
+  findSymbol(rule->invested)->set_int(mana);
+
+  const auto available=self->attribute[ATR_MANA];
+  const auto scroll=npc_getactivespellisscroll(self);
+  const auto scrollCost=findSymbol("SPL_COST_SCROLL")->get_int();
+  const auto runeCost=findSymbol(rule->runeCost)->get_int();
+  return (scroll && available>=scrollCost) || available>=runeCost ? SPL_SENDCAST : SPL_SENDSTOP;
   }
 
 bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32_t level) {
