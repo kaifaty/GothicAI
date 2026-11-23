@@ -615,6 +615,7 @@ class GameScript final : public GameRules {
     QuietSoundReaction                                          quietSound;
     bool                                                        nativeRoutineProgram = false;
     std::unordered_map<uint32_t,NativeRoutinePhase>              nativeRoutinePhases;
+    int32_t                                                     storyChapter = 0; // Outlives the stock KAPITEL binding in vm.
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};

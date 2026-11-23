@@ -140,7 +140,7 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
         ai_useitemtostate(self,announcement,1);
         auto output = [&](int n) { ai_output(self,self,numberedLine("DIA_Herold_Announce_04_",n)); };
         output(0);
-        const auto chapter = read("KAPITEL");
+        const auto chapter = storyChapter;
         if(chapter<=2) {
           static constexpr std::array starts = {1,3,5,7,11,13};
           const auto choice = draw(5,"B_ANNOUNCE_HEROLD.RANDY");

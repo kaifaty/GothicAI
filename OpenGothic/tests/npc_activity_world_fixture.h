@@ -2871,7 +2871,8 @@ void bindNpcGlobals(World& world) {
   auto* function=script.findSymbol("B_INITNPCGLOBALS");
   auto* chapter=script.findSymbol("KAPITEL");
   require(function && chapter && world.player(),"the alias fixture needs the stock helper and the player");
-  const auto previousChapter=chapter->get_int();
+  auto& ownedChapter=NpcDefinitionContract::storyChapter(script);
+  const auto previousChapter=ownedChapter;
   const auto previousContext=vm.unsafe_get_gi();
   const auto previousSelf=vm.global_self()->get_instance();
   const auto* configured=std::getenv("OPENGOTHIC_NPC_RECORDS");
@@ -2880,7 +2881,7 @@ void bindNpcGlobals(World& world) {
   const auto restore=[&] {
     vm.observe_writes({});
     vm.observe_instructions({});
-    chapter->set_int(previousChapter);
+    ownedChapter=previousChapter;
     for(const auto& [symbol,instance]:previousBindings)
       vm.find_symbol_by_index(symbol)->set_instance(instance);
     if(oldRecords) setenv("OPENGOTHIC_NPC_RECORDS",oldRecords->c_str(),1);
@@ -2888,7 +2889,7 @@ void bindNpcGlobals(World& world) {
     };
   try {
     setenv("OPENGOTHIC_NPC_RECORDS","0",1);
-    chapter->set_int(0);
+    ownedChapter=0;
     size_t instructions=0;
     vm.observe_instructions([&](const auto&) { ++instructions; });
     vm.observe_writes([&](const auto& symbol) {
@@ -2897,7 +2898,7 @@ void bindNpcGlobals(World& world) {
       });
     vm.unsafe_call_bl(function);
     vm.observe_writes({});
-    require(chapter->get_int()==1 && instructions>0 && previousBindings.size()==310,
+    require(ownedChapter==1 && chapter->get_int()==1 && instructions>0 && previousBindings.size()==310,
             "the VM must fill all stock aliases and default the chapter");
 
     const auto marker=std::static_pointer_cast<daedalus::INpc>(world.player()->handlePtr());
@@ -2911,7 +2912,7 @@ void bindNpcGlobals(World& world) {
     instructions=0;
     chapter->set_int(0);
     vm.unsafe_call_bl(function);
-    require(instructions==0 && chapter->get_int()==1 && vm.unsafe_get_gi()==previousContext &&
+    require(instructions==0 && ownedChapter==1 && chapter->get_int()==1 && vm.unsafe_get_gi()==previousContext &&
             vm.global_self()->get_instance()==previousSelf,
             "native binding must match the chapter and context with zero script instructions");
     for(const auto& [symbol,instance]:expected)
@@ -2919,11 +2920,43 @@ void bindNpcGlobals(World& world) {
               "every NPC alias must resolve to the same live handle or null");
     chapter->set_int(3);
     vm.unsafe_call_bl(function);
-    require(instructions==0 && chapter->get_int()==3,"native binding must preserve an established chapter");
+    require(instructions==0 && ownedChapter==3 && chapter->get_int()==3,"native binding must preserve an established chapter");
+
+    // Serialize the single entry through the same writer as a full save, and compare its legacy bytes.
+    const auto saveChapter=[&](std::optional<int32_t> legacy) {
+      std::vector<uint8_t> bytes;
+      Tempest::MemWriter writer(bytes);
+      {
+        Serialize out(writer);
+        out.setEntry("game/daedalus");
+        out.write(uint32_t(1));
+        if(legacy)
+          out.write(uint32_t(daedalus::DaedalusDataType::INT),std::string("KAPITEL"),uint32_t(1),*legacy);
+        else
+          NpcDefinitionContract::saveChapter(script,out);
+      }
+      return bytes;
+      };
+    ownedChapter=5;
+    const auto legacy=saveChapter(5);
+    const auto current=saveChapter(std::nullopt);
+    require(archiveEntries(legacy)==archiveEntries(current),"chapter must use the unchanged game/daedalus row");
+    require(vm.export_program().symbols[chapter->index()].int_values==std::vector<int32_t>{5},
+            "program export must see the live bound integer value");
+
+    ownedChapter=0;
+    Tempest::MemReader reader(legacy);
+    Serialize in(reader);
+    require(in.setEntry("game/daedalus"),"legacy archive must include a chapter value");
+    script.loadVar(in);
+    require(ownedChapter==5 && chapter->get_int()==5,"legacy chapter value must load into engine storage");
+    setenv("OPENGOTHIC_NPC_RECORDS","0",1);
+    vm.unsafe_call_bl(function);
+    require(ownedChapter==5,"legacy bytecode must read the saved chapter from engine storage");
     restore();
     }
   catch(...) { restore(); throw; }
-  std::puts("NPC global bindings: all 310 aliases and chapter semantics match with zero script instructions");
+  std::puts("NPC global bindings: all 310 aliases match stock; engine chapter agrees with VM reads, writes and save bytes");
   }
 
 void pointActivitiesInBothModes(Gothic& gothic) {

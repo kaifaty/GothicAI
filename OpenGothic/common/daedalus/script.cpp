@@ -164,9 +164,7 @@ namespace daedalus {
 			switch (sym.type()) {
 			case DaedalusDataType::INT:
 				record.int_values.resize(sym._m_count);
-				std::copy_n(std::get<std::unique_ptr<std::int32_t[]>>(sym._m_value).get(),
-				            sym._m_count,
-				            record.int_values.begin());
+				std::copy_n(sym.int_data(), sym._m_count, record.int_values.begin());
 				break;
 			case DaedalusDataType::FLOAT:
 				record.float_bits.resize(sym._m_count);
@@ -565,7 +563,7 @@ namespace daedalus {
 			return *get_member_ptr<std::int32_t>(index, context);
 		}
 
-		return std::get<std::unique_ptr<std::int32_t[]>>(_m_value)[index];
+		return int_data()[index];
 	}
 
 	void DaedalusSymbol::set_string(std::string_view value, std::uint16_t index, DaedalusInstance* context) {
@@ -639,8 +637,24 @@ namespace daedalus {
 
 			*get_member_ptr<std::int32_t>(index, context) = value;
 		} else {
-			std::get<std::unique_ptr<std::int32_t[]>>(_m_value)[index] = value;
+			int_data()[index] = value;
 		}
+	}
+
+	void DaedalusSymbol::bind_global_int(std::int32_t& value) {
+		if (type() != DaedalusDataType::INT || is_member() || is_const() || count() != 1 ||
+		    !std::holds_alternative<std::unique_ptr<std::int32_t[]>>(_m_value)) {
+			throw DaedalusScriptError {"cannot bind mutable global integer " + name()};
+		}
+
+		value = get_int();
+		_m_value = &value;
+	}
+
+	std::int32_t* DaedalusSymbol::int_data() const {
+		if (const auto* bound = std::get_if<std::int32_t*>(&_m_value))
+			return *bound;
+		return std::get<std::unique_ptr<std::int32_t[]>>(_m_value).get();
 	}
 
 	std::shared_ptr<DaedalusInstance> const& DaedalusSymbol::get_instance() {
