@@ -1,5 +1,6 @@
 #include "gamescript.h"
 
+#include "game/npcactivityhost.h"
 #include "world/objects/npc.h"
 
 #include <algorithm>
@@ -41,6 +42,13 @@ void GameScript::loadNativeRoutines() {
     {"ZS_SMALLTALK",          &GameScript::runSocialRoutine, 8000, RoutineWake::Smalltalk},
     {"ZS_STAND_DEMENTOR",     &GameScript::runSocialRoutine},
     {"ZS_STAND_RANGERMEETING",&GameScript::runSocialRoutine},
+    {monsterScheduler,       &GameScript::runMonsterScheduler},
+    {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
+    {"ZS_MM_RTN_REST",        &GameScript::runMonsterRoutine},
+    {"ZS_MM_RTN_ROAM",        &GameScript::runRoamingRoutine},
+    {"ZS_MM_RTN_EATGROUND",   &GameScript::runMonsterRoutine},
+    {"ZS_MM_RTN_WUSEL",       &GameScript::runRoamingRoutine},
+    {"ZS_MM_RTN_ORCSIT",      &GameScript::runMonsterRoutine},
     };
   for(const auto& routine : routines) {
     for(const std::string_view suffix : {"", "_LOOP", "_END"}) {
@@ -52,6 +60,71 @@ void GameScript::loadNativeRoutines() {
       nativeRoutinePhases.emplace(symbol->index(),phase);
       }
     }
+  }
+
+bool GameScript::runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol&, int& result) {
+  auto& aivar = npc.handle().aivar;
+  aivar[size_t(findSymbol("AIV_MM_PRIORITY")->get_int())] = findSymbol("PRIO_EAT")->get_int();
+  removeRavensStoneGuardians(npc);
+
+  // Overlapping windows keep the priority of the original scheduler. With no match it starts REST.
+  std::string_view next = "ZS_MM_RTN_REST";
+  for(const auto& window : monsterRoutineWindows) {
+    if(monsterRoutineWindowActive(npc,window)) {
+      next = window.state;
+      break;
+      }
+    }
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  ai_startstate(self,int(findFunction(next).ptr),1,"");
+  result = 0;
+  return true;
+  }
+
+bool GameScript::monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window) {
+  const auto& aivar = npc.handlePtr()->aivar;
+  const auto start = aivar[window.stockStart];
+  const auto end = aivar[window.stockEnd];
+  return start==-1 || wld_istime(start,0,end,0); // ONLYROUTINE
+  }
+
+void GameScript::enableMonsterRoutinePerceptions(Npc& npc) {
+  npc.setPerceptionTime(1000);
+  npc.setPerceptionEnable(PERC_ASSESSENEMY,findFunction("B_MM_ASSESSENEMY").ptr);
+  npc.setPerceptionEnable(PERC_ASSESSBODY,findFunction("B_MM_ASSESSBODY").ptr);
+  npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction("B_ASSESSMAGIC").ptr);
+  npc.setPerceptionEnable(PERC_ASSESSDAMAGE,findFunction("B_MM_ASSESSDAMAGE").ptr);
+  const auto othersDamage = findFunction("B_MM_ASSESSOTHERSDAMAGE").ptr;
+  npc.setPerceptionEnable(PERC_ASSESSOTHERSDAMAGE,othersDamage);
+  npc.setPerceptionEnable(PERC_ASSESSMURDER,othersDamage);
+  npc.setPerceptionEnable(PERC_ASSESSWARN,findFunction("B_MM_ASSESSWARN").ptr);
+  }
+
+void GameScript::beginMonsterRoutine(Npc& npc, bool desynchronize, WalkBit mode) {
+  npc.aiPush(AiQueue::aiSetWalkMode(mode));
+  if(desynchronize) {
+    const auto delay = rollRandom(1000,&npc,true);
+    findSymbol("B_MM_DESYNCHRONIZE.MSEC")->set_int(int32_t(delay));
+    if(delay>0)
+      npc.aiPush(AiQueue::aiWait(delay));
+    }
+  const auto& waypoint = npc.handle().wp;
+  if(NpcEngineCalls::nearestWaypoint(world(),npc)!=waypoint)
+    NpcEngineCalls::gotoWaypoint(world(),npc,waypoint);
+  }
+
+bool GameScript::endMonsterRoutine(Npc& npc, MonsterRoutine routine) {
+  if(monsterRoutineWindowActive(npc,monsterRoutineWindows[routine]))
+    return false;
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  ai_startstate(self,int(findFunction(monsterScheduler).ptr),1,"");
+  return true;
+  }
+
+void GameScript::removeRavensStoneGuardians(Npc& npc) {
+  // B_KILLNPC resolves the live NPC through the VM's SELF symbol.
+  if(npc.handle().guild==GIL_Stoneguardian && findSymbol("RAVENISDEAD")->get_int()==1)
+    vm.call_function<void>("B_KILLNPC",int32_t(vm.global_self()->index()));
   }
 
 bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe) {

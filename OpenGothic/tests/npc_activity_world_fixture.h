@@ -2106,12 +2106,213 @@ struct RoutineWitness {
     }
   };
 
+struct MonsterRoutineSave {
+  std::vector<std::string> queue;
+  uint64_t                 stateTime;
+  int32_t                  stage;
+  };
+
+constexpr const char* MonsterSaveActor = "BALTHASAR_SHEEP1";
+constexpr const char* MonsterScheduler = "ZS_MM_ALLSCHEDULER";
+
+MonsterRoutineSave monsterRoutinesWorld(Gothic& gothic) {
+  using Contract=NpcDefinitionContract;
+  ActivityEventsWorld test(gothic);
+  auto& world=test.world();
+  auto& script=world.script();
+  auto& session=*gothic.gameSession();
+  const auto originalTime=world.time();
+  const auto scheduler=ScriptFn(script.findSymbolIndex(MonsterScheduler));
+  const auto roam=ScriptFn(script.findSymbolIndex("ZS_MM_RTN_ROAM"));
+  const auto rest=ScriptFn(script.findSymbolIndex("ZS_MM_RTN_REST"));
+  const auto sleep=ScriptFn(script.findSymbolIndex("ZS_MM_RTN_SLEEP"));
+  require(scheduler.isValid(),"monster routine fixture needs the original dispatcher");
+  auto compare=[&](Npc& npc,const char* what,size_t expectedPhases,const auto& prepare,const auto& act) {
+    std::vector<std::string> original;
+    for(bool events:{false,true}) {
+      Contract::activityEventsOn(script)=events;
+      prepare();
+      script.setSeed(73106);
+      ActivityStream stream(world,npc);
+      act();
+      const auto phases=std::count_if(stream.events.begin(),stream.events.end(),[](const auto& event) {
+        return event.starts_with("phase ");
+        });
+      require(size_t(phases)==expectedPhases && stream.records==(events ? expectedPhases : 0),
+              (std::string(what)+": phases must use the selected executor").c_str());
+      std::erase_if(stream.events,[](const auto& event) {
+        return !(event.starts_with("phase ") || event.starts_with("result ") || event.starts_with("queue ") ||
+                 event.starts_with("random ") || event.starts_with("point "));
+        });
+      auto random=Contract::random(script);
+      stream.events.push_back("next random "+std::to_string(random()));
+      stream.events.push_back("state time "+std::to_string(npc.stateTime()));
+      stream.events.push_back("stage "+std::to_string(npc.handle().aivar[19]));
+      if(!events) original=std::move(stream.events);
+      else if(stream.events!=original) {
+        const auto [before,after]=std::mismatch(original.begin(),original.end(),stream.events.begin(),stream.events.end());
+        throw std::runtime_error(std::string(what)+": VM "+(before==original.end() ? "<none>" : *before)+
+                                 ", native "+(after==stream.events.end() ? "<none>" : *after));
+        }
+    }
+    };
+  struct Site { const char* state; const char* actor; const char* point; const char* freePoint; size_t window; };
+  static constexpr Site sites[]={
+    {"ZS_MM_RTN_SLEEP",     "SHADOWBEAST",       "NW_FOREST_PATH_35_06",        nullptr,                              30},
+    {"ZS_MM_RTN_REST",      "GRIMBALD_SNAPPER1", "NW_TROLLAREA_BRIGDE_01",      "FP_ROAM_NW_TROLLAREA_BRIGDE_01_01",   32},
+    {"ZS_MM_RTN_ROAM",      MonsterSaveActor,    "NW_FARM4_BALTHASAR",         "FP_ROAM_FARM4_SHEEP_04",             34},
+    {"ZS_MM_RTN_EATGROUND", "SCAVENGER",         "NW_FOREST_PATH_38_MONSTER",  "FP_ROAM_NW_FOREST_PATH_38_MONSTER_04",36},
+    {"ZS_MM_RTN_WUSEL",     "BLOODFLY",          "NW_FARM1_CITYWALL_FOREST_06","FP_ROAM_FARM1_FORREST_BLOODFLY_02",  38},
+    {"ZS_MM_RTN_ORCSIT",    "ORCSHAMAN_SIT",     "NW_PASS_ORKS_02",            "FP_CAMPFIRE_SHAMAN_05",              40},
+    };
+  for(const auto& site:sites) {
+    auto* actor=activityNpc(world,site.actor);
+    const auto* point=world.findWayPoint(site.point);
+    const auto* fp=site.freePoint ? world.findPoint(site.freePoint,false) : point;
+    const auto state=ScriptFn(script.findSymbolIndex(site.state));
+    require(actor && !actor->isDead() && point && fp && state.isValid(),
+            (std::string(site.state)+": stock fixture actor, locations and state must exist").c_str());
+    auto& npc=*actor;
+    npc.setSimTier(NpcSimTier::Full);
+    npc.setProcessPolicy(NpcProcessPolicy::AiNormal);
+    const auto vars=std::to_array(npc.handle().aivar);
+    auto prepare=[&] {
+      test.stop(npc);
+      npc.clearGoTo();
+      npc.setOther(nullptr);
+      npc.setVictim(nullptr);
+      npc.setTarget(nullptr);
+      npc.setPerceptionTime(1000);
+      test.freePoint(fp);
+      session.setTime(gtime(0,23,59));
+      std::copy(vars.begin(),vars.end(),npc.handle().aivar);
+      npc.handle().aivar[site.window]=22;
+      npc.handle().aivar[site.window+1]=6;
+      npc.setPosition(point->position());
+      npc.attachToPoint(point);
+      require(npc.startState(state,point->name),"the monster must enter its fixture state");
+      };
+    compare(npc,site.state,5,prepare,[&] {
+      Contract::tickRoutine(npc);
+      npc.clearAiQueue();
+      npc.setPosition(fp->position());
+      npc.attachToPoint(fp);
+      // The first beat establishes the pose or wander timer. The second also covers WUSEL's one-second threshold.
+      npc.setStateTime(999);
+      Contract::tickRoutine(npc);
+      require(npc.isInState(state),"a monster activity must continue inside its overnight window");
+      npc.clearAiQueue();
+      npc.setStateTime(6000);
+      session.setTime(gtime(1,0,0));
+      Contract::tickRoutine(npc);
+      require(npc.isInState(state),"a monster activity must continue across midnight");
+      npc.clearAiQueue();
+      session.setTime(gtime(1,6,0));
+      Contract::tickRoutine(npc);
+      const auto* next=npc.aiQueueFront();
+      require(!npc.isInState(state) && next && next->act==AI_StartState && next->func==scheduler && next->i0==1,
+              "a monster activity must end and queue its dispatcher at the end of the window");
+      });
+    test.stop(npc);
+    std::copy(vars.begin(),vars.end(),npc.handle().aivar);
+    std::printf("Monster routine %s: Init, active Loop, hour-boundary Loop and End agree in both executors\n",site.state);
+    }
+
+  auto& sheep=*activityNpc(world,MonsterSaveActor);
+  const auto vars=std::to_array(sheep.handle().aivar);
+  require(sheep.handle().start_aistate==int32_t(scheduler.ptr),"the fixture sheep must use the dispatcher as its start state");
+  auto prepare=[&] {
+    test.stop(sheep);
+    std::copy(vars.begin(),vars.end(),sheep.handle().aivar);
+    for(size_t i=30;i<42;++i) sheep.handle().aivar[i]=0;
+    sheep.handle().aivar[30]=22;
+    sheep.handle().aivar[31]=6;
+    sheep.handle().aivar[34]=-1;
+    };
+  compare(sheep,"monster dispatcher",5,prepare,[&] {
+    auto choose=[&](gtime when,ScriptFn expected) {
+      session.setTime(when);
+      sheep.handle().aivar[29]=0;
+      Contract::tickRoutine(sheep);
+      const auto* next=sheep.aiQueueFront();
+      require(sheep.isInState(scheduler) && next && next->act==AI_StartState && next->func==expected && next->i0==1 &&
+              next->s0.empty() && sheep.handle().aivar[29]==script.findSymbol("PRIO_EAT")->get_int(),
+              "dispatcher must queue the first active state, or rest, and restore eat priority");
+      Contract::nextAiAction(sheep);
+      require(sheep.isInState(expected),"the NPC lifecycle must take the dispatcher command");
+      };
+    choose(gtime(1,5,59),sleep);
+    Contract::tickRoutine(sheep);
+    sheep.clearAiQueue();
+    sheep.aiPush(AiQueue::aiStartState(rest,1,nullptr,nullptr,""));
+    Contract::nextAiAction(sheep);
+    require(sheep.isInState(rest),"a queued state change must interrupt the active monster routine");
+    sheep.clearState(true);
+    sheep.clearAiQueue();
+    // An NPC without a human routine returns through start_aistate on its next routine tick.
+    choose(gtime(1,6,0),roam);
+    sheep.clearState(true);
+    sheep.handle().aivar[34]=0;
+    choose(gtime(1,6,0),rest);
+    sheep.clearState(true);
+    });
+  std::copy(vars.begin(),vars.end(),sheep.handle().aivar);
+  sheep.handle().aivar[34]=-1;
+  session.setTime(originalTime);
+  require(sheep.startState(roam,"NW_FARM4_BALTHASAR"),"the fixture sheep must enter roam before saving");
+  Contract::tickRoutine(sheep);
+  sheep.setStateTime(1500);
+  require(!sheep.isAiQueueEmpty(),"the fixture must save a pending monster command");
+  return {activityQueue(sheep),sheep.stateTime(),sheep.handle().aivar[19]};
+  }
+
+void ravenStoneGuardianRoutines(World& world) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto* raven=script.findSymbol("RAVENISDEAD");
+  const auto guardian=script.findSymbolIndex("STONEGUARDIAN");
+  require(raven && guardian!=0,"the Raven fixture needs the original quest flag and stone guardian");
+  const auto prior=raven->get_int();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto enabled=events;
+  const auto* point=world.findWayPoint("NW_FARM4_BALTHASAR");
+  require(point!=nullptr,"the Raven fixture needs a position for the disposable guardian");
+  size_t kills=0;
+  const auto observer=vm.add_call_observer([&](const auto& function) {
+    if(function.name()=="B_KILLNPC") ++kills;
+    });
+  raven->set_int(1);
+  for(const auto* state:{MonsterScheduler,"ZS_MM_RTN_REST_LOOP"}) {
+    const auto id=ScriptFn(script.findSymbolIndex(state));
+    require(id.isValid(),"the Raven fixture needs both guardian routine phases");
+    for(bool native:{false,true}) {
+      events=native;
+      auto* npc=world.addNpc(guardian,point->position());
+      require(npc && npc->handle().guild==GIL_Stoneguardian && npc->attribute(ATR_HITPOINTS)>0,
+              "the Raven fixture guardian must start alive");
+      npc->handle().flags=NpcFlag::IMMORTAL;
+      npc->handle().aivar[19]=1;
+      npc->handle().aivar[32]=-1;
+      const auto before=kills;
+      script.invokeState(npc,nullptr,nullptr,id);
+      require(kills==before+1 && npc->attribute(ATR_HITPOINTS)==0 && npc->handle().flags==NpcFlag::NONE,
+              "Raven's death must invoke the original helper on the guardian and clear its HP and flags");
+      world.removeNpc(*npc);
+      }
+    }
+  vm.remove_call_observer(observer);
+  raven->set_int(prior);
+  events=enabled;
+  std::puts("Monster dispatcher and REST Loop: both executors remove stone guardians after Raven's death");
+  }
+
 std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* worldName,
                                                 std::span<const RoutineWitnessSite> sites,bool events) {
   using Contract=NpcDefinitionContract;
   gothic.setGame(std::make_unique<GameSession>(worldName));
   std::vector<RoutineWitness> result(sites.size());
   std::vector<uint8_t> save;
+  std::optional<MonsterRoutineSave> monster;
   {
     ActivityEventsWorld test(gothic);
     auto& world=test.world();
@@ -2150,6 +2351,8 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
               (std::string(site.state)+": Init did not run through the expected executor").c_str());
     }
     vm.remove_call_observer(observer);
+    if(events && std::string_view(worldName)=="NEWWORLD.ZEN")
+      monster=monsterRoutinesWorld(gothic);
     Tempest::MemWriter writer(save);
     Serialize out(writer);
     Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
@@ -2172,6 +2375,21 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
     auto& vm=script.getVm();
     std::map<std::string,size_t> vmCalls;
     const auto observer=vm.add_call_observer([&](const auto& function) { ++vmCalls[function.name()]; });
+    if(monster) {
+      auto* sheep=activityNpc(world,MonsterSaveActor);
+      const auto roam=ScriptFn(script.findSymbolIndex("ZS_MM_RTN_ROAM"));
+      require(sheep && sheep->isInState(roam) && Contract::aiState(*sheep).started &&
+              activityQueue(*sheep)==monster->queue && sheep->stateTime()==monster->stateTime &&
+              sheep->handle().aivar[19]==monster->stage,
+              "ordinary load must restore the monster's state, timer, stage and pending commands");
+      sheep->clearAiQueue();
+      sheep->setProcessPolicy(NpcProcessPolicy::AiNormal);
+      ActivityStream stream(world,*sheep);
+      Contract::tickRoutine(*sheep);
+      require(sheep->isInState(roam) && stream.records==1 && vmCalls["ZS_MM_RTN_ROAM_LOOP"]==0,
+              "the loaded monster must resume in its native loop without rerunning Init");
+      std::puts("Monster routine ZS_MM_RTN_ROAM: ordinary load restored the pending commands and resumed native Loop");
+    }
     for(size_t i=0;i<sites.size();++i) {
       const auto& site=sites[i];
       auto* actor=activityNpc(world,site.actor);
@@ -2210,6 +2428,8 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
               (std::string(site.state)+": End did not run through the expected executor").c_str());
     }
     vm.remove_call_observer(observer);
+    if(monster)
+      ravenStoneGuardianRoutines(world);
   }
   gothic.clearGame().reset();
   return result;
