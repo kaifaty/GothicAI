@@ -3072,6 +3072,81 @@ void remainingRoutineWitnesses(Gothic& gothic) {
   }
   }
 
+void dragonIslandInit(World& world) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& hero=*world.player();
+  const auto key=script.findSymbolIndex("ITKE_SHIP_LEVELCHANGE_MIS");
+  auto* level=script.findSymbol("CURRENTLEVEL");
+  auto* chapter=script.findSymbol("KAPITEL");
+  auto* pedroAlias=script.findSymbol("PEDRO_DI");
+  auto* pedro=world.findNpcByInstance(script.findSymbolIndex("NOV_600_PEDRO_DI"));
+  const auto island=script.intSymbol("DRAGONISLAND_ZEN",0);
+  const auto khorinis=script.intSymbol("NEWWORLD_ZEN",0);
+  const auto initialCount=hero.itemCount(key);
+  const auto initialChapter=chapter->get_int();
+  const auto initialPedro=pedroAlias->get_instance();
+  require(pedro && initialPedro==std::static_pointer_cast<daedalus::INpc>(pedro->handlePtr()) && level->get_int()==island,
+          "Dragon Island entry must set the level and bind its Pedro");
+  const auto* setting=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
+  const auto previous=setting ? std::optional<std::string>(setting) : std::nullopt;
+  const auto entry=script.findSymbol("INIT_DRAGONISLAND")->address();
+  const auto result=[&](bool native,uint32_t count) {
+    if(native) setenv("OPENGOTHIC_PLACEMENT_RECORDS","1",1);
+    else setenv("OPENGOTHIC_PLACEMENT_RECORDS","0",1);
+    hero.delItem(key,uint32_t(hero.itemCount(key)));
+    if(count>0) hero.addItem(key,count);
+    const auto priorChapter=count>0 ? 6 : 0;
+    level->set_int(khorinis);
+    chapter->set_int(priorChapter);
+    pedroAlias->set_instance(nullptr);
+
+    std::vector<std::pair<std::string,int32_t>> calls;
+    const auto observer=vm.add_call_observer([&](const auto& symbol) {
+      if(symbol.name()=="B_INITMONSTERATTITUDES" || symbol.name()=="B_INITGUILDATTITUDES" || symbol.name()=="B_INITNPCGLOBALS")
+        calls.emplace_back(symbol.name(),level->get_int());
+      });
+    vm.observe_externals([&](const auto& symbol) {
+      if(symbol.name()=="NPC_HASITEMS" || symbol.name()=="NPC_REMOVEINVITEMS")
+        calls.emplace_back(symbol.name(),level->get_int());
+      });
+    size_t rootInstructions=0;
+    vm.observe_instructions([&](const auto&) { if(vm.pc()==entry) ++rootInstructions; });
+
+    const auto pc=vm.pc();
+    const auto context=vm.unsafe_get_gi();
+    vm.push_int(0x12345678);
+    script.runWorldInit("INIT_DRAGONISLAND");
+    const auto sentinel=vm.pop_int();
+    vm.observe_instructions({});
+    vm.observe_externals({});
+    vm.remove_call_observer(observer);
+
+    require(rootInstructions==(native ? 0u : 1u) && sentinel==0x12345678 && vm.pc()==pc && vm.unsafe_get_gi()==context,
+            "Dragon Island Init must choose the expected root and restore the VM context");
+    require(level->get_int()==island && chapter->get_int()==(priorChapter==0 ? 1 : priorChapter) && pedroAlias->get_instance()==initialPedro &&
+            hero.itemCount(key)==(count>0 ? count-1 : 0),
+            "Dragon Island Init must rebind actors and consume one ship key only when present");
+    return calls;
+    };
+  for(uint32_t count:{0,2}) {
+    using Call=std::pair<std::string,int32_t>;
+    std::vector<Call> expected={{"B_INITMONSTERATTITUDES",khorinis},{"B_INITGUILDATTITUDES",khorinis},
+                                {"B_INITNPCGLOBALS",khorinis},{"NPC_HASITEMS",island}};
+    if(count>0) expected.emplace_back("NPC_REMOVEINVITEMS",island);
+    expected.emplace_back("B_INITNPCGLOBALS",island);
+    require(result(false,count)==expected && result(true,count)==expected,
+            "Dragon Island Init: the stock and native call order must agree across the level change");
+    }
+
+  hero.delItem(key,uint32_t(hero.itemCount(key)));
+  if(initialCount>0) hero.addItem(key,initialCount);
+  chapter->set_int(initialChapter);
+  if(previous) setenv("OPENGOTHIC_PLACEMENT_RECORDS",previous->c_str(),1);
+  else unsetenv("OPENGOTHIC_PLACEMENT_RECORDS");
+  std::puts("Dragon Island Init: both alias passes, level, inventory and call order match stock");
+  }
+
 // First-world placement against the original script path.
 void dragonIslandPlacement(Gothic& gothic) {
   const auto program=NpcSnapshot::load(baseProgramIndex().dir.parent_path());
@@ -3079,6 +3154,7 @@ void dragonIslandPlacement(Gothic& gothic) {
     return;
   gothic.setGame(std::make_unique<GameSession>("DRAGONISLAND.ZEN"));
   auto& world=*gothic.world();
+  dragonIslandInit(world);
   auto& script=world.script();
   auto& vm=script.getVm();
   const auto baseline=placementSnapshot(world,true);

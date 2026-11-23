@@ -108,3 +108,33 @@ void GameScript::runStartup(std::string_view fn) {
     }
   PlacementDefinitionRuntime::execute(vm,function,placementDefinitions);
   }
+
+void GameScript::runWorldInit(std::string_view fn) {
+  const auto* function = vm.find_symbol_by_name(fn);
+  if(!nativeRoutineProgram || !PlacementDefinitionRuntime::enabled() || !function || function->name()!="INIT_DRAGONISLAND") {
+    vm.call_function(function);
+    return;
+    }
+
+  const auto* npcGlobals = findSymbol("B_INITNPCGLOBALS");
+  vm.unsafe_call_bl(findSymbol("B_INITMONSTERATTITUDES"));
+  vm.unsafe_call_bl(findSymbol("B_INITGUILDATTITUDES"));
+  vm.unsafe_call_bl(npcGlobals);
+  findSymbol("CURRENTLEVEL")->set_int(findSymbol("DRAGONISLAND_ZEN")->get_int());
+
+  const auto key = int32_t(findSymbolIndex("ITKE_SHIP_LEVELCHANGE_MIS"));
+  vm.push_reference(vm.global_hero());
+  vm.push_int(key);
+  vm.unsafe_call_external(findSymbol("NPC_HASITEMS"));
+  const bool hasKey = vm.pop_int()!=0;
+  if(hasKey) {
+    vm.push_reference(vm.global_hero());
+    vm.push_int(key);
+    vm.push_int(1);
+    vm.unsafe_call_external(findSymbol("NPC_REMOVEINVITEMS"));
+    }
+  vm.unsafe_call_bl(npcGlobals);
+  // The stock void root discards the removal result on return.
+  if(hasKey)
+    (void)vm.pop_int();
+  }
