@@ -1540,7 +1540,7 @@ void seatedGestureAtObject(Npc& npc,uint32_t range) {
   using Contract=NpcDefinitionContract;
   auto& script=npc.world().script();
   const auto loop=Contract::aiState(npc).funcLoop;
-  auto& local=*script.getVm().find_symbol_by_name(std::string(script.symbolName(loop))+".RANDOM");
+  auto& local=*script.getVm().find_symbol_by_name(std::string(script.symbolName(loop.ptr))+".RANDOM");
   script.setSeed(73106);
   local.set_int(-1);
   auto expected=Contract::random(script);
@@ -1548,6 +1548,10 @@ void seatedGestureAtObject(Npc& npc,uint32_t range) {
   Contract::tickRoutine(npc);
   require(local.get_int()==-1 && Contract::random(script)==expected && npc.isAiQueueEmpty(),
           "seated gesture: no draw before six whole seconds");
+  npc.setStateTime(6000);
+  Contract::tickScheduledRoutine(npc);
+  require(local.get_int()==-1 && Contract::random(script)==expected && npc.isAiQueueEmpty(),
+          "seated gesture: an elapsed timer waits for the perception beat");
   constexpr std::array clips={"R_CHAIR_RANDOM_1","R_CHAIR_RANDOM_2","R_CHAIR_RANDOM_3","R_CHAIR_RANDOM_4"};
   bool full=false,silent=false;
   for(size_t i=0;i<64 && !(full && silent);++i) {
@@ -1585,6 +1589,7 @@ void seatedActivitiesWorld(Gothic& gothic,bool events) {
            ActivityDefinitions::bodyStateContains(int32_t(npc.bodyState()),65547) && npc.isAiQueueEmpty();
     };
   const auto* output=std::getenv("OPENGOTHIC_BENCH_OUT");
+  if(output && *output=='\0') output=nullptr;
   const auto directory=output ? std::filesystem::path(output)/(events ? "seated-events" : "seated-vm") :
       std::filesystem::temp_directory_path()/("gothic-seated-"+std::to_string(getpid()));
   std::filesystem::create_directories(directory);
