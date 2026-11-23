@@ -436,8 +436,10 @@ void GameScript::initDialogs() {
   loadDialogOU();
 
   dialogsInfo.clear();
-  vm.enumerate_instances_by_class_name("C_INFO", [this](daedalus::DaedalusSymbol& sym){
-    dialogsInfo.push_back(vm.init_instance<daedalus::IInfo>(&sym));
+  const bool native = nativeRoutineProgram && activityEvents && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+  vm.enumerate_instances_by_class_name("C_INFO", [this,native](daedalus::DaedalusSymbol& sym){
+    auto info = native ? readDialogInfo(sym) : nullptr;
+    dialogsInfo.push_back(info ? std::move(info) : vm.init_instance<daedalus::IInfo>(&sym));
     });
   }
 

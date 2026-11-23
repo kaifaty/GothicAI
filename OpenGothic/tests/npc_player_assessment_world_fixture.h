@@ -177,3 +177,257 @@ void playerAssessmentRoutes(World& world,Npc& npc,Npc& hero) {
   std::puts("Player assessment: direct and follower routes preserve room priority");
   fakeGuildAssessment(world,npc,hero);
   }
+
+void assessTalkEntry(World& world,Npc& npc,Npc& player) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& effects=Contract::activityEventsOn(script);
+  const bool savedEffects=effects;
+  const auto savedNpcQueue=Contract::queue(npc);
+  const auto savedPlayerQueue=Contract::queue(player);
+  const auto savedVars=std::to_array(npc.handle().aivar);
+  const auto savedPerceptions=std::to_array(Contract::perceptions(npc));
+  const auto savedState=Contract::aiState(npc);
+  const auto savedDeadline=Contract::refusalDeadline(npc);
+  const auto savedAttitude=npc.attitude();
+  auto* savedOther=npc.stateOther();
+  const auto savedVictim=vm.global_victim()->get_instance();
+  const auto* callback=vm.find_symbol_by_name("B_ASSESSTALK");
+  const auto refusal=vm.find_symbol_by_name("C_REFUSETALK")->address();
+  const auto started=script.findFunction("ZS_TALK");
+  const auto restore=[&] {
+    Contract::queue(npc)=savedNpcQueue;
+    Contract::queue(player)=savedPlayerQueue;
+    std::copy(savedVars.begin(),savedVars.end(),npc.handle().aivar);
+    std::copy(savedPerceptions.begin(),savedPerceptions.end(),Contract::perceptions(npc));
+    Contract::aiState(npc)=savedState;
+    Contract::refusalDeadline(npc)=savedDeadline;
+    npc.setAttitude(savedAttitude);
+    npc.setOther(savedOther);
+    vm.global_victim()->set_instance(savedVictim);
+    effects=savedEffects;
+    };
+  struct Site {
+    bool nested, guardRefusal;
+    };
+  for(const auto site : {Site{false,false},Site{true,false},Site{false,true}}) {
+    std::vector<std::string> originalNpc,originalPlayer;
+    for(bool native : {false,true}) {
+      if(native && (!savedEffects || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+        continue;
+      restore();
+      effects=native;
+      Contract::queue(npc).clear();
+      Contract::queue(player).clear();
+      npc.setAttitude(ATT_NEUTRAL);
+      npc.handle().aivar[1]=0;
+      npc.handle().aivar[3]=1;
+      npc.handle().aivar[12]=0;
+      npc.setPerceptionEnable(PERC_ASSESSTALK,callback->index());
+      Contract::aiState(npc).funcIni = site.guardRefusal ? script.findFunction("ZS_GUARD_PASSAGE") : ScriptFn();
+      Contract::aiState(npc).started = true;
+      Contract::refusalDeadline(npc)=world.tickCount()+1000;
+      vm.global_victim()->set_instance(nullptr);
+      size_t entryBytecode=0,refusalBytecode=0;
+      vm.observe_instructions([&](const auto&) {
+        entryBytecode+=vm.pc()==callback->address();
+        refusalBytecode+=vm.pc()==refusal;
+        });
+      if(site.nested) {
+        StoryRuntime::Bind context(vm,&npc,&player);
+        vm.unsafe_call_bl(callback);
+        } else {
+        require(npc.perceptionProcess(player,nullptr,0,PERC_ASSESSTALK),
+                "talk entry must arrive through the NPC's registered perception");
+        }
+      vm.observe_instructions({});
+      require(entryBytecode==size_t(!native) && refusalBytecode==size_t(!native),
+              "the selected executor must handle the entry and refusal rule");
+      if(site.guardRefusal) {
+        const auto* line=npc.aiQueueFront();
+        require(line && line->act==AI_OutputSvm && line->target==&player && line->s0=="$NOTNOW" &&
+                npc.hasPerc(PERC_ASSESSTALK),
+                "an unpassed gate guard on cooldown must decline without disabling talk perception");
+        } else {
+        auto queued=Contract::queue(npc);
+        bool opensDialog=false;
+        while(queued.size()>0) {
+          const auto action=queued.pop();
+          opensDialog|=action.act==AI_StartState && action.func==started && action.target==&player;
+          }
+        const auto* stand=player.aiQueueFront();
+        require(opensDialog && stand && stand->act==AI_StandUpQuick && !npc.hasPerc(PERC_ASSESSTALK),
+                "an accepted approach must stand the player and queue ZS_TALK");
+        }
+      if(native) {
+        require(activityQueue(npc)==originalNpc && activityQueue(player)==originalPlayer,
+                "talk entry must queue the same actions as the original callback");
+        } else {
+        originalNpc=activityQueue(npc);
+        originalPlayer=activityQueue(player);
+        }
+      }
+    }
+  restore();
+  }
+
+void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  const bool savedEvents=events;
+  const auto infoClass=script.findSymbolIndex("C_INFO");
+  const auto previousSelf=vm.global_self()->get_instance();
+  const auto previousContext=vm.unsafe_get_gi();
+  using Info=std::tuple<uint32_t,int32_t,int32_t,int32_t,int32_t,int32_t,std::string,int32_t,int32_t>;
+  using Choice=std::tuple<uint32_t,uint32_t,int32_t,std::string,bool>;
+  std::vector<Info> original;
+  std::vector<Choice> originalChoices;
+  for(bool native:{false,true}) {
+    if(native && (!savedEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+      continue;
+    events=native;
+    std::vector<std::string> constructors;
+    const auto observer=vm.add_call_observer([&](const auto& function) {
+      if(function.parent()==infoClass && function.type()==daedalus::DaedalusDataType::INSTANCE)
+        constructors.push_back(function.name());
+      });
+    script.initDialogs();
+    vm.remove_call_observer(observer);
+    require(vm.global_self()->get_instance()==previousSelf && vm.unsafe_get_gi()==previousContext,
+            "dialog metadata: initialization must restore the original VM context");
+
+    std::vector<Info> metadata;
+    for(const auto& info:Contract::dialogInfos(script)) {
+      const auto id=info->symbol_index();
+      require(vm.find_symbol_by_index(id)->get_instance().get()==info.get() && info->choices.empty(),
+              "dialog metadata: bind each instance to its original saved symbol and reset its choices");
+      metadata.emplace_back(id,info->npc,info->nr,info->important,info->condition,info->information,
+                            info->description,info->trade,info->permanent);
+      }
+    std::vector<Choice> choices;
+    for(const auto& choice:script.dialogChoices(player.handlePtr(),npc.handlePtr(),{},true))
+      if(choice.handle!=nullptr)
+        choices.emplace_back(choice.handle->symbol_index(),choice.scriptFn,choice.sort,choice.title,choice.isTrade);
+    require(metadata.size()==4139 && !choices.empty(),"dialog metadata: the stock catalogue and an ordinary dialog must be live");
+    if(native) {
+      require(metadata==original && choices==originalChoices,
+              "dialog metadata: preserve all typed fields, localized bytes, catalogue order and live choice filtering");
+      std::sort(constructors.begin(),constructors.end());
+      require(constructors==std::vector<std::string>{"DIA_BARTOK_TEACHSNEAK","DIA_BENNET_TEACHCOMMON","DIA_DOBAR_TEACH",
+                                                    "DIA_THORBEN_TEACH","DIA_WOLF_TEACHCRAWLERPLATES"},
+              "dialog metadata: only the five computed descriptions need their stock constructors");
+      } else {
+      require(constructors.size()==metadata.size(),"dialog metadata: the compatibility mode runs every constructor");
+      original=std::move(metadata);
+      originalChoices=std::move(choices);
+      }
+    }
+  events=savedEvents;
+  }
+
+void talkPhases(Gothic& gothic) {
+  using Contract=NpcDefinitionContract;
+  auto& world=*gothic.world();
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto* actor=activityNpc(world,"NONE_100_XARDAS");
+  require(actor!=nullptr && world.player()!=nullptr,"talk needs Xardas and the player");
+  auto& npc=*actor;
+  auto& player=*world.player();
+  stockDialogMetadata(world,npc,player);
+  auto& effects=Contract::activityEventsOn(script);
+  const bool savedEffects=effects;
+  const auto savedNpcQueue=Contract::queue(npc);
+  const auto savedPlayerQueue=Contract::queue(player);
+  const auto savedNpcVars=std::to_array(npc.handle().aivar);
+  const auto savedPlayerVars=std::to_array(player.handle().aivar);
+  const auto savedDeadline=Contract::refusalDeadline(player);
+  const auto savedDialogCheck=gothic.isNpcInDialogFn;
+  auto& talkFix=*vm.find_symbol_by_name("ZSTALKBUGFIX");
+  const auto savedFix=talkFix.get_int();
+  const auto phases=activityPhases(script,"ZS_TALK");
+  const std::array<uint32_t,3> phaseAddresses={
+    vm.find_symbol_by_index(uint32_t(phases.init))->address(),
+    vm.find_symbol_by_index(uint32_t(phases.loop))->address(),
+    vm.find_symbol_by_index(uint32_t(phases.end))->address(),
+    };
+  const auto restore=[&] {
+    Contract::queue(npc)=savedNpcQueue;
+    Contract::queue(player)=savedPlayerQueue;
+    std::copy(savedNpcVars.begin(),savedNpcVars.end(),npc.handle().aivar);
+    std::copy(savedPlayerVars.begin(),savedPlayerVars.end(),player.handle().aivar);
+    Contract::refusalDeadline(player)=savedDeadline;
+    effects=savedEffects;
+    talkFix.set_int(savedFix);
+    gothic.isNpcInDialogFn=savedDialogCheck;
+    };
+  std::vector<std::string> originalNpc,originalPlayer;
+  const auto manager=std::make_shared<std::pair<bool,size_t>>();
+  for(bool native:{false,true}) {
+    if(native && (!savedEffects || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+      continue;
+    restore();
+    effects=native;
+    Contract::queue(npc).clear();
+    Contract::queue(player).clear();
+    *manager={false,0};
+    gothic.isNpcInDialogFn=[manager](const Npc* query) {
+      if(query==nullptr)
+        ++manager->second;
+      return manager->first;
+      };
+
+    size_t bytecode=0;
+    vm.observe_instructions([&](const auto&) {
+      bytecode+=std::ranges::find(phaseAddresses,vm.pc())!=phaseAddresses.end();
+      });
+    const auto invoke=[&](size_t phase) { return script.invokeState(&npc,&player,nullptr,uint32_t(phase)); };
+    npc.handle().aivar[4]=0;
+    player.handle().aivar[4]=1;
+    talkFix.set_int(17);
+    invoke(phases.init);
+    require(Contract::queue(npc).size()==0 && Contract::queue(player).size()==0 &&
+            npc.handle().aivar[4]==0 && talkFix.get_int()==17,
+            "talk Init must leave a player already protected by another dialog alone");
+
+    npc.handle().aivar[3]=1;
+    npc.handle().aivar[5]=0;
+    player.handle().aivar[4]=0;
+    invoke(phases.init);
+    auto queued=Contract::queue(npc);
+    bool opensDialog=false;
+    while(queued.size()>0) {
+      const auto action=queued.pop();
+      opensDialog|=action.act==AI_ProcessInfo && action.target==&player;
+      }
+    require(opensDialog && npc.handle().aivar[4]==1 && player.handle().aivar[4]==1 && talkFix.get_int()==0,
+            "talk Init must protect both participants and queue the player dialog");
+
+    require(invoke(phases.loop)==LOOP_CONTINUE && talkFix.get_int()==1,
+            "talk must wait one Loop before the manager can finish it");
+    manager->first=true;
+    require(invoke(phases.loop)==LOOP_CONTINUE && npc.handle().aivar[4]==1 && player.handle().aivar[4]==1,
+            "an active dialog manager keeps both invincibility flags");
+    manager->first=false;
+    require(invoke(phases.loop)==LOOP_END && npc.handle().aivar[4]==0 && player.handle().aivar[4]==0 &&
+            npc.handle().aivar[3]==0 && npc.handle().aivar[5]==1 && manager->second==3,
+            "talk completion must clear protection and update the talk flags in the final Loop");
+
+    invoke(phases.end);
+    vm.observe_instructions({});
+    require(Contract::refusalDeadline(player)==world.tickCount()+20000 &&
+            bytecode==(native ? 0u : 6u),"talk End must set the player cooldown and all phases use the requested executor");
+    if(native) {
+      require(activityQueue(npc)==originalNpc && activityQueue(player)==originalPlayer,
+              "talk stock and native queues must match for both participants");
+      } else {
+      originalNpc=activityQueue(npc);
+      originalPlayer=activityQueue(player);
+      }
+    }
+  restore();
+  assessTalkEntry(world,npc,player);
+  }

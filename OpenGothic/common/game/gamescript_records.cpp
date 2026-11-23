@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <span>
 
 #include <Tempest/Log>
 
@@ -85,6 +86,68 @@ auto GameScript::npcRecord(daedalus::DaedalusSymbol* symbol) -> std::shared_ptr<
   if(symbol->is_instance_of<daedalus::INpc>())
     return std::static_pointer_cast<daedalus::INpc>(symbol->get_instance());
   return nullptr;
+  }
+
+auto GameScript::readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_ptr<daedalus::IInfo> {
+  using Op = daedalus::DaedalusOpcode;
+  using Type = daedalus::DaedalusDataType;
+
+  const auto* parent = vm.find_symbol_by_index(sym.parent());
+  if(parent==nullptr || parent->type()!=Type::CLASS)
+    return nullptr;
+
+  // A plain C_INFO constructor only assigns its scalar members from literals or constants.
+  // Read the whole constructor before binding the instance so computed descriptions can use the VM.
+  struct Field {
+    daedalus::DaedalusSymbol* member = nullptr;
+    int32_t value = 0;
+    const std::string* text = nullptr;
+    };
+  std::array<Field,8> fields;
+  size_t count = 0;
+  uint32_t pc = sym.address();
+  const auto next = [&] {
+    const auto instruction = pc<vm.size() ? vm.instruction_at(pc) : daedalus::DaedalusInstruction{};
+    pc += instruction.size;
+    return instruction;
+    };
+  for(;;) {
+    const auto source = next();
+    if(source.op==Op::RSR)
+      break;
+    if(count==fields.size() || (source.op!=Op::PUSHI && source.op!=Op::PUSHV))
+      return nullptr;
+    const auto target = next();
+    const auto store = next().op;
+    auto* member = target.op==Op::PUSHV ? vm.find_symbol_by_index(target.symbol) : nullptr;
+    if(member==nullptr || member->parent()!=parent->index() || !member->is_member() ||
+       member->is_const() || member->count()!=1)
+      return nullptr;
+    const auto* constant = source.op==Op::PUSHV ? vm.find_symbol_by_index(source.symbol) : nullptr;
+    if(source.op==Op::PUSHV && (constant==nullptr || !constant->is_const() ||
+                              constant->is_member() || constant->count()!=1))
+      return nullptr;
+
+    auto& field = fields[count++];
+    field.member = member;
+    if(member->type()==Type::STRING && store==Op::MOVS && constant && constant->type()==Type::STRING)
+      field.text = &constant->get_string();
+    else if(member->type()==Type::INT && store==Op::MOVI && (!constant || constant->type()==Type::INT))
+      field.value = constant ? constant->get_int() : source.immediate;
+    else if(member->type()==Type::FUNCTION && store==Op::MOVVF && source.op==Op::PUSHI)
+      field.value = source.immediate;
+    else
+      return nullptr;
+    }
+
+  auto info = vm.allocate_instance<daedalus::IInfo>(&sym);
+  for(const auto& field : std::span(fields).first(count)) {
+    if(field.text!=nullptr)
+      field.member->set_string(*field.text,0,info.get());
+    else
+      field.member->set_int(field.value,0,info.get());
+    }
+  return info;
   }
 
 void GameScript::setNpcInfoKnown(const NpcRecord& npc, const daedalus::IInfo& info) {

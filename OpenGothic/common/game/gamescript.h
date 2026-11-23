@@ -403,6 +403,7 @@ class GameScript final : public GameRules {
     void  initCommon();
     void  initSettings();
     void  loadDialogOU();
+    auto  readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_ptr<daedalus::IInfo>;
 
     Item* findItem(daedalus::IItem* handle);
     Item* findItemById(size_t id);
