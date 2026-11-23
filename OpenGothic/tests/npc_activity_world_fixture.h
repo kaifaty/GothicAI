@@ -1650,7 +1650,7 @@ void drawWeaponPerceptions(World& world,Npc& npc,Npc& hero) {
       const bool delivered=npc.perceptionProcess(hero,nullptr,npc.qDistTo(hero),site.perc);
       vm.remove_call_observer(count);
       vm.observe_instructions({});
-      require(delivered && playerAssessment==(site.perc==PERC_ASSESSPLAYER ? 1u : 0u) &&
+      require(delivered && playerAssessment==(!native && site.perc==PERC_ASSESSPLAYER ? 1u : 0u) &&
               drawBytecode==(!native && site.perc!=PERC_ASSESSTHREAT ? 1u : 0u) &&
               threatBytecode==(!native && site.perc==PERC_ASSESSTHREAT ? 1u : 0u) && policyBytecode==(native ? 0u : 1u),
               "draw weapon: draw, player and threat callbacks skip the migrated bytecode only in native mode");
@@ -2202,6 +2202,8 @@ void enemyPerceptions(World& world,Npc& npc,Npc& hero) {
   const auto enemy=script.findFunction("B_ASSESSENEMY");
   const auto enemyPc=vm.find_symbol_by_name("B_ASSESSENEMY")->address();
   const auto player=script.findFunction("B_ASSESSPLAYER");
+  const auto murder=script.findFunction("B_ASSESSMURDER");
+  auto* lobart=activityNpc(world,"BAU_950_LOBART");
   const auto attack=script.findFunction("ZS_ATTACK");
   const auto observe=script.findFunction("ZS_OBSERVEPLAYER");
   const auto playerReason=script.intSymbol("AR_REACTTOWEAPON",-1);
@@ -2217,15 +2219,17 @@ void enemyPerceptions(World& world,Npc& npc,Npc& hero) {
   const auto savedNpcGuild=npc.handle().guild;
   const auto savedHeroGuild=hero.handle().guild;
   const auto savedInvincible=hero.handle().aivar[4];
-  require(Contract::aiState(npc).started && !hero.isDown() && npc.qDistTo(hero)<500.f*500.f &&
+  require(lobart && Contract::aiState(npc).started && !hero.isDown() && npc.qDistTo(hero)<500.f*500.f &&
           script.guildAttitude(npc,hero)!=ATT_HOSTILE,"enemy perception: a live player is nearby without an old guild feud");
   hero.handle().aivar[4]=0;
   npc.setAttitude(ATT_HOSTILE);
 
-  enum class Site { BeforeDelay, AfterDelay, ObservingPlayer, OpposedGuild, EnemyOverride };
-  for(auto site:{Site::BeforeDelay,Site::AfterDelay,Site::ObservingPlayer,Site::OpposedGuild,Site::EnemyOverride}) {
+  enum class Site { BeforeDelay, AfterDelay, ObservingPlayer, MurderBl, OpposedGuild, EnemyOverride };
+  for(auto site:{Site::BeforeDelay,Site::AfterDelay,Site::ObservingPlayer,Site::MurderBl,Site::OpposedGuild,Site::EnemyOverride}) {
     const bool guildFeud=site==Site::OpposedGuild;
-    const bool watching=site==Site::ObservingPlayer;
+    const bool playerAssessment=site==Site::ObservingPlayer;
+    const bool murderAssessment=site==Site::MurderBl;
+    const bool watching=playerAssessment || murderAssessment;
     const bool hostile=site!=Site::BeforeDelay && site!=Site::EnemyOverride;
     npc.handle().guild=guildFeud ? uint32_t(GIL_MIL) : savedNpcGuild;
     hero.handle().guild=guildFeud ? uint32_t(GIL_BDT) : savedHeroGuild;
@@ -2245,14 +2249,16 @@ void enemyPerceptions(World& world,Npc& npc,Npc& hero) {
       npc.aiPush(AiQueue::aiWait(173));
       npc.setPerceptionEnable(PERC_ASSESSENEMY,enemy.ptr);
       npc.setPerceptionEnable(PERC_ASSESSPLAYER,player.ptr);
+      npc.setPerceptionEnable(PERC_ASSESSMURDER,murder.ptr);
       size_t bytecode=0,playerCalls=0;
       vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==enemyPc; });
       const auto observer=vm.add_call_observer([&](const auto& sym) { playerCalls+=sym.name()=="B_ASSESSPLAYER"; });
-      const bool delivered=npc.perceptionProcess(hero,nullptr,npc.qDistTo(hero),watching ? PERC_ASSESSPLAYER : PERC_ASSESSENEMY);
+      const auto perc=playerAssessment ? PERC_ASSESSPLAYER : murderAssessment ? PERC_ASSESSMURDER : PERC_ASSESSENEMY;
+      const bool delivered=npc.perceptionProcess(hero,murderAssessment ? lobart : nullptr,npc.qDistTo(hero),perc);
       vm.remove_call_observer(observer);
       vm.observe_instructions({});
-      require(delivered && bytecode==(native ? 0u : 1u) && playerCalls==(watching ? 1u : 0u),
-              "enemy perception: both stock paths hit the enemy rules and only VM mode enters their bytecode");
+      require(delivered && bytecode==(native ? 0u : 1u) && playerCalls==(!native && playerAssessment ? 1u : 0u),
+              "enemy perception: direct, player and murder callbacks skip enemy bytecode in native mode");
       const auto* next=npc.aiQueueFront();
       if(hostile) {
         require(next && next->act==AI_StartState && next->func==attack && next->target==&hero && next->i0==0 &&
@@ -2277,7 +2283,61 @@ void enemyPerceptions(World& world,Npc& npc,Npc& hero) {
   npc.handle().guild=savedNpcGuild;
   hero.handle().guild=savedHeroGuild;
   hero.handle().aivar[4]=savedInvincible;
-  std::puts("Enemy perception: direct and player assessment routes match the VM for delay, observation, guild and override");
+  std::puts("Enemy perception: direct, player and murder assessment match the VM for delay, observation, guild and override");
+  }
+
+void playerAssessmentRoutes(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto assess=script.findFunction("B_ASSESSPLAYER");
+  const auto follow=script.findFunction("B_ASSESSFOLLOWPLAYER");
+  const auto observe=script.findFunction("ZS_OBSERVEPLAYER");
+  const auto assessPc=vm.find_symbol_by_name("B_ASSESSPLAYER")->address();
+  auto& comment=*vm.find_symbol_by_name("PLAYER_DRAWWEAPONCOMMENT");
+  const auto savedComment=comment.get_int();
+  const auto savedFlag=npc.handle().aivar[19];
+  const auto savedAttitude=npc.attitude();
+  const auto savedInvincible=hero.handle().aivar[4];
+  npc.setAttitude(ATT_NEUTRAL);
+  hero.handle().aivar[4]=0;
+  require(npc.canSeeNpc(hero,false) && npc.portalName()==hero.portalName() &&
+          world.guildOfRoom(npc.portalName())==int32_t(GIL_PUBLIC),
+          "player assessment: the fixture has a visible guest in the same public room");
+  for(const auto route:{assess,follow}) {
+    std::vector<std::string> original;
+    for(bool native:{false,true}) {
+      enabled=native;
+      comment.set_int(1);
+      npc.handle().aivar[19]=1;
+      npc.clearAiQueue();
+      npc.aiPush(AiQueue::aiWait(173));
+      npc.setPerceptionEnable(PERC_ASSESSPLAYER,route.ptr);
+      size_t bytecode=0,followCalls=0;
+      vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==assessPc; });
+      const auto count=vm.add_call_observer([&](const auto& sym) { followCalls+=sym.name()=="B_ASSESSFOLLOWPLAYER"; });
+      const bool delivered=npc.perceptionProcess(hero,nullptr,npc.qDistTo(hero),PERC_ASSESSPLAYER);
+      vm.remove_call_observer(count);
+      vm.observe_instructions({});
+      require(delivered && bytecode==(native ? 0u : 1u) && followCalls==(route==follow ? 1u : 0u),
+              "player assessment: direct and follower perceptions use the chosen executor");
+      const auto* next=npc.aiQueueFront();
+      require(next && next->act==AI_StartState && next->func==observe && next->target==&hero && next->i0==1 &&
+              comment.get_int()==1 && !npc.hasPerc(PERC_ASSESSPLAYER),
+              "player assessment: room entry wins before weapon handling and replaces the old queue");
+      auto queue=activityQueue(npc);
+      if(native) require(original==queue,"player assessment: both routes reproduce the original room queue");
+      else original=std::move(queue);
+      }
+    }
+  enabled=wasEnabled;
+  comment.set_int(savedComment);
+  npc.handle().aivar[19]=savedFlag;
+  npc.setAttitude(savedAttitude);
+  hero.handle().aivar[4]=savedInvincible;
+  std::puts("Player assessment: direct and follower routes preserve room priority");
   }
 
 void quietSoundRooms(Gothic& gothic) {
@@ -2461,6 +2521,7 @@ void quietSoundRooms(Gothic& gothic) {
   humanPlunderAndArmorPhases(world,*npc,hero);
   controlSpellPhases(world,*npc,hero);
   enemyPerceptions(world,*npc,hero);
+  playerAssessmentRoutes(world,*npc,hero);
   for(bool privateRoom:{false,true}) {
     std::vector<std::string> original;
     for(bool native:{false,true}) {

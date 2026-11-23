@@ -346,11 +346,13 @@ void GameScript::loadNativeHumanPerceptions() {
   threatCallback = findFunction("B_ASSESSTHREAT");
   damageCallback = findFunction("B_ASSESSDAMAGE");
   enemyCallback = findFunction("B_ASSESSENEMY");
+  playerCallback = findFunction("B_ASSESSPLAYER");
   stopShortZapCallback = findFunction("B_STOPSHORTZAPPED");
   const auto enabled = [this] { return nativeHumanPerceptionsEnabled(); };
   vm.override_function("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }},enabled);
   vm.override_function("B_ASSESSDAMAGE",std::function<void()>{[this] { runDamageReaction(); }},enabled);
   vm.override_function("B_ASSESSENEMY",std::function<int32_t()>{[this] { return runEnemyReaction(); }},enabled);
+  vm.override_function("B_ASSESSPLAYER",std::function<void()>{[this] { runPlayerAssessment(); }},enabled);
   vm.override_function("B_VALIDATEOTHER",std::function<void()>{[this] {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
@@ -362,7 +364,7 @@ void GameScript::loadNativeHumanPerceptions() {
 
 bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase) {
   const bool stopShortZap = fn==stopShortZapCallback;
-  if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=damageCallback && fn!=enemyCallback && !stopShortZap) ||
+  if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !stopShortZap) ||
      !nativeHumanPerceptionsEnabled())
     return false;
   phase.fromRecord();
@@ -372,6 +374,8 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
     runThreatReaction();
   else if(fn==enemyCallback)
     phase.result = runEnemyReaction();
+  else if(fn==playerCallback)
+    runPlayerAssessment();
   else if(stopShortZap)
     stopControlSpell(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()),true);
   else
@@ -564,6 +568,111 @@ int32_t GameScript::runEnemyReaction() {
     return 1;
     }
   return 0;
+  }
+
+void GameScript::runPlayerAssessment() {
+  constexpr size_t startedTalk = 3; // AIV_NPCSTARTEDTALK
+  constexpr size_t invincible = 4; // AIV_INVINCIBLE
+  constexpr size_t guardPassageStatus = 12; // AIV_GUARDPASSAGE_STATUS
+  constexpr size_t partyMember = 15; // AIV_PARTYMEMBER
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto constant = [&](std::string_view name) { return findSymbol(name)->get_int(); };
+  const auto distance = [&] { return npc_getdisttonpc(self,other()); };
+  const auto hasBodyState = [&](const std::shared_ptr<daedalus::INpc>& actor, int32_t state) {
+    return vm.call_function<int32_t>("C_BODYSTATECONTAINS",actor,state)!=0;
+    };
+  const auto fakeGuild = [&] { return vm.call_function<int32_t>("C_PLAYERHASFAKEGUILD",self,other())!=0; };
+  const auto assessTalk = [&] {
+    self->aivar[startedTalk] = 1;
+    vm.call_function<void>("B_ASSESSTALK");
+    };
+
+  const auto inspector = hlp_getnpc(int(findSymbolIndex("PC_LEVELINSPEKTOR")));
+  findSymbol("B_ASSESSPLAYER.PCL")->set_instance(inspector);
+  const auto source = other();
+  if(hlp_getinstanceid(source)==hlp_getinstanceid(inspector) || self==nullptr || (source && source->aivar[invincible]==1) ||
+     vm.call_function<int32_t>("C_NPCISDOWN",source)!=0)
+    return;
+
+  const auto otherGuild = source ? int32_t(source->guild) : 0;
+  if(otherGuild>constant("GIL_SEPERATOR_HUM")) {
+    if(isGateGuard(self)) {
+      ai_standupquick(self);
+      startNpcAttack(self,other(),constant("AR_MONSTERCLOSETOGATE"),0);
+      return;
+      }
+    if(wld_getguildattitude(int32_t(self->guild),otherGuild)==ATT_HOSTILE &&
+       self->type!=NpcType::G2_FRIEND && self->aivar[partyMember]==0) {
+      startNpcAttack(self,other(),constant("AR_GUILDENEMY"),0);
+      return;
+      }
+    }
+  if(runEnemyReaction()!=0)
+    return;
+  const bool fakeBandit = isPlayerFakeBandit(self,other());
+  if(self->guild!=GIL_BDT && fakeBandit)
+    startNpcAttack(self,other(),constant("AR_GUILDENEMY"),0);
+
+  const bool near = distance()<=constant("PERC_DIST_INTERMEDIAT");
+  const bool pursueMurderer = vm.call_function<int32_t>("C_WANTTOATTACKMURDER",self,other())!=0;
+  const bool murdered = playerCrime(self)==constant("CRIME_MURDER");
+  if(near && pursueMurderer && murdered) {
+    startNpcAttack(self,other(),constant("AR_HUMANMURDEREDHUMAN"),0);
+    return;
+    }
+  if(runEnterRoomReaction()!=0 || runDrawWeaponReaction()!=0)
+    return;
+  findSymbol("PLAYER_DRAWWEAPONCOMMENT")->set_int(0);
+
+  if(hasBodyState(other(),BS_SNEAK)) {
+    const bool react = vm.call_function<int32_t>("C_WANTTOREACTTOSNEAKER",self,other())!=0;
+    const auto observe = findFunction("ZS_OBSERVEPLAYER");
+    if(react && !npc_isinstate(self,int(observe.ptr))) {
+      npc_clearaiqueue(self);
+      clearPerceptions(self);
+      ai_startstate(self,int(observe.ptr),1,"");
+      return;
+      }
+    }
+  else if(hasBodyState(other(),BS_STAND)) {
+    findSymbol("PLAYER_SNEAKERCOMMENT")->set_int(0);
+    }
+  if(!hasBodyState(other(),BS_LIE))
+    findSymbol("PLAYER_GETOUTOFMYBEDCOMMENT")->set_int(0);
+
+  vm.call_function<void>("B_ASSIGNDEMENTORTALK",self);
+  const auto talkDistance = constant("PERC_DIST_DIALOG");
+  if(npc_checkinfo(self,1) && distance()<=talkDistance) {
+    if(isGateGuard(self)) {
+      assessTalk();
+      return;
+      }
+    const bool disguise = fakeGuild();
+    const bool refuse = vm.call_function<int32_t>("C_REFUSETALK",self,other())!=0;
+    const bool hasCrime = playerCrime(self)!=constant("CRIME_NONE");
+    const bool diving = hasBodyState(other(),BS_DIVE);
+    const bool swimming = hasBodyState(other(),BS_SWIM);
+    const bool falling = hasBodyState(other(),BS_FALL);
+    if(!disguise && !refuse && !hasCrime && !diving && !swimming && !falling) {
+      assessTalk();
+      return;
+      }
+    }
+  const bool disguise = fakeGuild();
+  const bool gateGuard = isGateGuard(self);
+  const bool refuse = npc_refusetalk(other());
+  const bool withinGreetingRange = distance()<=talkDistance;
+  const bool walking = hasBodyState(self,BS_WALK);
+  if(!disguise && !gateGuard && !refuse && withinGreetingRange && walking) {
+    lookAtNpc(self,other());
+    vm.call_function<void>("B_SAY_GUILDGREETINGS",self,other());
+    stopLookAtNpc(self);
+    npc_setrefusetalk(other(),20);
+    }
+  const bool outsideTalkRange = distance()>talkDistance;
+  if(isGateGuard(self) && outsideTalkRange)
+    self->aivar[guardPassageStatus] = constant("GP_NONE");
   }
 
 void GameScript::stopControlSpell(const std::shared_ptr<daedalus::INpc>& self, bool continueRoutine) {
