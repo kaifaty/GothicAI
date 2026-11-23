@@ -2170,6 +2170,7 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
           test.moveHero(guard+Tempest::Vec3(distance,0,0),0);
           actor->clearAiQueue();
           actor->setStateTime(time);
+          Contract::aiState(*actor).loopNextTime=world.tickCount();
           Contract::tickRoutine(*actor);
           require(aligned(*actor)==expect && actor->stateTime()==(expect ? 0u : uint64_t(time)),
                   "ZS_GUARD_PASSAGE: align and reset only at three seconds with the hero outside 500 cm");
