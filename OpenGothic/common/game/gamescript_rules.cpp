@@ -2986,9 +2986,10 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
       }
     }
 
-  vm.call_function<void>("B_GIVETRADEINV",self);
-  vm.call_function<void>("B_GIVEDEATHINV",self);
-  vm.call_function<void>("B_CLEARRUNEINV",self);
+  for(auto name : {"B_GIVETRADEINV","B_GIVEDEATHINV","B_CLEARRUNEINV"}) {
+    vm.push_reference(vm.global_self());
+    vm.unsafe_call_bl(findSymbol(name));
+    }
   adjustPetzCrime(self,std::nullopt);
   self->aivar[sawCrime] = number("CRIME_NONE");
   ai_unequipweapons(self);
@@ -3059,8 +3060,10 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
         winner->aivar[arenaFight] = number("AF_AFTER");
       }
 
-    vm.call_function<void>("B_GIVETRADEINV",self);
-    vm.call_function<void>("B_CLEARRUNEINV",self);
+    for(auto name : {"B_GIVETRADEINV","B_CLEARRUNEINV"}) {
+      vm.push_reference(vm.global_self());
+      vm.unsafe_call_bl(findSymbol(name));
+      }
     const auto winner = other();
     if(self->aivar[victoryXpGiven]==0 && ((winner && winner->aivar[partyMember]==1) || npc_isplayer(winner))) {
       givePlayerXp(self->level*number("XP_PER_VICTORY"));

@@ -96,6 +96,7 @@ GameScript::GameScript(GameSession &owner)
   aiDefaultPipe.reset(new GlobalOutput(*this));
   initCommon();
   loadNativeNpcDeath();
+  loadNativeTradeInventory();
   loadNativeNpcGlobals();
   loadNativeMonsterAttitudes();
   loadNativeWorldEntry();

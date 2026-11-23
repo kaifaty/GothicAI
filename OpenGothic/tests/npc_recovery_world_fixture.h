@@ -111,6 +111,58 @@ void dragonDeathBranches(Gothic& gothic, bool native) {
   restore();
   }
 
+void tradeInventoryAfterDefeat(ActivityEventsWorld& test, bool native) {
+  auto& world = test.world();
+  auto& script = world.script();
+  auto& vm = script.getVm();
+  auto* matteo = activityNpc(world,"VLK_416_MATTEO");
+  require(matteo && !matteo->isDead(),"trade inventory: need the living stock merchant");
+  test.stop(*matteo);
+  const auto actor = std::static_pointer_cast<daedalus::INpc>(matteo->handlePtr());
+  const auto oldSelf = vm.global_self()->get_instance();
+  const auto gold = script.findSymbolIndex("ITMI_GOLD");
+  const auto junk = script.findSymbolIndex("ITAT_WOLFFUR");
+  const auto before = matteo->itemCount(gold);
+  script.findSymbol("KAPITEL")->set_int(1);
+  auto* stocked = script.findSymbol("MATTEO_ITEMSGIVEN_CHAPTER_1");
+  stocked->set_int(0);
+  actor->aivar[49] = 1; // At the restock chapter boundary.
+  actor->aivar[16] = 1; // The defeat does not award ambient goods again.
+  matteo->addItem(junk,2);
+  vm.global_self()->set_instance(actor);
+
+  std::vector<std::string> calls;
+  const auto observer = vm.add_call_observer([&](const auto& symbol) {
+    const auto name = std::string_view(symbol.name());
+    if(name=="B_CLEARRUNEINV" || name=="B_CLEARJUNKTRADEINV" || name=="B_GIVETRADEINV_MATTEO" ||
+       name=="B_CLEARDEADTRADER" || name=="B_CREATEAMBIENTINV")
+      calls.emplace_back(name);
+    });
+  const auto* trade = script.findSymbol("B_GIVETRADEINV");
+  bool tradeVm = false;
+  vm.observe_instructions([&](const auto&) { tradeVm |= vm.pc()==trade->address(); });
+  const auto run = [&] {
+    vm.push_int(0x12345678);
+    vm.push_reference(vm.global_self());
+    vm.unsafe_call_bl(trade);
+    require(vm.pop_int()==0x12345678,"trade inventory: the legacy void frame drops all cleanup results");
+    };
+  run();
+  require(calls==std::vector<std::string>{"B_CLEARRUNEINV","B_CLEARJUNKTRADEINV","B_GIVETRADEINV_MATTEO"} &&
+          matteo->itemCount(junk)==0 && matteo->itemCount(gold)==before+100 && actor->aivar[49]==2 && stocked->get_int()==1 &&
+          script.findSymbol("B_GIVETRADEINV.TRD_MATTEO")->get_instance()==actor && tradeVm!=native,
+          "trade inventory: stock junk cleanup and Matteo's real chapter restock run in order");
+  calls.clear();
+  require(matteo->startState(script.findFunction("ZS_UNCONSCIOUS"),""),"trade inventory: Matteo enters the knockout state");
+  run();
+  require(calls==std::vector<std::string>{"B_CLEARRUNEINV","B_CLEARDEADTRADER"} && matteo->itemCount(gold)==0 &&
+          actor->aivar[49]==0 && stocked->get_int()==1,
+          "trade inventory: a defeated merchant resets stock without re-granting ambient loot");
+  vm.observe_instructions({});
+  vm.remove_call_observer(observer);
+  vm.global_self()->set_instance(oldSelf);
+  }
+
 void npcDeathLifecycle(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   constexpr auto* actor="BAU_951_HILDA";
@@ -171,11 +223,16 @@ void npcDeathLifecycle(Gothic& gothic) {
     script.setSeed(73106);
     Contract::activityEventsOn(script)=native;
     npc->handle().aivar[16]=0; // This defeat has not yet awarded experience.
+    const auto light=script.findSymbolIndex("ITRU_LIGHT");
+    const auto paladinLight=script.findSymbolIndex("ITRU_PALLIGHT");
+    npc->addItem(light,5);
+    npc->addItem(paladinLight,2);
     const auto beforeXp=hero.experience();
     const auto dead=script.findFunction("ZS_DEAD");
     const auto initPc=script.findSymbol("ZS_DEAD")->address();
     const auto loopPc=script.findSymbol("ZS_DEAD_LOOP")->address();
-    size_t initVm=0,loopVm=0,deathLoot=0,dragonChecks=0;
+    const auto runePc=script.findSymbol("B_CLEARRUNEINV")->address();
+    size_t initVm=0,loopVm=0,runeVm=0,deathLoot=0,dragonChecks=0;
     const auto calls=vm.add_call_observer([&](const auto& symbol) {
       deathLoot+=symbol.name()=="B_GIVEDEATHINV";
       dragonChecks+=symbol.name()=="B_DRAGONKILLCOUNTER";
@@ -183,6 +240,7 @@ void npcDeathLifecycle(Gothic& gothic) {
     vm.observe_instructions([&](const auto&) {
       initVm+=vm.pc()==initPc;
       loopVm+=vm.pc()==loopPc;
+      runeVm+=vm.pc()==runePc;
       });
     npc->changeAttribute(ATR_HITPOINTS,-npc->attribute(ATR_HITPOINTS),false);
     npc->setOther(&hero);
@@ -199,6 +257,8 @@ void npcDeathLifecycle(Gothic& gothic) {
             "death: Init grants loot once and the first Loop alone checks the dragon counter");
     require(npc->stateOther()==&hero && hero.experience()>beforeXp && npc->handle().aivar[16]==1,
             "death: the credited player receives experience and remains the state's other");
+    require(runeVm==(native ? 0u : 2u) && npc->itemCount(light)==3 && npc->itemCount(paladinLight)==0,
+            "death: both cleanup calls preserve the stock cross-count for the two light runes");
     auto outcome=consequences(*npc,hero);
     if(!native) original=std::move(outcome);
     else {
@@ -206,6 +266,7 @@ void npcDeathLifecycle(Gothic& gothic) {
       npc->setStateTime(750);
       corpse=save("inside death state");
       }
+    tradeInventoryAfterDefeat(test,native);
     dragonDeathBranches(gothic,native);
     }
 

@@ -6,6 +6,274 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <stdexcept>
+
+void GameScript::loadNativeTradeInventory() {
+  if(!nativeRoutineProgram)
+    return;
+
+  using Op = daedalus::DaedalusOpcode;
+  using Symbol = daedalus::DaedalusSymbol;
+  using NpcRef = std::shared_ptr<daedalus::INpc>;
+  const auto enabled = [this] {
+    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+    };
+  auto* lookup = findSymbol("HLP_GETNPC");
+  auto* instanceId = findSymbol("HLP_GETINSTANCEID");
+  auto* hasItems = findSymbol("NPC_HASITEMS");
+  auto* removeItems = findSymbol("NPC_REMOVEINVITEMS");
+  auto* validNpc = findSymbol("HLP_ISVALIDNPC");
+  auto* inState = findSymbol("NPC_ISINSTATE");
+  auto* runes = findSymbol("B_CLEARRUNEINV");
+  auto* junk = findSymbol("B_CLEARJUNKTRADEINV");
+  auto* dead = findSymbol("B_CLEARDEADTRADER");
+  auto* runesActor = findSymbol("B_CLEARRUNEINV.SLF");
+  auto* runeHero = findSymbol("B_CLEARRUNEINV.HER");
+  auto* junkActor = findSymbol("B_CLEARJUNKTRADEINV.SLF");
+  auto* tradeActor = findSymbol("B_GIVETRADEINV.SLF");
+  auto* aivar = findSymbol("C_NPC.AIVAR");
+  auto* chapter = findSymbol("KAPITEL");
+  const auto deadState = int32_t(findSymbolIndex("ZS_DEAD"));
+  const auto unconsciousState = int32_t(findSymbolIndex("ZS_UNCONSCIOUS"));
+  constexpr uint16_t stockChapter = 49; // AIV_INVCHAPTER.
+  uint32_t pc = runes->address();
+  const auto malformed = [&] { throw std::runtime_error("Invalid stock inventory rule at "+std::to_string(pc)); };
+  const auto take = [&](Op expected) {
+    const auto op = vm.instruction_at(pc);
+    if(op.op!=expected)
+      malformed();
+    pc += op.size;
+    return op;
+    };
+  const auto expectSymbol = [&](Op op,const Symbol* symbol) {
+    if(take(op).symbol!=symbol->index())
+      malformed();
+    };
+  const auto saveActor = [&](const Symbol* symbol) {
+    expectSymbol(Op::PUSHVI,symbol);
+    take(Op::MOVVI);
+    };
+  const auto expectCall = [&](const Symbol* symbol) {
+    if(take(Op::BL).address!=symbol->address())
+      malformed();
+    };
+  const auto expectChapterSlot = [&] {
+    const auto op = take(Op::PUSHVV);
+    if(op.symbol!=aivar->index() || op.index!=stockChapter)
+      malformed();
+    };
+  const auto readPair = [&](const Symbol* actor) {
+    expectSymbol(Op::PUSHVI,actor);
+    const auto remove = take(Op::PUSHI).immediate;
+    expectSymbol(Op::PUSHVI,actor);
+    const auto count = take(Op::PUSHI).immediate;
+    expectSymbol(Op::BE,hasItems);
+    expectSymbol(Op::BE,removeItems);
+    return std::pair{remove,count};
+    };
+
+  saveActor(runesActor);
+  const auto heroIndex = take(Op::PUSHI).immediate;
+  if(heroIndex!=int32_t(findSymbolIndex("PC_HERO")))
+    malformed();
+  expectSymbol(Op::BE,lookup);
+  saveActor(runeHero);
+  expectSymbol(Op::PUSHVI,runeHero);
+  expectSymbol(Op::BE,instanceId);
+  expectSymbol(Op::PUSHVI,vm.global_self());
+  expectSymbol(Op::BE,instanceId);
+  take(Op::NEQ);
+  const auto runesEnd = take(Op::BZ).address;
+  std::array<std::pair<int32_t,int32_t>,54> runePairs;
+  for(auto& pair : runePairs)
+    pair = readPair(runesActor);
+  if(pc!=runesEnd)
+    malformed();
+  take(Op::RSR);
+
+  pc = junk->address();
+  saveActor(junkActor);
+  expectSymbol(Op::PUSHVI,junkActor);
+  expectSymbol(Op::BE,validNpc);
+  const auto junkEnd = take(Op::BZ).address;
+  std::array<std::pair<int32_t,int32_t>,73> junkPairs;
+  for(auto& pair : junkPairs)
+    pair = readPair(junkActor);
+  if(pc!=junkEnd)
+    malformed();
+  take(Op::RSR);
+
+  struct Trader {
+    int32_t source;
+    Symbol* alias;
+    };
+  std::array<Trader,50> traders;
+  pc = findSymbol("B_GIVETRADEINV")->address();
+  saveActor(tradeActor);
+  for(auto& trader : traders) {
+    trader.source = take(Op::PUSHI).immediate;
+    expectSymbol(Op::BE,lookup);
+    trader.alias = findSymbol(take(Op::PUSHVI).symbol);
+    if(trader.alias==nullptr || !trader.alias->name().starts_with("B_GIVETRADEINV.TRD_"))
+      malformed();
+    take(Op::MOVVI);
+    }
+  expectSymbol(Op::PUSHVI,tradeActor);
+  expectCall(runes);
+  expectSymbol(Op::PUSHV,chapter);
+  expectSymbol(Op::GMOVI,tradeActor);
+  expectChapterSlot();
+  take(Op::LTE);
+  const auto restockEnd = take(Op::BZ).address;
+  const auto readTraderBranch = [&] {
+    auto* alias = findSymbol(take(Op::PUSHVI).symbol);
+    if(std::ranges::find(traders,alias,&Trader::alias)==traders.end())
+      malformed();
+    expectSymbol(Op::BE,instanceId);
+    expectSymbol(Op::PUSHVI,tradeActor);
+    expectSymbol(Op::BE,instanceId);
+    take(Op::EQ);
+    return std::pair{alias,take(Op::BZ).address};
+    };
+  // Lookup, restock and cleanup each have their own authored order.
+  std::array<std::pair<Symbol*,const Symbol*>,50> restocks;
+  for(auto& restock : restocks) {
+    const auto [alias,next] = readTraderBranch();
+    expectSymbol(Op::PUSHVI,tradeActor);
+    expectCall(junk);
+    expectSymbol(Op::PUSHVI,tradeActor);
+    const auto* body = vm.find_symbol_by_address(take(Op::BL).address);
+    if(body==nullptr || !body->name().starts_with("B_GIVETRADEINV_") || pc!=next)
+      malformed();
+    restock = {alias,body};
+    }
+  if(take(Op::PUSHI).immediate!=1)
+    malformed();
+  expectSymbol(Op::PUSHV,chapter);
+  take(Op::ADD);
+  expectSymbol(Op::GMOVI,tradeActor);
+  expectChapterSlot();
+  take(Op::MOVI);
+  if(pc!=restockEnd)
+    malformed();
+  for(const auto state : {unconsciousState,deadState}) {
+    expectSymbol(Op::PUSHVI,tradeActor);
+    if(take(Op::PUSHI).immediate!=state)
+      malformed();
+    expectSymbol(Op::BE,inState);
+    }
+  take(Op::ORR);
+  const auto tradeEnd = take(Op::BZ).address;
+  std::array<Symbol*,50> defeatedTraders;
+  for(auto& defeated : defeatedTraders) {
+    const auto [alias,next] = readTraderBranch();
+    expectSymbol(Op::PUSHVI,tradeActor);
+    expectCall(dead);
+    if(pc!=next)
+      malformed();
+    defeated = alias;
+    }
+  if(pc!=tradeEnd)
+    malformed();
+  take(Op::RSR);
+
+  const auto getNpc = [this,lookup](int32_t source,Symbol* alias) {
+    vm.push_int(source);
+    vm.unsafe_call_external(lookup);
+    alias->set_instance(vm.pop_instance());
+    };
+  const auto id = [this,instanceId](Symbol* actor) {
+    vm.push_reference(actor);
+    vm.unsafe_call_external(instanceId);
+    return vm.pop_int();
+    };
+  const auto removePairs = [this,hasItems,removeItems](Symbol* actor,const auto& pairs) {
+    for(const auto& [remove,count] : pairs) {
+      vm.push_reference(actor);
+      vm.push_int(remove);
+      vm.push_reference(actor);
+      vm.push_int(count);
+      vm.unsafe_call_external(hasItems);
+      // Keep the original external's INT on the void helper's call stack.
+      vm.unsafe_call_external(removeItems);
+      }
+    };
+  const auto call = [this](Symbol* actor,const Symbol* fn) {
+    vm.push_reference(actor);
+    vm.unsafe_call_bl(fn);
+    };
+  const auto member = [this](Symbol* actor) {
+    auto npc = std::static_pointer_cast<daedalus::INpc>(actor->get_instance());
+    vm.unsafe_set_gi(npc);
+    return npc;
+    };
+
+  vm.override_function("B_CLEARRUNEINV",std::function<void(NpcRef)>{
+    [this,runesActor,runeHero,heroIndex,runePairs,getNpc,id,removePairs](NpcRef actor) {
+      runesActor->set_instance(std::move(actor));
+      getNpc(heroIndex,runeHero);
+      const auto hero = id(runeHero);
+      if(hero!=id(vm.global_self()))
+        removePairs(runesActor,runePairs);
+    }},enabled);
+  vm.override_function("B_CLEARJUNKTRADEINV",std::function<void(NpcRef)>{
+    [this,junkActor,junkPairs,validNpc,removePairs](NpcRef actor) {
+      junkActor->set_instance(std::move(actor));
+      vm.push_reference(junkActor);
+      vm.unsafe_call_external(validNpc);
+      if(vm.pop_int()!=0)
+        removePairs(junkActor,junkPairs);
+    }},enabled);
+  vm.override_function("B_CLEARDEADTRADER",std::function<void(NpcRef)>{
+    [this,call,member](NpcRef actor) {
+      auto* trader = findSymbol("B_CLEARDEADTRADER.TRADER");
+      trader->set_instance(std::move(actor));
+      vm.push_reference(trader);
+      vm.unsafe_call_external(findSymbol("NPC_CLEARINVENTORY"));
+      const auto defeated = member(trader);
+      if(!defeated || defeated->aivar[16]==0) // AIV_VICTORYXPGIVEN.
+        call(trader,findSymbol("B_CREATEAMBIENTINV"));
+      if(const auto current = member(trader))
+        current->aivar[stockChapter] = std::bit_cast<int32_t>(uint32_t(storyChapter)-1u);
+    }},enabled);
+  vm.override_function("B_GIVETRADEINV",std::function<void(NpcRef)>{
+    [this,traders,restocks,defeatedTraders,tradeActor,runes,junk,dead,inState,unconsciousState,deadState,getNpc,id,call,member](NpcRef actor) {
+      const auto sameTrader = [&](Symbol* alias) {
+        const auto selected = id(alias);
+        return selected==id(tradeActor);
+        };
+      const auto isInState = [&](int32_t state) {
+        vm.push_reference(tradeActor);
+        vm.push_int(state);
+        vm.unsafe_call_external(inState);
+        return vm.pop_int()!=0;
+        };
+      tradeActor->set_instance(std::move(actor));
+      for(const auto& trader : traders)
+        getNpc(trader.source,trader.alias);
+      call(tradeActor,runes);
+      const auto current = member(tradeActor);
+      if((current ? current->aivar[stockChapter] : 0)<=storyChapter) {
+        for(const auto& [alias,body] : restocks) {
+          if(!sameTrader(alias))
+            continue;
+          call(tradeActor,junk);
+          call(tradeActor,body);
+          }
+        if(const auto restocked = member(tradeActor))
+          restocked->aivar[stockChapter] = std::bit_cast<int32_t>(uint32_t(storyChapter)+1u);
+        }
+      const bool unconscious = isInState(unconsciousState);
+      const bool deceased = isInState(deadState);
+      if(unconscious || deceased) {
+        for(auto* alias : defeatedTraders) {
+          if(sameTrader(alias))
+            call(tradeActor,dead);
+          }
+        }
+    }},enabled);
+  }
 
 bool GameScript::applyArmorSetEffect(Npc& npc, uint32_t callback) {
   const auto it = itemDefinitions.armorSetEffects.find(callback);
