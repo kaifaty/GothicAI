@@ -254,6 +254,49 @@ void talkPhases(Gothic& gothic) {
   assessTalkEntry(world,npc,player);
   }
 
+void stockQuestJournalEntry(GameScript& script, const std::string& topic) {
+  auto& vm=script.getVm();
+  auto& session=*Gothic::inst().gameSession();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto originalEvents=events;
+  const auto originalTime=session.time();
+  auto* savedTopic=vm.find_symbol_by_name("B_LOGENTRY.TOPIC");
+  auto* savedEntry=vm.find_symbol_by_name("B_LOGENTRY.ENTRY");
+  const auto originalTopic=savedTopic->get_string();
+  const auto originalEntry=savedEntry->get_string();
+  const auto* addEntry=vm.find_symbol_by_name("B_LOGENTRY");
+  const auto* getDay=vm.find_symbol_by_name("B_GETDAYPLUS");
+  const std::string entry="stock journal helper";
+  for(const bool native:{false,true}) {
+    events=native;
+    std::vector<std::string> feedback;
+    unsigned bytecode=0;
+    vm.observe_instructions([&](const auto&) { ++bytecode; });
+    vm.observe_externals([&](const auto& fn) {
+      if(fn.name()=="PRINTSCREEN" || fn.name()=="SND_PLAY")
+        feedback.push_back(fn.name());
+      });
+    vm.push_string(topic);
+    vm.push_string(entry);
+    vm.unsafe_call_bl(addEntry);
+    for(const auto& [hour,minute,expected]:std::array{std::array{21,59,5},std::array{22,0,6},
+                                                     std::array{23,58,6},std::array{23,59,5}}) {
+      session.setTime(gtime(5,hour,minute));
+      vm.unsafe_call_bl(getDay);
+      require(vm.pop_int()==expected,"quest deadlines must preserve the stock late-evening boundary");
+      }
+    vm.observe_instructions({});
+    vm.observe_externals({});
+    require((bytecode==0)==native && savedTopic->get_string()==topic && savedEntry->get_string()==entry &&
+            feedback==std::vector<std::string>{"PRINTSCREEN","SND_PLAY"},
+            "stock journal entry and deadline helpers must preserve saved arguments and ordered feedback");
+    }
+  savedTopic->set_string(originalTopic);
+  savedEntry->set_string(originalEntry);
+  session.setTime(originalTime);
+  events=originalEvents;
+  }
+
 auto storyJournalBeforeSave(GameScript& script) {
   const auto journalStart=script.questLog().questCount();
   const std::string note="StoryGraph contract note";
@@ -287,12 +330,13 @@ auto storyJournalBeforeSave(GameScript& script) {
     require(result.ok,result.error.c_str());
     require(journalCalls==0,"live StoryGraph journal effects must bypass VM externals");
   }
+  stockQuestJournalEntry(script,note);
   const auto requireJournal=[journalStart,note,mission](const QuestLog& journal) {
     require(journal.questCount()==journalStart+2,"StoryGraph journal must ignore absent and invalid effects");
     const auto& first=journal.quest(journalStart);
     const auto& second=journal.quest(journalStart+1);
     require(first.name==note && first.section==QuestLog::Note && first.status==QuestLog::Status::Success &&
-            first.entry==std::vector<std::string>{"first","second"},
+            first.entry==std::vector<std::string>{"first","second","stock journal helper","stock journal helper"},
             "StoryGraph journal must preserve note section, valid status and entry order");
     require(second.name==mission && second.section==QuestLog::Mission && second.status==QuestLog::Status::Failed &&
             second.entry.empty(),"a status before creation must create an ordered Mission");

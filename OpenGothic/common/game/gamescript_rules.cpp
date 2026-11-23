@@ -2867,6 +2867,27 @@ void GameScript::closeQuestTopic(std::string_view topic, int32_t mission, int32_
   }
 
 void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
+  vm.override_function("B_LOGENTRY",std::function<void(std::string_view,std::string_view)>{
+    [this](std::string_view topic, std::string_view entry) {
+      auto* savedTopic=findSymbol("B_LOGENTRY.TOPIC");
+      auto* savedEntry=findSymbol("B_LOGENTRY.ENTRY");
+      savedEntry->set_string(entry);
+      savedTopic->set_string(topic);
+      log_addentry(savedTopic->get_string(),savedEntry->get_string());
+      vm.push_reference(findSymbol("PRINT_NEWLOGENTRY"));
+      vm.push_int(-1);
+      vm.push_reference(findSymbol("YPOS_LOGENTRY"));
+      vm.push_reference(findSymbol("FONT_SCREENSMALL"));
+      vm.push_int(2);
+      vm.unsafe_call_external(findSymbol("PRINTSCREEN"));
+      vm.push_reference(findSymbol("$12894")); // LogEntry
+      vm.unsafe_call_external(findSymbol("SND_PLAY"));
+      }},enabled);
+  vm.override_function("B_GETDAYPLUS",std::function<int32_t()>{[this] {
+    const bool nextDay=wld_istime(22,0,23,59);
+    return std::bit_cast<int32_t>(uint32_t(wld_getday())+uint32_t(nextDay));
+    }},enabled);
+
   using Op=daedalus::DaedalusOpcode;
   using Type=daedalus::DaedalusDataType;
   using Number=std::variant<int32_t,uint32_t>; // literal or live integer symbol
