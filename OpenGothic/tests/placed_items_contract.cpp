@@ -2168,7 +2168,7 @@ void activityDefinitionsWorld(Gothic& gothic) {
     actors.insert(activity.actor);
     activities.push_back(std::move(activity));
     }
-  require(NpcDefinitionContract::activities(script).phases.size()==3*activities.size()+eventPhases,
+  require(NpcDefinitionContract::activities(script).phases.size()==3*accepted.size()+eventPhases,
           "the game must load the accepted mob phases and the point activities' Init and End");
   size_t events=0;
   for(auto& activity:activities)
