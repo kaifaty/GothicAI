@@ -221,6 +221,22 @@ class GameScript final : public GameRules {
     void         runActivityGesture(Npc& npc, const ActivityEvents::Record& activity) override;
     bool         routineTimerDue(const Npc& npc, ScriptFn loop) const override;
 
+    // The scheduler checks these windows in order; the society export preserves that order.
+    static constexpr const char* monsterScheduler = "ZS_MM_ALLSCHEDULER";
+    struct MonsterRoutineWindow {
+      const char* state;
+      const char* start;
+      const char* end;
+      };
+    static constexpr MonsterRoutineWindow monsterRoutineWindows[] = {
+      {"ZS_MM_RTN_SLEEP",     "AIV_MM_SLEEPSTART",     "AIV_MM_SLEEPEND"},
+      {"ZS_MM_RTN_REST",      "AIV_MM_RESTSTART",      "AIV_MM_RESTEND"},
+      {"ZS_MM_RTN_ROAM",      "AIV_MM_ROAMSTART",      "AIV_MM_ROAMEND"},
+      {"ZS_MM_RTN_EATGROUND", "AIV_MM_EATGROUNDSTART", "AIV_MM_EATGROUNDEND"},
+      {"ZS_MM_RTN_WUSEL",     "AIV_MM_WUSELSTART",     "AIV_MM_WUSELEND"},
+      {"ZS_MM_RTN_ORCSIT",    "AIV_MM_ORCSITSTART",    "AIV_MM_ORCSITEND"},
+      };
+
   private:
     friend struct NpcDefinitionContract;
     bool invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe);
@@ -229,6 +245,14 @@ class GameScript final : public GameRules {
     bool runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool monsterRoutineWindowActive(int32_t start, int32_t end);
+    void enableMonsterRoutinePerceptions(Npc& npc);
+    void beginMonsterRoutine(Npc& npc, bool desynchronize = true, WalkBit mode = WalkBit::WM_Walk);
+    bool endMonsterRoutine(Npc& npc, size_t startHourAivar);
+    void removeRavensStoneGuardians(Npc& npc);
     void loadNativeRoutines();
 
     using NativeRoutineCallback = bool (GameScript::*)(Npc&, const daedalus::DaedalusSymbol&, int&);

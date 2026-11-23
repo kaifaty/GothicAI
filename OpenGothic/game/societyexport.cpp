@@ -213,20 +213,6 @@ double median(std::vector<double> v) {
   return v[v.size()/2];
   }
 
-// The monster schedule (G2 scripts): ZS_MM_AllScheduler starts the first of these states whose aivar hours hold the
-// time of day (Wld_IsTime(start,0,end,0)) or whose start is OnlyRoutine (-1). The export names the state and carries
-// the two aivar values; the order is the order of the scheduler's checks.
-struct MmWindow { const char* state; const char* start; const char* end; };
-constexpr MmWindow MmSchedule[] = {
-  {"ZS_MM_RTN_SLEEP",     "AIV_MM_SLEEPSTART",     "AIV_MM_SLEEPEND"},
-  {"ZS_MM_RTN_REST",      "AIV_MM_RESTSTART",      "AIV_MM_RESTEND"},
-  {"ZS_MM_RTN_ROAM",      "AIV_MM_ROAMSTART",      "AIV_MM_ROAMEND"},
-  {"ZS_MM_RTN_EATGROUND", "AIV_MM_EATGROUNDSTART", "AIV_MM_EATGROUNDEND"},
-  {"ZS_MM_RTN_WUSEL",     "AIV_MM_WUSELSTART",     "AIV_MM_WUSELEND"},
-  {"ZS_MM_RTN_ORCSIT",    "AIV_MM_ORCSITSTART",    "AIV_MM_ORCSITEND"},
-  };
-constexpr const char* MmScheduler = "ZS_MM_ALLSCHEDULER";
-
 // The aivar index a script constant names; the export fails when the scripts have no such constant.
 size_t aivarIndex(World& world, const char* name) {
   auto* sym = world.script().findSymbol(name);
@@ -383,7 +369,7 @@ Result build(World& world) {
   std::vector<double> walk, run;
   size_t people = 0, entries = 0, unresolved = 0, aistates = 0, schedules = 0;
   std::vector<std::pair<size_t,size_t>> mmAivars;
-  const auto scheduler = world.script().findSymbolIndex(MmScheduler);
+  const auto scheduler = world.script().findSymbolIndex(GameScript::monsterScheduler);
   std::vector<std::string> startNearest;
   uint32_t ordinal = 0;
   for(size_t i=0; i<all.size(); ++i) {
@@ -417,18 +403,17 @@ Result build(World& world) {
     const float walkSpeed = npc.simplifiedMoveSpeed(WalkBit::WM_Walk);
     w.Key("walk_cm_per_s");  number(w,walkSpeed>0.f ? double(walkSpeed)*1000.0 : 0.0);
     aistates += aistate!=0 ? 1 : 0;
-    // The hours of ZS_MM_AllScheduler for an NPC that starts with it: [state, start aivar, end aivar] in the order
-    // of its checks (MmSchedule); null for any other NPC.
+    // [state, start hour, end hour] in scheduler priority order, or null for NPCs with a different start state.
     w.Key("mm_schedule");
     if(aistate!=0 && size_t(aistate)==scheduler) {
       if(mmAivars.empty())
-        for(const auto& m:MmSchedule)
+        for(const auto& m:GameScript::monsterRoutineWindows)
           mmAivars.emplace_back(aivarIndex(world,m.start),aivarIndex(world,m.end));
       const auto& aiv = npc.handle().aivar;
       w.StartArray();
       for(size_t k=0; k<mmAivars.size(); ++k) {
         w.StartArray();
-        ascii(w,MmSchedule[k].state);
+        ascii(w,GameScript::monsterRoutineWindows[k].state);
         w.Int(aiv[mmAivars[k].first]);
         w.Int(aiv[mmAivars[k].second]);
         w.EndArray();
