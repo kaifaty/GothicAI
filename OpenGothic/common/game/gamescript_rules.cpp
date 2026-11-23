@@ -597,7 +597,9 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
 
   if(symbol.name()=="ZS_DEAD_LOOP") {
     if(self->aivar[deathHandled]==0) {
-      vm.call_function<void>("B_DRAGONKILLCOUNTER",self);
+      vm.push_reference(vm.global_self());
+      vm.unsafe_call_bl(findSymbol("B_DRAGONKILLCOUNTER"));
+      (void)vm.pop_int(); // The stock Loop ignores the helper's result.
       self->aivar[deathHandled] = 1;
       }
     result = LOOP_CONTINUE;
