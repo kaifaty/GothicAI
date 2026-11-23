@@ -146,7 +146,7 @@ bool GameScript::runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& sy
       turnWhenDue();
       }
     else if(hlp_getinstanceid(self)==hlp_getinstanceid(findSymbol("DIEGOOW")->get_instance()) &&
-            vm.call_function<int32_t>("C_DIEGOTOOFAR",int32_t(0))) {
+            diegoRouteBoundary(0)!=0) {
       // The quest's allowed route remains shared with its dialogue and perceptions.
       turnWhenDue();
       }
@@ -166,7 +166,7 @@ bool GameScript::runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& sy
     const auto heroDistance = npc_getdisttowp(heroRef,properties.wp);
     if(selfDistance<heroDistance && npc_getdisttonpc(self,heroRef)>800) {
       // This reaction is also installed as the guide's assess-player callback.
-      vm.call_function<void>("B_ASSESSGUIDEPLAYER");
+      runGuidePlayerAssessment();
       }
     else if(selfDistance>300) {
       if(!inBodyState(npc,BS_SWIM))
@@ -184,4 +184,109 @@ bool GameScript::runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& sy
     return true;
     }
   return false;
+  }
+
+void GameScript::runFollowerPlayerAssessment() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  if(self==nullptr)
+    return;
+  const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+  constexpr size_t positionStage = 19, followDistance = 80;
+  auto& stage = self->aivar[positionStage];
+  const auto stand = [&] {
+    npc_clearaiqueue(self);
+    ai_standup(self);
+    stage = 1;
+    };
+  if(stage==0 && npc_getdisttonpc(self,hero)<self->aivar[followDistance]) {
+    stand();
+    return;
+    }
+  if(hlp_getinstanceid(self)==hlp_getinstanceid(findSymbol("DIEGOOW")->get_instance())) {
+    const auto boundary = diegoRouteBoundary(0);
+    if(stage==0 && boundary!=0) {
+      stand();
+      if(npc_getdisttonpc(self,hero)>findSymbol("PERC_DIST_DIALOG")->get_int()) {
+        const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+        sayToNpc(self,other,"$SC_HEYWAITASECOND");
+        }
+      return;
+      }
+    }
+  runPlayerAssessment();
+  }
+
+void GameScript::runGuidePlayerAssessment() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  if(self==nullptr)
+    return;
+  const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+  const auto distance = npc_getdisttonpc(self,hero);
+  if(distance<=800) {
+    runPlayerAssessment();
+    return;
+    }
+  if(npc_getdisttowp(self,self->wp)<npc_getdisttowp(hero,self->wp)) {
+    npc_clearaiqueue(self);
+    ai_standup(self);
+    turnToNpc(self,hero);
+    }
+  constexpr size_t enemyOverride = 61;
+  if(npc_getattitude(self,hero)==ATT_HOSTILE && self->aivar[enemyOverride]==1 && distance>1200)
+    self->aivar[enemyOverride] = 0;
+  }
+
+void GameScript::runCompanionFightSound(bool follower) {
+  using Actor = std::shared_ptr<daedalus::INpc>;
+  const auto source = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto victim = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_victim()->get_instance());
+  constexpr size_t partyMember = 15; // AIV_PARTYMEMBER
+  const auto inParty = [](const Actor& actor) { return actor!=nullptr && actor->aivar[partyMember]==1; };
+  if(npc_isplayer(victim) || npc_isplayer(source) || (follower && (inParty(victim) || inParty(source))))
+    runFightSoundReaction();
+  }
+
+int32_t GameScript::diegoRouteBoundary(int32_t tolerance) {
+  findSymbol("C_DIEGOTOOFAR.TOLERANCE")->set_int(tolerance);
+  const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+  const auto near = [&](std::string_view point, int32_t radius) {
+    return npc_getdisttowp(hero,point)<int64_t(radius)+tolerance;
+    };
+  struct Boundary {
+    std::string_view point;
+    int32_t radius;
+    int32_t region;
+    };
+  static constexpr Boundary north[] = {
+    {"SPAWN_OW_SHADOWBEAST_10_01",4000,1}, // Angar
+    {"OW_ICEREGION_ENTRANCE_01",  3000,2},
+    {"OW_PATH_046",              1800,4}, // Swamp
+    {"CASTLE_5",                 1500,3}, // Fire dragon
+    {"MT13",                     5500,5}, // Lake
+    {"MT16",                     6500,5},
+    };
+  for(const auto& boundary : north)
+    if(near(boundary.point,boundary.radius))
+      return boundary.region;
+
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  if((npc_getheighttonpc(self,hero)>1000 && npc_getdisttowp(hero,"DT_E3_03")<1000) ||
+     wld_getplayerportalguild()==int32_t(GIL_DMT) || near("DT_MAINGATE",500))
+    return 6;
+
+  static constexpr Boundary minesAndCastle[] = {
+    {"OW_NEWMINE_03_B",           2500,7},
+    {"OW_NEWMINE_03",             2500,7},
+    {"OW_MINE3_OUT",              1200,8},
+    {"OW_PATH_266",               3000,9},
+    {"OC_CENTER_05",             12000,10},
+    {"OC_CENTER_02",             12000,10},
+    {"PATH_OC_PSI_01",            5000,11},
+    {"OC_ORCBARRIER_08",          5000,11},
+    {"OW_PATH_BLOODFLY01_SPAWN01", 5000,12},
+    };
+  for(const auto& boundary : minesAndCastle)
+    if(near(boundary.point,boundary.radius))
+      return boundary.region;
+  return 0;
   }

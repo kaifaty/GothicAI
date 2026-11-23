@@ -388,6 +388,10 @@ class GameScript final : public GameRules {
     void runDamageReaction();
     int32_t runEnemyReaction();
     void runPlayerAssessment();
+    void runFollowerPlayerAssessment();
+    void runGuidePlayerAssessment();
+    void runCompanionFightSound(bool follower);
+    int32_t diegoRouteBoundary(int32_t tolerance);
     void runPropertyCrime(bool usingMob);
     void startHumanWarning(const std::shared_ptr<daedalus::INpc>& self, ScriptFn state);
     int32_t botheredByWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
@@ -662,6 +666,8 @@ class GameScript final : public GameRules {
     ScriptFn                                                    damageCallback;
     ScriptFn                                                    enemyCallback;
     ScriptFn                                                    playerCallback;
+    ScriptFn                                                    followPlayerCallback, guidePlayerCallback;
+    ScriptFn                                                    followFightSoundCallback, guideFightSoundCallback;
     ScriptFn                                                    theftCallback;
     ScriptFn                                                    useMobCallback;
     ScriptFn                                                    stopShortZapCallback;

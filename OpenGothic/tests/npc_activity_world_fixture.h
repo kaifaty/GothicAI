@@ -684,6 +684,93 @@ void guardActivityWorld(Gothic& gothic) {
   std::puts("Guard point: one owner, last release, loaded walk and pose, 5999/6000 ms, both draw outcomes, VM fallback");
   }
 
+void diegoRouteBoundaries(World& world,Npc& context) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const auto savedEnabled=enabled;
+  auto* hero=world.player();
+  const auto* angar=world.findWayPoint("SPAWN_OW_SHADOWBEAST_10_01");
+  const auto* ice=world.findWayPoint("OW_ICEREGION_ENTRANCE_01");
+  require(hero && angar && ice,"Diego's route needs the original OldWorld waypoints");
+  const auto savedPosition=hero->position();
+  auto* check=vm.find_symbol_by_name("C_DIEGOTOOFAR");
+  auto* tolerance=vm.find_symbol_by_name("C_DIEGOTOOFAR.TOLERANCE");
+  require(check && tolerance,"the route fixture uses the original function and argument slot");
+  const auto savedTolerance=tolerance->get_int();
+  const auto savedSelf=vm.global_self()->get_instance();
+  vm.global_self()->set_instance(std::static_pointer_cast<daedalus::INpc>(context.handlePtr()));
+  struct Site { const WayPoint* point; int32_t offset, tolerance, region; };
+  for(const Site site : {Site{angar,3999,0,1}, Site{angar,4000,0,0}, Site{angar,4000,1000,1}, Site{ice,0,0,2}}) {
+    hero->setPosition(site.point->position()+Tempest::Vec3(float(site.offset),0,0));
+    int32_t original=0;
+    for(bool native : {false,true}) {
+      enabled=native;
+      tolerance->set_int(-1);
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==check->address(); });
+      const auto region=vm.call_function<int32_t>(check,site.tolerance);
+      vm.observe_instructions({});
+      require(instructions==size_t(!native) && tolerance->get_int()==site.tolerance,
+              "Diego's route query preserves its argument and uses the selected executor");
+      if(site.region!=0)
+        require(region==site.region,"Diego's route preserves the original nonzero region code");
+      else
+        require(region!=1,"Diego's route excludes the strict Angar radius boundary");
+      if(native) require(region==original,"Diego's route agrees with the original at each position and tolerance");
+      else original=region;
+      }
+    }
+  auto* diego=activityNpc(world,"DIEGOOW");
+  const bool added=diego==nullptr;
+  if(added)
+    diego=world.addNpc(script.findSymbolIndex("DIEGOOW"),angar->position());
+  require(diego && !diego->isDead(),"Diego's follower fixture needs the original actor");
+  const auto savedDiego=savedNpc(*diego);
+  const auto follow=script.findFunction("B_ASSESSFOLLOWPLAYER");
+  const auto followPc=vm.find_symbol_by_name("B_ASSESSFOLLOWPLAYER")->address();
+  for(bool native : {false,true}) {
+    enabled=native;
+    loadSavedNpc(*diego,savedDiego);
+    hero->setPosition(angar->position());
+    diego->setPosition(angar->position()+Tempest::Vec3(600,0,0));
+    diego->setProcessPolicy(NpcProcessPolicy::AiNormal);
+    diego->setExternalControl(false);
+    diego->clearAiQueue();
+    diego->aiPush(AiQueue::aiWait(713));
+    auto& state=Contract::aiState(*diego);
+    state.funcIni=script.findFunction("ZS_FOLLOW_PLAYER");
+    state.started=true;
+    diego->handle().aivar[19]=0;
+    diego->handle().aivar[80]=500;
+    diego->setPerceptionEnable(PERC_ASSESSPLAYER,follow.ptr);
+    size_t followerBytecode=0,routeBytecode=0;
+    vm.observe_instructions([&](const auto&) {
+      followerBytecode+=vm.pc()==followPc;
+      routeBytecode+=vm.pc()==check->address();
+      });
+    const bool delivered=diego->passPerception(*hero,nullptr,PERC_ASSESSPLAYER);
+    vm.observe_instructions({});
+    auto queue=Contract::queue(*diego);
+    require(delivered && followerBytecode==size_t(!native) && routeBytecode==size_t(!native) &&
+            diego->handle().aivar[19]==1 && queue.size()==2 && queue.pop().act==AI_StandUp,
+            "Diego must cancel the approach when the hero reaches the next route boundary");
+    const auto waitLine=queue.pop();
+    require(waitLine.act==AI_OutputSvm && waitLine.s0=="$SC_HEYWAITASECOND" && waitLine.target==hero,
+            "Diego must ask the hero to wait after standing up");
+    }
+  if(added)
+    world.removeNpc(*diego);
+  else
+    loadSavedNpc(*diego,savedDiego);
+  hero->setPosition(savedPosition);
+  vm.global_self()->set_instance(savedSelf);
+  tolerance->set_int(savedTolerance);
+  enabled=savedEnabled;
+  std::puts("Diego route: original and native region codes, dialogue tolerance and follower warning agree");
+  }
+
 void guardCampfireChange(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   gothic.clearGame().reset();
@@ -697,6 +784,7 @@ void guardCampfireChange(Gothic& gothic) {
   const auto* row=world.findWayPoint("OW_DJG_ROCKCAMP_01");
   const auto* fire=world.findPoint("FP_CAMPFIRE_DJG_ROCKCAMP_01",false);
   require(npc && row && fire,"Gestath and his camp must be in OLDWORLD");
+  diegoRouteBoundaries(world,*npc);
   EventActor guard;
   guard.state="ZS_STAND_GUARDING";
   guard.phases=activityPhases(script,guard.state.c_str());
@@ -1719,6 +1807,79 @@ void warnPerception(World& world,Npc& npc,Npc& hero) {
   std::puts("Warn: source, victim and busy-listener gates match the original callback");
   }
 
+void companionPlayerPerceptions(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const auto savedEnabled=enabled;
+  const auto savedNpcState=savedNpc(npc);
+  const auto savedHeroState=savedNpc(hero);
+  const auto* point=world.findWayPoint(npc.handle().wp);
+  require(point!=nullptr,"companion assessment needs the original NPC waypoint");
+  const auto follow=script.findFunction("B_ASSESSFOLLOWPLAYER");
+  const auto guide=script.findFunction("B_ASSESSGUIDEPLAYER");
+  const auto guideLoop=script.findFunction("ZS_GUIDE_PLAYER_LOOP");
+  const auto followPc=vm.find_symbol_by_name("B_ASSESSFOLLOWPLAYER")->address();
+  const auto guidePc=vm.find_symbol_by_name("B_ASSESSGUIDEPLAYER")->address();
+  const auto playerPc=vm.find_symbol_by_name("B_ASSESSPLAYER")->address();
+  enum class Phase { Follow, Guide, GuideLoop };
+  struct Site { Phase phase; int32_t distance; bool handoff, hostile; };
+  for(const auto site : {Site{Phase::Follow,499,false,false},Site{Phase::Follow,500,true,false},
+                         Site{Phase::Guide,800,true,false},Site{Phase::Guide,1200,false,true},
+                         Site{Phase::GuideLoop,1201,false,true}}) {
+    std::vector<std::string> original;
+    for(bool native : {false,true}) {
+      enabled=native;
+      loadSavedNpc(npc,savedNpcState);
+      loadSavedNpc(hero,savedHeroState);
+      npc.setExternalControl(false);
+      npc.setProcessPolicy(NpcProcessPolicy::AiNormal);
+      npc.setPosition(point->position());
+      hero.setPosition(point->position()+Tempest::Vec3(float(site.distance),0,0));
+      npc.setAttitude(site.hostile ? ATT_HOSTILE : ATT_FRIENDLY);
+      npc.handle().aivar[19]=0;
+      npc.handle().aivar[61]=site.hostile ? 1 : 0;
+      npc.handle().aivar[80]=500;
+      npc.clearAiQueue();
+      npc.aiPush(AiQueue::aiWait(713));
+      const bool following=site.phase==Phase::Follow;
+      const auto callback=following ? follow : guide;
+      npc.setPerceptionEnable(PERC_ASSESSPLAYER,callback.ptr);
+      size_t wrapperBytecode=0,playerBytecode=0;
+      vm.observe_instructions([&](const auto&) {
+        wrapperBytecode+=vm.pc()==(following ? followPc : guidePc);
+        playerBytecode+=vm.pc()==playerPc;
+        });
+      const auto delivered=site.phase==Phase::GuideLoop
+        ? script.invokeState(&npc,&hero,nullptr,guideLoop)==LOOP_CONTINUE
+        : npc.passPerception(hero,nullptr,PERC_ASSESSPLAYER);
+      vm.observe_instructions({});
+      require(delivered && wrapperBytecode==size_t(!native) && playerBytecode==size_t(!native && site.handoff),
+              "companion assessment must select the same specialized or normal branch");
+      if(!site.handoff) {
+        auto queue=Contract::queue(npc);
+        require(queue.size()==(following ? 1u : 2u) && queue.pop().act==AI_StandUp,
+                "approaching a follower or falling behind a guide replaces its previous queue");
+        if(!following) {
+          const auto turn=queue.pop();
+          require(turn.act==AI_TurnToNpc && turn.target==&hero,"the guide turns to the hero");
+          }
+        require(npc.handle().aivar[19]==int32_t(following) &&
+                npc.handle().aivar[61]==int32_t(site.hostile && site.distance<=1200),
+                "the follower reaches its position and the guide keeps the strict hostile cutoff");
+        }
+      auto queue=activityQueue(npc);
+      if(native) require(queue==original,"companion assessment preserves the original action order");
+      else original=std::move(queue);
+      }
+    }
+  loadSavedNpc(npc,savedNpcState);
+  loadSavedNpc(hero,savedHeroState);
+  enabled=savedEnabled;
+  std::puts("Companion assessments: follower arrival, ordinary player handoff and guide wait agree with the VM");
+  }
+
 void fightSoundPerceptions(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -1726,14 +1887,18 @@ void fightSoundPerceptions(World& world,Npc& npc,Npc& hero) {
   auto& enabled=Contract::activityEventsOn(script);
   const auto savedEnabled=enabled;
   auto* victim=activityNpc(world,"BAU_934_BABERA");
-  require(victim && victim!=&npc && !victim->isDead(),"fight sound: a third living participant exists");
+  auto* party=activityNpc(world,"BAU_935_BRONKO");
+  require(victim && victim!=&npc && !victim->isDead() && party && party!=&npc && !party->isDead(),
+          "fight sound: the living witnesses and participants exist");
   const auto savedListener=savedNpc(npc);
   const auto savedVictim=savedNpc(*victim);
   const auto savedHero=savedNpc(hero);
+  const auto savedParty=savedNpc(*party);
   const auto restore=[&] {
     loadSavedNpc(npc,savedListener);
     loadSavedNpc(*victim,savedVictim);
     loadSavedNpc(hero,savedHero);
+    loadSavedNpc(*party,savedParty);
     };
   const auto here=npc.position();
   const auto nearby=hero.position();
@@ -1741,9 +1906,13 @@ void fightSoundPerceptions(World& world,Npc& npc,Npc& hero) {
   const auto watch=script.findFunction("ZS_WATCHFIGHT");
   const auto sound=script.findFunction("B_ASSESSFIGHTSOUND");
   const auto guideSound=script.findFunction("B_ASSESSGUIDEFIGHTSOUND");
+  const auto followSound=script.findFunction("B_ASSESSFOLLOWFIGHTSOUND");
   const auto soundPc=vm.find_symbol_by_name("B_ASSESSFIGHTSOUND")->address();
-  enum class Case { NoVictim, Distant, Nailed, Monster, Room, Watch, Guide };
-  for(auto kind : {Case::NoVictim,Case::Distant,Case::Nailed,Case::Monster,Case::Room,Case::Watch,Case::Guide}) {
+  const auto guidePc=vm.find_symbol_by_name("B_ASSESSGUIDEFIGHTSOUND")->address();
+  const auto followPc=vm.find_symbol_by_name("B_ASSESSFOLLOWFIGHTSOUND")->address();
+  enum class Case { NoVictim, Distant, Nailed, Monster, Room, Watch, Guide, FollowerParty, FollowerOther, GuideParty };
+  for(auto kind : {Case::NoVictim,Case::Distant,Case::Nailed,Case::Monster,Case::Room,Case::Watch,
+                   Case::Guide,Case::FollowerParty,Case::FollowerOther,Case::GuideParty}) {
     std::vector<std::string> original;
     for(bool native : {false,true}) {
       enabled=native;
@@ -1762,20 +1931,35 @@ void fightSoundPerceptions(World& world,Npc& npc,Npc& hero) {
       victim->handle().guild=kind==Case::Monster ? int32_t(GIL_WOLF) : int32_t(GIL_BAU);
       victim->handle().fight_tactic=kind==Case::Nailed ? script.intSymbol("FAI_NAILED",1) : 0;
       victim->handle().aivar[9]=0;
+      victim->handle().aivar[15]=0;
+      const bool following=kind==Case::FollowerParty || kind==Case::FollowerOther;
+      const bool guiding=kind==Case::Guide || kind==Case::GuideParty;
+      auto& source=following || kind==Case::GuideParty ? *party : hero;
+      party->handle().guild=GIL_BAU;
+      party->handle().aivar[9]=0;
+      party->handle().aivar[15]=kind==Case::FollowerOther ? 0 : 1;
+      party->handle().fight_tactic=0;
+      party->setPosition(nearby);
       victim->setPosition(kind==Case::Distant ? here+Tempest::Vec3(2000,0,0) : nearby);
       hero.setPosition(kind==Case::Distant ? here+Tempest::Vec3(2200,0,0) : nearby);
-      npc.setPerceptionEnable(PERC_ASSESSFIGHTSOUND,(kind==Case::Guide ? guideSound : sound).ptr);
+      npc.setPerceptionEnable(PERC_ASSESSFIGHTSOUND,(following ? followSound : guiding ? guideSound : sound).ptr);
 
-      size_t instructions=0;
-      vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==soundPc; });
-      const auto delivered=npc.passPerception(hero,kind==Case::NoVictim ? nullptr : victim,PERC_ASSESSFIGHTSOUND);
+      size_t rootBytecode=0,wrapperBytecode=0;
+      vm.observe_instructions([&](const auto&) {
+        rootBytecode+=vm.pc()==soundPc;
+        wrapperBytecode+=vm.pc()==guidePc || vm.pc()==followPc;
+        });
+      const auto delivered=npc.passPerception(source,kind==Case::NoVictim ? nullptr : victim,PERC_ASSESSFIGHTSOUND);
       vm.observe_instructions({});
-      require(delivered && instructions==size_t(!native),"fight sound: direct and nested dispatch use the selected root");
+      const bool handedOff=kind!=Case::GuideParty && kind!=Case::FollowerOther;
+      require(delivered && rootBytecode==size_t(!native && handedOff) &&
+              wrapperBytecode==size_t(!native && (following || guiding)),
+              "fight sound: the specialized callbacks preserve the stock party and player filters");
       const auto* next=npc.aiQueueFront();
       const bool startsAttack=kind==Case::Monster || kind==Case::Room;
-      const bool startsWatch=kind==Case::Watch || kind==Case::Guide;
+      const bool startsWatch=kind==Case::Watch || kind==Case::Guide || kind==Case::FollowerParty;
       require(next && (startsAttack || startsWatch ? next->act==AI_StartState && next->func==(startsAttack ? attack : watch) &&
-                       next->target==&hero && next->victim==victim && next->i0==0 && !npc.hasPerc(PERC_ASSESSFIGHTSOUND)
+                       next->target==&source && next->victim==victim && next->i0==0 && !npc.hasPerc(PERC_ASSESSFIGHTSOUND)
                      : next->act==AI_Wait && npc.hasPerc(PERC_ASSESSFIGHTSOUND)),
               "fight sound: the listener preserves the original queue outcome, source and victim");
       if(startsAttack) {
@@ -1790,7 +1974,7 @@ void fightSoundPerceptions(World& world,Npc& npc,Npc& hero) {
     }
   restore();
   enabled=savedEnabled;
-  std::puts("Fight sound: direct and guide perception preserve source, victim, attack choice and watch");
+  std::puts("Fight sound: direct, guide and follower perception preserve source, victim, party filters and action");
   }
 
 void damagePerceptions(World& world,Npc& npc,Npc& hero) {
@@ -2748,6 +2932,7 @@ void quietSoundRooms(Gothic& gothic) {
   observePlayerPhases(world,*npc,hero,false);
   drawWeaponPerceptions(world,*npc,hero);
   warnPerception(world,*npc,hero);
+  companionPlayerPerceptions(world,*npc,hero);
   fightSoundPerceptions(world,*npc,hero);
   damagePerceptions(world,*npc,hero);
   humanAttackPhases(world,*npc,hero);

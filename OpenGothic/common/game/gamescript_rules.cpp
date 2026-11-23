@@ -349,6 +349,10 @@ void GameScript::loadNativeHumanPerceptions() {
   damageCallback = findFunction("B_ASSESSDAMAGE");
   enemyCallback = findFunction("B_ASSESSENEMY");
   playerCallback = findFunction("B_ASSESSPLAYER");
+  followPlayerCallback = findFunction("B_ASSESSFOLLOWPLAYER");
+  guidePlayerCallback = findFunction("B_ASSESSGUIDEPLAYER");
+  followFightSoundCallback = findFunction("B_ASSESSFOLLOWFIGHTSOUND");
+  guideFightSoundCallback = findFunction("B_ASSESSGUIDEFIGHTSOUND");
   theftCallback = findFunction("B_ASSESSTHEFT");
   useMobCallback = findFunction("B_ASSESSUSEMOB");
   stopShortZapCallback = findFunction("B_STOPSHORTZAPPED");
@@ -358,6 +362,10 @@ void GameScript::loadNativeHumanPerceptions() {
   vm.override_function("B_ASSESSENEMY",std::function<int32_t()>{[this] { return runEnemyReaction(); }},enabled);
   vm.override_function("B_ASSESSPLAYER",std::function<void()>{[this] { runPlayerAssessment(); }},enabled);
   vm.override_function("B_ASSESSFIGHTSOUND",std::function<void()>{[this] { runFightSoundReaction(); }},enabled);
+  vm.override_function("B_ASSESSGUIDEPLAYER",std::function<void()>{[this] { runGuidePlayerAssessment(); }},enabled);
+  vm.override_function("C_DIEGOTOOFAR",std::function<int32_t(int32_t)>{[this](int32_t tolerance) {
+    return diegoRouteBoundary(tolerance);
+    }},enabled);
   vm.override_function("B_VALIDATEOTHER",std::function<void()>{[this] {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
@@ -370,8 +378,10 @@ void GameScript::loadNativeHumanPerceptions() {
 bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase) {
   const bool stopShortZap = fn==stopShortZapCallback;
   const bool propertyCrime = fn==theftCallback || fn==useMobCallback;
+  const bool companionFight = fn==followFightSoundCallback || fn==guideFightSoundCallback;
   if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=warnCallback && fn!=fightSoundCallback &&
-      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !propertyCrime && !stopShortZap) ||
+      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && fn!=followPlayerCallback &&
+      fn!=guidePlayerCallback && !companionFight && !propertyCrime && !stopShortZap) ||
      !nativeHumanPerceptionsEnabled())
     return false;
   phase.fromRecord();
@@ -383,6 +393,12 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
     phase.result = runEnemyReaction();
   else if(fn==playerCallback)
     runPlayerAssessment();
+  else if(fn==followPlayerCallback)
+    runFollowerPlayerAssessment();
+  else if(fn==guidePlayerCallback)
+    runGuidePlayerAssessment();
+  else if(companionFight)
+    runCompanionFightSound(fn==followFightSoundCallback);
   else if(propertyCrime)
     runPropertyCrime(fn==useMobCallback);
   else if(fn==warnCallback)
