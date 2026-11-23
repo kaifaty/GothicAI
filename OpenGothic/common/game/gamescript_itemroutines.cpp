@@ -1127,6 +1127,132 @@ bool GameScript::applyEquipmentStatEffect(Npc& npc, uint32_t callback) {
   return true;
   }
 
+bool GameScript::applyQuestEquipmentEffect(std::string_view item, bool equip) {
+  const bool chargedEye = item=="INNOSEYE";
+  const bool depletedEye = equip && item=="ITMI_INNOSEYE_DISCHARGED_MIS";
+  const bool deathAmulet = item=="ITAM_AMULETTOFDEATH_MIS";
+  const bool ranger = item=="ITRI_RANGER_ADDON";
+  const bool orcElite = item=="ORCELITERING";
+  if(!chargedEye && !depletedEye && !deathAmulet && !ranger && !orcElite)
+    return false;
+
+  auto* self = vm.global_self();
+  const auto reference = [&](const char* name) { vm.push_reference(findSymbol(name)); };
+  const auto external = [&](const char* name) { return vm.unsafe_call_external(findSymbol(name)); };
+  const auto print = [&](const char* message) {
+    reference(message);
+    external("PRINT");
+    };
+  const auto playEffect = [&](const char* visual) {
+    reference(visual);
+    vm.push_reference(self);
+    vm.push_reference(self);
+    vm.push_int(0);
+    vm.push_int(0);
+    vm.push_int(0);
+    reference("FALSE");
+    external("WLD_PLAYEFFECT");
+    };
+  const auto sound = [&](const char* name) {
+    reference(name);
+    external("SND_PLAY");
+    };
+
+  if(orcElite) {
+    vm.push_reference(self);
+    reference("ATR_STRENGTH");
+    vm.push_int(equip ? -20 : 20);
+    external("NPC_CHANGEATTRIBUTE");
+    if(equip)
+      print("PRINT_ORCELITERINGEQUIP");
+    return true;
+    }
+  if(ranger) {
+    auto* hero = vm.global_hero();
+    vm.push_reference(hero);
+    external("HLP_GETINSTANCEID");
+    vm.push_reference(self);
+    external("HLP_GETINSTANCEID");
+    const auto wearerId = vm.pop_int();
+    if(vm.pop_int()!=wearerId)
+      return true;
+    const auto yes = findSymbol("TRUE")->get_int();
+    const auto no = findSymbol("FALSE")->get_int();
+    auto* laresRing = findSymbol("RANGERRINGISLARESRING");
+    auto* wearing = findSymbol("SCISWEARINGRANGERRING");
+    if(equip) {
+      if(findSymbol("ENTERED_ADDONWORLD")->get_int()==no) {
+        vm.push_reference(hero);
+        vm.push_int(int32_t(findSymbolIndex("ITRI_RANGER_ADDON")));
+        external("NPC_HASITEMS");
+        if(vm.pop_int()==no)
+          laresRing->set_int(yes);
+        }
+      wearing->set_int(yes);
+      print("PRINT_ADDON_SCISWEARINGRANGERRING");
+      } else {
+      if(findSymbol("SC_ISRANGER")->get_int()==no)
+        wearing->set_int(no);
+      laresRing->set_int(no);
+      }
+    return true;
+    }
+  if(depletedEye) {
+    playEffect("$15685"); // Stock spellFX_Fear.
+    sound("$15686"); // Stock MFX_FEAR_CAST.
+    return true;
+    }
+
+  struct RestoreContext {
+    daedalus::DaedalusVm& vm;
+    std::shared_ptr<daedalus::DaedalusInstance> caller;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+    } restore{vm,vm.unsafe_get_gi()};
+  const auto animation = [&](const char* name) {
+    vm.push_reference(self);
+    reference(name);
+    external("AI_PLAYANI");
+    vm.push_reference(self);
+    external("AI_STANDUP");
+    };
+  if(chargedEye && equip) {
+    playEffect("$15676"); // Stock spellFX_Innoseye.
+    playEffect("$15677"); // Stock spellFX_LIGHTSTAR_RED.
+    playEffect("$15678"); // Stock FX_EarthQuake.
+    animation("$15679"); // Stock T_MAGRUN_2_HEASHOOT.
+    sound("$15680"); // Stock SFX_INNOSEYE.
+    }
+  static constexpr std::pair<Protection,const char*> fields[] = {
+    {PROT_EDGE,"AM_EYEPROTEDGE"}, {PROT_BLUNT,"AM_EYEPROTEDGE"}, {PROT_POINT,"AM_EYEPROTPOINT"},
+    {PROT_FIRE,"AM_EYEPROTFIRE"}, {PROT_MAGIC,"AM_EYEPROTMAGE"},
+    };
+  auto* protection = findSymbol("C_NPC.PROTECTION");
+  for(const auto& [index,eyeBonus] : fields) {
+    const auto amount = chargedEye ? uint32_t(findSymbol(eyeBonus)->get_int()) : 30u;
+    const auto wearer = self->get_instance();
+    vm.unsafe_set_gi(wearer);
+    const auto current = uint32_t(vm.get_int(wearer,protection,index));
+    vm.set_int(wearer,protection,index,std::bit_cast<int32_t>(equip ? current+amount : current-amount));
+    }
+  if(chargedEye && equip) {
+    reference("$15681"); // Stock empty screen message.
+    vm.push_int(-1);
+    vm.push_int(-1);
+    reference("FONT_SCREEN");
+    vm.push_int(0);
+    if(external("PRINTSCREEN"))
+      (void)vm.pop_int();
+    }
+  if(deathAmulet && equip) {
+    playEffect("$16181"); // Stock spellFX_LIGHTSTAR_WHITE.
+    playEffect("$16182"); // Stock FX_EarthQuake.
+    playEffect("$16183"); // Stock spellFX_INCOVATION_WHITE.
+    animation("$16184"); // Stock T_MAGRUN_2_HEASHOOT.
+    sound("$16185"); // Stock MFX_FIRERAIN_INVEST.
+    }
+  return true;
+  }
+
 void GameScript::applyWispEquipmentEffect(bool equip) {
   auto* detector = findSymbol("WISP_DETECTOR");
   auto* local = findSymbol(equip ? "EQUIP_WISPDETECTOR.DETWSP" : "UNEQUIP_WISPDETECTOR.DETWSP");
@@ -1220,7 +1346,7 @@ bool GameScript::applyStatefulEquipmentEffect(Npc& npc, std::string_view callbac
     });
   const bool manaStaff = item=="ZAUBERSTAB";
   if(belt==std::end(belts) && set==std::end(sets) && !manaStaff)
-    return false;
+    return applyQuestEquipmentEffect(item,equip);
 
   const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   struct RestoreContext {

@@ -518,6 +518,7 @@ class GameScript final : public GameRules {
     bool applyEquipmentStatEffect(Npc& npc, uint32_t callback);
     bool applyStatefulEquipmentEffect(Npc& npc, std::string_view callback);
     void applyWispEquipmentEffect(bool equip);
+    bool applyQuestEquipmentEffect(std::string_view item, bool equip);
     void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
     void selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     bool chooseCombatSpell(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
