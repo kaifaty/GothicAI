@@ -1582,6 +1582,56 @@ void fightWatchPerceptions(World& world,Npc& npc,Npc& hero) {
 
 #include "npc_murder_world_fixture.h"
 
+void humanPerceptionPresets(World& world,Npc& npc) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto savedPerceptions=std::to_array(Contract::perceptions(npc));
+  const auto savedTime=Contract::perceptionTime(npc);
+  const auto savedSenses=npc.handle().senses;
+  const auto savedRange=npc.handle().senses_range;
+  auto& vmSelf=*vm.global_self();
+  const auto savedSelf=vmSelf.get_instance();
+  vmSelf.set_instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
+  for(const auto* name : {"PERCEPTION_SET_NORMAL","PERCEPTION_SET_MINIMAL"}) {
+    const auto* fn=script.findSymbol(name);
+    std::array<ScriptFn,PERC_Count> original;
+    uint64_t originalTime=0;
+    for(bool native : {false,true}) {
+      enabled=native;
+      npc.handle().senses=0;
+      npc.handle().senses_range=0;
+      npc.setPerceptionTime(777);
+      for(uint8_t slot=1; slot<PERC_Count; ++slot)
+        npc.setPerceptionDisable(PercType(slot));
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { ++instructions; });
+      vm.unsafe_call_bl(fn);
+      vm.observe_instructions({});
+      require((instructions==0)==native && npc.handle().senses==int32_t(SensesBit::SENSE_SEE | SensesBit::SENSE_HEAR) &&
+              npc.handle().senses_range==script.intSymbol("PERC_DIST_ACTIVE_MAX",0),
+              "human presets: both executors set the original senses and only legacy reads bytecode");
+      std::array<ScriptFn,PERC_Count> actual;
+      for(uint8_t slot=0; slot<PERC_Count; ++slot)
+        actual[slot]=Contract::perception(npc,PercType(slot));
+      if(native) require(actual==original && Contract::perceptionTime(npc)==originalTime,
+                         "human presets: all callback symbols and perception timing match the VM");
+      else {
+        original=actual;
+        originalTime=Contract::perceptionTime(npc);
+        }
+      }
+    }
+  vmSelf.set_instance(savedSelf);
+  std::copy(savedPerceptions.begin(),savedPerceptions.end(),Contract::perceptions(npc));
+  npc.setPerceptionTime(savedTime);
+  npc.handle().senses=savedSenses;
+  npc.handle().senses_range=savedRange;
+  enabled=wasEnabled;
+  }
+
 void quietSoundRooms(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -1756,6 +1806,7 @@ void quietSoundRooms(Gothic& gothic) {
 
   prepare(true);
   observePlayerPhases(world,*npc,hero,false);
+  humanPerceptionPresets(world,*npc);
   drawWeaponPerceptions(world,*npc,hero);
   warnPerception(world,*npc,hero);
   companionPlayerPerceptions(world,*npc,hero);

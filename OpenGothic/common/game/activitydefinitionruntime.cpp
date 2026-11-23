@@ -122,7 +122,7 @@ const ActivityDefinitionRuntime::Phase* ActivityDefinitionRuntime::find(const De
 int ActivityDefinitionRuntime::run(daedalus::DaedalusVm& vm, World& world, Npc& npc, const Phase& entry,
                                    const std::function<void(int32_t)>& createItem) {
   NpcActivityHost host(world,npc,[&vm,&entry](std::string_view) {
-    vm.call_function<void>(vm.find_symbol_by_index(entry.helper));
+    vm.unsafe_call_bl(vm.find_symbol_by_index(entry.helper));
     },createItem);
   if(const auto* point=entry.record.point) {
     using Form = ActivityDefinitions::PointActivity::Form;

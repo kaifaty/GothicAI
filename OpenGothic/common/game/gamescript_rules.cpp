@@ -434,6 +434,8 @@ void GameScript::loadNativeHumanPerceptions() {
   stopShortZapCallback = findFunction("B_STOPSHORTZAPPED");
   restartTentacleCallback = findFunction("B_RESTARTGREENTENTACLE");
   const auto enabled = [this] { return nativeHumanPerceptionsEnabled(); };
+  vm.override_function("PERCEPTION_SET_NORMAL",std::function<void()>{[this] { setPerceptionPreset(true); }},enabled);
+  vm.override_function("PERCEPTION_SET_MINIMAL",std::function<void()>{[this] { setPerceptionPreset(false); }},enabled);
   vm.override_function("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }},enabled);
   vm.override_function("B_ASSESSDAMAGE",std::function<void()>{[this] { runDamageReaction(); }},enabled);
   vm.override_function("B_ASSESSENEMY",std::function<int32_t()>{[this] { return runEnemyReaction(); }},enabled);
@@ -447,6 +449,9 @@ void GameScript::loadNativeHumanPerceptions() {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
   using Actor = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("C_NPCISGATEGUARD",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    return isGateGuard(npc);
+    }},enabled);
   vm.override_function("C_BODYSTATECONTAINS",std::function<int32_t(Actor,int32_t)>{[this](const Actor& npc, int32_t state) {
     return npcBodyStateContains(npc,state);
     }},enabled);
@@ -2416,7 +2421,7 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
 
   const auto winner = other();
   if(self->aivar[victoryXpGiven]==0 && (npc_isplayer(winner) || (winner && winner->aivar[partyMember]==1))) {
-    vm.call_function<void>("B_GIVEPLAYERXP",self->level*number("XP_PER_VICTORY"));
+    givePlayerXp(self->level*number("XP_PER_VICTORY"));
     self->aivar[victoryXpGiven] = 1;
     }
 
@@ -2459,7 +2464,7 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
     if(number("BLOODWYN_SPAWN")==0 && number("MINECRAWLER_KILLED")>=9) {
       ai_teleport(namedNpc("BLOODWYN"),"ADW_MINE_TO_MC_03");
       vm.call_function<void>("B_STARTOTHERROUTINE",namedNpc("BLOODWYN"),std::string_view("MINE"));
-      vm.call_function<void>("B_GIVEPLAYERXP",number("XP_ADDON_BLOODYWYN"));
+      givePlayerXp(number("XP_ADDON_BLOODYWYN"));
       setNumber("BLOODWYN_SPAWN",1);
       } else {
       increment("MINECRAWLER_KILLED");
@@ -2538,7 +2543,7 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
     vm.call_function<void>("B_CLEARRUNEINV",self);
     const auto winner = other();
     if(self->aivar[victoryXpGiven]==0 && ((winner && winner->aivar[partyMember]==1) || npc_isplayer(winner))) {
-      vm.call_function<void>("B_GIVEPLAYERXP",self->level*number("XP_PER_VICTORY"));
+      givePlayerXp(self->level*number("XP_PER_VICTORY"));
       self->aivar[victoryXpGiven] = 1;
       }
     ai_unequipweapons(self);
