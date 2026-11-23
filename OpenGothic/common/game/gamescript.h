@@ -389,6 +389,7 @@ class GameScript final : public GameRules {
     int32_t runEnemyReaction();
     void runPlayerAssessment();
     void runPropertyCrime(bool usingMob);
+    void runMurderReaction();
     void startHumanWarning(const std::shared_ptr<daedalus::INpc>& self, ScriptFn state);
     int32_t botheredByWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     int32_t runEnterRoomReaction();
@@ -664,6 +665,7 @@ class GameScript final : public GameRules {
     ScriptFn                                                    playerCallback;
     ScriptFn                                                    theftCallback;
     ScriptFn                                                    useMobCallback;
+    ScriptFn                                                    murderCallback;
     ScriptFn                                                    stopShortZapCallback;
     std::unordered_map<uint32_t,NativeRoutinePhase>              nativeRoutinePhases;
     daedalus::DaedalusVm                                          vm;

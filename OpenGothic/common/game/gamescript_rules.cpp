@@ -351,6 +351,7 @@ void GameScript::loadNativeHumanPerceptions() {
   playerCallback = findFunction("B_ASSESSPLAYER");
   theftCallback = findFunction("B_ASSESSTHEFT");
   useMobCallback = findFunction("B_ASSESSUSEMOB");
+  murderCallback = findFunction("B_ASSESSMURDER");
   stopShortZapCallback = findFunction("B_STOPSHORTZAPPED");
   const auto enabled = [this] { return nativeHumanPerceptionsEnabled(); };
   vm.override_function("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }},enabled);
@@ -371,7 +372,7 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
   const bool stopShortZap = fn==stopShortZapCallback;
   const bool propertyCrime = fn==theftCallback || fn==useMobCallback;
   if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=warnCallback && fn!=fightSoundCallback &&
-      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && !propertyCrime && !stopShortZap) ||
+      fn!=damageCallback && fn!=enemyCallback && fn!=playerCallback && fn!=murderCallback && !propertyCrime && !stopShortZap) ||
      !nativeHumanPerceptionsEnabled())
     return false;
   phase.fromRecord();
@@ -385,6 +386,8 @@ bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phas
     runPlayerAssessment();
   else if(propertyCrime)
     runPropertyCrime(fn==useMobCallback);
+  else if(fn==murderCallback)
+    runMurderReaction();
   else if(fn==warnCallback)
     runWarnReaction();
   else if(fn==fightSoundCallback)
@@ -828,6 +831,75 @@ void GameScript::runPropertyCrime(bool usingMob) {
     }
   const auto reason = findSymbol(usingMob ? "AR_USEMOB" : "AR_THEFT")->get_int();
   startNpcAttack(self,other(),reason,0);
+  }
+
+void GameScript::runMurderReaction() {
+  constexpr size_t dropDeadAndKill = 52; // AIV_DROPDEADANDKILL
+  constexpr size_t toughGuy = 57; // AIV_TOUGHGUY
+  constexpr size_t enemyOverride = 61; // AIV_ENEMYOVERRIDE
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto victim = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_victim()->get_instance());
+  const auto constant = [&](std::string_view name) { return findSymbol(name)->get_int(); };
+  const auto attack = [&](std::string_view reason) { startNpcAttack(self,other(),constant(reason),0); };
+  const auto report = [&](std::string_view crime) { memorizePlayerCrime(self,other(),constant(crime)); };
+  const auto guild = [](const std::shared_ptr<daedalus::INpc>& actor) { return actor ? int32_t(actor->guild) : 0; };
+  const auto killer = other();
+  if(self==nullptr || hlp_getinstanceid(killer)==hlp_getinstanceid(self))
+    return;
+  const auto range = constant("PERC_DIST_INTERMEDIAT");
+  const auto height = constant("PERC_DIST_HEIGHT");
+  if((npc_getdisttonpc(self,victim)>range && npc_getdisttonpc(self,killer)>range) ||
+     (npc_getheighttonpc(self,victim)>height && npc_getheighttonpc(self,killer)>height) ||
+     (!npc_canseenpcfreelos(self,victim) && !npc_canseenpcfreelos(self,killer)))
+    return;
+  if(runEnemyReaction()!=0)
+    return;
+
+  const auto victimGuild = guild(victim);
+  if(victim && victim->aivar[toughGuy]==0 && victimGuild==GIL_SHEEP) {
+    if(wantsToAttackSheepKiller(self,other())) {
+      attack("AR_SHEEPKILLER");
+      return;
+      }
+    if(isGateGuard(self))
+      report("CRIME_SHEEPKILLER");
+    }
+  const auto separator = constant("GIL_SEPERATOR_HUM");
+  if(victimGuild>separator)
+    return;
+  if(guild(other())>separator) {
+    attack("AR_MONSTERMURDEREDHUMAN");
+    return;
+    }
+  if(self->aivar[enemyOverride]==1) {
+    self->aivar[enemyOverride] = 0;
+    npc_perceiveall(self);
+    npc_getnexttarget(self);
+    if(vm.call_function<int32_t>("C_NPCISDOWN",other())==0 && hlp_isvalidnpc(other()))
+      attack("AR_GUILDENEMY");
+    return;
+    }
+
+  const auto attitudeToKiller = npc_getattitude(self,other());
+  const auto attitudeToVictim = npc_getattitude(self,victim);
+  if((attitudeToKiller==ATT_NEUTRAL || attitudeToKiller==ATT_FRIENDLY) &&
+     (attitudeToVictim==ATT_ANGRY || attitudeToVictim==ATT_HOSTILE))
+    return;
+  if(self->type==NpcType::G2_FRIEND && npc_isplayer(other()))
+    return;
+  if(vm.call_function<int32_t>("C_WANTTOATTACKMURDER",self,other())==0) {
+    if(isGateGuard(self))
+      report("CRIME_MURDER");
+    return;
+    }
+  const auto attacker = other();
+  if((victim && victim->aivar[dropDeadAndKill]==1) || (attacker && attacker->aivar[dropDeadAndKill]==1))
+    return;
+  const bool belongsToBanditCamp = vm.call_function<int32_t>("C_NPCBELONGSTOBL",victim)!=0;
+  if((!belongsToBanditCamp && victimGuild==GIL_BDT) || victimGuild==GIL_DMT)
+    return;
+  attack("AR_HUMANMURDEREDHUMAN");
   }
 
 void GameScript::runPlayerAssessment() {
