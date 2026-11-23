@@ -3406,6 +3406,11 @@ bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& s
   }
 
 void GameScript::givePlayerXp(int32_t amount) {
+  struct RestoreContext {
+    daedalus::DaedalusVm& vm;
+    std::shared_ptr<daedalus::DaedalusInstance> caller;
+    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+    } restore{vm,vm.unsafe_get_gi()};
   const auto add=[](int32_t a,int32_t b) {
     return std::bit_cast<int32_t>(uint32_t(a)+uint32_t(b));
     };
@@ -3418,7 +3423,8 @@ void GameScript::givePlayerXp(int32_t amount) {
     vm.push_reference(findSymbol(y));
     vm.push_reference(findSymbol(font));
     vm.push_int(2);
-    vm.unsafe_call_external(findSymbol("PRINTSCREEN"));
+    if(vm.unsafe_call_external(findSymbol("PRINTSCREEN")))
+      (void)vm.pop_int();
     };
 
   auto* savedAmount=findSymbol("B_GIVEPLAYERXP.ADD_XP");
