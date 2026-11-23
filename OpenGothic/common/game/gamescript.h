@@ -429,6 +429,7 @@ class GameScript final : public GameRules {
     void  initCommon();
     void  initSettings();
     void  loadDialogOU();
+    void  loadNativeAmbientInfos();
     void  loadNativeTrainingHelpers();
     auto  buildLearnString(std::string_view title) -> daedalus::DaedalusSymbol&;
     auto  readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_ptr<daedalus::IInfo>;

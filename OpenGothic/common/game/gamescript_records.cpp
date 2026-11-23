@@ -358,6 +358,159 @@ auto GameScript::npcRecord(daedalus::DaedalusSymbol* symbol) -> std::shared_ptr<
   return nullptr;
   }
 
+void GameScript::loadNativeAmbientInfos() {
+  if(!nativeRoutineProgram)
+    return;
+
+  using Op = daedalus::DaedalusOpcode;
+  using Type = daedalus::DaedalusDataType;
+  using Symbol = daedalus::DaedalusSymbol;
+  using Actor = std::shared_ptr<daedalus::INpc>;
+  constexpr uint32_t ambient = 1u<<uint32_t(NpcType::G2_AMBIENT);
+  constexpr uint32_t oldCamp = 1u<<uint32_t(NpcType::G2_OC_AMBIENT);
+  constexpr uint32_t banditCamp = 1u<<uint32_t(NpcType::G2_BL_AMBIENT);
+  constexpr uint32_t valley = 1u<<uint32_t(NpcType::G2_TAL_AMBIENT);
+  constexpr int32_t anyVoice = -1;
+  static constexpr struct Selector {
+    int32_t guild;
+    uint32_t types;
+    int32_t voice;
+    std::string_view suffix;
+    } selectors[] = {
+    {GIL_VLK, ambient, 1,  "VLK_1"},
+    {GIL_VLK, ambient, 6,  "VLK_6"},
+    {GIL_VLK, ambient, 8,  "VLK_8"},
+    {GIL_VLK, ambient, 16, "VLK_16"},
+    {GIL_VLK, ambient, 17, "VLK_17"},
+    {GIL_MIL, ambient, 6, "MIL_6"},
+    {GIL_MIL, ambient, 7, "MIL_7"},
+    {GIL_MIL, oldCamp, 1, "OCVLK_1"},
+    {GIL_MIL, oldCamp, 6, "OCVLK_6"},
+    {GIL_PAL, ambient, 4,  "PAL_4"},
+    {GIL_PAL, ambient, 9,  "PAL_9"},
+    {GIL_PAL, ambient, 12, "PAL_12"},
+    {GIL_PAL, oldCamp, 4, "OCPAL_4"},
+    {GIL_PAL, oldCamp, 9, "OCPAL_9"},
+    {GIL_BAU, ambient, 1,  "BAU_1"},
+    {GIL_BAU, ambient, 7,  "BAU_7"},
+    {GIL_BAU, ambient, 13, "BAU_13"},
+    {GIL_BAU, ambient, 16, "BAU_16"},
+    {GIL_SLD, ambient, 6, "SLD_6"},
+    {GIL_SLD, ambient, 7, "SLD_7"},
+    {GIL_NOV, ambient, 3, "NOV_3"},
+    {GIL_NOV, ambient, 8, "NOV_8"},
+    {GIL_PIR, ambient, 6, "ADDON_PIR_6"},
+    {GIL_PIR, ambient, 7, "ADDON_PIR_7"},
+    {GIL_OUT, ambient, 1,  "OUT_1"},
+    {GIL_OUT, ambient, 7,  "OUT_7"},
+    {GIL_OUT, ambient, 13, "OUT_13"},
+    {GIL_OUT, oldCamp, 4, "OWPAL_4"},
+    {GIL_STRF, ambient|oldCamp, 1,  "STRF_1"},
+    {GIL_STRF, ambient|oldCamp, 13, "STRF_13"},
+    {GIL_STRF, banditCamp, anyVoice,"ADDON_SKLAVEN_3"},
+    {GIL_BDT, ambient|oldCamp, 1,  "BDT_1"},
+    {GIL_BDT, ambient|oldCamp, 13, "BDT_13"},
+    {GIL_BDT, banditCamp, 1,  "ADDON_BL_BDT_1"},
+    {GIL_BDT, banditCamp, 13, "ADDON_BL_BDT_13"},
+    {GIL_BDT, valley, 1,  "ADDON_TAL_BDT_1"},
+    {GIL_BDT, valley, 13, "ADDON_TAL_BDT_13"},
+    {GIL_DMT, ambient|oldCamp, 19, {}},
+    };
+  struct Binding {
+    Symbol* savedActor = nullptr;
+    std::vector<Symbol*> topics;
+    };
+  std::array<Binding,std::size(selectors)> bindings;
+  auto* infoClass = findSymbol("C_INFO");
+  auto* npcMember = findSymbol("C_INFO.NPC");
+  auto* instanceId = findSymbol("HLP_GETINSTANCEID");
+  for(size_t i=0; i<std::size(selectors); ++i) {
+    if(selectors[i].suffix.empty())
+      continue;
+    const auto name = std::string("B_ASSIGNAMBIENTINFOS_").append(selectors[i].suffix);
+    auto* helper = findSymbol(name);
+    auto& binding = bindings[i];
+    binding.savedActor = findSymbol(name+".SLF");
+    if(helper==nullptr || binding.savedActor==nullptr)
+      return;
+
+    // Accept only the saved parameter followed by ordered C_INFO.NPC assignments.
+    uint32_t pc = helper->address();
+    const auto take = [&](Op expected) -> std::optional<daedalus::DaedalusInstruction> {
+      if(pc>=vm.size())
+        return {};
+      const auto instr = vm.instruction_at(pc);
+      if(instr.op!=expected)
+        return {};
+      pc += instr.size;
+      return instr;
+      };
+    const auto symbol = [&](Op op,const Symbol* expected) {
+      const auto instr = take(op);
+      return instr && instr->symbol==expected->index();
+      };
+    if(!symbol(Op::PUSHVI,binding.savedActor) || !take(Op::MOVVI))
+      return;
+    while(!take(Op::RSR)) {
+      if(!symbol(Op::PUSHVI,binding.savedActor) || !symbol(Op::BE,instanceId))
+        return;
+      const auto target = take(Op::GMOVI);
+      auto* info = target ? vm.find_symbol_by_index(target->symbol) : nullptr;
+      if(info==nullptr || info->type()!=Type::INSTANCE || info->parent()!=infoClass->index() ||
+         !symbol(Op::PUSHV,npcMember) || !take(Op::MOVI))
+        return;
+      binding.topics.push_back(info);
+      }
+    }
+
+  const auto enabled = [this] {
+    if(!activityEvents || floorDefer.active() || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
+      return false;
+    try {
+      const auto& argument = vm.stack_frame(0);
+      if(argument.reference)
+        return std::get<Symbol*>(argument.value)->is_instance_of<daedalus::INpc>();
+      const auto* actor = std::get_if<std::shared_ptr<daedalus::DaedalusInstance>>(&argument.value);
+      return actor && *actor && (*actor)->instance_type()==&typeid(daedalus::INpc);
+      } catch(const daedalus::DaedalusVmException&) {
+      return false;
+      }
+    };
+  auto* savedActor = findSymbol("B_ASSIGNAMBIENTINFOS.SLF");
+  auto* dementor = findSymbol("B_ASSIGNDEMENTORTALK");
+  vm.override_function("B_ASSIGNAMBIENTINFOS",std::function<void(Actor)>{
+    [this,savedActor,dementor,npcMember,instanceId,bindings=std::move(bindings)](const Actor& actor) {
+      savedActor->set_instance(actor);
+      const auto type = uint32_t(actor->type);
+      if(type>=32u)
+        return;
+      const auto typeBit = 1u<<type;
+      for(size_t i=0; i<std::size(selectors); ++i) {
+        const auto& selector = selectors[i];
+        if(actor->guild!=selector.guild || (selector.types&typeBit)==0 ||
+           (selector.voice!=anyVoice && actor->voice!=selector.voice))
+          continue;
+
+        vm.unsafe_set_gi(actor);
+        const auto& binding = bindings[i];
+        if(binding.savedActor==nullptr) {
+          vm.push_reference(savedActor);
+          vm.unsafe_call_bl(dementor);
+          } else {
+          binding.savedActor->set_instance(actor);
+          for(auto* topic : binding.topics) {
+            vm.push_reference(binding.savedActor);
+            vm.unsafe_call_external(instanceId);
+            const auto owner = vm.pop_int();
+            const auto context = topic->get_instance();
+            vm.unsafe_set_gi(context);
+            vm.set_int(context,npcMember,0,owner);
+            }
+          }
+        }
+      }},enabled);
+  }
+
 void GameScript::loadNativeTrainingHelpers() {
   if(!nativeRoutineProgram)
     return;

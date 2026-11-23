@@ -505,7 +505,8 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
         }
       if(self->type==NpcType::G2_TAL_AMBIENT || self->type==NpcType::G2_BL_AMBIENT ||
          self->type==NpcType::G2_OC_AMBIENT || self->type==NpcType::G2_AMBIENT) {
-        vm.call_function<void>("B_ASSIGNAMBIENTINFOS",self);
+        vm.push_instance(self);
+        vm.unsafe_call_bl(findSymbol("B_ASSIGNAMBIENTINFOS"));
         if(belongsToCity(self))
           assignInfo("B_ASSIGNCITYGUIDE.SLF","DIA_CITYGUIDE");
         }

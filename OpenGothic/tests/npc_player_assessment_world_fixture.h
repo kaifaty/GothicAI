@@ -39,8 +39,19 @@ void talkTopicAssignments(World& world,Npc& npc,Npc& hero) {
   const auto self=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   const auto other=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
   const auto init=script.findFunction("ZS_TALK");
+  constexpr std::array ambientTopics={"DIA_MIL_6_EXIT","DIA_MIL_6_JOIN","DIA_MIL_6_PEOPLE","DIA_MIL_6_LOCATION","DIA_MIL_6_STANDARD",
+      "DIA_OCVLK_6_EXIT","DIA_OCVLK_6_PEOPLE","DIA_OCVLK_6_LOCATION","DIA_OCVLK_6_STANDARD"};
+  std::array<std::shared_ptr<daedalus::IInfo>,ambientTopics.size()> ambientInfos;
+  std::ranges::transform(ambientTopics,ambientInfos.begin(),[&](const auto* name) {
+    return std::static_pointer_cast<daedalus::IInfo>(vm.find_symbol_by_name(name)->get_instance());
+    });
+  std::array<int32_t,ambientTopics.size()> savedAmbientOwners;
+  std::ranges::transform(ambientInfos,savedAmbientOwners.begin(),[](const auto& info) { return info->npc; });
+  const std::array ambientSlots{vm.find_symbol_by_name("B_ASSIGNAMBIENTINFOS_MIL_6.SLF"),
+                                vm.find_symbol_by_name("B_ASSIGNAMBIENTINFOS_OCVLK_6.SLF")};
+  const std::array savedAmbientSlots{ambientSlots[0]->get_instance(),ambientSlots[1]->get_instance()};
   actor.guild=GIL_MIL;
-  actor.voice=0; // No stock militia voice-specific assignment.
+  actor.voice=6;
   for(bool oldCamp:{false,true}) {
     actor.type=oldCamp ? NpcType::G2_OC_AMBIENT : NpcType::G2_AMBIENT;
     npc.setAttitude(oldCamp ? ATT_ANGRY : ATT_FRIENDLY);
@@ -61,6 +72,8 @@ void talkTopicAssignments(World& world,Npc& npc,Npc& hero) {
       for(auto* slot:slots) slot->set_instance(nullptr);
       disguiseOther.set_instance(nullptr);
       for(const auto& info:infos) info->npc=-1;
+      for(const auto& info:ambientInfos) info->npc=-1;
+      for(auto* slot:ambientSlots) slot->set_instance(nullptr);
       std::vector<Site> called;
       vm.observe_instructions([&](const auto&) {
         if(const auto it=std::ranges::find(addresses,vm.pc()); it!=addresses.end())
@@ -70,7 +83,7 @@ void talkTopicAssignments(World& world,Npc& npc,Npc& hero) {
       vm.observe_instructions({});
       const auto expected=oldCamp ? std::vector<Site>{FakeBandit,AmbientInfos,City,OldCamp,Tough,Ambient} :
           std::vector<Site>{AmbientInfos,City,OldCamp,Guide,Potion,Tough,ToughNews,Ambient,Crime,Absolution,OldCamp,City,OldCamp,AmbientNews};
-      require(called==(native ? std::vector<Site>{AmbientInfos} : expected),
+      require(called==(native ? std::vector<Site>{} : expected),
               "talk topics: the assigned topics and nested crime callbacks keep their order");
       for(size_t i=0;i<slots.size();++i) {
         const bool used=std::ranges::find(expected,Site(i))!=expected.end();
@@ -78,12 +91,20 @@ void talkTopicAssignments(World& world,Npc& npc,Npc& hero) {
         }
       for(const auto& info:infos)
         require(info->npc==(oldCamp ? -1 : int32_t(npc.instanceSymbol())),"talk topics: stock info recipients agree");
+      const auto speaker=int32_t(npc.instanceSymbol());
+      for(size_t i=0;i<ambientInfos.size();++i)
+        require(ambientInfos[i]->npc==((i>=5)==oldCamp ? speaker : -1),
+                "talk topics: the ambient assignment uses the actor's type and voice");
+      require(ambientSlots[size_t(oldCamp)]->get_instance()==self && ambientSlots[size_t(!oldCamp)]->get_instance()==nullptr,
+              "talk topics: only the selected voice helper saves the actor");
       require(disguiseOther.get_instance()==(oldCamp ? other : nullptr) && disguiseArmor.get_instance()==savedDisguiseArmor,
               "talk topics: disguise ignores armor in the stock actor's context");
       }
     }
   for(size_t i=0;i<slots.size();++i) slots[i]->set_instance(savedSlots[i]);
   for(size_t i=0;i<infos.size();++i) infos[i]->npc=savedOwners[i];
+  for(size_t i=0;i<ambientInfos.size();++i) ambientInfos[i]->npc=savedAmbientOwners[i];
+  for(size_t i=0;i<ambientSlots.size();++i) ambientSlots[i]->set_instance(savedAmbientSlots[i]);
   disguiseOther.set_instance(savedDisguiseOther);
   disguiseArmor.set_instance(savedDisguiseArmor);
   const auto [guild,type,voice,attitude]=originalActor;
@@ -895,6 +916,7 @@ void playerAssessmentHelpers(World& world,Npc& npc,Npc& hero) {
       exit->npc=-21;
       dialogue->npc=-23;
       assignSlot.set_instance(nullptr);
+      ambientSlot.set_instance(nullptr);
       size_t assignEntries=0,ambientEntries=0;
       std::vector<const daedalus::DaedalusInstance*> writes;
       vm.observe_instructions([&](const auto&) {
@@ -905,15 +927,17 @@ void playerAssessmentHelpers(World& world,Npc& npc,Npc& hero) {
         if(member.name()=="C_INFO.NPC")
           writes.push_back(info);
         });
-      vm.call_function<void>(&ambient,self);
+      vm.push_instance(self);
+      vm.unsafe_call_bl(&ambient);
       vm.observe_member_writes({});
       vm.observe_instructions({});
       const auto id=int32_t(npc.instanceSymbol());
       const std::vector<const daedalus::DaedalusInstance*> expected=eligible ?
            std::vector<const daedalus::DaedalusInstance*>{exit.get(),dialogue.get()} : std::vector<const daedalus::DaedalusInstance*>{};
-      require(assignEntries==size_t(!native) && ambientEntries==1 && assignSlot.get_instance()==self &&
+      require(assignEntries==size_t(!native) && ambientEntries==size_t(!native) &&
+              assignSlot.get_instance()==self && ambientSlot.get_instance()==self &&
               exit->npc==(eligible ? id : -21) && dialogue->npc==(eligible ? id : -23) && writes==expected && contextsPreserved(),
-              "Dementor talk: the original ambient wrapper preserves the borrowed two dialogues and their write order");
+              "Dementor talk: the ambient wrapper preserves the borrowed two dialogues and their write order");
       }
     }
   for(size_t i=0;i<slots.size();++i)

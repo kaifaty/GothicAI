@@ -107,6 +107,7 @@ GameScript::GameScript(GameSession &owner)
   loadNativeHumanPerceptions();
   loadNativeEquipment();
   loadNativeTalkReaction();
+  loadNativeAmbientInfos();
   loadNativeTrainingHelpers();
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
