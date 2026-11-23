@@ -7,7 +7,33 @@
 #include <vector>
 
 namespace {
-PlacementDefinitionRuntime::Definitions dragonIslandPlacement(const daedalus::DaedalusScript& vm) {
+struct LiteralPlacement {
+  const daedalus::DaedalusSymbol* instance;
+  daedalus::DaedalusSymbol* point;
+  const daedalus::DaedalusSymbol* external;
+  };
+
+LiteralPlacement readLiteralPlacement(daedalus::DaedalusScript& vm,uint32_t& pc,std::string_view section) {
+  using Op = daedalus::DaedalusOpcode;
+  using Type = daedalus::DaedalusDataType;
+  // The three literal operations each have a four-byte operand.
+  if(pc>=vm.size() || vm.size()-pc<15)
+    throw std::runtime_error("Stock placement: truncated call in "+std::string(section));
+  const auto instance = vm.instruction_at(pc);
+  const auto point = vm.instruction_at(pc+5);
+  const auto insert = vm.instruction_at(pc+10);
+  const auto* what = vm.find_symbol_by_index(uint32_t(instance.immediate));
+  auto* where = vm.find_symbol_by_index(point.symbol);
+  const auto* external = vm.find_symbol_by_index(insert.symbol);
+  if(instance.op!=Op::PUSHI || !what || what->type()!=Type::INSTANCE || !what->is_const() ||
+     point.op!=Op::PUSHV || !where || where->type()!=Type::STRING || !where->is_const() ||
+     insert.op!=Op::BE || !external || (external->name()!="WLD_INSERTNPC" && external->name()!="WLD_INSERTITEM"))
+    throw std::runtime_error("Stock placement: unexpected literal in "+std::string(section));
+  pc+=15;
+  return {what,where,external};
+  }
+
+PlacementDefinitionRuntime::Definitions dragonIslandPlacement(daedalus::DaedalusScript& vm) {
   using Value = PlacementDefinitions::Value;
   struct Captain {
     std::string_view flag, npc;
@@ -64,32 +90,16 @@ PlacementDefinitionRuntime::Definitions dragonIslandPlacement(const daedalus::Da
   // These authored sections consist only of literal placement calls. Read their
   // data from the stock package without executing any of their instructions.
   using Op = daedalus::DaedalusOpcode;
-  using Type = daedalus::DaedalusDataType;
   for(const auto* section : {"STARTUP_NEWWORLD_PART_DRAGON_ISLAND_01", "STARTUP_NEWWORLD_PART_DRAGON_UNDEAD_01",
                              "STARTUP_NEWWORLD_PART_DRAGON_FINAL_01"}) {
     auto pc = vm.find_symbol_by_name(section)->address();
     for(;;) {
       if(pc>=vm.size())
         throw std::runtime_error("Dragon Island placement: missing return in "+std::string(section));
-      const auto instance = vm.instruction_at(pc);
-      if(instance.op==Op::RSR)
+      if(vm.instruction_at(pc).op==Op::RSR)
         break;
-      // PUSHI, PUSHV and BE each carry one four-byte operand.
-      if(vm.size()-pc<15)
-        throw std::runtime_error("Dragon Island placement: truncated call in "+std::string(section));
-      pc+=instance.size;
-      const auto point = vm.instruction_at(pc);
-      pc+=point.size;
-      const auto insert = vm.instruction_at(pc);
-      pc+=insert.size;
-      const auto* what = vm.find_symbol_by_index(uint32_t(instance.immediate));
-      const auto* where = vm.find_symbol_by_index(point.symbol);
-      const auto* function = vm.find_symbol_by_index(insert.symbol);
-      if(instance.op!=Op::PUSHI || !what || what->type()!=Type::INSTANCE || !what->is_const() ||
-         point.op!=Op::PUSHV || !where || where->type()!=Type::STRING || !where->is_const() ||
-         insert.op!=Op::BE || !function || (function->name()!="WLD_INSERTNPC" && function->name()!="WLD_INSERTITEM"))
-        throw std::runtime_error("Dragon Island placement: unexpected instruction in "+std::string(section));
-      call(function->name().c_str(),{name(what->name()),string(where->get_string())});
+      const auto placement = readLiteralPlacement(vm,pc,section);
+      call(placement.external->name().c_str(),{name(placement.instance->name()),string(placement.point->get_string())});
       }
     }
 
