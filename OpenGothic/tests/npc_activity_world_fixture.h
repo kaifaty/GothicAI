@@ -2405,14 +2405,20 @@ void seatedActivitiesWorld(Gothic& gothic,bool events) {
   if(!output) std::filesystem::remove_all(directory);
   }
 
-void sleepRoutineWorld(Gothic& gothic,bool events) {
+void sleepRoutineWorld(Gothic& gothic,bool events,bool deep) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
   auto& world=test.world();
   auto* matteo=activityNpc(world,"VLK_416_MATTEO");
   require(matteo!=nullptr,"sleep routine: the authored bed user must exist");
   auto bedtime=test.actor("ZS_GOTOBED","BEDHIGH",matteo);
-  const auto sleep=activityPhases(world.script(),"ZS_SLEEP");
+  if(deep) {
+    bedtime.state="ZS_GOTOBED_DEEP";
+    bedtime.phases=activityPhases(world.script(),bedtime.state.c_str());
+    }
+  const std::string sleepState=deep ? "ZS_SLEEP_DEEP" : "ZS_SLEEP";
+  const auto sleep=activityPhases(world.script(),sleepState.c_str());
+  const auto loopName=sleepState+"_LOOP";
   const auto* approach=test.awayFrom(*bedtime.point,200.f);
   test.only({matteo});
   test.moveHero(bedtime.point->position()+Tempest::Vec3(150,0,0),0);
@@ -2430,6 +2436,7 @@ void sleepRoutineWorld(Gothic& gothic,bool events) {
   const auto deadline=Contract::aiState(*matteo).eTime;
   Contract::tickRoutine(*matteo);
   matteo->setPerceptionDisable(PERC_ASSESSPLAYER);
+  matteo->setPerceptionDisable(PERC_ASSESSQUIETSOUND);
   const auto approaches=activityQueue(*matteo);
   require(approaches.size()>=2 && approaches.back().starts_with("StartState "),
           "sleep routine: the approach queues the sleep transition last");
@@ -2437,7 +2444,7 @@ void sleepRoutineWorld(Gothic& gothic,bool events) {
   auto& vm=world.script().getVm();
   size_t vmLoops=0;
   const auto observer=vm.add_call_observer([&](const auto& function) {
-    vmLoops+=function.name()=="ZS_SLEEP_LOOP";
+    vmLoops+=function.name()==loopName;
     });
   const auto settled=[&] {
     const auto* object=matteo->interactive();
@@ -2447,9 +2454,27 @@ void sleepRoutineWorld(Gothic& gothic,bool events) {
     };
   test.stepUntil(1200,settled,"Matteo sleeps in a bed after approaching his routine waypoint");
   require(Contract::aiState(*matteo).eTime==deadline,"sleep routine: the transition preserves the row's end time");
+  require(matteo->hasPerc(PERC_ASSESSQUIETSOUND)==!deep,
+          "only ordinary sleep registers the quiet sound callback during Init");
   test.step(90);
   require(settled() && (vmLoops==0)==events,"sleep routine: a held bed remains settled with the selected executor");
   vm.remove_call_observer(observer);
+
+  if(deep) {
+    size_t instructions=0;
+    vm.observe_instructions([&](const auto&) { ++instructions; });
+    const auto perceived=matteo->passPerception(*world.player(),nullptr,PERC_ASSESSTALK);
+    vm.observe_instructions({});
+    auto commands=Contract::queue(*matteo);
+    require(perceived && commands.size()==2 && (events ? instructions==0 : instructions>0),
+            "sleep talk: a sleeping NPC accepts the hero's request through the chosen executor");
+    const auto release=commands.pop();
+    const auto talk=commands.pop();
+    require(release.act==AI_UseMob && release.s0=="BEDHIGH" && release.i0==-1 &&
+            talk.act==AI_StartState && talk.func==ScriptFn(world.script().findSymbolIndex("ZS_TALK")),
+            "sleep talk: release the bed before talking");
+    matteo->clearAiQueue();
+    }
 
   Contract::aiState(*matteo).eTime=world.time();
   Contract::aiState(*matteo).loopNextTime=world.tickCount();
@@ -2462,8 +2487,8 @@ void sleepRoutineWorld(Gothic& gothic,bool events) {
   require(release.act==AI_UseMob && release.s0=="BEDHIGH" && release.i0==-1,
           "sleep routine: the end requests the normal get-up animation");
   test.stepUntil(600,[&] { return matteo->interactive()==nullptr; },"Matteo leaves his bed");
-  std::printf("Sleep routine (events=%d): %zu VM Loop calls; approach, handoff, held bed and release verified\n",
-              int(events),vmLoops);
+  std::printf("%s (events=%d): %zu VM Loop calls; approach, handoff, held bed and release verified\n",
+              sleepState.c_str(),int(events),vmLoops);
   }
 
 // The switch and the accepted list through the loader the game calls.
@@ -2667,7 +2692,8 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     itemRoutinePhasesWorld(gothic,events);
     ActivityEventsWorld paired(gothic);
     pairedSmalltalkWorld(paired,events);
-    sleepRoutineWorld(gothic,events);
+    sleepRoutineWorld(gothic,events,false);
+    sleepRoutineWorld(gothic,events,true);
     gothic.clearGame().reset();
     seatedActivitiesWorld(gothic,events);
     if(events) {
@@ -3091,6 +3117,39 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
         require(events ? instructions==0 : instructions>0,
                 "the golem wake-up must dispatch through the chosen executor");
       }
+      if(std::string_view(site.state)=="ZS_SLEEP_DEEP" ||
+         std::string_view(site.state)=="ZS_PRAY_SLEEPER" ||
+         std::string_view(site.state)=="ZS_PRAY_SLEEPER_FP") {
+        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
+        actor->clearAiQueue();
+        size_t instructions=0;
+        vm.observe_instructions([&](const auto&) { ++instructions; });
+        if(std::string_view(site.state)=="ZS_PRAY_SLEEPER_FP") {
+          ActivityEventsWorld test(gothic);
+          const auto* point=world.findPoint("FP_PRAY_MONASTERY_02",false);
+          require(point!=nullptr,"the prayer fixture needs its authored monastery point");
+          test.freePoint(point);
+          actor->attachToPoint(point);
+          actor->setPosition(point->position());
+          Contract::tickRoutine(*actor);
+          const auto* kneel=actor->aiQueueFront();
+          require(kneel && kneel->act==AI_PlayAnimBs && kneel->s0=="T_STAND_2_PRAY" &&
+                  Contract::queue(*actor).size()==1,"the sleeper prayer kneels directly on the point");
+        } else {
+          Contract::tickRoutine(*actor);
+          if(std::string_view(site.state)=="ZS_SLEEP_DEEP") {
+            const auto* use=actor->aiQueueFront();
+            require(use && use->act==AI_UseMob && use->s0=="BEDHIGH" && use->i0==1,
+                    "the loaded deep sleep phase resumes by using the original bed");
+          } else {
+            require(actor->isAiQueueEmpty(),"the sleeper prayer with no IDOL nearby leaves the queue clear");
+          }
+        }
+        vm.observe_instructions({});
+        require(events ? instructions==0 : instructions>0,
+                "the loaded sleep or prayer phase must use the chosen executor");
+        witness.continuation=activityQueue(*actor);
+      }
       actor->clearAiQueue();
       const std::string end=std::string(site.state)+"_END";
       const auto vmBefore=vmCalls[end];
@@ -3119,6 +3178,9 @@ void remainingRoutineWitnesses(Gothic& gothic) {
     {"ZS_GUIDE_PLAYER",        "VLK_440_BARTOK",                    "NW_FARM1_CITYWALL_FOREST_07"},
     {"ZS_PRACTICE_MAGIC",      "TA_TESTMODELL",                    "NW_CITY_PATH_HABOUR_03"},
     {"ZS_RUNTOWP",             "MIL_337_MIKA",                     "NW_FARM2_PATH_03"},
+    {"ZS_SLEEP_DEEP",          "VLK_416_MATTEO",                   "NW_CITY_BED_MATTEO"},
+    {"ZS_PRAY_SLEEPER",        "NOV_604_DYRIAN",                   "NW_MONASTERY_CHURCH_06"},
+    {"ZS_PRAY_SLEEPER_FP",     "NOV_603_AGON",                      "NW_MONASTERY_CHURCH_03"},
     {"ZS_SPIT_FIRE",           "VLK_468_CANTHAR",                  "NW_CITY_PATH_HABOUR_03"},
     {"ZS_STAND_DEMENTOR",      "DMT_1202_DEMENTOR",                "NW_XARDAS_VALLEY_03"},
     {"ZS_STAND_RANGERMEETING", "MIL_350_ADDON_MARTIN",             "NW_TAVERNE_07"},

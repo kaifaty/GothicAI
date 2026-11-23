@@ -33,48 +33,50 @@ bool GameScript::runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& sy
     NpcEngineCalls::gotoWaypoint(world(),npc,properties.wp);
     };
 
-  if(name=="ZS_GOTOBED") {
-    standardInit();
+  if(name=="ZS_GOTOBED" || name=="ZS_GOTOBED_DEEP") {
+    setPerceptionPreset(true);
+    resetRoutineNpc(self);
     npc.aiPush(AiQueue::aiSetWalkMode(WalkBit::WM_Walk));
     if(NpcEngineCalls::nearestWaypoint(world(),npc)!=properties.wp)
       goToWaypoint();
     // The transition also starts at an already reached bed and keeps the row's end time.
-    ai_startstate(self,int(findFunction("ZS_SLEEP").ptr),0,"");
+    const auto sleep = name=="ZS_GOTOBED_DEEP" ? "ZS_SLEEP_DEEP" : "ZS_SLEEP";
+    ai_startstate(self,int(findFunction(sleep).ptr),0,"");
     result = 0;
     return true;
     }
-  if(name=="ZS_SLEEP") {
-    enable(PERC_ASSESSQUIETSOUND,"B_ASSESSQUIETSOUND");
+  if(name=="ZS_SLEEP" || name=="ZS_SLEEP_DEEP") {
+    if(name=="ZS_SLEEP")
+      enable(PERC_ASSESSQUIETSOUND,"B_ASSESSQUIETSOUND");
     enable(PERC_ASSESSDAMAGE,"B_ASSESSDAMAGE");
     enable(PERC_ASSESSTALK,"B_ASSESSSLEEPTALK");
     npc.aiPush(AiQueue::aiSetWalkMode(WalkBit::WM_Walk));
     result = 0;
     return true;
     }
-  if(name=="ZS_SLEEP_END") {
+  if(name=="ZS_SLEEP_END" || name=="ZS_SLEEP_DEEP_END") {
     if(!npc_isinplayersroom(self))
-      ai_outputsvm(self,self,"$AWAKE");
+      sayToNpc(self,self,"$AWAKE");
     npc.aiPush(AiQueue::aiUseMob(bed,-1));
     result = 0;
     return true;
     }
-  if(name=="ZS_SLEEP_LOOP") {
+  if(name=="ZS_SLEEP_LOOP" || name=="ZS_SLEEP_DEEP_LOOP") {
     result = LOOP_CONTINUE;
-    if(inBodyState(npc,BS_LIE))
+    if(npcBodyStateContains(self,BS_LIE))
       return true;
     if(world().availableMob(npc,bed)!=nullptr) {
       npc.aiPush(AiQueue::aiUseMob(bed,1));
       return true;
       }
-    auto* hero = findNpc(vm.global_hero());
-    if(hero!=nullptr && npc_getdisttonpc(self,std::static_pointer_cast<daedalus::INpc>(hero->handlePtr()))<=500 && inBodyState(*hero,BS_LIE)) {
-      auto& complaint = *findSymbol("PLAYER_GETOUTOFMYBEDCOMMENT");
-      if(complaint.get_int()==0) {
-        npc.aiPush(AiQueue::aiTurnToNpc(hero));
-        if(auto* other = findNpc(vm.global_other()))
-          ai_outputsvm(self,std::static_pointer_cast<daedalus::INpc>(other->handlePtr()),"$GETOUTOFMYBED");
-        complaint.set_int(1);
-        }
+    const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+    const auto distance = npc_getdisttonpc(self,hero);
+    const bool lyingHero = npcBodyStateContains(hero,BS_LIE);
+    auto& complaint = *findSymbol("PLAYER_GETOUTOFMYBEDCOMMENT");
+    if(distance<=500 && lyingHero && complaint.get_int()==0) {
+      turnToNpc(self,hero);
+      sayToNpc(self,std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()),"$GETOUTOFMYBED");
+      complaint.set_int(1);
       }
     return true;
     }
@@ -184,4 +186,11 @@ bool GameScript::runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& sy
     return true;
     }
   return false;
+  }
+
+void GameScript::assessSleepTalk(Npc& npc) {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  if(npcBodyStateContains(self,BS_LIE))
+    npc.aiPush(AiQueue::aiUseMob(bed,-1));
+  ai_startstate(self,int(ZS_Talk),0,"");
   }

@@ -114,18 +114,13 @@ bool GameScript::runDormantGolem(Npc& npc, const daedalus::DaedalusSymbol& symbo
   return true;
   }
 
-bool GameScript::invokeNativeGolemPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol,
-                                             NpcActivityProbe::Phase& phase) {
-  if(symbol.name()!="B_GOLEMRISE" || !nativeRoomReactionsEnabled())
-    return false;
-
-  phase.fromRecord();
+void GameScript::wakeDormantGolem(Npc& npc) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
   const auto remains = mob_hasitems("NW_GOLEMCHEST",int(findSymbolIndex("ITSE_GOLEMCHEST_MIS")));
   const auto distance = npc_getdisttonpc(self,hero);
   if(remains!=0 || distance>700)
-    return true;
+    return;
 
   npc.aiPush(AiQueue::aiPlayAnim("T_RISE"));
   auto& body = npc.handle();
@@ -136,5 +131,4 @@ bool GameScript::invokeNativeGolemPerception(Npc& npc, const daedalus::DaedalusS
   body.bodystate_interruptable_override = 0;
   body.start_aistate = int32_t(findFunction(monsterScheduler).ptr);
   body.aivar[32] = -1; // AIV_MM_RESTSTART = ONLYROUTINE
-  return true;
   }

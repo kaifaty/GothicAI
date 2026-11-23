@@ -9,7 +9,7 @@
 namespace {
 using ActivityDefinitions::Phase;
 
-enum class PointRoutine { GuardPassage, Pick, PracticeMagic, PracticeSword, Pray, Study, Unknown };
+enum class PointRoutine { GuardPassage, Pick, PracticeMagic, PracticeSword, Pray, PrayIdol, PraySleeper, Study, Unknown };
 
 PointRoutine pointRoutine(std::string_view name) {
   if(name=="ZS_GUARD_PASSAGE")  return PointRoutine::GuardPassage;
@@ -17,6 +17,8 @@ PointRoutine pointRoutine(std::string_view name) {
   if(name=="ZS_PRACTICE_MAGIC") return PointRoutine::PracticeMagic;
   if(name=="ZS_PRACTICE_SWORD") return PointRoutine::PracticeSword;
   if(name=="ZS_PRAY_INNOS_FP")  return PointRoutine::Pray;
+  if(name=="ZS_PRAY_SLEEPER")   return PointRoutine::PrayIdol;
+  if(name=="ZS_PRAY_SLEEPER_FP") return PointRoutine::PraySleeper;
   if(name=="ZS_STUDY_WP")       return PointRoutine::Study;
   return PointRoutine::Unknown;
   }
@@ -60,14 +62,14 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
 
   if(phase==Phase::Init) {
     setPerceptionPreset(true);
-    stopLookAt();
-    npc.aiPush(AiQueue::aiRemoveWeapon());
+    resetRoutineNpc(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
     if(kind==PointRoutine::GuardPassage) {
       npc.setPerceptionTime(100);
       npc.aiPush(AiQueue::aiStandup());
       }
     NpcEngineCalls::setWalkMode(npc,1);
-    const bool walk = kind==PointRoutine::GuardPassage || kind==PointRoutine::Study || awayFromWaypoint();
+    const bool walk = kind==PointRoutine::PrayIdol ? NpcEngineCalls::nearestWaypoint(world(),npc)!=npc.handle().wp
+                     : kind==PointRoutine::GuardPassage || kind==PointRoutine::Study || awayFromWaypoint();
     if(walk)
       gotoWaypoint();
     if(kind==PointRoutine::Study || (kind==PointRoutine::PracticeSword && walk) ||
@@ -85,9 +87,13 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
       npc.aiPush(AiQueue::aiStandup());
       npc.aiPush(AiQueue::aiRemoveWeapon());
       }
-    else if(kind==PointRoutine::Pray) {
-      npc.stopAnim("T_PRAY_RANDOM");
+    else if(kind==PointRoutine::Pray || kind==PointRoutine::PraySleeper) {
+      if(kind==PointRoutine::Pray)
+        npc.stopAnim("T_PRAY_RANDOM");
       npc.aiPush(AiQueue::aiPlayAnim("T_PRAY_2_STAND"));
+      }
+    else if(kind==PointRoutine::PrayIdol) {
+      npc.aiPush(AiQueue::aiUseMob("IDOL",-1));
       }
     else if(kind==PointRoutine::Study) {
       const auto scroll = findSymbol("FAKESCROLL_ADDON")->index();
@@ -182,12 +188,21 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
       gotoWaypoint();
       npc.aiPush(AiQueue::aiAlignToWp());
       break;
+    case PointRoutine::PrayIdol: {
+      const auto available = world().availableMob(npc,"IDOL")!=nullptr;
+      const auto occupied = npcBodyStateContains(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),BS_MOBINTERACT_INTERRUPT);
+      if(available && !occupied)
+        npc.aiPush(AiQueue::aiUseMob("IDOL",1));
+      break;
+      }
     case PointRoutine::Pray:
+    case PointRoutine::PraySleeper:
       if(npc.isOnFreePoint("PRAY")) {
-        if(seated())
+        if(npcBodyStateContains(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),BS_SIT))
           npc.aiPush(AiQueue::aiPlayAnimBs("T_PRAY_RANDOM",BS_SIT));
         else {
-          npc.aiPush(AiQueue::aiAlignToFp());
+          if(kind==PointRoutine::Pray)
+            npc.aiPush(AiQueue::aiAlignToFp());
           npc.aiPush(AiQueue::aiPlayAnimBs("T_STAND_2_PRAY",BS_SIT));
           }
         }
@@ -259,9 +274,7 @@ bool GameScript::runBanditCamp(Npc& npc, const daedalus::DaedalusSymbol& symbol,
 
   if(name=="ZS_BANDIT") {
     setPerceptionPreset(true);
-    findSymbol("B_RESETALL.SLF")->set_instance(self);
-    stopLookAtNpc(self);
-    ai_removeweapon(self);
+    resetRoutineNpc(self);
     NpcEngineCalls::setWalkMode(npc,1);
     const auto& waypoint = npc.handle().wp;
     if(NpcEngineCalls::distanceToWaypoint(world(),npc,waypoint)>ApproachDistance)
@@ -288,9 +301,7 @@ bool GameScript::runBanditCamp(Npc& npc, const daedalus::DaedalusSymbol& symbol,
       }
     stage = InPose;
     }
-  findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(int32_t(BS_SIT));
-  findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self);
-  const auto seated = ActivityDefinitions::bodyStateContains(npc_getbodystate(self),int32_t(BS_SIT));
+  const auto seated = npcBodyStateContains(self,BS_SIT);
 
   if(name=="ZS_BANDIT_END") {
     if(seated)

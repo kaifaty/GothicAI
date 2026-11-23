@@ -11,7 +11,9 @@ void GameScript::loadNativeRoutines() {
 
   static constexpr NativeRoutinePhase routines[] = {
     {"ZS_GOTOBED",            &GameScript::runMovementRoutine},
+    {"ZS_GOTOBED_DEEP",       &GameScript::runMovementRoutine},
     {"ZS_SLEEP",              &GameScript::runMovementRoutine, 0, RoutineWake::Sleep},
+    {"ZS_SLEEP_DEEP",         &GameScript::runMovementRoutine, 0, RoutineWake::Sleep},
     {"ZS_FLEETOWP",           &GameScript::runMovementRoutine, 6000},
     {"ZS_RUNTOWP",            &GameScript::runMovementRoutine, 6000},
     {"ZS_FOLLOW_PLAYER",      &GameScript::runMovementRoutine},
@@ -31,6 +33,8 @@ void GameScript::loadNativeRoutines() {
     {"ZS_PRACTICE_MAGIC",     &GameScript::runPointRoutine},
     {"ZS_PRACTICE_SWORD",     &GameScript::runPointRoutine},
     {"ZS_PRAY_INNOS_FP",      &GameScript::runPointRoutine},
+    {"ZS_PRAY_SLEEPER",       &GameScript::runPointRoutine},
+    {"ZS_PRAY_SLEEPER_FP",    &GameScript::runPointRoutine},
     {"ZS_STUDY_WP",           &GameScript::runPointRoutine},
     {"ZS_ANNOUNCE_HEROLD",    &GameScript::runSocialRoutine, 70000, RoutineWake::Herald},
     {"ZS_CIRCLE",             &GameScript::runSocialRoutine},
@@ -136,6 +140,19 @@ bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& s
   const auto& phase = it->second;
   probe.fromRecord();
   ActivityEvents::countWakes(phase.state,phase.enters ? ActivityEvents::Entered : 0,true);
+  return true;
+  }
+
+bool GameScript::invokeNativeRoutinePerception(Npc& npc, const daedalus::DaedalusSymbol& symbol,
+                                               NpcActivityProbe::Phase& phase) {
+  const std::string_view name = symbol.name();
+  if((name!="B_GOLEMRISE" && name!="B_ASSESSSLEEPTALK") || !nativeRoomReactionsEnabled())
+    return false;
+  phase.fromRecord();
+  if(name=="B_GOLEMRISE")
+    wakeDormantGolem(npc);
+  else
+    assessSleepTalk(npc);
   return true;
   }
 
