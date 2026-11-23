@@ -4,6 +4,7 @@
 #include "daedalus/classes.h"
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <random>
 #include <unordered_map>
@@ -270,6 +271,7 @@ class GameScript final : public GameRules {
     bool usesNativeShrinkSpell(const Item* item) const;
     int runShrinkMana(Npc& caster, int mana, bool release);
     void castShrink(Npc& caster, Npc* target);
+    std::optional<int> runStockSpellMana(Npc& caster, int mana);
     bool runStockSpellCast(Npc& caster, std::string_view function, int32_t level);
     void assessMagic(Npc& npc);
     void clearNpcPerceptions(const std::shared_ptr<daedalus::INpc>& npc);

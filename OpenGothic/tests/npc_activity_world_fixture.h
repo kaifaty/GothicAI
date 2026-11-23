@@ -2794,17 +2794,21 @@ void stockSpellCastAccounting(World& world) {
   const auto targetHp=target.attribute(ATR_HITPOINTS);
   auto& level=*script.findSymbol("SPELL_CAST_ZAP.SPELLLEVEL");
   const auto oldLevel=level.get_int();
+  auto& invested=*script.findSymbol("SPELL_PROCESSMANA.MANAINVESTED");
+  auto& activeSpell=*script.findSymbol("SPELL_PROCESSMANA.ACTIVESPELL");
+  const auto oldInvested=invested.get_int(),oldActiveSpell=activeSpell.get_int();
   const auto* point=world.findWayPoint("NW_FARM4_BALTHASAR");
   require(point!=nullptr,"cast accounting: need a live stock caster spawn point");
 
   const struct Cast {
     const char* item;
     int32_t cost;
+    const char* admission=nullptr;
     bool leveled=false;
     } cases[] = {
-    {"ITSC_ICEBOLT",5},
-    {"ITRU_ICEBOLT",10},
-    {"ITSC_ZAP",5,true},
+    {"ITSC_ICEBOLT",5,"SPELL_LOGIC_ICEBOLT.MANAINVESTED"},
+    {"ITRU_ICEBOLT",10,"SPELL_LOGIC_ICEBOLT.MANAINVESTED"},
+    {"ITSC_ZAP",5,"SPELL_LOGIC_ZAP.MANAINVESTED",true},
     {"ITSC_SLEEP",0},
     };
   for(const auto& row:cases) {
@@ -2816,14 +2820,37 @@ void stockSpellCastAccounting(World& world) {
       auto* item=caster->addItem(symbol.index(),1);
       require(item && caster->drawSpell(item->spellId()) && caster->activeWeapon()==item,
               "cast accounting: the actual test item must be active");
+      events=native;
+      size_t instructions=0;
+      if(row.admission!=nullptr) {
+        auto& local=*script.findSymbol(row.admission);
+        const auto oldLocal=local.get_int();
+        for(bool enough:{false,true}) {
+          const auto available=row.cost-int32_t(!enough);
+          caster->handle().attribute[ATR_MANA]=available;
+          symbol.set_instance(nullptr);
+          invested.set_int(-1);
+          activeSpell.set_int(-1);
+          local.set_int(-1);
+          instructions=0;
+          vm.observe_instructions([&](const auto&) { ++instructions; });
+          const auto result=script.invokeMana(*caster,&target,17);
+          vm.observe_instructions({});
+          require(result==(enough ? SPL_SENDCAST : SPL_SENDSTOP) && (instructions==0)==native &&
+                  caster->attribute(ATR_MANA)==available && invested.get_int()==17 &&
+                  activeSpell.get_int()==item->spellId() && local.get_int()==17 &&
+                  symbol.get_instance()==std::static_pointer_cast<daedalus::IItem>(item->handlePtr()),
+                  "spell admission: preserve both thresholds, saved locals and the active item");
+          }
+        local.set_int(oldLocal);
+        }
       caster->handle().attribute[ATR_MANA]=3;
       caster->handle().aivar[20]=9;
       const auto casterQueue=activityQueue(*caster),targetQueue=activityQueue(target);
       const auto callSelf=vm.global_self()->get_instance(),callOther=vm.global_other()->get_instance();
       const auto callItem=vm.global_item()->get_instance(),callGi=vm.unsafe_get_gi();
       level.set_int(71);
-      events=native;
-      size_t instructions=0;
+      instructions=0;
       vm.observe_instructions([&](const auto&) { ++instructions; });
       vm.push_int(0x12345678);
       script.invokeSpell(*caster,&target,*item);
@@ -2843,8 +2870,10 @@ void stockSpellCastAccounting(World& world) {
       }
     }
   level.set_int(oldLevel);
+  invested.set_int(oldInvested);
+  activeSpell.set_int(oldActiveSpell);
   events=previousEvents;
-  std::puts("Spell cast accounting: rune, scroll, level and counter-only callbacks match both executors");
+  std::puts("Spell accounting: mana admission, rune, scroll, level and counter-only callbacks match both executors");
   }
 
 void shrinkSpellStates(World& world) {
