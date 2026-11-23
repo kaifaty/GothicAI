@@ -95,8 +95,11 @@ GameScript::GameScript(GameSession &owner)
   Gothic::inst().setupVmCommonApi(vm);
   aiDefaultPipe.reset(new GlobalOutput(*this));
   initCommon();
+  loadNativeKillNpc();
+  loadNativeNpcGlobals();
   loadNativeRoutines();
   loadNativeRoomReaction();
+  loadNativeHumanPerceptions();
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
   }
@@ -619,8 +622,7 @@ void GameScript::loadPerc(Serialize& fin) {
   uint32_t count = 0;
   fin.read(count);
   if(count!=PERC_Count) {
-    if(hasSymbolName("initPerceptions"))
-      vm.call_function("initPerceptions");
+    initPerceptions();
     return;
     }
   for(size_t i=0; i<PERC_Count; ++i)
@@ -1086,7 +1088,7 @@ void GameScript::invokeState(const std::shared_ptr<NpcRecord>& hnpc, const std::
     phase.fromRecord();
     runQuietSoundReaction(*npc);
     }
-  else if(npc==nullptr || !invokeNativeRoutine(*npc,*id,phase))
+  else if(npc==nullptr || !(invokeNativeRoutine(*npc,*id,phase) || invokeNativeMonsterPerception(*id,phase)))
     vm.call_function<void>(id);
   }
 
@@ -1124,9 +1126,11 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
     phase.fromRecord();
     runQuietSoundReaction(*npc);
     }
-  else if(sym!=nullptr && npc!=nullptr &&
-          (invokeNativeRoomPerception(*sym,phase) || invokeNativeRoutineReaction(*npc,*sym,phase))) {
-    // The reaction ran in the engine.
+  else if(npc!=nullptr && ((sym!=nullptr && (invokeNativeRoomPerception(*sym,phase) ||
+                                            invokeNativeMonsterPerception(*sym,phase) ||
+                                            invokeNativeRoutineReaction(*npc,*sym,phase))) ||
+                           invokeNativeHumanPerception(fn,phase))) {
+    // The perception ran in the engine.
     }
   else if(sym!=nullptr && sym->rtype() == daedalus::DaedalusDataType::INT) {
     ret = vm.call_function<int>(sym);
@@ -1226,6 +1230,8 @@ void GameScript::invokeRefreshAtInsert(Npc& npc) {
   if(B_RefreshAtInsert==nullptr)
     return;
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && NpcDefinitionRuntime::enabled())
+    return refreshNpcAtInsert(npc);
   vm.call_function<void>(B_RefreshAtInsert);
   }
 

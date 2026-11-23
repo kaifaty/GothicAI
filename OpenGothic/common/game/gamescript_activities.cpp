@@ -9,6 +9,10 @@ void GameScript::loadNativeRoutines() {
   if(!nativeRoutineProgram || !activityEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return;
 
+  vm.override_function("B_MM_ASSESSENEMY",std::function<void()>{[this] { runMonsterAssessEnemy(); }},[this] {
+    return nativeMonsterPerceptionsEnabled();
+    });
+
   static constexpr NativeRoutinePhase routines[] = {
     {"ZS_GOTOBED",            &GameScript::runMovementRoutine},
     {"ZS_GOTOBED_DEEP",       &GameScript::runMovementRoutine},
@@ -50,7 +54,26 @@ void GameScript::loadNativeRoutines() {
     {"ZS_CLEARROOM",          &GameScript::runClearRoom},
     {"ZS_BANDIT",             &GameScript::runBanditCamp},
     {"ZS_GOLEMDOWN",          &GameScript::runDormantGolem},
+    {"ZS_REACTTODAMAGE",       &GameScript::runHumanReaction},
+    {"ZS_REACTTOWEAPON",       &GameScript::runHumanReaction},
+    {"ZS_ATTACK",              &GameScript::runHumanAttack},
+    {"ZS_FLEE",                &GameScript::runHumanFlee},
+    {"ZS_WATCHFIGHT",          &GameScript::runWatchFight},
+    {"ZS_COMMENTFAKEGUILD",    &GameScript::runFakeGuildComment},
+    {"ZS_GETMEAT",             &GameScript::runHumanPlunder},
+    {"ZS_RANSACKBODY",         &GameScript::runHumanPlunder},
+    {"ZS_GREENTENTACLE",       &GameScript::runControlSpell},
+    {"ZS_SHORTZAPPED",         &GameScript::runControlSpell},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
+    {"ZS_MM_ATTACK",         &GameScript::runMonsterAttack},
+    {"ZS_MM_THREATENENEMY",   &GameScript::runMonsterThreat},
+    {"ZS_MM_FLEE",            &GameScript::runMonsterFlee},
+    {"ZS_MM_HUNT",            &GameScript::runMonsterHunt},
+    {"ZS_MM_EATBODY",         &GameScript::runMonsterEatBody},
+    {"ZS_MM_RTN_DRAGONREST",  &GameScript::runMonsterDragonRest},
+    {"ZS_MM_RTN_FOLLOW_SHEEP", &GameScript::runMonsterSheepFollow},
+    {"ZS_MM_RTN_FOLLOW_SHEEP_BALTHASAR", &GameScript::runMonsterSheepFollow},
+    {"ZS_MM_RTN_SUMMONED",    &GameScript::runMonsterSummoned},
     {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_REST",        &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_ROAM",        &GameScript::runRoamingRoutine},
@@ -126,9 +149,9 @@ bool GameScript::endMonsterRoutine(Npc& npc, MonsterRoutine routine) {
   }
 
 void GameScript::removeRavensStoneGuardians(Npc& npc) {
-  // B_KILLNPC resolves the live NPC through the VM's SELF symbol.
+  // The stock rule resolves the live guardian through the SELF alias.
   if(npc.handle().guild==GIL_Stoneguardian && findSymbol("RAVENISDEAD")->get_int()==1)
-    vm.call_function<void>("B_KILLNPC",int32_t(vm.global_self()->index()));
+    invokeKillNpc(int32_t(vm.global_self()->index()));
   }
 
 bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe) {
