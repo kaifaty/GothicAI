@@ -117,6 +117,7 @@ void DrawBuckets::updateTextureArrays(uint8_t fId) {
     }
   bank.pending.clear();
   bank.rebuild=false;
+  rebuiltTextureBank = true;
   }
 
 void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
@@ -274,6 +275,7 @@ void DrawBuckets::updatePrimitiveCounts(Encoder<CommandBuffer>& cmd) {
   }
 
 bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  rebuiltTextureBank = false;
   currentFrame=fId;
   spheres.commit(cmd,fId);
   const auto generation=Resources::textureGeneration();

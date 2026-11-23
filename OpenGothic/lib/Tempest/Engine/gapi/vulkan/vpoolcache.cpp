@@ -4,7 +4,9 @@
 #include "vdevice.h"
 #include "vdescriptorarray.h"
 
+#include <algorithm>
 #include <bit>
+#include <stdexcept>
 
 using namespace Tempest;
 using namespace Tempest::Detail;
@@ -21,6 +23,37 @@ static void addPoolSize(VkDescriptorPoolSize *p, size_t &sz, uint32_t cnt, VkDes
   sz++;
   }
 
+static ShaderReflection::LayoutDesc descriptorPart(ShaderReflection::LayoutDesc layout, uint32_t active) {
+  const auto removed = layout.active & ~active;
+  layout.active    &= active;
+  layout.array     &= active;
+  layout.runtime   &= active;
+  layout.resources &= active;
+  layout.samplers  &= active;
+  for(auto mask=removed; mask!=0; mask &= mask-1) {
+    const auto i       = std::countr_zero(mask);
+    layout.bindings[i] = ShaderReflection::Count;
+    layout.stage[i]    = ShaderReflection::None;
+    layout.count[i]    = 0;
+    layout.bufferSz[i] = 0;
+    layout.bufferEl[i] = 0;
+    }
+  return layout;
+  }
+
+static bool sameActiveBindings(const Bindings& a, const Bindings& b, uint32_t active) {
+  if(((a.array ^ b.array) & active)!=0)
+    return false;
+  for(auto mask=active; mask!=0; mask &= mask-1) {
+    const auto i = std::countr_zero(mask);
+    if(a.data[i]!=b.data[i])
+      return false;
+    // An array copies its own descriptors, including their samplers and image views.
+    if((a.array & (1u << i))==0 && (a.offset[i]!=b.offset[i] || a.smp[i]!=b.smp[i] || a.map[i]!=b.map[i]))
+      return false;
+    }
+  return true;
+  }
 
 VPoolCache::VPoolCache(VDevice& dev)
   : dev(dev) {
@@ -28,6 +61,9 @@ VPoolCache::VPoolCache(VDevice& dev)
   }
 
 VPoolCache::~VPoolCache() {
+  for(auto* entries : {&descriptors, &splitDescriptors})
+    for(const auto& entry : *entries)
+      vkDestroyDescriptorPool(dev.device.impl, entry.pool, nullptr);
   for(auto& i:cache)
     vkDestroyDescriptorPool(dev.device.impl, i, nullptr);
   }
@@ -56,15 +92,17 @@ void VPoolCache::setupLimits() {
 void VPoolCache::notifyDestroy(const AbstractGraphicsApi::NoCopy* res) {
   std::lock_guard<std::mutex> guard(sync);
 
-  for(size_t i=0; i<descriptors.size();) {
-    auto& d = descriptors[i];
-    if(!d.bindings.contains(res)) {
-      ++i;
-      continue;
+  for(auto* entries : {&descriptors, &splitDescriptors}) {
+    for(size_t i=0; i<entries->size();) {
+      auto& d = (*entries)[i];
+      if(!d.bindings.contains(res)) {
+        ++i;
+        continue;
+        }
+      vkDestroyDescriptorPool(dev.device.impl, d.pool, nullptr);
+      d = std::move(entries->back());
+      entries->pop_back();
       }
-    vkDestroyDescriptorPool(dev.device.impl, d.pool, nullptr);
-    d = std::move(descriptors.back());
-    descriptors.pop_back();
     }
   }
 
@@ -74,28 +112,33 @@ void VPoolCache::notifyUpdate(const VDescriptorArray& arr, uint32_t element) {
   // caller's guarantee that the GPU is done with the array covers them as well.
   std::lock_guard<std::mutex> guard(sync);
 
-  std::vector<VkCopyDescriptorSet> cpy;
-  for(auto& d:descriptors) {
-    for(uint32_t mask = d.arrays; mask!=0;) {
-      const int i = std::countr_zero(mask);
-      mask ^= (1u << i);
-      if(d.bindings.data[i]!=&arr)
-        continue;
-      VkCopyDescriptorSet& cx = cpy.emplace_back();
-      cx.sType           = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
-      cx.pNext           = nullptr;
-      cx.srcSet          = arr.set();
-      cx.srcBinding      = 0;
-      cx.srcArrayElement = element;
-      cx.dstSet          = d.set;
-      cx.dstBinding      = uint32_t(i);
-      cx.dstArrayElement = element;
-      cx.descriptorCount = 1;
+  // The source set has already been updated, so copying to cached sets must not allocate.
+  VkCopyDescriptorSet cpy[MaxBindings] = {};
+  uint32_t cnt = 0;
+  for(auto* entries : {&descriptors, &splitDescriptors}) {
+    for(const auto& d : *entries) {
+      for(uint32_t mask=d.arrays; mask!=0; mask &= mask-1) {
+        const auto i = std::countr_zero(mask);
+        if(d.bindings.data[i]!=&arr)
+          continue;
+        VkCopyDescriptorSet& cx = cpy[cnt++];
+        cx.sType           = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
+        cx.srcSet          = arr.set();
+        cx.srcArrayElement = element;
+        cx.dstSet          = d.set;
+        cx.dstBinding      = uint32_t(i);
+        cx.dstArrayElement = element;
+        cx.descriptorCount = 1;
+        if(cnt==MaxBindings) {
+          vkUpdateDescriptorSets(dev.device.impl, 0, nullptr, cnt, cpy);
+          cnt = 0;
+          }
+        }
       }
     }
 
-  if(!cpy.empty())
-    vkUpdateDescriptorSets(dev.device.impl, 0, nullptr, uint32_t(cpy.size()), cpy.data());
+  if(cnt>0)
+    vkUpdateDescriptorSets(dev.device.impl, 0, nullptr, cnt, cpy);
   }
 
 VkDescriptorPool VPoolCache::allocPool() {
@@ -246,13 +289,8 @@ VkDescriptorSet VPoolCache::allocDescSet(VkDescriptorPool pool, VkDescriptorSetL
   allocInfo.descriptorSetCount = 1;
   allocInfo.pSetLayouts        = &lay;
 
-  VkDevice        dev  = this->dev.device.impl;
   VkDescriptorSet desc = VK_NULL_HANDLE;
-  VkResult        ret  = vkAllocateDescriptorSets(dev,&allocInfo,&desc);
-  if(ret==VK_ERROR_FRAGMENTED_POOL)
-    return VK_NULL_HANDLE;
-  if(ret!=VK_SUCCESS)
-    return VK_NULL_HANDLE;
+  vkAssert(vkAllocateDescriptorSets(dev.device.impl, &allocInfo, &desc));
   return desc;
   }
 
@@ -269,14 +307,21 @@ uint32_t VPoolCache::bindlessCapacity(ShaderReflection::Class cls, size_t size) 
   return uint32_t(std::max<size_t>(size, capacity));
   }
 
-VPoolCache::Inst VPoolCache::allocBindless(const PushBlock& pb, const LayoutDesc& layout, const Bindings& binding) {
+VPoolCache::LayoutDesc VPoolCache::bindlessLayout(const LayoutDesc& layout, const Bindings& binding) {
   auto lx = layout;
-  for(uint32_t mask = lx.runtime; mask!=0;) {
-    const int i = std::countr_zero(mask);
-    mask ^= (1u << i);
-    auto* a = reinterpret_cast<const VDescriptorArray*>(binding.data[i]);
-    lx.count[i] = bindlessCapacity(lx.bindings[i], a->size());
+  for(uint32_t mask=lx.runtime; mask!=0; mask &= mask-1) {
+    const auto i = std::countr_zero(mask);
+    if((binding.array & (1u << i))==0 || binding.data[i]==nullptr)
+      throw std::logic_error("Missing runtime descriptor array");
+    const auto* a = static_cast<const VDescriptorArray*>(binding.data[i]);
+    // A different stage can declare a fixed size for the same binding.
+    lx.count[i] = std::max(lx.count[i], bindlessCapacity(lx.bindings[i], a->size()));
     }
+  return lx;
+  }
+
+VPoolCache::Inst VPoolCache::allocBindless(const PushBlock& pb, const LayoutDesc& layout, const Bindings& binding) {
+  const auto lx = bindlessLayout(layout, binding);
 
   Inst ret;
   ret.dLay = dev.setLayouts.findLayout(lx);
@@ -290,24 +335,72 @@ VPoolCache::Inst VPoolCache::allocBindless(const PushBlock& pb, const LayoutDesc
     return ret;
     }
 
-  auto& desc = descriptors.emplace_back();
+  ret.set = cacheSet(descriptors, ret.dLay, lx, binding);
+  return ret;
+  }
+
+VPoolCache::SplitInst VPoolCache::allocSplit(const PushBlock& pb, const LayoutDesc& layout, const Bindings& binding) {
+  if(((binding.array ^ layout.array) & layout.active)!=0)
+    throw std::logic_error("Descriptor binding does not match shader array declaration");
+  for(uint32_t mask=layout.array & ~layout.runtime; mask!=0; mask &= mask-1) {
+    const auto i = std::countr_zero(mask);
+    const auto* a = static_cast<const VDescriptorArray*>(binding.data[i]);
+    if(a==nullptr || a->size()!=layout.count[i])
+      throw std::logic_error("Incorrect size for fixed descriptor array");
+    }
+
+  const auto lx = bindlessLayout(layout, binding);
+  const auto scalars = descriptorPart(lx, ~lx.array);
+  const auto arrays  = descriptorPart(lx, lx.array);
+  const auto scalarLayout = dev.setLayouts.findLayout(scalars);
+  const auto arrayLayout  = dev.setLayouts.findLayout(arrays);
+
+  SplitInst ret;
+  ret.pLay = dev.psoLayouts.findLayout(pb, scalarLayout, arrayLayout);
+
+  std::lock_guard<std::mutex> guard(sync);
+  const auto getSet = [&](const LayoutDesc& part, VkDescriptorSetLayout setLayout) {
+    for(const auto& entry : splitDescriptors)
+      if(entry.dLay==setLayout && sameActiveBindings(entry.bindings, binding, part.active))
+        return entry.set;
+
+    // Hold only the bindings used by this set so unrelated resources cannot evict it.
+    Bindings key;
+    key.array = binding.array & part.active;
+    for(auto mask=part.active; mask!=0; mask &= mask-1) {
+      const auto i  = std::countr_zero(mask);
+      key.data[i]   = binding.data[i];
+      key.offset[i] = binding.offset[i];
+      key.smp[i]    = binding.smp[i];
+      key.map[i]    = binding.map[i];
+      }
+    return cacheSet(splitDescriptors, setLayout, part, key);
+    };
+
+  ret.sets[0] = getSet(scalars, scalarLayout);
+  ret.sets[1] = getSet(arrays, arrayLayout);
+  return ret;
+  }
+
+VkDescriptorSet VPoolCache::cacheSet(std::vector<DSet>& entries, VkDescriptorSetLayout setLayout,
+                                    const LayoutDesc& layout, const Bindings& binding) {
+  auto& desc = entries.emplace_back();
   try {
-    desc.dLay     = ret.dLay;
+    desc.dLay     = setLayout;
     desc.bindings = binding;
-    desc.arrays   = lx.active & binding.array;
-    desc.pool     = allocPool(lx);
-    desc.set      = allocDescSet(desc.pool, ret.dLay);
-    initDescriptorSet(desc.set, binding, lx);
+    desc.arrays   = layout.active & binding.array;
+    desc.pool     = allocPool(layout);
+    desc.set      = allocDescSet(desc.pool, setLayout);
+    initDescriptorSet(desc.set, binding, layout);
     }
   catch(...) {
     if(desc.pool!=VK_NULL_HANDLE)
       vkDestroyDescriptorPool(dev.device.impl, desc.pool, nullptr);
-    descriptors.pop_back();
+    entries.pop_back();
     throw;
     }
 
-  ret.set  = desc.set;
-  return ret;
+  return desc.set;
   }
 
 void VPoolCache::initDescriptorSet(VkDescriptorSet dset, const Bindings &binding, const LayoutDesc& l) {

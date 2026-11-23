@@ -15,18 +15,20 @@ VPsoLayoutCache::~VPsoLayoutCache() {
     vkDestroyPipelineLayout(dev.device.impl, i.pLay, nullptr);
   }
 
-VkPipelineLayout VPsoLayoutCache::findLayout(const ShaderReflection::PushBlock& pb, VkDescriptorSetLayout lay) {
+VkPipelineLayout VPsoLayoutCache::findLayout(const ShaderReflection::PushBlock& pb, VkDescriptorSetLayout lay,
+                                            VkDescriptorSetLayout arrays) {
   std::lock_guard<std::mutex> guard(sync);
 
   const auto stageFlags = nativeFormat(pb.stage);
   for(auto& i:layouts)
-    if(i.lay==lay && i.pushStage==stageFlags && i.pushSize==pb.size)
+    if(i.lay==lay && i.arrays==arrays && i.pushStage==stageFlags && i.pushSize==pb.size)
       return i.pLay;
 
+  const VkDescriptorSetLayout sets[] = {lay, arrays};
   VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
   pipelineLayoutInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  pipelineLayoutInfo.pSetLayouts            = &lay;
-  pipelineLayoutInfo.setLayoutCount         = 1;
+  pipelineLayoutInfo.pSetLayouts            = sets;
+  pipelineLayoutInfo.setLayoutCount         = arrays!=VK_NULL_HANDLE ? 2 : 1;
   pipelineLayoutInfo.pushConstantRangeCount = 0;
 
   VkPushConstantRange push = {};
@@ -41,6 +43,7 @@ VkPipelineLayout VPsoLayoutCache::findLayout(const ShaderReflection::PushBlock& 
 
   auto& ret = layouts.emplace_back();
   ret.lay       = lay;
+  ret.arrays    = arrays;
   ret.pushStage = stageFlags;
   ret.pushSize  = uint32_t(pb.size);
   try {

@@ -66,6 +66,10 @@ void Encoder<Tempest::CommandBuffer>::setDebugMarker(std::string_view tag) {
   impl->setDebugMarker(tag);
   }
 
+void Encoder<Tempest::CommandBuffer>::setGraphicsDescriptorArrayReuse(bool enabled) {
+  impl->setGraphicsDescriptorArrayReuse(enabled);
+  }
+
 void Encoder<Tempest::CommandBuffer>::setPushData(const void* data, size_t size) {
   impl->setPushData(data, size);
   }

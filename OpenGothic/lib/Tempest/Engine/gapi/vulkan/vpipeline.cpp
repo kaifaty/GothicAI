@@ -51,9 +51,22 @@ VPipeline::VPipeline(VDevice& device, Topology tp, const RenderState& st, const 
       }
     ShaderReflection::setupLayout(pb, layout, sync, bindings, count);
 
-    for(size_t i=0; i<count; ++i)
-      if(sh[i]!=nullptr)
-        modules[i] = Detail::DSharedPtr<const VShader*>{sh[i]};
+    supportsSplitDescriptors = !device.props.hasDescriptorHeap && layout.isUpdateAfterBind();
+    for(size_t i=0; i<count; ++i) {
+      if(sh[i]==nullptr)
+        continue;
+      modules[i] = Detail::DSharedPtr<const VShader*>{sh[i]};
+
+      if(!supportsSplitDescriptors)
+        continue;
+      // A binding shared between stages must move to the same set in each module.
+      for(const auto& slot:sh[i]->lay) {
+        if(slot.cls!=ShaderReflection::Push && slot.isArray()!=bool(layout.array & (1u<<slot.layout))) {
+          supportsSplitDescriptors = false;
+          break;
+          }
+        }
+      }
 
     if(auto vert=findShader(ShaderReflection::Stage::Vertex)) {
       declSize = vert->vert.decl.size();
@@ -84,9 +97,12 @@ VPipeline::~VPipeline() {
   cleanup();
   }
 
-VkPipeline VPipeline::instance(const VkPipelineRenderingCreateInfoKHR& info, VkRenderPass pass, VkPipelineLayout pLay, size_t stride) {
+VkPipeline VPipeline::instance(const VkPipelineRenderingCreateInfoKHR& info, VkRenderPass pass, VkPipelineLayout pLay, size_t stride,
+                               bool splitDescriptors) {
+  assert(!splitDescriptors || supportsSplitDescriptors);
   std::lock_guard<SpinLock> guard(syncInst);
 
+  // The pipeline layout identifies the one-set and two-set variants.
   for(auto& i:instDr)
     if(i.isCompatible(info,pLay,stride))
       return i.val;
@@ -94,7 +110,7 @@ VkPipeline VPipeline::instance(const VkPipelineRenderingCreateInfoKHR& info, VkR
   try {
     val = initGraphicsPipeline(device,pLay,pass,&info,st,
                                decl.get(),declSize,stride,
-                               tp,modules);
+                               tp,modules,splitDescriptors);
     instDr.emplace_back(info,pLay,stride,val);
     }
   catch(...) {
@@ -134,7 +150,7 @@ VkPipeline VPipeline::initGraphicsPipeline(VDevice& device,
                                            const RenderState &st,
                                            const Decl::ComponentType *decl, size_t declSize,
                                            size_t stride, Topology tp,
-                                           const DSharedPtr<const VShader*>* shaders) {
+                                           const DSharedPtr<const VShader*>* shaders, bool splitDescriptors) {
   SmallArray<VkDescriptorSetAndBindingMappingEXT, MaxBindings> mappings(this->layout.size());
   VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo { VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT};
   if(device.props.hasDescriptorHeap) {
@@ -146,13 +162,14 @@ VkPipeline VPipeline::initGraphicsPipeline(VDevice& device,
   VkPipelineShaderStageCreateInfo shaderStages[5] = {};
   size_t                          stagesCnt       = 0;
   for(size_t i=0; i<5; ++i) {
-    if(shaders[i].handler==nullptr)
+    const auto* shader = shaders[i].handler;
+    if(shader==nullptr)
       continue;
 
     VkPipelineShaderStageCreateInfo& sh = shaderStages[stagesCnt];
     sh.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    sh.stage  = nativeFormat(shaders[i].handler->stage);
-    sh.module = shaders[i].handler->impl;
+    sh.stage  = nativeFormat(shader->stage);
+    sh.module = splitDescriptors ? shader->splitDescriptorsModule() : shader->impl;
     sh.pName  = "main";
     if(device.props.hasDescriptorHeap) {
       mappingInfo.pNext = sh.pNext;

@@ -378,6 +378,8 @@ void VCommandBuffer::reset() {
   swapchainSync.clear();
 
   bindings = Bindings();
+  reuseDescriptorArrays = false;
+  splitDescriptors = false;
   pushDescriptors.reset();
   }
 
@@ -598,6 +600,10 @@ void VCommandBuffer::setComputePipeline(AbstractGraphicsApi::CompPipeline& p) {
   pipelineLayout  = VK_NULL_HANDLE; // clear until dispatch
   }
 
+void VCommandBuffer::setGraphicsDescriptorArrayReuse(bool enabled) {
+  reuseDescriptorArrays = enabled;
+  }
+
 void VCommandBuffer::dispatch(size_t x, size_t y, size_t z) {
   implSetUniforms(PipelineStage::S_Compute);
   implSetPushData(PipelineStage::S_Compute);
@@ -689,9 +695,10 @@ void VCommandBuffer::handleSync(const ShaderReflection::LayoutDesc& lay, const S
   }
 
 void VCommandBuffer::implSetUniforms(const PipelineStage st) {
-  if(!bindings.durty)
+  const bool split = st==PipelineStage::S_Graphics && reuseDescriptorArrays &&
+                     curDrawPipeline->canSplitDescriptors();
+  if(!bindings.durty && split==splitDescriptors)
     return;
-  bindings.durty = false;
 
   using PushBlock  = ShaderReflection::PushBlock;
   using LayoutDesc = ShaderReflection::LayoutDesc;
@@ -725,8 +732,10 @@ void VCommandBuffer::implSetUniforms(const PipelineStage st) {
   handleSync(*lay, *sync, st);
 
   if(device.props.hasDescriptorHeap) {
-    if(lay->active==0)
+    if(lay->active==0) {
+      bindings.durty = false;
       return;
+      }
 
     auto vkCmdPushDataEXT = device.vkCmdPushDataEXT;
 
@@ -738,10 +747,15 @@ void VCommandBuffer::implSetUniforms(const PipelineStage st) {
     pushDataInfo.data.address = heapIndices;
     pushDataInfo.data.size    = sizeof(uint32_t)*lay->size();
     vkCmdPushDataEXT(impl, &pushDataInfo);
+    bindings.durty = false;
     return;
     }
 
-  if(lay->isUpdateAfterBind()) {
+  if(split) {
+    const auto dset = device.descPool.allocSplit(*pb, *lay, bindings);
+    pLay = dset.pLay;
+    vkCmdBindDescriptorSets(impl, bindPoint, pLay, 0, 2, dset.sets, 0, nullptr);
+    } else if(lay->isUpdateAfterBind()) {
     auto dset = device.descPool.allocBindless(*pb, *lay, bindings);
     pLay = dset.pLay;
     vkCmdBindDescriptorSets(impl, bindPoint,
@@ -755,20 +769,22 @@ void VCommandBuffer::implSetUniforms(const PipelineStage st) {
     }
 
   if(pLay!=pipelineLayout && st==PipelineStage::S_Graphics) {
-    pipelineLayout = pLay;
     auto& pso  = *curDrawPipeline;
     auto  rp   = (passRp!=nullptr ? passRp->pass : VK_NULL_HANDLE);
-    auto  inst = pso.instance(passDyn, rp, pipelineLayout, vboStride);
+    auto  inst = pso.instance(passDyn, rp, pLay, vboStride, split);
     vkCmdBindPipeline(impl, bindPoint, inst);
+    pipelineLayout = pLay;
     pushData.durty = true;
     }
   else if(pLay!=pipelineLayout && st==PipelineStage::S_Compute) {
-    pipelineLayout = pLay;
     auto& pso  = *curCompPipeline;
-    auto  inst = pso.instance(pipelineLayout);
+    auto  inst = pso.instance(pLay);
     vkCmdBindPipeline(impl, bindPoint, inst);
+    pipelineLayout = pLay;
     pushData.durty = true;
     }
+  splitDescriptors = split;
+  bindings.durty   = false;
   }
 
 void VCommandBuffer::implSetPushData(const PipelineStage st) {

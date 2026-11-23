@@ -77,6 +77,9 @@ void AbstractGraphicsApi::CommandBuffer::begin(Detail::SyncHint) {
   begin();
   }
 
+void AbstractGraphicsApi::CommandBuffer::setGraphicsDescriptorArrayReuse(bool) {
+  }
+
 void AbstractGraphicsApi::CommandBuffer::setPushData(const void* data, size_t size) {
   throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
   }
