@@ -335,20 +335,36 @@ void GameScript::runQuietSoundReaction(Npc& listener) {
   ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),1,"");
   }
 
-bool GameScript::nativeDrawWeaponEnabled() const {
+bool GameScript::nativeHumanPerceptionsEnabled() const {
   return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
   }
 
-void GameScript::loadNativeDrawWeaponReaction() {
+void GameScript::loadNativeHumanPerceptions() {
   if(!nativeRoutineProgram)
     return;
   drawWeaponCallback = findFunction("B_ASSESSDRAWWEAPON");
-  const auto enabled = [this] { return nativeDrawWeaponEnabled(); };
+  threatCallback = findFunction("B_ASSESSTHREAT");
+  damageCallback = findFunction("B_ASSESSDAMAGE");
+  const auto enabled = [this] { return nativeHumanPerceptionsEnabled(); };
   vm.override_function("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }},enabled);
+  vm.override_function("B_ASSESSDAMAGE",std::function<void()>{[this] { runDamageReaction(); }},enabled);
   using Actor = std::shared_ptr<daedalus::INpc>;
   vm.override_function("C_NPCISBOTHEREDBYWEAPON",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     return botheredByWeapon(self,other);
     }},enabled);
+  }
+
+bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase) {
+  if((fn!=drawWeaponCallback && fn!=threatCallback && fn!=damageCallback) || !nativeHumanPerceptionsEnabled())
+    return false;
+  phase.fromRecord();
+  if(fn==drawWeaponCallback)
+    phase.result = runDrawWeaponReaction();
+  else if(fn==threatCallback)
+    runThreatReaction();
+  else
+    runDamageReaction();
+  return true;
   }
 
 int32_t GameScript::botheredByWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
@@ -387,10 +403,94 @@ int32_t GameScript::runDrawWeaponReaction() {
   if((watchedFight && observing) || !npc_canseenpc(self,other()))
     return 0;
 
+  startHumanWarning(self,react);
+  return 1;
+  }
+
+void GameScript::startHumanWarning(const std::shared_ptr<daedalus::INpc>& self, ScriptFn state) {
   npc_clearaiqueue(self);
   vm.call_function<void>("B_CLEARPERCEPTIONS",self);
-  ai_startstate(self,int(react.ptr),0,"");
-  return 1;
+  ai_startstate(self,int(state.ptr),0,"");
+  }
+
+void GameScript::runThreatReaction() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  if(npc_getdisttonpc(self,other)>findSymbol("PERC_DIST_INTERMEDIAT")->get_int() ||
+     !npc_canseenpc(self,other) || botheredByWeapon(self,other)==0)
+    return;
+  startHumanWarning(self,findFunction("ZS_REACTTOWEAPON"));
+  }
+
+void GameScript::runDamageReaction() {
+  constexpr size_t lastTarget = 7; // AIV_LASTTARGET
+  constexpr size_t attackReason = 9; // AIV_ATTACKREASON
+  constexpr size_t partyMember = 15; // AIV_PARTYMEMBER
+  constexpr size_t hitByOther = 22; // AIV_HITBYOTHERNPC
+  constexpr size_t arenaFight = 45; // AIV_ARENAFIGHT
+  constexpr size_t enemyOverride = 61; // AIV_ENEMYOVERRIDE
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+
+  const auto quarhodron = hlp_getnpc(int(findSymbolIndex("NONE_ADDON_111_QUARHODRON")));
+  findSymbol("B_ASSESSDAMAGE.QUARHO")->set_instance(quarhodron);
+  const auto rhademes = hlp_getnpc(int(findSymbolIndex("NONE_ADDON_112_RHADEMES")));
+  findSymbol("B_ASSESSDAMAGE.RHADEM")->set_instance(rhademes);
+  if(self==nullptr)
+    return;
+  const auto selfId = hlp_getinstanceid(self);
+  if(selfId==hlp_getinstanceid(rhademes) || selfId==hlp_getinstanceid(quarhodron)) {
+    vm.call_function<int32_t>("B_GHOSTSPECIALDAMAGE",other(),self);
+    return;
+    }
+  vm.call_function<void>("B_BELIARSWEAPONSPECIALDAMAGE",other(),self);
+
+  auto& aivar = self->aivar;
+  if(aivar[arenaFight]==findSymbol("AF_AFTER")->get_int())
+    aivar[arenaFight] = findSymbol("AF_AFTER_PLUS_DAMAGE")->get_int();
+  if(aivar[enemyOverride]==1) {
+    const auto raven = hlp_getnpc(int(findSymbolIndex("BDT_1090_ADDON_RAVEN")));
+    findSymbol("B_ASSESSDAMAGE.RAV")->set_instance(raven);
+    if(hlp_getinstanceid(raven)==selfId)
+      aivar[enemyOverride] = 0;
+    }
+
+  if(npc_isinstate(self,int(ZS_Attack))) {
+    const bool player = npc_isplayer(other());
+    if(player && (self->type==NpcType::G2_FRIEND || aivar[partyMember]==1))
+      return;
+    const auto sourceId = hlp_getinstanceid(other());
+    if(aivar[lastTarget]!=sourceId) {
+      if(sourceId!=hlp_getinstanceid(vm.global_hero()->get_instance()) || aivar[hitByOther]==sourceId)
+        npc_settarget(self,other());
+      else
+        aivar[hitByOther] = sourceId;
+      }
+    return;
+    }
+
+  if(vm.call_function<int32_t>("B_ASSESSENEMY")!=0)
+    return;
+  const auto none = findSymbol("AR_NONE")->get_int();
+  const auto attacker = other();
+  if((attacker==nullptr || attacker->aivar[attackReason]==none) && !npc_isplayer(attacker)) {
+    vm.call_function<void>("B_ATTACK",self,attacker,none,0);
+    return;
+    }
+
+  const auto closeCombat = npc_isinfightmode(attacker,int(FightMode::FMODE_NONE)) ||
+                           npc_isinfightmode(attacker,int(FightMode::FMODE_FIST)) ||
+                           npc_isinfightmode(attacker,int(FightMode::FMODE_MELEE));
+  if(closeCombat) {
+    const bool playerFriend = npc_isplayer(attacker) && self->type==NpcType::G2_FRIEND;
+    const bool friendly = npc_getattitude(self,attacker)==ATT_FRIENDLY;
+    const auto warn = findFunction("ZS_REACTTODAMAGE");
+    if((playerFriend || friendly) && !npc_isinstate(self,int(warn.ptr))) {
+      startHumanWarning(self,warn);
+      return;
+      }
+    }
+  vm.call_function<void>("B_ATTACK",self,attacker,findSymbol("AR_REACTTODAMAGE")->get_int(),0);
   }
 
 bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {

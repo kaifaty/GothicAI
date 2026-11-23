@@ -1608,6 +1608,7 @@ void drawWeaponPerceptions(World& world,Npc& npc,Npc& hero) {
   const auto react=script.findFunction("ZS_REACTTOWEAPON");
   const auto dagger=script.findSymbolIndex("ITMW_1H_VLK_DAGGER");
   const auto drawPc=vm.find_symbol_by_name("B_ASSESSDRAWWEAPON")->address();
+  const auto threatPc=vm.find_symbol_by_name("B_ASSESSTHREAT")->address();
   const auto policyPc=vm.find_symbol_by_name("C_NPCISBOTHEREDBYWEAPON")->address();
   auto& comment=*vm.find_symbol_by_name("PLAYER_DRAWWEAPONCOMMENT");
   const int savedComment=comment.get_int();
@@ -1636,9 +1637,10 @@ void drawWeaponPerceptions(World& world,Npc& npc,Npc& hero) {
       npc.setPerceptionEnable(PERC_DRAWWEAPON,draw.ptr);
       npc.setPerceptionEnable(PERC_ASSESSPLAYER,assess.ptr);
       npc.setPerceptionEnable(PERC_ASSESSTHREAT,threat.ptr);
-      size_t drawBytecode=0,policyBytecode=0,playerAssessment=0;
+      size_t drawBytecode=0,threatBytecode=0,policyBytecode=0,playerAssessment=0;
       vm.observe_instructions([&](const auto&) {
         drawBytecode+=vm.pc()==drawPc;
+        threatBytecode+=vm.pc()==threatPc;
         policyBytecode+=vm.pc()==policyPc;
         });
       const auto count=vm.add_call_observer([&](const auto& symbol) {
@@ -1648,7 +1650,8 @@ void drawWeaponPerceptions(World& world,Npc& npc,Npc& hero) {
       vm.remove_call_observer(count);
       vm.observe_instructions({});
       require(delivered && playerAssessment==(site.perc==PERC_ASSESSPLAYER ? 1u : 0u) &&
-              drawBytecode==(native || site.perc==PERC_ASSESSTHREAT ? 0u : 1u) && policyBytecode==(native ? 0u : 1u),
+              drawBytecode==(!native && site.perc!=PERC_ASSESSTHREAT ? 1u : 0u) &&
+              threatBytecode==(!native && site.perc==PERC_ASSESSTHREAT ? 1u : 0u) && policyBytecode==(native ? 0u : 1u),
               "draw weapon: draw, player and threat callbacks skip the migrated bytecode only in native mode");
       const auto* next=npc.aiQueueFront();
       require(comment.get_int()==1 && next &&
@@ -1667,6 +1670,104 @@ void drawWeaponPerceptions(World& world,Npc& npc,Npc& hero) {
   comment.set_int(savedComment);
   enabled=wasEnabled;
   std::puts("Draw weapon: direct perception, player assessment and threat match the VM, including the fist rejection");
+  }
+
+void damagePerceptions(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto damage=script.findFunction("B_ASSESSDAMAGE");
+  const auto damagePc=vm.find_symbol_by_name("B_ASSESSDAMAGE")->address();
+  const auto attack=script.findFunction("ZS_ATTACK");
+  const auto warn=script.findFunction("ZS_REACTTODAMAGE");
+  const auto stopZap=script.findFunction("B_STOPSHORTZAPPED");
+  const auto reactReason=script.intSymbol("AR_REACTTODAMAGE",-1);
+  const auto noneReason=script.intSymbol("AR_NONE",-1);
+  const auto crimeAttack=script.intSymbol("CRIME_ATTACK",-1);
+  const auto afterArena=script.intSymbol("AF_AFTER",-1);
+  const auto afterArenaDamage=script.intSymbol("AF_AFTER_PLUS_DAMAGE",-1);
+  auto* lobart=activityNpc(world,"BAU_950_LOBART");
+  require(lobart!=nullptr,"damage perception: the fixture needs a nearby NPC attacker");
+  auto& aivar=npc.handle().aivar;
+  const auto savedAivar=std::to_array(aivar);
+  auto& state=Contract::aiState(npc).funcIni;
+  const auto savedState=state;
+  const auto savedAttitude=npc.attitude();
+  auto* savedTarget=npc.target();
+  const auto savedLobartReason=lobart->handle().aivar[9];
+  lobart->handle().aivar[9]=noneReason;
+  hero.setToFistMode();
+
+  enum class Hit { Friend, SpellEnd, HeroAttack, Bystander, AlreadyFighting };
+  for(const auto hit : {Hit::Friend,Hit::SpellEnd,Hit::HeroAttack,Hit::Bystander,Hit::AlreadyFighting}) {
+    std::vector<std::string> original;
+    for(bool native:{false,true}) {
+      enabled=native;
+      state=hit==Hit::AlreadyFighting ? attack : savedState;
+      const bool warning=hit==Hit::Friend || hit==Hit::SpellEnd;
+      npc.setAttitude(warning ? ATT_FRIENDLY : ATT_NEUTRAL);
+      npc.setTarget(nullptr);
+      npc.clearAiQueue();
+      npc.aiPush(AiQueue::aiWait(173));
+      npc.setPerceptionEnable(PERC_ASSESSDAMAGE,damage.ptr);
+      std::copy(savedAivar.begin(),savedAivar.end(),aivar);
+      aivar[1]=0;
+      aivar[15]=0;
+      aivar[22]=0;
+      aivar[45]=afterArena;
+      aivar[61]=0;
+      aivar[7]=int32_t(lobart->instanceSymbol());
+      script.setSeed(73106);
+      auto random=Contract::random(script);
+      auto& attacker=hit==Hit::Bystander ? *lobart : hero;
+      size_t bytecode=0;
+      vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==damagePc; });
+      const auto deliver=[&] {
+        require(npc.perceptionProcess(attacker,&npc,0,PERC_ASSESSDAMAGE),"damage perception: the stock callback is delivered");
+        };
+      if(hit==Hit::SpellEnd)
+        script.invokeState(&npc,&attacker,nullptr,stopZap);
+      else
+        deliver();
+      if(attacker.isPlayer())
+        random();
+      if(hit==Hit::AlreadyFighting) {
+        require(npc.target()==nullptr && aivar[22]==int32_t(hero.instanceSymbol()),
+                "damage perception: the first hit by the player remembers the source");
+        deliver();
+        random();
+        require(npc.target()==&hero && npc.aiQueueFront() && npc.aiQueueFront()->act==AI_Wait,
+                "damage perception: another hit retargets without replacing the combat queue");
+        } else {
+        const auto* next=npc.aiQueueFront();
+        require(next && next->act==AI_StartState && next->func==(warning ? warn : attack) &&
+                next->target==&attacker && next->victim==(hit==Hit::SpellEnd ? nullptr : &npc) &&
+                next->i0==0 && !npc.hasPerc(PERC_ASSESSDAMAGE),
+                "damage perception: warning and attack replace the queue and clear perceptions");
+        if(!warning)
+          require(aivar[9]==(hit==Hit::HeroAttack ? reactReason : noneReason) &&
+                  aivar[1]==(hit==Hit::HeroAttack ? crimeAttack : 0),
+                  "damage perception: attack reason and crime follow the source");
+        }
+      vm.observe_instructions({});
+      const auto calls=hit==Hit::AlreadyFighting ? 2u : 1u;
+      require(bytecode==(native ? 0u : calls) && Contract::random(script)==random && aivar[45]==afterArenaDamage,
+              "damage perception: both dispatch routes preserve the arena flag and the Beliar weapon draw");
+      auto queue=activityQueue(npc);
+      if(native) require(original==queue,"damage perception: the original and native queues match");
+      else original=std::move(queue);
+      }
+    }
+  hero.closeWeapon(true);
+  lobart->handle().aivar[9]=savedLobartReason;
+  std::copy(savedAivar.begin(),savedAivar.end(),aivar);
+  state=savedState;
+  npc.setAttitude(savedAttitude);
+  npc.setTarget(savedTarget);
+  enabled=wasEnabled;
+  std::puts("Damage perception: stock damage and spell end routes preserve warnings, attack reasons, crime and retargeting");
   }
 
 void quietSoundRooms(Gothic& gothic) {
@@ -1844,6 +1945,7 @@ void quietSoundRooms(Gothic& gothic) {
   prepare(true);
   observePlayerPhases(world,*npc,hero,false);
   drawWeaponPerceptions(world,*npc,hero);
+  damagePerceptions(world,*npc,hero);
   for(bool privateRoom:{false,true}) {
     std::vector<std::string> original;
     for(bool native:{false,true}) {

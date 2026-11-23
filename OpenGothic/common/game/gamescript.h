@@ -352,9 +352,13 @@ class GameScript final : public GameRules {
     bool nativeRoomReactionsEnabled() const;
     bool invokeNativeRoomPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
     void loadNativeRoomReaction();
-    void loadNativeDrawWeaponReaction();
-    bool nativeDrawWeaponEnabled() const;
+    void loadNativeHumanPerceptions();
+    bool nativeHumanPerceptionsEnabled() const;
+    bool invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase);
     int32_t runDrawWeaponReaction();
+    void runThreatReaction();
+    void runDamageReaction();
+    void startHumanWarning(const std::shared_ptr<daedalus::INpc>& self, ScriptFn state);
     int32_t botheredByWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     int32_t runEnterRoomReaction();
     int32_t runExitIfRoomLeft();
@@ -620,6 +624,8 @@ class GameScript final : public GameRules {
     QuietSoundReaction                                          quietSound;
     bool                                                        nativeRoutineProgram = false;
     ScriptFn                                                    drawWeaponCallback;
+    ScriptFn                                                    threatCallback;
+    ScriptFn                                                    damageCallback;
     std::unordered_map<uint32_t,NativeRoutinePhase>              nativeRoutinePhases;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
