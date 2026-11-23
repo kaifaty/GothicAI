@@ -4,6 +4,7 @@
 #include "npcdaymeasurement.h"
 
 #include "baseidentity.h"
+#include "baseimport.h"
 #include "commandline.h"
 #include "game/gamesession.h"
 #include "gothic.h"
@@ -108,6 +109,7 @@ fs::path program(const fs::path& base) {
         "{\"format\":\"gothic-programs\",\"version\":1,\"archives\":[],\"loose_files\":[],\"programs\":{\""+name+"\":\""+sha+
         "\"},\"sources\":["+source+"],\"vfs\":{\"GOTHIC.DAT\":0,\"FIGHT.DAT\":0,\"CAMERA.DAT\":0,\"SFX.DAT\":0,\"PARTICLEFX.DAT\":0,\"VISUALFX.DAT\":0,\"MUSIC.DAT\":0},\"host\":{},\"selections\":[{\"request\":\"GOTHIC.DAT\",\"language\":-1,\"step\":\"vfs_find_request\",\"path\":\"GOTHIC.DAT\",\"source\":0}],\"server\":{\"storygraph_dat\":0}}\n");
   const auto definitions=base/"definitions"/sha;
+  BaseImport::convertFightDefinitions(base);
   NpcSnapshot::writeItems(value,definitions/"items.json");
   NpcSnapshot::writeRoutines(value,definitions/"routines.json");
   NpcSnapshot::writeNpcs(value,definitions/"npcs.json");
