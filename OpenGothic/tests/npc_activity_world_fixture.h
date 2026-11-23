@@ -1,5 +1,21 @@
 // Live world fixture and point activity cases for placed_items_contract.cpp.
 
+#include "storyruntime.h"
+#include "storygraph/exec.h"
+
+namespace {
+
+const WayPoint* activityRow(Npc& npc,size_t init,std::string& name,gtime* start=nullptr) {
+  const WayPoint* point=nullptr;
+  npc.forEachRoutine([&](const Npc::RoutineInfo& row) {
+    if(point==nullptr && row.state.ptr==init && row.waypoint!=nullptr) {
+      point=row.waypoint; name=std::string(row.point);
+      if(start) *start=row.start;
+      }
+    });
+  return point;
+  }
+
 bool activityCandidate(Npc& npc) { return !npc.isPlayer() && npc.isHuman() && !npc.isDead(); }
 
 void loadSavedNpc(Npc& npc,const std::vector<uint8_t>& bytes) {
@@ -1388,6 +1404,155 @@ void loadCampfireGroup(Gothic& gothic,const CampfireSave& save) {
           calls.phase(*sitter,"ZS_SIT_CAMPFIRE")==0,"the whole-game load and seat transfer preserve one owner and never repeat Init");
   std::printf("E3.3 campfire: whole-game load kept edge %s, first step %.2f cm, wait and seat owner; zero repeated Init\n",
               save.edge.c_str(),double(std::hypot(step.x,step.z)));
+  }
+
+void talkPhases(Gothic& gothic) {
+  using Contract=NpcDefinitionContract;
+  auto& world=*gothic.world();
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto* actor=activityNpc(world,"NONE_100_XARDAS");
+  require(actor!=nullptr && world.player()!=nullptr,"talk needs Xardas and the player");
+  auto& npc=*actor;
+  auto& player=*world.player();
+  auto& effects=Contract::activityEventsOn(script);
+  const bool savedEffects=effects;
+  const auto savedNpcQueue=Contract::queue(npc);
+  const auto savedPlayerQueue=Contract::queue(player);
+  const auto savedNpcVars=std::to_array(npc.handle().aivar);
+  const auto savedPlayerVars=std::to_array(player.handle().aivar);
+  const auto savedDeadline=Contract::refusalDeadline(player);
+  const auto savedDialogCheck=gothic.isNpcInDialogFn;
+  auto& talkFix=*vm.find_symbol_by_name("ZSTALKBUGFIX");
+  const auto savedFix=talkFix.get_int();
+  const auto phases=activityPhases(script,"ZS_TALK");
+  const std::array<uint32_t,3> phaseAddresses={
+    vm.find_symbol_by_index(uint32_t(phases.init))->address(),
+    vm.find_symbol_by_index(uint32_t(phases.loop))->address(),
+    vm.find_symbol_by_index(uint32_t(phases.end))->address(),
+    };
+  const auto restore=[&] {
+    Contract::queue(npc)=savedNpcQueue;
+    Contract::queue(player)=savedPlayerQueue;
+    std::copy(savedNpcVars.begin(),savedNpcVars.end(),npc.handle().aivar);
+    std::copy(savedPlayerVars.begin(),savedPlayerVars.end(),player.handle().aivar);
+    Contract::refusalDeadline(player)=savedDeadline;
+    effects=savedEffects;
+    talkFix.set_int(savedFix);
+    gothic.isNpcInDialogFn=savedDialogCheck;
+    };
+  std::vector<std::string> originalNpc,originalPlayer;
+  const auto manager=std::make_shared<std::pair<bool,size_t>>();
+  for(bool native:{false,true}) {
+    if(native && (!savedEffects || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+      continue;
+    restore();
+    effects=native;
+    Contract::queue(npc).clear();
+    Contract::queue(player).clear();
+    *manager={false,0};
+    gothic.isNpcInDialogFn=[manager](const Npc* query) {
+      if(query==nullptr)
+        ++manager->second;
+      return manager->first;
+      };
+
+    size_t bytecode=0;
+    vm.observe_instructions([&](const auto&) {
+      bytecode+=std::ranges::find(phaseAddresses,vm.pc())!=phaseAddresses.end();
+      });
+    const auto invoke=[&](size_t phase) { return script.invokeState(&npc,&player,nullptr,uint32_t(phase)); };
+    npc.handle().aivar[4]=0;
+    player.handle().aivar[4]=1;
+    talkFix.set_int(17);
+    invoke(phases.init);
+    require(Contract::queue(npc).size()==0 && Contract::queue(player).size()==0 &&
+            npc.handle().aivar[4]==0 && talkFix.get_int()==17,
+            "talk Init must leave a player already protected by another dialog alone");
+
+    npc.handle().aivar[3]=1;
+    npc.handle().aivar[5]=0;
+    player.handle().aivar[4]=0;
+    invoke(phases.init);
+    auto queued=Contract::queue(npc);
+    bool opensDialog=false;
+    while(queued.size()>0) {
+      const auto action=queued.pop();
+      opensDialog|=action.act==AI_ProcessInfo && action.target==&player;
+      }
+    require(opensDialog && npc.handle().aivar[4]==1 && player.handle().aivar[4]==1 && talkFix.get_int()==0,
+            "talk Init must protect both participants and queue the player dialog");
+
+    require(invoke(phases.loop)==LOOP_CONTINUE && talkFix.get_int()==1,
+            "talk must wait one Loop before the manager can finish it");
+    manager->first=true;
+    require(invoke(phases.loop)==LOOP_CONTINUE && npc.handle().aivar[4]==1 && player.handle().aivar[4]==1,
+            "an active dialog manager keeps both invincibility flags");
+    manager->first=false;
+    require(invoke(phases.loop)==LOOP_END && npc.handle().aivar[4]==0 && player.handle().aivar[4]==0 &&
+            npc.handle().aivar[3]==0 && npc.handle().aivar[5]==1 && manager->second==3,
+            "talk completion must clear protection and update the talk flags in the final Loop");
+
+    invoke(phases.end);
+    vm.observe_instructions({});
+    require(Contract::refusalDeadline(player)==world.tickCount()+20000 &&
+            bytecode==(native ? 0u : 6u),"talk End must set the player cooldown and all phases use the requested executor");
+    if(native) {
+      require(activityQueue(npc)==originalNpc && activityQueue(player)==originalPlayer,
+              "talk stock and native queues must match for both participants");
+      } else {
+      originalNpc=activityQueue(npc);
+      originalPlayer=activityQueue(player);
+      }
+    }
+  restore();
+  }
+
+auto storyJournalBeforeSave(GameScript& script) {
+  const auto journalStart=script.questLog().questCount();
+  const std::string note="StoryGraph contract note";
+  const std::string mission="StoryGraph contract mission";
+  {
+    using namespace storygraph::ex;
+    const std::string absent="StoryGraph contract absent";
+    storygraph::Program program;
+    const auto step=[&](std::string fn, const std::string& topic, storygraph::ExprP value) {
+      auto& action=program.steps.emplace_back();
+      action.kind=storygraph::Step::Call;
+      action.call=call(std::move(fn),{str(topic),std::move(value)});
+      };
+    step("LOG_ADDENTRY",absent,str("ignored"));
+    step("LOG_SETTOPICSTATUS",absent,integer(int32_t(QuestLog::Status::Obsolete)));
+    step("LOG_CREATETOPIC",absent,integer(-1));
+    step("LOG_CREATETOPIC",note,integer(QuestLog::Note));
+    step("LOG_SETTOPICSTATUS",note,integer(int32_t(QuestLog::Status::Success)));
+    step("LOG_ADDENTRY",note,str("first"));
+    step("LOG_CREATETOPIC",note,integer(QuestLog::Mission));
+    step("LOG_SETTOPICSTATUS",note,integer(256));
+    step("LOG_ADDENTRY",note,str("second"));
+    step("LOG_SETTOPICSTATUS",mission,integer(int32_t(QuestLog::Status::Failed)));
+    step("LOG_CREATETOPIC",mission,integer(QuestLog::Note));
+    auto& vm=script.getVm();
+    size_t journalCalls=0;
+    vm.observe_externals([&](const auto& fn) { journalCalls+=fn.name().starts_with("LOG_"); });
+    StoryRuntime story(nullptr);
+    const auto result=story.interpreter(vm).run(program);
+    vm.observe_externals({});
+    require(result.ok,result.error.c_str());
+    require(journalCalls==0,"live StoryGraph journal effects must bypass VM externals");
+  }
+  const auto requireJournal=[journalStart,note,mission](const QuestLog& journal) {
+    require(journal.questCount()==journalStart+2,"StoryGraph journal must ignore absent and invalid effects");
+    const auto& first=journal.quest(journalStart);
+    const auto& second=journal.quest(journalStart+1);
+    require(first.name==note && first.section==QuestLog::Note && first.status==QuestLog::Status::Success &&
+            first.entry==std::vector<std::string>{"first","second"},
+            "StoryGraph journal must preserve note section, valid status and entry order");
+    require(second.name==mission && second.section==QuestLog::Mission && second.status==QuestLog::Status::Failed &&
+            second.entry.empty(),"a status before creation must create an ordered Mission");
+    };
+  requireJournal(script.questLog());
+  return requireJournal;
   }
 
 void observePlayerPhases(World& world,Npc& npc,Npc& hero,bool seated) {
@@ -2836,3 +3001,5 @@ void remainingRoutineWitnesses(Gothic& gothic) {
     }
   }
   }
+
+}
