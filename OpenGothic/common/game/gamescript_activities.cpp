@@ -56,12 +56,6 @@ void GameScript::loadNativeRoutines() {
     {"ZS_STAND_RANGERMEETING",&GameScript::runSocialRoutine},
     {"ZS_OBSERVEPLAYER",      &GameScript::runObservePlayer},
     {"ZS_CLEARROOM",          &GameScript::runClearRoom},
-    {"ZS_TALK",               &GameScript::runTalk},
-    {"ZS_BANDIT",             &GameScript::runBanditCamp},
-    {"ZS_GOLEMDOWN",          &GameScript::runDormantGolem},
-    {"ZS_DEAD",               &GameScript::runDeadState},
-    {"ZS_UNCONSCIOUS",        &GameScript::runUnconsciousState},
-    {"ZS_HEALSELF",           &GameScript::runHealSelf},
     {"ZS_REACTTODAMAGE",       &GameScript::runHumanReaction},
     {"ZS_REACTTOWEAPON",       &GameScript::runHumanReaction},
     {"ZS_ATTACK",              &GameScript::runHumanAttack},
@@ -72,6 +66,12 @@ void GameScript::loadNativeRoutines() {
     {"ZS_RANSACKBODY",         &GameScript::runHumanPlunder},
     {"ZS_GREENTENTACLE",       &GameScript::runControlSpell},
     {"ZS_SHORTZAPPED",         &GameScript::runControlSpell},
+    {"ZS_DEAD",               &GameScript::runDeadState},
+    {"ZS_UNCONSCIOUS",        &GameScript::runUnconsciousState},
+    {"ZS_HEALSELF",           &GameScript::runHealSelf},
+    {"ZS_BANDIT",             &GameScript::runBanditCamp},
+    {"ZS_GOLEMDOWN",          &GameScript::runDormantGolem},
+    {"ZS_TALK",               &GameScript::runTalk},
     {"ZS_MAGICFLEE",          &GameScript::runFearOrSleepSpell},
     {"ZS_MAGICSLEEP",         &GameScript::runFearOrSleepSpell},
     {"ZS_MAGICFREEZE",        &GameScript::runFreezeOrWhirlwindSpell},
@@ -120,9 +120,41 @@ void GameScript::loadNativeRoutines() {
   const auto enabled=[this] {
     return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
     };
-  using Handle=std::shared_ptr<daedalus::INpc>;
-  vm.override_function("B_MAGICHURTNPC",std::function<void(Handle,Handle,int32_t)>{
-    [this](Handle attacker, Handle target, int32_t damage) { magicHurtNpc(attacker,target,damage); }},enabled);
+  vm.override_function("B_MM_WISPDETECT",std::function<int32_t()>{[this] { return detectWisp(); }},enabled);
+  vm.override_function("B_WISPDETECTEDITEM",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [this](auto& machine) -> daedalus::DaedalusNakedCall {
+      if(auto* mask = detectWispItem())
+        machine.push_reference(mask);
+      else
+        machine.push_int(0);
+      return {};
+      }
+    },enabled);
+  vm.override_function("B_GETWISPDETECTEDITEM",std::function<void()>{[this] { approachWispItem(); }},enabled);
+  vm.override_function("B_ASSIGNDRAGONTALK",std::function<void(NpcHandle)>{[this](const NpcHandle& dragon) {
+    assignDragonTalk(dragon);
+    }},enabled);
+  vm.override_function("C_WANTTOEAT",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [this](auto&) -> daedalus::DaedalusNakedCall {
+      pushMonsterWantsToEat();
+      return {};
+      }
+    },enabled);
+  vm.override_function("C_NPCISMONSTERMAGE",std::function<int32_t(NpcHandle)>{
+    [this](NpcHandle npc) { return int32_t(isMonsterMage(npc)); }},enabled);
+  vm.override_function("PERCEPTION_SET_MONSTER_RTN",std::function<void()>{[this] {
+    if(auto* npc = findNpc(vm.global_self()))
+      enableMonsterRoutinePerceptions(*npc);
+    }},enabled);
+  vm.override_function("B_MAGICHURTNPC",std::function<void(NpcHandle,NpcHandle,int32_t)>{
+    [this](NpcHandle attacker, NpcHandle target, int32_t damage) { magicHurtNpc(attacker,target,damage); }},enabled);
+  vm.override_function("B_AWAKE_STONEGUARDIAN",std::function<void(NpcHandle)>{[this](NpcHandle actor) {
+    awakenStoneGuardian(actor);
+    }},enabled);
+  vm.override_function("B_REMOVEGHOST",std::function<int32_t()>{[this] {
+    removeFinishedGhosts();
+    return 0; // The stock function declares an integer and returns without a value.
+    }},enabled);
   vm.override_function("B_GIVEPLAYERXP",std::function<void(int32_t)>{
     [this](int32_t amount) { givePlayerXp(amount); }},enabled);
   loadNativeQuestLog(enabled);
@@ -201,6 +233,22 @@ bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& s
   return true;
   }
 
+bool GameScript::invokeNativeRoutineReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol,
+                                               NpcActivityProbe::Phase& phase) {
+  const std::string_view name = symbol.name();
+  if((name!="B_GOLEMRISE" && name!="B_ASSESSSLEEPTALK" && name!="B_EVENT_PORTAL_EARTHQUAKE") ||
+     !nativeRoomReactionsEnabled())
+    return false;
+  phase.fromRecord();
+  if(name=="B_GOLEMRISE")
+    wakeDormantGolem(npc);
+  else if(name=="B_ASSESSSLEEPTALK")
+    assessSleepTalk(npc);
+  else
+    runPortalEarthquake(npc);
+  return true;
+  }
+
 bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol,
                                               NpcActivityProbe::Phase& phase) {
   const std::string_view name = symbol.name();
@@ -240,7 +288,7 @@ bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::Daedalus
       }
     else if(spell==id("SPL_ICECUBE") || spell==id("SPL_ICEWAVE")) {
       npc.clearAiQueue();
-      clearNpcPerceptions(self);
+      clearPerceptions(self);
       ai_startstate(self,int(findFunction("ZS_MAGICFREEZE").ptr),0,"");
       }
     }
@@ -251,22 +299,6 @@ bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::Daedalus
     if(matches)
       npc.setStateTime(0);
     }
-  return true;
-  }
-
-bool GameScript::invokeNativeRoutineReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol,
-                                               NpcActivityProbe::Phase& phase) {
-  const std::string_view name = symbol.name();
-  if((name!="B_GOLEMRISE" && name!="B_ASSESSSLEEPTALK" && name!="B_EVENT_PORTAL_EARTHQUAKE") ||
-     !nativeRoomReactionsEnabled())
-    return false;
-  phase.fromRecord();
-  if(name=="B_GOLEMRISE")
-    wakeDormantGolem(npc);
-  else if(name=="B_ASSESSSLEEPTALK")
-    assessSleepTalk(npc);
-  else
-    runPortalEarthquake(npc);
   return true;
   }
 

@@ -124,6 +124,258 @@ void shrinkSpellCast(World& world) {
   std::puts("Shrink cast: stock mana, target eligibility, perceptions, queued state and saved locals match");
   }
 
+void stockSpellSummons(World& world) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  auto& hero=*world.player();
+  auto& armyLevel=*script.findSymbol("SPELL_CAST_ARMYOFDARKNESS.SPELLLEVEL");
+  auto& heroSymbol=*script.findSymbol("PC_HERO");
+  const auto previousEvents=events;
+  const auto previousLevel=armyLevel.get_int();
+  const auto previousHero=heroSymbol.get_instance();
+  const auto* point=world.findWayPoint("NW_FARM4_BALTHASAR");
+  auto& perceptions=Contract::passivePerceptions(world);
+  const auto passiveCount=perceptions.size();
+  require(point!=nullptr,"spell summons: the fixture needs a stock spawn point");
+  const struct Spell {
+    const char* item;
+    const char* cast;
+    const char* creature;
+    int32_t cost, selection;
+    uint32_t count;
+    bool player;
+    } spells[] = {
+    {"ITSC_SUMWOLF", "SPELL_CAST_SUMMONWOLF", "SUMMONED_WOLF",5,1,1,true},
+    {"ITRU_SUMSKEL", "SPELL_CAST_SUMMONSKELETON", "SKELETON",60,1,1,false},
+    {"ITRU_SUMMONGUARDIAN", "SPELL_CAST_SUMMONGUARDIAN", "STONEGUARDIAN",60,2,1,false},
+    {"ITSC_ARMYOFDARKNESS", "SPELL_CAST_ARMYOFDARKNESS", "SUMMONED_SKELETON",5,1,6,true},
+    };
+  for(const auto& row:spells) {
+    auto& itemSymbol=*script.findSymbol(row.item);
+    auto& creature=*script.findSymbol(row.creature);
+    const auto oldItem=itemSymbol.get_instance(), oldCreature=creature.get_instance();
+    const auto oldCurrent=vm.global_item()->get_instance();
+    const auto castPc=script.findSymbol(row.cast)->address();
+    std::vector<Tempest::Vec3> stock;
+    for(bool native:{false,true}) {
+      auto* caster=world.addNpc(heroSymbol.index(),point->position());
+      require(caster!=nullptr,"spell summons: the stock caster must spawn");
+      caster->setProcessPolicy(row.player ? NpcProcessPolicy::Player : NpcProcessPolicy::AiNormal);
+      require(caster->isPlayer()==row.player,"spell summons: the caster must have the intended engine role");
+      auto* item=caster->addItem(itemSymbol.index(),1);
+      require(item && caster->drawSpell(item->spellId()) && caster->activeWeapon()==item,
+              "spell summons: the actual rune or scroll must be active");
+      events=native;
+      caster->handle().attribute[ATR_MANA]=3;
+      caster->handle().aivar[20]=9;
+      armyLevel.set_int(71);
+      const auto before=world.npcCount();
+      const auto callSelf=vm.global_self()->get_instance(), callOther=vm.global_other()->get_instance(), callGi=vm.unsafe_get_gi();
+      size_t castEntries=0;
+      vm.observe_instructions([&](const auto&) { castEntries+=vm.pc()==castPc; });
+      vm.push_int(0x12345678);
+      script.invokeSpell(*caster,row.player ? nullptr : &hero,*item);
+      const auto marker=vm.pop_int();
+      vm.observe_instructions({});
+      require(castEntries==size_t(!native) && world.npcCount()==before+row.count && marker==0x12345678 &&
+              caster->attribute(ATR_MANA)==3-row.cost && caster->handle().aivar[20]==9+row.selection &&
+              armyLevel.get_int()==(row.count==6 ? 0 : 71),
+              "spell summons: cast keeps the original mana, selection, level and number of spawns");
+      require(vm.global_self()->get_instance()==callSelf && vm.global_other()->get_instance()==callOther && vm.unsafe_get_gi()==callGi,
+              "spell summons: the callback restores its caller's actor context");
+      for(uint32_t i=0;i<row.count;++i) {
+        auto* spawned=world.npcById(before);
+        require(spawned && spawned->instanceSymbol()==creature.index(),"spell summons: the engine spawns the stock creature for this caster");
+        if(native)
+          require(spawned->position()==stock[i],"spell summons: each creature is placed at the stock position in the original order");
+        else
+          stock.push_back(spawned->position());
+        world.removeNpc(*spawned);
+        }
+      world.removeNpc(*caster);
+      heroSymbol.set_instance(previousHero);
+      creature.set_instance(oldCreature);
+      itemSymbol.set_instance(oldItem);
+      vm.global_item()->set_instance(oldCurrent);
+      perceptions.resize(passiveCount);
+      }
+    }
+  events=previousEvents;
+  armyLevel.set_int(previousLevel);
+  std::puts("Spell summons: hero, NPC, selection and Army of Darkness match the VM");
+  }
+
+void stockTransformMana(World& world, const WayPoint& point) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  auto* hero=script.findSymbol("PC_HERO");
+  auto* invested=script.findSymbol("SPELL_PROCESSMANA.MANAINVESTED");
+  auto* active=script.findSymbol("SPELL_PROCESSMANA.ACTIVESPELL");
+  const auto oldHero=hero->get_instance();
+  const auto oldInvested=invested->get_int(), oldActive=active->get_int();
+  const struct Transform { const char* item; const char* local; const char* form; } cases[] = {
+    {"ITSC_TRFSHEEP","SPELL_LOGIC_TRFSHEEP.MANAINVESTED","SHEEP"},
+    {"ITSC_TRFDRAGONSNAPPER","SPELL_LOGIC_TRFDRAGONSNAPPER.MANAINVESTED","DRAGONSNAPPER"},
+    };
+  for(const auto& row:cases) {
+    auto* itemSymbol=script.findSymbol(row.item);
+    auto* local=script.findSymbol(row.local);
+    const auto oldItem=itemSymbol->get_instance();
+    const auto oldLocal=local->get_int();
+    auto* caster=world.addNpc(hero->index(),point.position());
+    require(caster,"transform mana: the test caster must spawn");
+    auto* item=caster->addItem(itemSymbol->index(),1);
+    require(item && caster->drawSpell(item->spellId()) && caster->activeWeapon()==item,
+            "transform mana: the original scroll must be active");
+    const auto itemHandle=std::static_pointer_cast<daedalus::IItem>(item->handlePtr());
+    const auto form=int32_t(script.findSymbolIndex(row.form));
+    for(bool native:{false,true}) {
+      events=native;
+      for(int32_t mana:{4,5,10}) {
+        caster->handle().attribute[ATR_MANA]=mana;
+        caster->setActiveSpellInfo(71);
+        itemSymbol->set_instance(nullptr);
+        invested->set_int(-1);
+        active->set_int(-1);
+        local->set_int(-1);
+        size_t instructions=0;
+        vm.observe_instructions([&](const auto&) { ++instructions; });
+        const auto result=script.invokeMana(*caster,nullptr,17);
+        vm.observe_instructions({});
+        const bool allowed=mana>=5;
+        require(result==(allowed ? SPL_SENDCAST : SPL_SENDSTOP) && (instructions==0)==native &&
+                caster->attribute(ATR_MANA)==(allowed ? mana-10 : mana) &&
+                NpcDefinitionContract::activeSpellInfo(*caster)==(allowed ? form : 71),
+                "transform mana: the scroll threshold, full debit and written form match the VM");
+        require(invested->get_int()==17 && active->get_int()==item->spellId() && local->get_int()==17 &&
+                itemSymbol->get_instance()==itemHandle,"transform mana: active item and old VM slots are published on both paths");
+        }
+      }
+    world.removeNpc(*caster);
+    itemSymbol->set_instance(oldItem);
+    local->set_int(oldLocal);
+    }
+  hero->set_instance(oldHero);
+  invested->set_int(oldInvested);
+  active->set_int(oldActive);
+  events=previousEvents;
+  std::puts("Transform mana: the original scroll threshold, debit and target form match both executors");
+  }
+
+void stockSpecialSpellMana(World& world) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  auto* hero=script.findSymbol("PC_HERO");
+  auto* witness=script.findSymbol("BAU_951_HILDA");
+  const auto oldHero=hero->get_instance(),oldWitness=witness->get_instance();
+  const auto oldItem=vm.global_item()->get_instance();
+  auto& invested=*script.findSymbol("SPELL_PROCESSMANA.MANAINVESTED");
+  auto& activeSpell=*script.findSymbol("SPELL_PROCESSMANA.ACTIVESPELL");
+  auto& bodyState=*script.findSymbol("C_BODYSTATECONTAINS.BODYSTATE");
+  auto& charmTest=*script.findSymbol("CHARM_TEST");
+  auto& charmQuest=*script.findSymbol("MIS_IGNAZ_CHARM");
+  const auto oldInvested=invested.get_int(),oldSpell=activeSpell.get_int(),oldBody=bodyState.get_int();
+  const auto oldCharm=charmTest.get_int(),oldQuest=charmQuest.get_int();
+  std::vector<std::pair<daedalus::DaedalusSymbol*,std::shared_ptr<daedalus::DaedalusInstance>>> savedActors;
+  for(std::string_view name:{"B_CLEARPERCEPTIONS.SLF","C_NPCISDOWN.SLF","C_BODYSTATECONTAINS.SLF",
+                            "B_DELETEPETZCRIME.SLF","C_NPCBELONGSTOOLDCAMP.SLF","C_NPCBELONGSTOCITY.SLF",
+                            "C_NPCBELONGSTOMONASTERY.SLF","C_NPCBELONGSTOFARM.SLF","C_NPCBELONGSTOBL.SLF"}) {
+    auto* symbol=script.findSymbol(name);
+    savedActors.emplace_back(symbol,symbol->get_instance());
+    }
+  auto* point=world.findWayPoint("NW_FARM4_BALTHASAR");
+  require(point!=nullptr,"special mana: need a live stock spawn point");
+  auto* target=world.addNpc(witness->index(),point->position());
+  require(target!=nullptr,"special mana: the spell target must spawn");
+  target->handle().guild=GIL_OUT;
+  target->handle().attribute[ATR_HITPOINTS]=100;
+  auto& crime=target->handle().aivar[1];
+  auto& fight=target->handle().aivar[0];
+
+  const struct Rule {
+    const char* item;
+    const char* local;
+    int32_t mana, entering, result, remaining;
+    bool sleep=false, charm=false;
+    } cases[] = {
+    {"ITSC_SLEEP",     "SPELL_LOGIC_SLEEP.MANAINVESTED",     5,17,SPL_SENDCAST,      0,true},
+    {"ITSC_CHARM",     "SPELL_LOGIC_CHARM.MANAINVESTED",     5,17,SPL_SENDCAST,      5,false,true},
+    {"ITRU_SWARM",     "SPELL_LOGIC_SWARM.MANAINVESTED",    20,17,SPL_SENDCAST,      0},
+    {"ITRU_SUCKENERGY","SPELL_LOGIC_SUCKENERGY.MANAINVESTED", 0,0,SPL_RECEIVEINVEST,0},
+    {"ITRU_SUCKENERGY","SPELL_LOGIC_SUCKENERGY.MANAINVESTED",29,1,SPL_SENDSTOP,     29},
+    {"ITRU_SUCKENERGY","SPELL_LOGIC_SUCKENERGY.MANAINVESTED",30,1,SPL_SENDCAST,     30},
+    };
+  auto* dispatcher=script.findSymbol("SPELL_PROCESSMANA");
+  for(const auto& row:cases) {
+    auto& itemSymbol=*script.findSymbol(row.item);
+    auto& local=*script.findSymbol(row.local);
+    const auto oldSymbol=itemSymbol.get_instance();
+    const auto oldLocal=local.get_int();
+    auto* caster=world.addNpc(hero->index(),point->position());
+    require(caster!=nullptr,"special mana: the stock caster must spawn");
+    auto* item=caster->addItem(itemSymbol.index(),1);
+    require(item && caster->drawSpell(item->spellId()) && caster->activeWeapon()==item,
+            "special mana: the original scroll or rune must be active");
+    for(bool native:{false,true}) {
+      events=native;
+      target->clearAiQueue();
+      if(row.sleep)
+        target->aiPush(AiQueue::aiWait(1));
+      crime=script.findSymbol("CRIME_ATTACK")->get_int();
+      fight=19;
+      charmQuest.set_int(script.findSymbol("LOG_RUNNING")->get_int());
+      charmTest.set_int(0);
+      caster->handle().attribute[ATR_MANA]=row.mana;
+      itemSymbol.set_instance(nullptr);
+      invested.set_int(-1);
+      activeSpell.set_int(-1);
+      local.set_int(-1);
+      size_t entries=0;
+      vm.observe_instructions([&](const auto&) { entries+=vm.pc()==dispatcher->address(); });
+      vm.push_int(0x12345678);
+      const auto result=script.invokeMana(*caster,target,row.entering);
+      const auto stack=vm.pop_int();
+      vm.observe_instructions({});
+      require(result==row.result && entries==size_t(!native) && stack==0x12345678 &&
+              caster->attribute(ATR_MANA)==row.remaining,"special mana: thresholds and debit must match the VM");
+      require(invested.get_int()==row.entering && activeSpell.get_int()==item->spellId() && local.get_int()==row.entering &&
+              itemSymbol.get_instance()==std::static_pointer_cast<daedalus::IItem>(item->handlePtr()),
+              "special mana: publish the active spell item and retain all three legacy slots");
+      if(row.sleep) {
+        const auto* action=target->aiQueueFront();
+        require(action && action->act==AI_StartState && action->func==script.findFunction("ZS_MAGICSLEEP") &&
+                action->target==target && action->i0==0 && action->s0.empty() && activityQueue(*target).size()==1,
+                "special mana: Sleep must replace the target's queue with the original state command");
+        }
+      if(row.charm)
+        require(crime==0 && fight==0 && charmTest.get_int()==1 && activityQueue(*target).empty(),
+                "special mana: Charm must clear the crime and fight while setting Ignaz's quest flag");
+      }
+    world.removeNpc(*caster);
+    itemSymbol.set_instance(oldSymbol);
+    local.set_int(oldLocal);
+    }
+  world.removeNpc(*target);
+  hero->set_instance(oldHero);
+  witness->set_instance(oldWitness);
+  vm.global_item()->set_instance(oldItem);
+  for(const auto& [symbol,oldActor]:savedActors)
+    symbol->set_instance(oldActor);
+  invested.set_int(oldInvested);
+  activeSpell.set_int(oldSpell);
+  bodyState.set_int(oldBody);
+  charmTest.set_int(oldCharm);
+  charmQuest.set_int(oldQuest);
+  events=previousEvents;
+  std::puts("Special spell mana: sleep, charm, swarm and suck energy match both executors");
+  }
+
 void stockSpellCastAccounting(World& world) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -136,7 +388,6 @@ void stockSpellCastAccounting(World& world) {
   const auto oldItem=vm.global_item()->get_instance();
   const auto targetHp=target.attribute(ATR_HITPOINTS);
   auto& level=*script.findSymbol("SPELL_CAST_ZAP.SPELLLEVEL");
-  const auto oldLevel=level.get_int();
   auto& invested=*script.findSymbol("SPELL_PROCESSMANA.MANAINVESTED");
   auto& activeSpell=*script.findSymbol("SPELL_PROCESSMANA.ACTIVESPELL");
   const auto oldInvested=invested.get_int(),oldActiveSpell=activeSpell.get_int();
@@ -145,18 +396,30 @@ void stockSpellCastAccounting(World& world) {
 
   const struct Cast {
     const char* item;
-    int32_t cost;
+    int32_t debit;
     const char* admission=nullptr;
-    bool leveled=false;
+    const char* levelParameter=nullptr;
+    int32_t mana=3;
+    int32_t healing=0;
+    bool fear=false;
+    int32_t chargeStep=0;
     } cases[] = {
     {"ITSC_ICEBOLT",5,"SPELL_LOGIC_ICEBOLT.MANAINVESTED"},
     {"ITRU_ICEBOLT",10,"SPELL_LOGIC_ICEBOLT.MANAINVESTED"},
-    {"ITSC_ZAP",5,"SPELL_LOGIC_ZAP.MANAINVESTED",true},
+    {"ITSC_ZAP",5,"SPELL_LOGIC_ZAP.MANAINVESTED","SPELL_CAST_ZAP.SPELLLEVEL"},
     {"ITSC_SLEEP",0},
+    {"ITSC_CHARGEFIREBALL",3,"SPELL_LOGIC_CHARGEFIREBALL.MANAINVESTED","SPELL_CAST_CHARGEFIREBALL.SPELLLEVEL",3,0,false,40},
+    {"ITRU_WINDFIST",20,"SPELL_LOGIC_WINDFIST.MANAINVESTED","SPELL_CAST_WINDFIST.SPELLLEVEL",80,0,false,20},
+    {"ITSC_FEAR",5,nullptr,nullptr,3,0,true},
+    {"ITRU_SKULL",70,nullptr,nullptr,70},
+    {"ITSC_MEDIUMHEAL",5,nullptr,nullptr,3,400},
+    {"ITRU_PALFULLHEAL",50,nullptr,nullptr,3,800},
     };
   for(const auto& row:cases) {
     auto& symbol=*script.findSymbol(row.item);
     const auto savedItem=symbol.get_instance();
+    auto& castLevel=row.levelParameter ? *script.findSymbol(row.levelParameter) : level;
+    const auto oldCastLevel=castLevel.get_int();
     for(bool native:{false,true}) {
       auto* caster=world.addNpc(hero->index(),point->position());
       require(caster!=nullptr,"cast accounting: the stock caster must spawn");
@@ -165,11 +428,45 @@ void stockSpellCastAccounting(World& world) {
               "cast accounting: the actual test item must be active");
       events=native;
       size_t instructions=0;
-      if(row.admission!=nullptr) {
+      if(row.chargeStep!=0) {
+        auto& local=*script.findSymbol(row.admission);
+        const auto oldLocal=local.get_int();
+        auto& chargeLevel=caster->handle().aivar[88];
+        const auto oldChargeLevel=chargeLevel;
+        const auto step=row.chargeStep;
+        const struct Charge { int32_t mana, amount, level, manaAfter, levelAfter; SpellCode code; } charges[] = {
+          {step-1,step+1,2,step-1,2,SPL_DONTINVEST},
+          {step,step,4,step,1,SPL_STATUS_CANINVEST_NO_MANADEC},
+          {step,step+1,1,0,2,SPL_NEXTLEVEL},
+          {step,3*step,3,step,3,SPL_STATUS_CANINVEST_NO_MANADEC},
+          {step,3*step+1,3,0,4,SPL_NEXTLEVEL},
+          {step,3*step+1,4,step,4,SPL_DONTINVEST},
+          };
+        for(const auto& charge:charges) {
+          caster->handle().attribute[ATR_MANA]=charge.mana;
+          chargeLevel=charge.level;
+          symbol.set_instance(nullptr);
+          invested.set_int(-1);
+          activeSpell.set_int(-1);
+          local.set_int(-1);
+          instructions=0;
+          vm.observe_instructions([&](const auto&) { ++instructions; });
+          const auto result=script.invokeMana(*caster,&target,charge.amount);
+          vm.observe_instructions({});
+          require(result==charge.code && (instructions==0)==native &&
+                  caster->attribute(ATR_MANA)==charge.manaAfter && chargeLevel==charge.levelAfter &&
+                  invested.get_int()==charge.amount && activeSpell.get_int()==item->spellId() && local.get_int()==charge.amount &&
+                  symbol.get_instance()==std::static_pointer_cast<daedalus::IItem>(item->handlePtr()),
+                  "spell charge: preserve boundaries, debit, level, saved locals and the active item");
+          }
+        chargeLevel=oldChargeLevel;
+        local.set_int(oldLocal);
+        }
+      else if(row.admission!=nullptr) {
         auto& local=*script.findSymbol(row.admission);
         const auto oldLocal=local.get_int();
         for(bool enough:{false,true}) {
-          const auto available=row.cost-int32_t(!enough);
+          const auto available=row.debit-int32_t(!enough);
           caster->handle().attribute[ATR_MANA]=available;
           symbol.set_instance(nullptr);
           invested.set_int(-1);
@@ -187,36 +484,133 @@ void stockSpellCastAccounting(World& world) {
           }
         local.set_int(oldLocal);
         }
-      caster->handle().attribute[ATR_MANA]=3;
+      caster->handle().attribute[ATR_MANA]=row.mana;
+      caster->handle().attribute[ATR_HITPOINTSMAX]=1000;
+      caster->handle().attribute[ATR_HITPOINTS]=100;
       caster->handle().aivar[20]=9;
+      caster->clearAiQueue();
       const auto casterQueue=activityQueue(*caster),targetQueue=activityQueue(target);
       const auto callSelf=vm.global_self()->get_instance(),callOther=vm.global_other()->get_instance();
       const auto callItem=vm.global_item()->get_instance(),callGi=vm.unsafe_get_gi();
-      level.set_int(71);
+      castLevel.set_int(71);
+      if(row.healing!=0)
+        symbol.set_instance(nullptr);
       instructions=0;
       vm.observe_instructions([&](const auto&) { ++instructions; });
       vm.push_int(0x12345678);
       script.invokeSpell(*caster,&target,*item);
       const auto stack=vm.pop_int();
       vm.observe_instructions({});
-      require(stack==0x12345678 && (instructions==0)==native && caster->attribute(ATR_MANA)==3-row.cost &&
-              caster->handle().aivar[20]==10 && level.get_int()==(row.leveled ? 0 : 71),
+      require(stack==0x12345678 && (instructions==0)==native && caster->attribute(ATR_MANA)==row.mana-row.debit &&
+              caster->handle().aivar[20]==(row.healing!=0 ? 9 : 10) && castLevel.get_int()==(row.levelParameter ? 0 : 71),
               "cast accounting: selected executor keeps the raw mana debit, counter and optional level");
+      require(caster->attribute(ATR_HITPOINTS)==100+row.healing &&
+              (row.healing==0 || symbol.get_instance()==std::static_pointer_cast<daedalus::IItem>(item->handlePtr())),
+              "cast accounting: self-healing changes health and publishes the active item");
       require(vm.global_self()->get_instance()==callSelf && vm.global_other()->get_instance()==callOther &&
               vm.global_item()->get_instance()==callItem && vm.unsafe_get_gi()==callGi &&
-              target.attribute(ATR_HITPOINTS)==targetHp && activityQueue(*caster)==casterQueue && activityQueue(target)==targetQueue,
-              "cast accounting: the numeric callback preserves the actor context and queues");
+              target.attribute(ATR_HITPOINTS)==targetHp && activityQueue(target)==targetQueue,
+              "cast accounting: the callback preserves the actor context and the target queue");
+      const auto* action=caster->aiQueueFront();
+      if(row.fear)
+        require(action && action->act==AI_SetNpcsToState && action->func==script.findFunction("ZS_MAGICFLEE") && action->i0==1000 &&
+                activityQueue(*caster).size()==1,"cast accounting: fear queues the original area state and radius");
+      else
+        require(activityQueue(*caster)==casterQueue,"cast accounting: numerical casts leave the caster queue alone");
       world.removeNpc(*caster);
       hero->set_instance(oldHero);
       symbol.set_instance(savedItem);
       vm.global_item()->set_instance(oldItem);
       }
+    castLevel.set_int(oldCastLevel);
     }
-  level.set_int(oldLevel);
   invested.set_int(oldInvested);
   activeSpell.set_int(oldActiveSpell);
   events=previousEvents;
   std::puts("Spell accounting: mana admission, rune, scroll, level and counter-only callbacks match both executors");
+  stockTransformMana(world,*point);
+  stockSpellSummons(world);
+  stockSpecialSpellMana(world);
+  }
+
+void stockSpellCollisionParity(World& world) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  const bool priorEvents=events;
+  auto& hero=*world.player();
+  auto* sheep=script.findSymbol("SHEEP");
+  auto* collision=script.findSymbol("C_CANNPCCOLLIDEWITHSPELL");
+  auto& spellType=*script.findSymbol("C_CANNPCCOLLIDEWITHSPELL.SPELLTYPE");
+  const auto* point=world.findWayPoint("NW_FARM4_BALTHASAR");
+  require(sheep && collision && point,"spell collision: the stock scene must provide the actor and predicate");
+  const auto priorSheep=sheep->get_instance();
+  const auto priorSpellType=spellType.get_int();
+  const auto priorHero=vm.global_hero()->get_instance();
+  const auto priorHeroGuild=hero.handle().guild;
+  const auto priorSelf=vm.global_self()->get_instance(), priorOther=vm.global_other()->get_instance();
+  const auto priorGi=vm.unsafe_get_gi();
+  auto& bodySlot=*script.findSymbol("C_BODYSTATECONTAINS.SLF");
+  auto& bodyState=*script.findSymbol("C_BODYSTATECONTAINS.BODYSTATE");
+  auto& downSlot=*script.findSymbol("C_NPCISDOWN.SLF");
+  auto& undeadSlot=*script.findSymbol("C_NPCISUNDEAD.SLF");
+  const auto priorBodySlot=bodySlot.get_instance(), priorDown=downSlot.get_instance(), priorUndead=undeadSlot.get_instance();
+  const auto priorBodyState=bodyState.get_int();
+  auto* actor=world.addNpc(sheep->index(),point->position());
+  require(actor && !actor->isDown(),"spell collision: a live actor must exist");
+  const auto target=std::static_pointer_cast<daedalus::INpc>(actor->handlePtr());
+  vm.global_hero()->set_instance(std::static_pointer_cast<daedalus::INpc>(hero.handlePtr()));
+  for(bool native:{false,true}) {
+    events=native;
+    const auto check=[&](Npc& victim, Npc& caster, std::string_view spell, CollideMask expected) {
+      const auto id=script.intSymbol(spell,-1);
+      const auto callSelf=vm.global_self()->get_instance(), callOther=vm.global_other()->get_instance();
+      const auto callGi=vm.unsafe_get_gi();
+      size_t entries=0;
+      vm.observe_instructions([&](const auto&) { entries+=vm.pc()==collision->address(); });
+      vm.push_int(0x12345678);
+      const auto result=script.canNpcCollideWithSpell(victim,&caster,id);
+      const auto marker=vm.pop_int();
+      vm.observe_instructions({});
+      require(result==expected && entries==size_t(!native) && spellType.get_int()==id && marker==0x12345678,
+              "spell collision: the public entry preserves the mask, original parameter and VM stack");
+      require(vm.global_self()->get_instance()==callSelf && vm.global_other()->get_instance()==callOther && vm.unsafe_get_gi()==callGi,
+              "spell collision: the public entry restores the two actor aliases and VM context");
+      };
+    target->guild=GIL_FIREGOLEM;
+    target->aivar[43]=0;
+    check(*actor,hero,"SPL_ICELANCE",COLL_APPLYDOUBLEDAMAGE);
+    require(bodySlot.get_instance()==target && downSlot.get_instance()==target && bodyState.get_int()==BS_SWIM,
+            "spell collision: the original water and down checks still update their saved arguments");
+    check(*actor,hero,"SPL_FIREBOLT",COLL_APPLYHALVEDAMAGE);
+    check(*actor,hero,"SPL_ZAP",CollideMask(COLL_APPLYDAMAGE | COLL_DONTKILL));
+    target->guild=GIL_SKELETON;
+    target->attribute[ATR_HITPOINTSMAX]=1000;
+    check(*actor,hero,"SPL_DESTROYUNDEAD",COLL_DOEVERYTHING);
+    target->attribute[ATR_HITPOINTSMAX]=1001;
+    check(*actor,hero,"SPL_DESTROYUNDEAD",COLL_DONOTHING);
+    require(undeadSlot.get_instance()==target,"spell collision: a rejected undead target still updates the original argument");
+    target->guild=GIL_DMT;
+    hero.handle().guild=GIL_DMT;
+    check(*actor,hero,"SPL_FIRESTORM",COLL_DONOTHING);
+    hero.handle().guild=GIL_NONE;
+    check(hero,*actor,"SPL_LIGHTNINGFLASH",COLL_APPLYHALVEDAMAGE);
+    hero.handle().guild=priorHeroGuild;
+    }
+  world.removeNpc(*actor);
+  sheep->set_instance(priorSheep);
+  vm.global_hero()->set_instance(priorHero);
+  vm.global_self()->set_instance(priorSelf);
+  vm.global_other()->set_instance(priorOther);
+  vm.unsafe_set_gi(priorGi);
+  spellType.set_int(priorSpellType);
+  bodySlot.set_instance(priorBodySlot);
+  bodyState.set_int(priorBodyState);
+  downSlot.set_instance(priorDown);
+  undeadSlot.set_instance(priorUndead);
+  events=priorEvents;
+  std::puts("Spell collision: masks, saved arguments and world entry match the VM");
   }
 
 void shrinkSpellStates(World& world) {
@@ -504,12 +898,9 @@ std::vector<std::vector<std::string>> spellVictimPhasesWorld(Gothic& gothic, boo
     hero.setPosition(victim.position()+Tempest::Vec3(400,0,0));
     require(victim.startState(state,"",gtime::endOfTime(),true),"spell victim: start the actual AI state");
     victim.setOther(&caster);
-    ActivityStream stream(world,victim);
-    // This fixture counts phases. Native damage consumes external returns before the next VM instruction.
-    script.getVm().observe_externals({});
-    script.getVm().observe_instructions({});
+    ActivityStream stream(world,victim,ActivityStream::Externals::Skip);
     Contract::tickRoutine(victim);
-    require(Contract::perceptionCallback(victim,PERC_ASSESSMAGIC)==restart && victim.handle().aivar[row.marker]==int(drain),
+    require(Contract::perception(victim,PERC_ASSESSMAGIC)==restart && victim.handle().aivar[row.marker]==int(drain),
             "spell victim: Init binds the matching restart and seeds the tick marker");
     if(drain)
       require(script.findSymbol("TEMP_SUCKENERGY_DISTTOPLAYER")->get_int()==400,
@@ -555,7 +946,7 @@ std::vector<std::vector<std::string>> spellVictimPhasesWorld(Gothic& gothic, boo
     Contract::tickRoutine(victim);
     auto queue=Contract::queue(victim);
     require(!victim.isInState(state) && victim.tempAttitude()==ATT_HOSTILE && queue.size()==1 && queue.pop().act==AI_StandUp &&
-            Contract::perceptionCallback(victim,PERC_ASSESSMAGIC)==script.findFunction("B_ASSESSMAGIC") &&
+            Contract::perception(victim,PERC_ASSESSMAGIC)==script.findFunction("B_ASSESSMAGIC") &&
             stream.records==(events ? 8u : 0u),
             "spell victim: timeout or exact drain distance ends the state through the selected executor");
     actions.push_back(activityQueue(victim));
@@ -910,6 +1301,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
         transformNpcRecords(*gothic.world());
       initializePerceptionRanges(*gothic.world());
       bindNpcGlobals(*gothic.world());
+      initializeMonsterAttitudes(*gothic.world());
       }
     const auto save=pointActivitiesWorld(gothic,events);
     itemRoutinePhasesWorld(gothic,events);
@@ -918,6 +1310,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     if(stockMagic) {
       shrinkSpellStates(*gothic.world());
       stockSpellCastAccounting(*gothic.world());
+      stockSpellCollisionParity(*gothic.world());
       magicHurtStates(*gothic.world());
       }
     ActivityEventsWorld paired(gothic);

@@ -3,6 +3,7 @@
 #include "daedalus/vm.h"
 #include "daedalus/classes.h"
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <set>
@@ -74,6 +75,7 @@ class GameScript final : public GameRules {
     bool         hasSymbolName(std::string_view fn);
     void         runStartup(std::string_view fn);
     void         runWorldInit(std::string_view fn);
+    void         invokeWorldTrigger(std::string_view fn);
 
     auto         createNpc(Npc& owner, size_t instance, std::string_view waypoint, uint32_t& kind) -> std::shared_ptr<NpcRecord> override;
     uint32_t     initializeInstanceNpc(const std::shared_ptr<NpcRecord>& npc, size_t instance) override;
@@ -102,6 +104,7 @@ class GameScript final : public GameRules {
     void         loadPerc(Serialize& fin);
 
     inline auto& getVm() { return vm; }
+    bool         usesVerifiedNpcProgram() const { return nativeRoutineProgram; }
     // symbols of ours: the AI director's story variables and npc's
     inline auto& ownSymbols() { return own; }
     auto         questLog() const -> const QuestLog&;
@@ -270,17 +273,15 @@ class GameScript final : public GameRules {
     void assessSleepTalk(Npc& npc);
     void runPortalEarthquake(Npc& npc);
     void resetRoutineNpc(const std::shared_ptr<daedalus::INpc>& self);
-    bool npcBodyStateContains(const std::shared_ptr<daedalus::INpc>& self, BodyState state);
+    bool npcBodyStateContains(const std::shared_ptr<daedalus::INpc>& self, int32_t state);
     bool runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
-    bool runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
-    bool runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
-    bool runHealSelf(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
-    bool runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    void sayAttackReason();
+    void sayAttackEnd();
     bool runHumanFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runFakeGuildComment(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -288,6 +289,13 @@ class GameScript final : public GameRules {
     bool runControlSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     void stopControlSpell(const std::shared_ptr<daedalus::INpc>& self, bool continueRoutine);
     void validateCombatTarget(const std::shared_ptr<daedalus::INpc>& self);
+    bool runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool isCanyonRazor(const std::shared_ptr<daedalus::INpc>& actor);
+    bool dropsUnconsciousNpc();
+    void showRemainingCanyonRazors();
+    bool runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runHealSelf(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -298,6 +306,9 @@ class GameScript final : public GameRules {
     bool runMonsterDragonRest(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterSheepFollow(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterSummoned(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    int32_t detectWisp();
+    daedalus::DaedalusSymbol* detectWispItem();
+    void approachWispItem();
     bool nativeMonsterPerceptionsEnabled();
     bool invokeNativeMonsterPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);
     void runMonsterAssessBody();
@@ -305,31 +316,39 @@ class GameScript final : public GameRules {
     void runMonsterAssessEnemy();
     void runMonsterAssessOthersDamage();
     void runMonsterAssessPlayer();
+    void assignDragonTalk(const std::shared_ptr<daedalus::INpc>& dragon);
     void runMonsterAssessWarn();
     void runMonsterAssessSurprise();
     void runMonsterAssessQuietSoundSleep();
     void runMonsterSummonedAssessTalk();
+    void awakenStoneGuardian(const std::shared_ptr<daedalus::INpc>& actor);
     bool monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monster, const std::shared_ptr<daedalus::INpc>& body);
+    void pushMonsterWantsToEat();
     bool monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey);
-    bool monsterTargetHasBodyState(const std::shared_ptr<daedalus::INpc>& target, int32_t state);
-    bool monsterTargetIsDown(const std::shared_ptr<daedalus::INpc>& target);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runShrinkState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMagicHurtState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     void magicHurtNpc(const std::shared_ptr<daedalus::INpc>& attacker, const std::shared_ptr<daedalus::INpc>& target,
                       int32_t damage);
+    void ghostSpecialDamage(const std::shared_ptr<daedalus::INpc>& attacker, const std::shared_ptr<daedalus::INpc>& defender);
+    void beliarWeaponSpecialDamage(const std::shared_ptr<daedalus::INpc>& attacker, const std::shared_ptr<daedalus::INpc>& defender);
+    bool hasReadiedBeliarWeapon();
+    bool isBeliarWeaponItem(const std::shared_ptr<daedalus::IItem>& weapon);
     bool usesNativeShrinkSpell(const Item* item) const;
     int runShrinkMana(Npc& caster, int mana, bool release);
     void castShrink(Npc& caster, Npc* target);
+    CollideMask runStockSpellCollision(Npc& target, Npc& caster, int32_t spellId);
     std::optional<int> runStockSpellMana(Npc& caster, int mana);
+    std::optional<int> runSpecialSpellMana(Npc& caster, int spell, int mana);
     bool runStockSpellCast(Npc& caster, std::string_view function, int32_t level);
+    bool runStockTeleportCast(const std::shared_ptr<daedalus::INpc>& actor, std::string_view function);
     void assessMagic(Npc& npc);
-    void clearNpcPerceptions(const std::shared_ptr<daedalus::INpc>& npc);
     void givePlayerXp(int32_t amount);
     void loadNativeQuestLog(const std::function<bool()>& enabled);
     void closeQuestTopic(std::string_view topic, int32_t mission, int32_t common, int32_t endChapter);
     bool monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window);
     void enableMonsterRoutinePerceptions(Npc& npc);
+    bool isMonsterMage(const std::shared_ptr<daedalus::INpc>& npc);
     void beginMonsterRoutine(Npc& npc, bool desynchronize = true, WalkBit mode = WalkBit::WM_Walk);
     bool endMonsterRoutine(Npc& npc, MonsterRoutine routine);
     void removeRavensStoneGuardians(Npc& npc);
@@ -346,10 +365,24 @@ class GameScript final : public GameRules {
       bool enters = false;
       };
     void refreshNpcAtInsert(Npc& npc);
-    void loadNativeKillNpc();
+    void loadNativeNpcDeath();
+    void loadNativeTradeInventory();
+    void loadNativeDeathTrophies();
     void loadNativeNpcGlobals();
+    void loadNativeMonsterAttitudes();
+    void loadNativeWorldEntry();
+    void runWorldFirstEntryTrigger(bool oldWorld);
+    void loadNewWorldChapterEntries();
+    void loadKhorinisChapter3();
+    void loadOldWorldChapterEntries();
+    void removeFinishedGhosts();
+    enum class ChapterWorld : uint8_t { New, Old, Addon };
+    void enterChapterWorld(ChapterWorld world);
+    void changeChapter(int32_t chapter, int32_t level);
     void invokeKillNpc(int32_t symbol);
     void killNpc(int32_t symbol);
+    void removeNpc(int32_t symbol);
+    int32_t countDragonDeaths(const std::shared_ptr<daedalus::INpc>& actor);
     void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
     bool startHotkeyPotion(Npc& pl, bool mana);
@@ -405,6 +438,10 @@ class GameScript final : public GameRules {
     void  initCommon();
     void  initSettings();
     void  loadDialogOU();
+    void  loadNativeAmbientInfos();
+    void  loadNativeTrainingHelpers();
+    auto  buildLearnString(std::string_view title) -> daedalus::DaedalusSymbol&;
+    auto  readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_ptr<daedalus::IInfo>;
 
     Item* findItem(daedalus::IItem* handle);
     Item* findItemById(size_t id);
@@ -418,6 +455,8 @@ class GameScript final : public GameRules {
     auto  findFocus(std::string_view name) -> daedalus::IFocus;
 
     void storeItem(Item* it);
+    bool invokeNativeMobState(const daedalus::DaedalusSymbol& symbol);
+    void runStockPickLock(int32_t success, int32_t brokenOrOpen);
 
     bool aiOutput   (Npc &from, std::string_view name, bool overlay);
     bool aiOutputSvm(Npc &from, std::string_view name, std::string_view svm, Npc* target, bool overlay);
@@ -431,30 +470,73 @@ class GameScript final : public GameRules {
     bool nativeRoomReactionsEnabled() const;
     bool invokeNativeRoomPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
     void loadNativeRoomReaction();
-    void loadNativeTalkReaction();
-    bool canRunNativeTalkReaction();
-    bool invokeNativeTalkPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
-    void runAssessTalk();
-    bool refusesTalk(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
-    void loadNativeEquipment();
-    void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
-    void selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void loadNativeHumanPerceptions();
+    void bindCrimeGlobals();
+    void loadNativeCrimeReports(const std::function<bool()>& enabled);
     bool nativeHumanPerceptionsEnabled() const;
     bool invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase);
     int32_t runDrawWeaponReaction();
     void runThreatReaction();
     void runWarnReaction();
     void runFightSoundReaction();
+    void runFightDefeat();
+    void runCheerFight();
     bool hasAttackReasonToKill(const std::shared_ptr<daedalus::INpc>& npc);
+    void rememberFleeCheck(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool alwaysRansacks(const std::shared_ptr<daedalus::INpc>& self);
+    bool wantsToRansack(const std::shared_ptr<daedalus::INpc>& self);
+    void queueFinishingMove(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     bool wantsToAttackSheepKiller(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     bool wantsToAttackThief(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool wantsToAttackMurderer(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool belongsToBanditCamp(const std::shared_ptr<daedalus::INpc>& npc);
+    bool isNpcDownInScript(const std::shared_ptr<daedalus::INpc>& npc);
     void runDamageReaction();
     int32_t runEnemyReaction();
     void runPlayerAssessment();
+    bool wantsToReactToSneaker(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    void assignDementorTalk(const std::shared_ptr<daedalus::INpc>& npc);
+    void setCombatAttitude(const std::shared_ptr<daedalus::INpc>& npc, int32_t attitude);
+    void sayGuildGreeting(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    void sayAmbientGreeting(std::string_view line);
+    void runFollowerPlayerAssessment();
+    void runGuidePlayerAssessment();
+    void runCompanionFightSound(bool follower);
+    int32_t diegoRouteBoundary(int32_t tolerance);
     void runPropertyCrime(bool usingMob);
+    bool usedMobIsPossession(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool takenItemIsPossession(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
+                               const std::shared_ptr<daedalus::IItem>& item);
+    void runMoveMobReaction();
+    void runSurpriseReaction();
+    void runMurderReaction();
     void startHumanWarning(const std::shared_ptr<daedalus::INpc>& self, ScriptFn state);
     int32_t botheredByWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    void loadNativeEquipment();
+    bool applyCumulativeFoodEffect(std::string_view callback);
+    bool applyStockItemUseEffect(std::string_view callback);
+    bool applyArmorSetEffect(Npc& npc, uint32_t callback);
+    bool applyFightSkillItemEffect(Npc& npc, uint32_t callback);
+    bool applyEquipmentStatEffect(Npc& npc, uint32_t callback);
+    bool applyStatefulEquipmentEffect(Npc& npc, std::string_view callback);
+    void applyWispEquipmentEffect(bool equip);
+    bool applyQuestEquipmentEffect(std::string_view item, bool equip);
+    void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
+    void selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool chooseCombatSpell(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool isUndeadNpc(const std::shared_ptr<daedalus::INpc>& npc);
+    bool isEvilNpc(const std::shared_ptr<daedalus::INpc>& npc);
+    void loadNativeTalkReaction();
+    void endProductionDialog();
+    bool canPickpocket(int32_t dexterity, int32_t gold);
+    void attemptPickpocket();
+    void givePickpocketXp();
+    void decrementPickpocketVictimCount();
+    bool canRunNativeTalkReaction();
+    bool invokeNativeTalkPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
+    void runAssessTalk();
+    bool refusesTalk(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    void readySpell(const std::shared_ptr<daedalus::INpc>& self, int32_t spell, int32_t mana);
     int32_t runEnterRoomReaction();
     int32_t runExitIfRoomLeft();
     void runPortalCollisionReaction();
@@ -463,7 +545,11 @@ class GameScript final : public GameRules {
     int32_t playerCrime(const std::shared_ptr<daedalus::INpc>& self);
     void memorizePlayerCrime(const std::shared_ptr<daedalus::INpc>& witness, const std::shared_ptr<daedalus::INpc>& offender, int32_t crime);
     int32_t currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>& self);
+    void adjustPetzCrime(const std::shared_ptr<daedalus::INpc>& witness, std::optional<int32_t> newCrime);
+    bool belongsToCity(const std::shared_ptr<daedalus::INpc>& npc);
     bool isToughGuy(const std::shared_ptr<daedalus::INpc>& self);
+    bool wantsToCallGuards(const std::shared_ptr<daedalus::INpc>& npc);
+    void callGuards();
     void startNpcAttack(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
                         int32_t reason, int32_t wait);
     void runQuietSoundReaction(Npc& listener);
@@ -473,11 +559,15 @@ class GameScript final : public GameRules {
     bool isGateGuard(const std::shared_ptr<daedalus::INpc>& self);
     bool isBotheredByPlayerRoomGuild(const std::shared_ptr<daedalus::INpc>& self);
     bool isPlayerFakeBandit(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool isPlayerFakePirate(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    bool hasFakeGuild(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void desynchronizeNpc();
-    void sayToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other, std::string_view line);
+    void sayToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
+                  std::string_view line, bool overlay = false);
     void turnToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void lookAtNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void stopLookAtNpc(const std::shared_ptr<daedalus::INpc>& self);
+    void queueItemUse(const std::shared_ptr<daedalus::INpc>& self, int32_t item);
     static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                        RoutineDefinitionRuntime::Definitions& routines,
                                        NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,
@@ -722,13 +812,36 @@ class GameScript final : public GameRules {
     ScriptFn                                                    threatCallback;
     ScriptFn                                                    warnCallback;
     ScriptFn                                                    fightSoundCallback;
+    ScriptFn                                                    fightDefeatCallback;
+    ScriptFn                                                    cheerFightCallback;
     ScriptFn                                                    damageCallback;
     ScriptFn                                                    enemyCallback;
     ScriptFn                                                    playerCallback;
+    ScriptFn                                                    followPlayerCallback, guidePlayerCallback;
+    ScriptFn                                                    followFightSoundCallback, guideFightSoundCallback;
     ScriptFn                                                    theftCallback;
     ScriptFn                                                    useMobCallback;
+    ScriptFn                                                    moveMobCallback;
+    ScriptFn                                                    surpriseCallback;
+    ScriptFn                                                    murderCallback;
     ScriptFn                                                    stopShortZapCallback;
+    ScriptFn                                                    restartTentacleCallback;
     std::unordered_map<uint32_t,NativeRoutinePhase>              nativeRoutinePhases;
+    // The stock VM aliases this storage and is destroyed before it.
+    int32_t                                                     storyChapter = 0, currentStoryWorld = 0;
+    std::array<int32_t,8>                                       worldEntryLatches{};
+    std::array<int32_t,5>                                       crimeAbsolutionLevels{};
+    std::array<int32_t,19>                                      petzCrimeCounters{};
+    struct DeathProgress {
+      int32_t canyonRazors=0, madKills=0, festerBugs=0, jackCrocodiles=0, minecrawlers=0, bloodwynSpawned=0;
+      int32_t ravenDead=0, dragonsKilled=0, allDragonsDead=0, undeadDragonDead=0, biffSurvived=0;
+      std::array<int32_t,4> dragonDeaths{};
+      } deathProgress;
+    struct GhostProgress {
+      int32_t knowsTempleEntrance=0, summonedAncientGhost=0, removedQuarhodron=0;
+      int32_t stoneGuardianTrigger=0, tookRhademesTrap=0, talkedToRhademesAfter=0, removedRhademes=0;
+      int32_t attackWarn=0;
+      } ghostProgress;
     daedalus::DaedalusVm                                          vm;
     StartupFloor                                                floorDefer{*this};
     OwnSymbols                                                  own{vm};

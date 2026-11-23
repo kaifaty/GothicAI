@@ -95,14 +95,20 @@ GameScript::GameScript(GameSession &owner)
   Gothic::inst().setupVmCommonApi(vm);
   aiDefaultPipe.reset(new GlobalOutput(*this));
   initCommon();
-  loadNativeKillNpc();
+  loadNativeNpcDeath();
+  loadNativeTradeInventory();
+  loadNativeDeathTrophies();
   loadNativeNpcGlobals();
+  loadNativeMonsterAttitudes();
+  loadNativeWorldEntry();
   loadNativeRoutineExchange();
   loadNativeRoutines();
   loadNativeRoomReaction();
-  loadNativeEquipment();
   loadNativeHumanPerceptions();
+  loadNativeEquipment();
   loadNativeTalkReaction();
+  loadNativeAmbientInfos();
+  loadNativeTrainingHelpers();
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
   }
@@ -435,8 +441,10 @@ void GameScript::initDialogs() {
   loadDialogOU();
 
   dialogsInfo.clear();
-  vm.enumerate_instances_by_class_name("C_INFO", [this](daedalus::DaedalusSymbol& sym){
-    dialogsInfo.push_back(vm.init_instance<daedalus::IInfo>(&sym));
+  const bool native = nativeRoutineProgram && activityEvents && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+  vm.enumerate_instances_by_class_name("C_INFO", [this,native](daedalus::DaedalusSymbol& sym){
+    auto info = native ? readDialogInfo(sym) : nullptr;
+    dialogsInfo.push_back(info ? std::move(info) : vm.init_instance<daedalus::IInfo>(&sym));
     });
   }
 
@@ -1092,7 +1100,7 @@ void GameScript::invokeState(const std::shared_ptr<NpcRecord>& hnpc, const std::
     runQuietSoundReaction(*npc);
     }
   else if(npc==nullptr || !(invokeNativeTalkPerception(*id,phase) || invokeNativeRoutine(*npc,*id,phase) ||
-                           invokeNativeMonsterPerception(*id,phase)))
+                            invokeNativeMonsterPerception(*id,phase)))
     vm.call_function<void>(id);
   }
 
@@ -1131,9 +1139,9 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
     runQuietSoundReaction(*npc);
     }
   else if(npc!=nullptr && ((sym!=nullptr && (invokeNativeRoomPerception(*sym,phase) ||
-                                            invokeNativeTalkPerception(*sym,phase) ||
                                             invokeNativeMonsterPerception(*sym,phase) ||
                                             invokeNativeRoutineReaction(*npc,*sym,phase) ||
+                                            invokeNativeTalkPerception(*sym,phase) ||
                                             invokeNativeStatusPerception(*npc,*sym,phase))) ||
                            invokeNativeHumanPerception(fn,phase))) {
     // The perception ran in the engine.
@@ -1164,15 +1172,50 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
     return;
 
   ScopeVar self(*vm.global_self(), npc->handlePtr());
-  if(!itemDefinitions.restoreEffects.empty() && activityEvents && !floorDefer.active() &&
+  if(nativeRoutineProgram && activityEvents && !floorDefer.active() &&
      ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off) {
+    const auto amount = [&](const ItemDefinitionRuntime::RestoreChange& change) {
+      const auto* symbol = std::get_if<uint32_t>(&change.amount);
+      return symbol ? vm.find_symbol_by_index(*symbol)->get_int() : std::get<int32_t>(change.amount);
+      };
     const auto it = itemDefinitions.restoreEffects.find(functionSymbol->index());
     if(it!=itemDefinitions.restoreEffects.end()) {
-      const auto& effect = it->second;
-      const auto amount = vm.find_symbol_by_index(effect.amountSymbol)->get_int();
-      npc_changeattribute(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()),effect.attribute,amount);
+      const auto actor = std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
+      const auto apply = [&](const ItemDefinitionRuntime::RestoreChange& change) {
+        npc_changeattribute(actor,change.attribute,amount(change));
+        };
+      apply(it->second.first);
+      if(it->second.second)
+        apply(*it->second.second);
       return;
       }
+    const auto full = itemDefinitions.fullRestoreEffects.find(functionSymbol->index());
+    if(full!=itemDefinitions.fullRestoreEffects.end()) {
+      const auto actor = std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
+      auto* attribute = findSymbol("C_NPC.ATTRIBUTE");
+      vm.set_int(actor,attribute,full->second.attribute,vm.get_int(actor,attribute,full->second.maximum));
+      return;
+      }
+    const auto permanent = itemDefinitions.permanentAttributeEffects.find(functionSymbol->index());
+    if(permanent!=itemDefinitions.permanentAttributeEffects.end()) {
+      const auto actor = std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
+      const auto& effect = permanent->second;
+      vm.push_reference(vm.global_self());
+      vm.push_int(effect.increase.attribute);
+      const auto* dose = std::get_if<uint32_t>(&effect.increase.amount);
+      if(dose)
+        vm.push_reference(vm.find_symbol_by_index(*dose));
+      else
+        vm.push_int(std::get<int32_t>(effect.increase.amount));
+      vm.unsafe_call_bl(findSymbol("B_RAISEATTRIBUTE"));
+      if(effect.refill)
+        npc_changeattribute(actor,*effect.refill,amount(effect.increase));
+      return;
+      }
+    if(applyCumulativeFoodEffect(functionSymbol->name()) || applyStockItemUseEffect(functionSymbol->name()) ||
+       applyArmorSetEffect(*npc,functionSymbol->index()) || applyFightSkillItemEffect(*npc,functionSymbol->index()) ||
+       applyEquipmentStatEffect(*npc,functionSymbol->index()) || applyStatefulEquipmentEffect(*npc,functionSymbol->name()))
+      return;
     }
   vm.call_function<void>(functionSymbol);
   }
@@ -1202,6 +1245,17 @@ int GameScript::invokeManaRelease(Npc &npc, Npc* target, int mana) {
 
   if(usesNativeShrinkSpell(npc.activeWeapon()))
     return runShrinkMana(npc,mana,true);
+  if(nativeRoutineProgram && activityEvents && !floorDefer.active() &&
+     ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off) {
+    const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+    findSymbol("SPELL_PROCESSMANA_RELEASE.MANAINVESTED")->set_int(mana);
+    const auto spell = npc_getactivespell(actor);
+    findSymbol("SPELL_PROCESSMANA_RELEASE.ACTIVESPELL")->set_int(spell);
+    for(const auto name : {"SPL_PYROKINESIS", "SPL_CHARGEFIREBALL", "SPL_CHARGEZAP", "SPL_WINDFIST"})
+      if(spell==findSymbol(name)->get_int())
+        return SPL_SENDCAST;
+    return SPL_SENDSTOP;
+    }
   return vm.call_function<int>(fn,mana);
   }
 
@@ -1250,6 +1304,11 @@ void GameScript::invokePickLock(Npc& npc, int bSuccess, int bBrokenOpen) {
   if(fn==nullptr)
     return;
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  if(nativeRoutineProgram && activityEvents && !floorDefer.active() &&
+     ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off) {
+    runStockPickLock(bSuccess,bBrokenOpen);
+    return;
+    }
   vm.call_function<void>(fn, bSuccess, bBrokenOpen);
   }
 
@@ -1270,6 +1329,8 @@ CollideMask GameScript::canNpcCollideWithSpell(Npc& npc, Npc* shooter, int32_t s
 
   ScopeVar self (*vm.global_self(),  npc.handlePtr());
   ScopeVar other(*vm.global_other(), shooter->handlePtr());
+  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
+    return runStockSpellCollision(npc,*shooter,spellId);
   return CollideMask(vm.call_function<int>(fn, spellId));
   }
 
@@ -1481,7 +1542,8 @@ void GameScript::useInteractive(const std::shared_ptr<NpcRecord>& hnpc, std::str
 
   ScopeVar self(*vm.global_self(),hnpc);
   try {
-    vm.call_function<void>(fn);
+    if(!invokeNativeMobState(*fn))
+      vm.call_function<void>(fn);
     }
   catch (...) {
     Log::i("unable to use interactive [",func,"]");

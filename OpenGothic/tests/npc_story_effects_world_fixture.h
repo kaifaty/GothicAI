@@ -97,6 +97,29 @@ void assessTalkEntry(World& world,Npc& npc,Npc& player) {
   restore();
   }
 
+void nestedStockDialogue(World& world, Npc& npc, Npc& player) {
+  auto& gothic=Gothic::inst();
+  auto& vm=world.script().getVm();
+  auto* condition=vm.find_symbol_by_name("DIA_ADDON_CAVALORN_LETSKILLBANDITS_CONDITION");
+  auto* helper=vm.find_symbol_by_name("C_BRAGOBANDITSDEAD");
+  require(condition && helper,"nested dialogue needs the stock Cavalorn condition and bandit check");
+  StoryRuntime runtime(nullptr);
+  std::optional<DialogGraph> bridge;
+  if(!gothic.dialogScriptFn)
+    bridge.emplace([](std::string&&) {},nullptr,runtime);
+  StoryRuntime::Bind context(vm,&npc,&player);
+  size_t entries=0;
+  vm.observe_instructions([&](const auto&) { entries+=vm.pc()==helper->address(); });
+  const auto original=vm.call_function<int32_t>(condition);
+  const auto originalEntries=entries;
+  entries=0;
+  int32_t lifted=0;
+  const auto handled=gothic.dialogScriptFn(*condition,lifted);
+  vm.observe_instructions({});
+  require(originalEntries==1 && handled && lifted==original && entries==0,
+          "the live StoryGraph must evaluate the stock nested bandit check without executing its bytecode");
+  }
+
 void talkPhases(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   auto& world=*gothic.world();
@@ -106,6 +129,9 @@ void talkPhases(Gothic& gothic) {
   require(actor!=nullptr && world.player()!=nullptr,"talk needs Xardas and the player");
   auto& npc=*actor;
   auto& player=*world.player();
+  nestedStockDialogue(world,npc,player);
+  stockDialogMetadata(world,npc,player);
+  productionDialogEnd(world,npc,player);
   auto& effects=Contract::activityEventsOn(script);
   const bool savedEffects=effects;
   const auto savedNpcQueue=Contract::queue(npc);
@@ -198,6 +224,7 @@ void talkPhases(Gothic& gothic) {
     }
   restore();
   assessTalkEntry(world,npc,player);
+  talkTopicAssignments(world,npc,player);
   }
 
 auto storyJournalBeforeSave(GameScript& script) {
@@ -233,12 +260,13 @@ auto storyJournalBeforeSave(GameScript& script) {
     require(result.ok,result.error.c_str());
     require(journalCalls==0,"live StoryGraph journal effects must bypass VM externals");
   }
+  stockQuestJournalEntry(script,note);
   const auto requireJournal=[journalStart,note,mission](const QuestLog& journal) {
     require(journal.questCount()==journalStart+2,"StoryGraph journal must ignore absent and invalid effects");
     const auto& first=journal.quest(journalStart);
     const auto& second=journal.quest(journalStart+1);
     require(first.name==note && first.section==QuestLog::Note && first.status==QuestLog::Status::Success &&
-            first.entry==std::vector<std::string>{"first","second"},
+            first.entry==std::vector<std::string>{"first","second","stock journal helper","stock journal helper"},
             "StoryGraph journal must preserve note section, valid status and entry order");
     require(second.name==mission && second.section==QuestLog::Mission && second.status==QuestLog::Status::Failed &&
             second.entry.empty(),"a status before creation must create an ordered Mission");

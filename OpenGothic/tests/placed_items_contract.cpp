@@ -49,8 +49,6 @@
 #include "graphics/pfx/particlefx.h"
 #include "world/bullet.h"
 #include "game/physicssave.h"
-#include "storyruntime.h"
-#include "storygraph/exec.h"
 
 #include <rapidjson/document.h>
 #include <Tempest/MemReader>
@@ -84,10 +82,14 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
 #include "storygraph/eval.h"
 namespace {
 
-void require(bool condition, const char* message) {
-  if(!condition)
-    throw std::runtime_error(message);
-  }
+using NpcWorldFixture::activityNpc;
+using NpcWorldFixture::activityQueue;
+using NpcWorldFixture::companionPlayerPerceptions;
+using NpcWorldFixture::oldWorldNpcCases;
+using NpcWorldFixture::fightSoundPerceptions;
+using NpcWorldFixture::loadSavedNpc;
+using NpcWorldFixture::require;
+using NpcWorldFixture::savedNpc;
 
 Tempest::Matrix4x4 at(float x, float y, float z = 0) {
   auto result = Tempest::Matrix4x4::mkIdentity();
@@ -663,17 +665,6 @@ ArchiveEntries archiveEntries(const std::vector<uint8_t>& bytes) {
   return entries;
   }
 
-std::vector<uint8_t> savedNpc(Npc& npc) {
-  std::vector<uint8_t> bytes;
-  {
-    Tempest::MemWriter writer(bytes);
-    Serialize out(writer);
-    out.setContext(&npc.world());
-    npc.save(out,0,"/npc/");
-    }
-  return bytes;
-  }
-
 ArchiveEntries npcState(Npc& npc) {
   // Compare entry payloads: ZIP modification times are outside NPC state.
   return archiveEntries(savedNpc(npc));
@@ -714,7 +705,7 @@ struct HelperLocal {
   uint16_t index;
   std::variant<int32_t,float,std::string,std::shared_ptr<daedalus::DaedalusInstance>> value;
   };
-std::vector<HelperLocal> helperLocals(daedalus::DaedalusVm& vm) {
+std::vector<HelperLocal> helperLocals(daedalus::DaedalusVm& vm,bool saveTalents) {
   using Type=daedalus::DaedalusDataType;
   std::vector<HelperLocal> values;
   for(const auto& entry:vm.symbols()) {
@@ -723,7 +714,8 @@ std::vector<HelperLocal> helperLocals(daedalus::DaedalusVm& vm) {
        !(name.starts_with("B_SETFIGHTSKILLS.") || name.starts_with("B_ADDFIGHTSKILL.") ||
          name.starts_with("B_RAISEFIGHTTALENT.") || name.starts_with("B_RAISEREALFIGHTTALENTPERCENT.") ||
          name.starts_with("B_SETNPCVISUAL.") || name.starts_with("B_SETATTRIBUTESTOCHAPTER.") ||
-         name.starts_with("B_CREATEAMBIENTINV.") || name.starts_with("B_CREATEAMBIENTINV_"))) continue;
+         name.starts_with("B_CREATEAMBIENTINV.") || name.starts_with("B_CREATEAMBIENTINV_") ||
+         (saveTalents && NpcDefinitions::isPlayerTalentArray(name)))) continue;
     auto* symbol=vm.find_symbol_by_index(entry.index());
     for(uint16_t index=0;index<entry.count();++index) {
       if(entry.type()==Type::INT) values.push_back({symbol,index,entry.get_int(index)});
@@ -744,9 +736,9 @@ void restoreHelperLocals(const std::vector<HelperLocal>& values) {
       else entry.symbol->set_instance(value);
       },entry.value);
   }
-std::map<std::string,std::string> helperLocalText(daedalus::DaedalusVm& vm,const Npc& npc) {
+std::map<std::string,std::string> helperLocalText(daedalus::DaedalusVm& vm,const Npc& npc,bool saveTalents) {
   std::map<std::string,std::string> result;
-  for(const auto& entry:helperLocals(vm))
+  for(const auto& entry:helperLocals(vm,saveTalents))
     result[entry.symbol->name()+"["+std::to_string(entry.index)+"]"]=std::visit([&](const auto& value) -> std::string {
       using Type=std::decay_t<decltype(value)>;
       if constexpr(std::is_same_v<Type,std::string>) return Bench::bodyJson(value);
@@ -921,7 +913,8 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
       const auto previousContext=vm.unsafe_get_gi();
       std::unique_ptr<Npc> expected,actual;
       bool recordsActive=false;
-      const auto localBaseline=helperLocals(vm);
+      const bool saveTalents=program.sha256==NpcDefinitions::TalentWriteProgram && NpcDefinitions::writesPlayerTalents(name);
+      const auto localBaseline=helperLocals(vm,saveTalents);
       try {
         const auto policy=name=="PC_HERO" ? NpcProcessPolicy::Player : NpcProcessPolicy::AiNormal;
         const bool syntheticEquip=library.npcs.contains("NPC_NO_ID") &&
@@ -980,7 +973,7 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
           return result;
           };
         const auto expectedStrings=temporaryStrings();
-        const auto expectedLocals=helperLocalText(vm,*expected);
+        const auto expectedLocals=helperLocalText(vm,*expected,saveTalents);
         const auto expectedDaily=vm.find_symbol_by_index(uint32_t(expected->handle().daily_routine));
         const bool capturedDaily=expectedDaily && routines.routines.contains(expectedDaily->name());
         if(capturedDaily) {
@@ -1005,9 +998,10 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
           }
         if(name=="VLK_408_JORA")
           difference(name,"record hitchance[1] after B_SetFightSkills","40",std::to_string(actual->handle().hitchance[1]));
-        const auto actualLocals=helperLocalText(vm,*actual);
-        if(helpersOnly)
-          for(const auto& [local,value]:expectedLocals) difference(name,"helper local "+local,value,actualLocals.at(local));
+        const auto actualLocals=helperLocalText(vm,*actual,saveTalents);
+        for(const auto& [local,value]:expectedLocals)
+          if(helpersOnly || (saveTalents && local.starts_with("PLAYER_TALENT_")))
+            difference(name,"constructor symbol "+local,value,actualLocals.at(local));
         const auto actualStrings=temporaryStrings();
         difference(name,"VM temporary string count",std::to_string(expectedStrings.size()),std::to_string(actualStrings.size()));
         for(size_t index=0;index<std::min(expectedStrings.size(),actualStrings.size());++index)
@@ -1381,11 +1375,22 @@ void placementDefinitionsDisabled(World& world) {
 // perception helper still runs in the VM), the queued commands and the phase results.
 class ActivityStream final : public NpcActivityProbe {
   public:
-    ActivityStream(World& world,Npc& npc):npc(npc),vm(world.script().getVm()) {
+    enum class Externals { Trace, Skip };
+
+    ActivityStream(World& world,Npc& npc,Externals externals=Externals::Trace,std::function<void(uint32_t)> onInstruction={})
+      :npc(npc),vm(world.script().getVm()) {
       previous=NpcActivityProbe::instance;
       NpcActivityProbe::instance=this;
-      vm.observe_externals([this](const daedalus::DaedalusSymbol& symbol) { external(symbol); });
-      vm.observe_instructions([this](const daedalus::DaedalusInstruction&) { finish(); });
+      if(externals==Externals::Trace)
+        vm.observe_externals([this](const daedalus::DaedalusSymbol& symbol) { external(symbol); });
+      else
+        vm.observe_externals({});
+      vm.observe_instructions([this,onInstruction=std::move(onInstruction)](const daedalus::DaedalusInstruction&) {
+        // Read the external return before the next instruction changes the stack.
+        finish();
+        if(onInstruction)
+          onInstruction(vm.pc());
+        });
       ActivityDefinitionRuntime::observer=[this](const Npc& who,std::string_view event) {
         if(&who==&this->npc && depth>0 && !event.starts_with("deferred ")) events.emplace_back(event);
         };
@@ -1593,19 +1598,6 @@ std::vector<std::string> activityEngine(World& world,Npc& npc,const char* positi
           "the engine must run Init twice, Loop three times and End at the interruption and at the end of the row");
   require(!npc.isInState(anvil.init),"the end of the routine row must leave the activity");
   return events;
-  }
-
-// The NPC's queue as text, front first, without taking it.
-std::vector<std::string> activityQueue(const Npc& npc) {
-  auto queue=NpcDefinitionContract::queue(npc);
-  std::vector<std::string> actions;
-  while(queue.size()>0) {
-    const auto a=queue.pop();
-    actions.push_back(std::string(AiQueue::actionName(uint32_t(a.act)))+" "+std::to_string(a.i0)+" "+std::to_string(a.i1)+" "+
-                      a.s0+" "+(a.point ? a.point->name : "")+" "+(a.target ? std::string(a.target->displayName()) : "")+" "+
-                      std::to_string(a.func.ptr));
-    }
-  return actions;
   }
 
 // Commands the queue received for walking to `point`.
@@ -1831,14 +1823,6 @@ void activityDefinitionsSynthetic(World& world) {
   std::printf("Activity counters: ZS_SMITH_ANVIL 3 phases from the record, ZS_TEST_ROAST 3 from the VM; %zu equal events\n",events);
   }
 
-Npc* activityNpc(World& world,const char* name) {
-  const auto symbol=world.script().findSymbolIndex(name);
-  for(uint32_t i=0;i<world.npcCount();++i)
-    if(world.npcById(i)->instanceSymbol()==symbol)
-      return world.npcById(i);
-  return nullptr;
-  }
-
 // The accepted activities of NEWWORLD, with the object scheme and the approach threshold their
 // scripts pass (0: the nearest-waypoint approach). Written from the scripts, not from the record,
 // so a record with another state's parameters fails the stream comparison with the VM.
@@ -1873,9 +1857,12 @@ struct WorldActivity {
 
 std::string npcName(World& world,const Npc& npc) { return std::string(world.script().symbolName(npc.instanceSymbol())); }
 
+}
+
 #include "npc_activity_world_fixture.h"
 #include "npc_placement_world_fixture.h"
-#include "npc_story_effects_world_fixture.h"
+
+namespace {
 
 // Every position of one activity at its real object: at the object, far from the point, the object
 // taken by other NPCs, already at the object, both sides of a distance approach, and the engine's
@@ -2180,8 +2167,9 @@ void activityEventsWorld(Gothic& gothic) {
                              " (start "+away->name+")");
 
   // Interrupted on the approach through the queue: End runs, the previous state is the activity and the commands
-  // left behind are the same as with OPENGOTHIC_ACTIVITY_EVENTS=0, with the same stream of engine calls, queued
-  // commands and phases throughout. The same one routine tick after a reset queue on the approach
+  // left behind are the same as with OPENGOTHIC_ACTIVITY_EVENTS=0. Compare engine calls, queued commands and phases,
+  // comparing the perception preset by the state it installs since its native calls bypass the VM observer.
+  // The same one routine tick after a reset queue on the approach
   // (Npc_ClearAIQueue), which starts the walk over: the polled Loop looks for the object instead, so the stream
   // does not compare there.
   auto approachInterrupted=[&](bool events,bool reset) {
@@ -2198,13 +2186,14 @@ void activityEventsWorld(Gothic& gothic) {
       harad.clearAiQueue();
       NpcDefinitionContract::tickRoutine(harad);
       }
+    const auto preset=activityApproachPerceptions(test.world(),harad,state,stream && !events ? &stream->events : nullptr);
     require(!harad.wasInState(ScriptFn(anvil.phases.init)),"before the interruption the activity is no previous state");
     NpcDefinitionContract::pushFront(harad,AiQueue::aiStartState(ScriptFn(cool.phases.init),1,nullptr,nullptr,""));
     NpcDefinitionContract::nextAiAction(harad);
     require(harad.isInState(ScriptFn(cool.phases.init)),"the queued interruption must switch the state");
     const auto ends=stream ? activityCount(stream->events,"phase "+state+"_END") : phases.phase(harad,state+"_END");
     const auto result=std::tuple{ends,harad.wasInState(ScriptFn(anvil.phases.init)),
-                                 stream ? stream->events : std::vector<std::string>{},activityQueue(harad)};
+                                 stream ? stream->events : std::vector<std::string>{},activityQueue(harad),preset};
     stream.reset();
     NpcDefinitionContract::activityEventsOn(test.world().script())=true;
     return result;
@@ -2217,6 +2206,8 @@ void activityEventsWorld(Gothic& gothic) {
       return at.first==a.end() && at.second==b.end() ? std::string() :
              ": polled '"+(at.first!=a.end() ? *at.first : "")+"', by events '"+(at.second!=b.end() ? *at.second : "")+"'";
       };
+    require(std::get<4>(polled)==std::get<4>(byEvents),
+            "the polled and event approaches must install the same senses, callback bindings and perception interval");
     auto difference=firstDifference(std::get<2>(polled),std::get<2>(byEvents));
     if(difference.empty())
       difference=firstDifference(std::get<3>(polled),std::get<3>(byEvents));

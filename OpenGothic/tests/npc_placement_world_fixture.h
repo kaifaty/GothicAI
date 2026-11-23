@@ -1,5 +1,244 @@
 // Live world contracts for startup, world entry and story routine switches.
 
+void khorinisCryptTriggers(World& world) {
+  if(!world.script().usesVerifiedNpcProgram())
+    return;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  const auto baseline=placementSnapshot(world,true);
+  const auto random=NpcDefinitionContract::random(script);
+  const auto* configured=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
+  const auto previous=configured ? std::optional<std::string>(configured) : std::nullopt;
+  const auto restore=[&] {
+    vm.observe_externals({});
+    vm.observe_instructions({});
+    placementRestore(world,baseline);
+    NpcDefinitionContract::random(script)=random;
+    if(previous) setenv("OPENGOTHIC_PLACEMENT_RECORDS",previous->c_str(),1);
+    else unsetenv("OPENGOTHIC_PLACEMENT_RECORDS");
+    };
+  const auto capture=[&](bool native) {
+    restore();
+    setenv("OPENGOTHIC_PLACEMENT_RECORDS",native ? "1" : "0",1);
+    constexpr std::array<std::string_view,4> names={"EVT_CRYPT_01","EVT_CRYPT_02","EVT_CRYPT_03","EVT_CRYPT_FINAL"};
+    std::vector<std::pair<int32_t,std::string>> spawns;
+    vm.observe_externals([&](const auto& symbol) {
+      if(symbol.name()=="WLD_INSERTNPC") {
+        const auto& point=vm.stack_frame(0);
+        const auto* literal=std::get<daedalus::DaedalusSymbol*>(point.value);
+        spawns.emplace_back(std::get<int32_t>(vm.stack_frame(1).value),literal->get_string(point.index));
+        }
+      });
+    for(const auto name:names) {
+      const auto* root=script.findSymbol(name);
+      auto* once=script.findSymbol(std::string(name)+"_ONETIME");
+      once->set_int(script.intSymbol("FALSE",-1));
+      size_t entries=0;
+      vm.observe_instructions([&](const auto&) { entries+=vm.pc()==root->address(); });
+      const auto before=spawns.size();
+      script.invokeWorldTrigger(name);
+      const auto after=spawns.size();
+      script.invokeWorldTrigger(name);
+      vm.observe_instructions({});
+      require(entries==(native ? 0u : 2u) && once->get_int()==script.intSymbol("TRUE",-1) &&
+              after-before==(name==names.back() ? 6u : 7u) && spawns.size()==after,
+              "Khorinis crypt: each trigger inserts its wave only once through the selected executor");
+      }
+    size_t repeatEffects=0;
+    vm.observe_externals([&](const auto&) { ++repeatEffects; });
+    for(const auto* name:{"ADW_ADANOSTEMPEL_STONEGRD_TRIGG_FUNC_01","ADW_ADANOSTEMPEL_STONEGRD_TRIGG_FUNC_02",
+                          "SC_COMESINTO_CANYONLIBRARY_FUNC"}) {
+      const auto* root=script.findSymbol(name);
+      auto* once=script.findSymbol(std::string(name)+"_ONETIME");
+      const auto previousOnce=once->get_int();
+      once->set_int(script.intSymbol("TRUE",-1));
+      size_t entries=0;
+      const auto before=vm.unsafe_get_gi();
+      vm.observe_instructions([&](const auto&) { entries+=vm.pc()==root->address(); });
+      script.invokeWorldTrigger(name);
+      vm.observe_instructions({});
+      require(entries==size_t(!native) && once->get_int()==script.intSymbol("TRUE",-1) && vm.unsafe_get_gi()==before,
+              "Addon triggers: preserve loaded one-time gates and route the selected executor");
+      once->set_int(previousOnce);
+      }
+    vm.observe_externals({});
+    require(repeatEffects==0,"Addon triggers: previously used encounters have no effects");
+
+    constexpr auto valley = "ENTER_OLDWORLD_FIRSTTIME_TRIGGER";
+    constexpr auto addon = "ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC";
+    const auto truth=script.intSymbol("TRUE",-1), falsity=script.intSymbol("FALSE",-1);
+    auto* valleyOnce=script.findSymbol("ENTER_OLDWORLD_FIRSTTIME_TRIGGER_ONETIME");
+    auto* addonOnce=script.findSymbol("ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_ONETIME");
+    valleyOnce->set_int(truth); // The live Khorinis contract leaves the Valley's introduction played.
+    addonOnce->set_int(falsity);
+    script.findSymbol("TSCHUESSBILGOT")->set_int(truth);
+    const auto* valleyRoot=script.findSymbol(valley);
+    const auto* addonRoot=script.findSymbol(addon);
+    std::vector<std::pair<std::string,int32_t>> lifecycle;
+    const auto observer=vm.add_call_observer([&](const auto& symbol) {
+      if(symbol.name()=="B_KILLNPC" || symbol.name()=="B_REMOVENPC")
+        lifecycle.emplace_back(symbol.name(),std::get<int32_t>(vm.stack_frame(0).value));
+      });
+    size_t entries=0;
+    vm.observe_instructions([&](const auto&) { entries+=vm.pc()==valleyRoot->address() || vm.pc()==addonRoot->address(); });
+    const auto pc=vm.pc();
+    const auto context=vm.unsafe_get_gi();
+    vm.push_int(0x12345678);
+    const auto stopObserving=[&] {
+      vm.observe_instructions({});
+      vm.remove_call_observer(observer);
+      };
+    try {
+      for(auto name:{addon,addon,valley,valley})
+        script.invokeWorldTrigger(name);
+      }
+    catch(...) {
+      stopObserving();
+      throw;
+      }
+    const auto sentinel=vm.pop_int();
+    stopObserving();
+    const auto removal=std::pair{std::string("B_REMOVENPC"),int32_t(script.findSymbolIndex("BILGOT"))};
+    require(entries==(native ? 0u : 4u) && sentinel==0x12345678 && vm.pc()==pc && vm.unsafe_get_gi()==context &&
+            addonOnce->get_int()==truth && lifecycle.size()==21 &&
+            lifecycle[19]==removal && lifecycle[20]==removal,
+            "first-entry triggers must latch Yarkendar and still check Bilgot after the Valley's introduction");
+    return std::tuple{spawns,lifecycle,archiveEntries(placementSnapshot(world,false))};
+    };
+  try {
+    const auto stock=capture(false);
+    require(capture(true)==stock,"world triggers: ordered spawn and lifecycle calls and world state match Daedalus");
+    }
+  catch(...) {
+    restore();
+    throw;
+    }
+  restore();
+  std::puts("World triggers: crypt waves, Yarkendar's first entry and Bilgot's later departure match Daedalus");
+  }
+
+void khorinisLateChapters(World& world) {
+  if(NpcSnapshot::load(baseProgramIndex().dir.parent_path()).sha256!=
+     "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
+    return;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  const auto baseline=placementSnapshot(world,true);
+  const auto random=NpcDefinitionContract::random(script);
+  const auto* configured=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
+  const auto previous=configured ? std::optional<std::string>(configured) : std::nullopt;
+  const auto* four=script.findSymbol("B_ENTER_NEWWORLD_KAPITEL_4");
+  const auto* five=script.findSymbol("B_ENTER_NEWWORLD_KAPITEL_5");
+  const auto get=[&](const char* name) { return script.findSymbol(name)->get_int(); };
+  const auto set=[&](const char* name,int32_t value) { script.findSymbol(name)->set_int(value); };
+  const auto restore=[&] {
+    placementRestore(world,baseline);
+    NpcDefinitionContract::random(script)=random;
+    if(previous) setenv("OPENGOTHIC_PLACEMENT_RECORDS",previous->c_str(),1);
+    else unsetenv("OPENGOTHIC_PLACEMENT_RECORDS");
+    };
+  const auto capture=[&](bool native,bool mage) {
+    restore();
+    setenv("OPENGOTHIC_PLACEMENT_RECORDS",native ? "1" : "0",1);
+    world.player()->handle().guild=get(mage ? "GIL_KDF" : "GIL_PAL");
+    if(!mage)
+      script.findSymbol("SEKOB")->set_instance(nullptr);
+    for(const auto* flag:{"ENTERNW_KAPITEL4","ENTERNW_KAPITEL5","TALBIN_FOLLOWSTHROUGHPASS","BIFF_FOLLOWSTHROUGHPASS",
+                          "PAL_SCHIFFSWACHE_EXCHANGE_ONETIME","MIS_OCGATEOPEN","MIS_SHIPISFREE","ROSI_FLEEFROMSEKOB_KAP5"})
+      set(flag,get("FALSE"));
+    set("GORNDJG_IS_ALIVE",get(mage ? "TRUE" : "FALSE"));
+    set("DJG_ANGAR_IS_ALIVE",get(mage ? "TRUE" : "FALSE"));
+    set("SHRINEISOBSESSED_SAGITTA",get("TRUE"));
+
+    std::vector<std::string> events;
+    const auto record=[&](const daedalus::DaedalusSymbol& symbol) {
+      auto line=symbol.name();
+      const auto args=vm.find_parameters_for_function(&symbol);
+      for(size_t i=0;i<args.size();++i)
+        line+=" "+placementArgument(vm,args[i],uint16_t(args.size()-1-i),world);
+      events.push_back(std::move(line));
+      };
+    const auto observer=vm.add_call_observer([&](const auto& symbol) {
+      if(symbol.name()=="B_STARTOTHERROUTINE" || symbol.name()=="B_KILLNPC" || symbol.name()=="B_REMOVENPC")
+        record(symbol);
+      });
+    vm.observe_externals([&](const auto& symbol) {
+      const auto& name=symbol.name();
+      if(name=="WLD_INSERTNPC" || name=="WLD_INSERTITEM" || name=="NPC_GETDISTTOWP" || name=="NPC_ISDEAD" ||
+         name=="CREATEINVITEMS" || name=="INTRODUCECHAPTER")
+        record(symbol);
+      });
+    const auto clear=[&] {
+      vm.observe_externals({});
+      vm.observe_instructions({});
+      vm.remove_call_observer(observer);
+      script.startupFloor().end();
+      };
+    const auto run=[&] {
+      size_t roots=0;
+      vm.observe_instructions([&](const auto&) { roots+=vm.pc()==four->address() || vm.pc()==five->address(); });
+      const auto pc=vm.pc();
+      const auto context=vm.unsafe_get_gi();
+      vm.push_int(0x12345678);
+      set("KAPITEL",4);
+      vm.unsafe_call_bl(four);
+      set("KAPITEL",5);
+      vm.unsafe_call_bl(five);
+      const auto sentinel=vm.pop_int();
+      vm.observe_instructions({});
+      require(roots==(native ? 0u : 2u) && sentinel==0x12345678 && vm.pc()==pc && vm.unsafe_get_gi()==context,
+              "Khorinis chapters 4-5: selected roots preserve the caller's stack, PC and context");
+      };
+    script.startupFloor().begin();
+    try {
+      run();
+      require(get("ENTERNW_KAPITEL4")==get("TRUE") && get("ENTERNW_KAPITEL5")==get("TRUE") &&
+              get("SHRINEISOBSESSED_SAGITTA")==get(mage ? "FALSE" : "TRUE"),
+              "Khorinis chapters 4-5: first entries latch and only the mage clears the shrine in this pair");
+      require(std::any_of(events.begin(),events.end(),[&](const std::string& event) {
+                return event.starts_with("INTRODUCECHAPTER ") &&
+                       event.find(mage ? "chapter5_KDF.tga" : "chapter5_PAL.tga")!=std::string::npos;
+                }),"Khorinis chapter 5: introduction uses the hero's guild artwork");
+      const auto firstEntry=events.size();
+      set("MIS_OCGATEOPEN",get("TRUE"));
+      set("TALBIN_FOLLOWSTHROUGHPASS",get("LOG_RUNNING"));
+      set("BIFF_FOLLOWSTHROUGHPASS",get("LOG_RUNNING"));
+      run();
+      const auto laterBegin=events.begin()+std::ptrdiff_t(firstEntry);
+      const auto laterPlacements=std::count_if(laterBegin,events.end(),[](const std::string& event) {
+        return event.starts_with("WLD_INSERTNPC ") || event.starts_with("B_STARTOTHERROUTINE ");
+        });
+      require(laterPlacements==4 && get("TALBIN_FOLLOWSTHROUGHPASS")==get("LOG_SUCCESS") &&
+              get("BIFF_FOLLOWSTHROUGHPASS")==get("LOG_SUCCESS") && get("MIS_SHIPISFREE")==get("TRUE") &&
+              get("PAL_SCHIFFSWACHE_EXCHANGE_ONETIME")==get("TRUE"),
+              "Khorinis chapters 4-5: later entry moves both followers and frees the ship once");
+      const auto laterEntry=events.size();
+      run();
+      require(events.size()==laterEntry,"Khorinis chapters 4-5: another entry must not replay the placements");
+      world.resetPositionToTA();
+      }
+    catch(...) {
+      clear();
+      throw;
+      }
+    clear();
+    return std::tuple{events,archiveEntries(placementSnapshot(world,false)),placementSymbols(script,false),
+                      script.randomState(nullptr)};
+    };
+  try {
+    for(bool mage:{false,true}) {
+      const auto stock=capture(false,mage);
+      require(capture(true,mage)==stock,"Khorinis chapters 4-5: ordered inputs and saved state must match stock");
+      }
+    }
+  catch(...) {
+    restore();
+    throw;
+    }
+  restore();
+  std::puts("Khorinis chapters 4-5: paladin and mage entries, later followers and ship guards match stock");
+  }
+
 void dragonIslandInit(World& world) {
   auto& script=world.script();
   auto& vm=script.getVm();
@@ -153,6 +392,7 @@ void dragonIslandPlacement(Gothic& gothic) {
     require(captured(true,crew)==vmResult,
             ("Dragon Island placement: crew case "+std::to_string(crew)+" matches stock calls and saved world").c_str());
     }
+  NpcWorldFixture::dragonIslandChapterWorld(world);
   gothic.clearGame().reset();
   std::puts("Dragon Island placement: four captain and crew combinations match the original calls and world state");
   }
@@ -248,6 +488,7 @@ void routineSwitchWorld(World& world) {
   vm.global_self()->set_instance(oldSelf);
   if(oldSwitch) setenv("OPENGOTHIC_ROUTINE_RECORDS",oldSwitch->c_str(),1);
   else unsetenv("OPENGOTHIC_ROUTINE_RECORDS");
+  NpcWorldFixture::gregAtDexter(world);
   std::puts("Routine switch: saved aliases, same-instance rule, validity, schedule and queue match stock");
   }
 
@@ -304,6 +545,8 @@ std::vector<std::string> placementFirstWorld(Gothic& gothic) {
     require(startup && NpcDefinitionContract::placements(gothic.world()->script()).placements.contains(startup->index()),
             "default NEWWORLD startup must replay a captured placement record");
     routineSwitchWorld(*gothic.world());
+    khorinisLateChapters(*gothic.world());
+    khorinisCryptTriggers(*gothic.world());
     std::printf("First-world NEWWORLD placement: %s NPCs, %s items; %zu saved/global state entries, %zu differences; STARTUP_NEWWORLD=%s\n",
                 actual.at("NPC count").c_str(),actual.at("item count").c_str(),expected.size(),differences.size(),
                 startup && NpcDefinitionContract::placements(gothic.world()->script()).placements.contains(startup->index()) ? "record" : "VM");

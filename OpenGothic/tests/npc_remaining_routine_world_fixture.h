@@ -13,7 +13,7 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
     auto& script=world.script();
     auto& vm=script.getVm();
     test.only({});
-    ActivityEvents::reset();
+    NpcWorldFixture::prepareRoutineWitnessWorld(world,events);
     std::map<std::string,size_t> vmCalls;
     const auto observer=vm.add_call_observer([&](const auto& function) { ++vmCalls[function.name()]; });
     for(size_t i=0;i<sites.size();++i) {
@@ -117,6 +117,120 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
         }
         require(events ? vmCalls["ZS_GUARD_PASSAGE_LOOP"]==0 : vmCalls["ZS_GUARD_PASSAGE_LOOP"]==3,
                 "ZS_GUARD_PASSAGE must use the expected Loop executor across the threshold");
+      }
+      if(std::string_view(site.state)=="ZS_BANDIT") {
+        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
+        size_t instructions=0;
+        vm.observe_instructions([&](const auto&) { ++instructions; });
+        actor->clearAiQueue();
+        Contract::tickRoutine(*actor);
+        require(actor->handle().aivar[19]==0 && !activityQueue(*actor).empty(),
+                "the loaded bandit must select its campfire or guard pose exactly once");
+        witness.continuation=activityQueue(*actor);
+        script.setSeed(73106);
+        auto* roll=script.findSymbol("ZS_BANDIT_LOOP.RANDOM");
+        require(roll!=nullptr,"the bandit fixture needs the original random slot");
+        roll->set_int(-1);
+        for(uint64_t ms : {5999,6000}) {
+          actor->clearAiQueue();
+          actor->setStateTime(ms);
+          Contract::tickRoutine(*actor);
+          require(actor->stateTime()==(ms==5999 ? 5999u : 0u) &&
+                  (ms==5999 ? actor->isAiQueueEmpty() && roll->get_int()==-1
+                           : roll->get_int()>=0 && roll->get_int()<3),
+                  "the bandit first checks its next watch gesture at six whole seconds");
+          const auto queue=activityQueue(*actor);
+          witness.continuation.insert(witness.continuation.end(),queue.begin(),queue.end());
+        }
+        vm.observe_instructions({});
+        witness.continuation.push_back(std::to_string(roll->get_int()));
+        require(events ? instructions==0 : instructions>0,
+                "the loaded bandit loops must dispatch through the chosen executor");
+      }
+      if(std::string_view(site.state)=="ZS_GOLEMDOWN") {
+        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
+        require(actor->handle().senses==int32_t(SensesBit::SENSE_SMELL) && actor->handle().senses_range==2000,
+                "load must preserve the dormant golem's senses");
+        actor->clearAiQueue();
+        Contract::tickRoutine(*actor);
+        require(Contract::aiState(*actor).loopNextTime==world.tickCount()+1000,
+                "the loaded golem must keep its one-second perception interval");
+        require(actor->handle().aivar[19]==0 && actor->aiQueueFront() && actor->aiQueueFront()->s0=="T_DEAD",
+                "the loaded golem must settle into its dormant pose once");
+        actor->clearAiQueue();
+        Contract::tickRoutine(*actor);
+        require(actor->isAiQueueEmpty(),"the dormant golem must keep its pose on the next loop");
+
+        auto* hero=world.player();
+        Interactive* chest=nullptr;
+        for(uint32_t index=0; auto* mob=world.mobsiById(index); ++index) {
+          if(mob->tag()=="NW_GOLEMCHEST") {
+            chest=mob;
+            break;
+          }
+        }
+        const auto item=script.findSymbolIndex("ITSE_GOLEMCHEST_MIS");
+        require(hero && chest && item && chest->inventory().itemCount(item)>0,
+                "the stock golem fixture needs the mission item inside its chest");
+        actor->setExternalControl(false);
+        size_t instructions=0;
+        auto wakeAt=[&](float offset) {
+          hero->setPosition(actor->position()+Tempest::Vec3(offset,0,0));
+          vm.observe_instructions([&](const auto&) { ++instructions; });
+          const auto perceived=actor->passPerception(*hero,nullptr,PERC_ASSESSPLAYER);
+          vm.observe_instructions({});
+          require(perceived,"the dormant golem must recover its perception callback after load");
+          };
+        wakeAt(700.f);
+        require(actor->isAiQueueEmpty(),"the golem must wait while the item is inside the chest");
+        auto& inventory=chest->inventory();
+        Inventory removed;
+        Inventory::transfer(removed,inventory,nullptr,item,inventory.itemCount(item),world);
+        wakeAt(701.f);
+        require(actor->isAiQueueEmpty(),"the golem must wait while the hero is outside 700 cm");
+        wakeAt(700.f);
+        witness.continuation=activityQueue(*actor);
+        witness.continuation.push_back(actor->handle().name[0]);
+        require(actor->aiQueueFront() && actor->aiQueueFront()->s0=="T_RISE" &&
+                actor->handle().no_focus==0 && actor->handle().flags==NpcFlag::NONE &&
+                actor->handle().bodystate_interruptable_override==0 && actor->handle().aivar[32]==-1 &&
+                actor->handle().start_aistate==int32_t(script.findSymbolIndex(MonsterScheduler)),
+                "after opening the chest, the golem must rise, attack, and resume the monster dispatcher");
+        require(events ? instructions==0 : instructions>0,
+                "the golem wake-up must dispatch through the chosen executor");
+      }
+      if(std::string_view(site.state)=="ZS_SLEEP_DEEP" ||
+         std::string_view(site.state)=="ZS_PRAY_SLEEPER" ||
+         std::string_view(site.state)=="ZS_PRAY_SLEEPER_FP") {
+        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
+        actor->clearAiQueue();
+        size_t instructions=0;
+        vm.observe_instructions([&](const auto&) { ++instructions; });
+        if(std::string_view(site.state)=="ZS_PRAY_SLEEPER_FP") {
+          ActivityEventsWorld test(gothic);
+          const auto* point=world.findPoint("FP_PRAY_MONASTERY_02",false);
+          require(point!=nullptr,"the prayer fixture needs its authored monastery point");
+          test.freePoint(point);
+          actor->attachToPoint(point);
+          actor->setPosition(point->position());
+          Contract::tickRoutine(*actor);
+          const auto* kneel=actor->aiQueueFront();
+          require(kneel && kneel->act==AI_PlayAnimBs && kneel->s0=="T_STAND_2_PRAY" &&
+                  Contract::queue(*actor).size()==1,"the sleeper prayer kneels directly on the point");
+        } else {
+          Contract::tickRoutine(*actor);
+          if(std::string_view(site.state)=="ZS_SLEEP_DEEP") {
+            const auto* use=actor->aiQueueFront();
+            require(use && use->act==AI_UseMob && use->s0=="BEDHIGH" && use->i0==1,
+                    "the loaded deep sleep phase resumes by using the original bed");
+          } else {
+            require(actor->isAiQueueEmpty(),"the sleeper prayer with no IDOL nearby leaves the queue clear");
+          }
+        }
+        vm.observe_instructions({});
+        require(events ? instructions==0 : instructions>0,
+                "the loaded sleep or prayer phase must use the chosen executor");
+        witness.continuation=activityQueue(*actor);
       }
       const std::string_view state=site.state;
       if(state=="ZS_MAGICFLEE" || state=="ZS_MAGICSLEEP") {
@@ -262,120 +376,6 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
                 actor->handle().bodystate_interruptable_override==0 && actor->handle().aivar[32]==-1 &&
                 actor->handle().start_aistate==int32_t(script.findSymbolIndex(MonsterScheduler)) &&
                 (events ? calls==0 : calls==2),"the zombie must rise and queue the stock attack transition");
-        witness.continuation=activityQueue(*actor);
-      }
-      if(std::string_view(site.state)=="ZS_BANDIT") {
-        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
-        size_t instructions=0;
-        vm.observe_instructions([&](const auto&) { ++instructions; });
-        actor->clearAiQueue();
-        Contract::tickRoutine(*actor);
-        require(actor->handle().aivar[19]==0 && !activityQueue(*actor).empty(),
-                "the loaded bandit must select its campfire or guard pose exactly once");
-        witness.continuation=activityQueue(*actor);
-        script.setSeed(73106);
-        auto* roll=script.findSymbol("ZS_BANDIT_LOOP.RANDOM");
-        require(roll!=nullptr,"the bandit fixture needs the original random slot");
-        roll->set_int(-1);
-        for(uint64_t ms : {5999,6000}) {
-          actor->clearAiQueue();
-          actor->setStateTime(ms);
-          Contract::tickRoutine(*actor);
-          require(actor->stateTime()==(ms==5999 ? 5999u : 0u) &&
-                  (ms==5999 ? actor->isAiQueueEmpty() && roll->get_int()==-1
-                           : roll->get_int()>=0 && roll->get_int()<3),
-                  "the bandit first checks its next watch gesture at six whole seconds");
-          const auto queue=activityQueue(*actor);
-          witness.continuation.insert(witness.continuation.end(),queue.begin(),queue.end());
-        }
-        vm.observe_instructions({});
-        witness.continuation.push_back(std::to_string(roll->get_int()));
-        require(events ? instructions==0 : instructions>0,
-                "the loaded bandit loops must dispatch through the chosen executor");
-      }
-      if(std::string_view(site.state)=="ZS_GOLEMDOWN") {
-        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
-        require(actor->handle().senses==int32_t(SensesBit::SENSE_SMELL) && actor->handle().senses_range==2000,
-                "load must preserve the dormant golem's senses");
-        actor->clearAiQueue();
-        Contract::tickRoutine(*actor);
-        require(Contract::aiState(*actor).loopNextTime==world.tickCount()+1000,
-                "the loaded golem must keep its one-second perception interval");
-        require(actor->handle().aivar[19]==0 && actor->aiQueueFront() && actor->aiQueueFront()->s0=="T_DEAD",
-                "the loaded golem must settle into its dormant pose once");
-        actor->clearAiQueue();
-        Contract::tickRoutine(*actor);
-        require(actor->isAiQueueEmpty(),"the dormant golem must keep its pose on the next loop");
-
-        auto* hero=world.player();
-        Interactive* chest=nullptr;
-        for(uint32_t index=0; auto* mob=world.mobsiById(index); ++index) {
-          if(mob->tag()=="NW_GOLEMCHEST") {
-            chest=mob;
-            break;
-          }
-        }
-        const auto item=script.findSymbolIndex("ITSE_GOLEMCHEST_MIS");
-        require(hero && chest && item && chest->inventory().itemCount(item)>0,
-                "the stock golem fixture needs the mission item inside its chest");
-        actor->setExternalControl(false);
-        size_t instructions=0;
-        auto wakeAt=[&](float offset) {
-          hero->setPosition(actor->position()+Tempest::Vec3(offset,0,0));
-          vm.observe_instructions([&](const auto&) { ++instructions; });
-          const auto perceived=actor->passPerception(*hero,nullptr,PERC_ASSESSPLAYER);
-          vm.observe_instructions({});
-          require(perceived,"the dormant golem must recover its perception callback after load");
-          };
-        wakeAt(700.f);
-        require(actor->isAiQueueEmpty(),"the golem must wait while the item is inside the chest");
-        auto& inventory=chest->inventory();
-        Inventory removed;
-        Inventory::transfer(removed,inventory,nullptr,item,inventory.itemCount(item),world);
-        wakeAt(701.f);
-        require(actor->isAiQueueEmpty(),"the golem must wait while the hero is outside 700 cm");
-        wakeAt(700.f);
-        witness.continuation=activityQueue(*actor);
-        witness.continuation.push_back(actor->handle().name[0]);
-        require(actor->aiQueueFront() && actor->aiQueueFront()->s0=="T_RISE" &&
-                actor->handle().no_focus==0 && actor->handle().flags==NpcFlag::NONE &&
-                actor->handle().bodystate_interruptable_override==0 && actor->handle().aivar[32]==-1 &&
-                actor->handle().start_aistate==int32_t(script.findSymbolIndex(MonsterScheduler)),
-                "after opening the chest, the golem must rise, attack, and resume the monster dispatcher");
-        require(events ? instructions==0 : instructions>0,
-                "the golem wake-up must dispatch through the chosen executor");
-      }
-      if(std::string_view(site.state)=="ZS_SLEEP_DEEP" ||
-         std::string_view(site.state)=="ZS_PRAY_SLEEPER" ||
-         std::string_view(site.state)=="ZS_PRAY_SLEEPER_FP") {
-        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
-        actor->clearAiQueue();
-        size_t instructions=0;
-        vm.observe_instructions([&](const auto&) { ++instructions; });
-        if(std::string_view(site.state)=="ZS_PRAY_SLEEPER_FP") {
-          ActivityEventsWorld test(gothic);
-          const auto* point=world.findPoint("FP_PRAY_MONASTERY_02",false);
-          require(point!=nullptr,"the prayer fixture needs its authored monastery point");
-          test.freePoint(point);
-          actor->attachToPoint(point);
-          actor->setPosition(point->position());
-          Contract::tickRoutine(*actor);
-          const auto* kneel=actor->aiQueueFront();
-          require(kneel && kneel->act==AI_PlayAnimBs && kneel->s0=="T_STAND_2_PRAY" &&
-                  Contract::queue(*actor).size()==1,"the sleeper prayer kneels directly on the point");
-        } else {
-          Contract::tickRoutine(*actor);
-          if(std::string_view(site.state)=="ZS_SLEEP_DEEP") {
-            const auto* use=actor->aiQueueFront();
-            require(use && use->act==AI_UseMob && use->s0=="BEDHIGH" && use->i0==1,
-                    "the loaded deep sleep phase resumes by using the original bed");
-          } else {
-            require(actor->isAiQueueEmpty(),"the sleeper prayer with no IDOL nearby leaves the queue clear");
-          }
-        }
-        vm.observe_instructions({});
-        require(events ? instructions==0 : instructions>0,
-                "the loaded sleep or prayer phase must use the chosen executor");
         witness.continuation=activityQueue(*actor);
       }
       actor->clearAiQueue();

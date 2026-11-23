@@ -24,7 +24,12 @@ struct Call {
   std::vector<Argument> args;
   bool deferred = false;
   };
-using Step = std::variant<Field,Call>;
+struct GlobalIntWrite {
+  uint32_t binding = 0;
+  uint16_t index = 0;
+  int32_t value = 0;
+  };
+using Step = std::variant<Field,Call,GlobalIntWrite>;
 struct Definitions {
   std::unordered_map<uint32_t,std::vector<Step>> npcs;
   NpcHelperRuntime::Definitions helpers;

@@ -25,6 +25,9 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
   nativeRoutineProgram=sha256==stockNotrProgram;
   if(nativeRoutineProgram) {
     ItemDefinitionRuntime::registerStockRestoreEffects(items,script);
+    ItemDefinitionRuntime::registerStockArmorSetEffects(items,script);
+    ItemDefinitionRuntime::registerStockFightSkillEffects(items,script);
+    ItemDefinitionRuntime::registerStockEquipmentStatEffects(items,script);
     const auto* callback=script.find_symbol_by_name("B_ASSESSQUIETSOUND");
     const auto* height=script.find_symbol_by_name("PERC_DIST_HEIGHT");
     const auto* indoorHeight=script.find_symbol_by_name("PERC_DIST_INDOOR_HEIGHT");

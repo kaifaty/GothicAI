@@ -628,7 +628,7 @@ void GameSession::initScripts(bool firstTime) {
 
   if(vm->hasSymbolName("init_global")) {
     LoadProbe::Startup::Detail::Scope call("script_function",[]{return std::string("INIT_GLOBAL");});
-    vm->getVm().call_function("init_global");
+    vm->runWorldInit("init_global");
     }
 
   string_frm init("init_",name);

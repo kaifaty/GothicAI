@@ -138,15 +138,25 @@ namespace daedalus {
 
 	void DaedalusVm::unsafe_call_bl(DaedalusSymbol const* sym) {
 		// the same as the BL instruction
-		if (auto cb = _m_function_overrides.find(sym->address());
-		    cb != _m_function_overrides.end() && (!cb->second.enabled || cb->second.enabled())) {
+		if (auto* cb = active_override(*sym)) {
 			notify_call(sym);
 			StackGuard guard {this, sym->rtype()};
-			cb->second.call(*this);
+			cb->call(*this);
 			guard.inhibit();
 			return;
 		}
 		unsafe_call(sym);
+	}
+
+	bool DaedalusVm::has_active_override(DaedalusSymbol const& sym) const {
+		return active_override(sym) != nullptr;
+	}
+
+	DaedalusVm::FunctionOverride const* DaedalusVm::active_override(DaedalusSymbol const& sym) const {
+		auto cb = _m_function_overrides.find(sym.address());
+		if (cb != _m_function_overrides.end() && (!cb->second.enabled || cb->second.enabled()))
+			return &cb->second;
+		return nullptr;
 	}
 
 	bool DaedalusVm::unsafe_call_external(DaedalusSymbol const* external) {

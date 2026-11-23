@@ -217,6 +217,7 @@ class WorldObjects final {
     std::vector<uint8_t> tailPlan; // per npcArr slot, AnimationTail::Step bits
     std::vector<Tempest::Vec3> fighters;
     friend struct WorldDataContract;
+    friend struct NpcDefinitionContract;
     void           saveItemPhysics(Serialize& fout) const;
     void           loadItemPhysics(Serialize& fin);
     void           savePlacedItems(Serialize& fout) const;

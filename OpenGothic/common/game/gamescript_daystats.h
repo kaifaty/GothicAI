@@ -31,7 +31,8 @@ class DayScriptStats {
     static std::pair<std::string,std::string> statePhase(std::string_view symbol);
 
   private:
-    struct Context { std::string state, phase; bool root=true; };
+    enum class RootCall { Pending, Observed, Record };
+    struct Context { std::string state, phase; RootCall root=RootCall::Pending; };
     struct Frame { std::string name; uint32_t address; uint64_t* instructions=nullptr; };
     void call(const daedalus::DaedalusSymbol& symbol, const daedalus::DaedalusVm& vm);
     void instruction(const daedalus::DaedalusInstruction& instruction, uint32_t pc);

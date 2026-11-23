@@ -11,9 +11,14 @@ void GameScript::loadNativeRoutineExchange() {
   if(!nativeRoutineProgram)
     return;
 
+  const auto instanceId=[this](daedalus::DaedalusSymbol* symbol) {
+    vm.push_reference(symbol);
+    vm.unsafe_call_external(findSymbol("HLP_GETINSTANCEID"));
+    return vm.pop_int();
+    };
   using Handle=std::shared_ptr<daedalus::INpc>;
   vm.override_function("B_STARTOTHERROUTINE",std::function<void(Handle,std::string_view)>{
-    [this](Handle npc,std::string_view routine) {
+    [this,instanceId](Handle npc,std::string_view routine) {
       auto* actor=findSymbol("B_STARTOTHERROUTINE.SLF");
       auto* name=findSymbol("B_STARTOTHERROUTINE.NEWROUTINE");
       name->set_string(routine);
@@ -23,11 +28,6 @@ void GameScript::loadNativeRoutineExchange() {
       const auto call=[&](std::string_view external) {
         vm.push_reference(actor);
         vm.unsafe_call_external(findSymbol(external));
-        };
-      const auto instanceId=[&](daedalus::DaedalusSymbol* symbol) {
-        vm.push_reference(symbol);
-        vm.unsafe_call_external(findSymbol("HLP_GETINSTANCEID"));
-        return vm.pop_int();
         };
       call("AI_STANDUP");
       const auto selected=instanceId(actor);
@@ -47,4 +47,27 @@ void GameScript::loadNativeRoutineExchange() {
       if(!sameInstance)
         call("AI_CONTINUEROUTINE");
       }},RoutineDefinitionRuntime::enabled);
+
+  vm.override_function("B_GREG_COMESTODEXTER",std::function<void()>{[this,instanceId] {
+    auto* dexter=findSymbol("DEXTER");
+    const auto expected=instanceId(dexter);
+    const auto actual=instanceId(vm.global_self());
+    if(expected!=actual)
+      return;
+    auto* complete=findSymbol("B_GREG_COMESTODEXTER_ONETIME");
+    const auto no=findSymbol("FALSE")->get_int();
+    if(complete->get_int()!=no)
+      return;
+
+    constexpr uint16_t enemyOverride=61; // AIV_ENEMYOVERRIDE in the verified program.
+    const auto context=dexter->get_instance();
+    vm.unsafe_set_gi(context);
+    if(context)
+      findSymbol("C_NPC.AIVAR")->set_int(no,enemyOverride,context.get());
+    findSymbol("GREGLOCATION")->set_int(findSymbol("GREG_DEXTER")->get_int());
+    vm.push_reference(findSymbol("GREG_NW"));
+    vm.push_reference(findSymbol("$12928"));
+    vm.unsafe_call_bl(findSymbol("B_STARTOTHERROUTINE"));
+    complete->set_int(findSymbol("TRUE")->get_int());
+    }},RoutineDefinitionRuntime::enabled);
   }

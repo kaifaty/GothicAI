@@ -5,16 +5,57 @@
 #include "daedalus/vm.h"
 #include "game/rpgvocabulary.h"
 
+#include <optional>
 #include <unordered_map>
+#include <variant>
+#include <vector>
 
 namespace ItemDefinitionRuntime {
-struct RestoreEffect {
+struct RestoreChange {
   Attribute attribute;
-  uint32_t amountSymbol;
+  std::variant<uint32_t,int32_t> amount; // Symbol index or literal dose.
+  };
+struct RestoreEffect {
+  RestoreChange first;
+  std::optional<RestoreChange> second;
+  };
+struct FullRestoreEffect {
+  Attribute attribute, maximum;
+  };
+struct PermanentAttributeEffect {
+  RestoreChange increase;
+  std::optional<Attribute> refill;
+  };
+struct ArmorSetEffect {
+  uint32_t armorFlag;
+  uint32_t beltFlag;
+  bool     equip;
+  };
+struct FightSkillEffect {
+  Talent  talent;
+  int32_t delta;
+  bool    playerOnly;
+  };
+struct EquipmentAttributeWrite {
+  Attribute attribute;
+  std::optional<int32_t> minimum{};
+  };
+struct EquipmentStatChange {
+  std::variant<Protection,Attribute,EquipmentAttributeWrite> stat;
+  uint32_t amount;
+  };
+struct EquipmentStatEffect {
+  std::vector<EquipmentStatChange> changes;
+  bool equip;
   };
 struct Definitions {
   std::unordered_map<uint32_t,ItemRecord> items;
   std::unordered_map<uint32_t,RestoreEffect> restoreEffects;
+  std::unordered_map<uint32_t,FullRestoreEffect> fullRestoreEffects;
+  std::unordered_map<uint32_t,PermanentAttributeEffect> permanentAttributeEffects;
+  std::unordered_map<uint32_t,ArmorSetEffect> armorSetEffects;
+  std::unordered_map<uint32_t,FightSkillEffect> fightSkillEffects;
+  std::unordered_map<uint32_t,EquipmentStatEffect> equipmentStatEffects;
   };
 Definitions resolve(const ItemDefinitions::Library& library, const daedalus::DaedalusScript& script);
 // Select the section by the verified program-record SHA, applying the game's environment switch.
@@ -22,6 +63,9 @@ Definitions load(const std::filesystem::path& base, const daedalus::DaedalusScri
                  std::string_view sha256);
 // Register effects only after verifying the stock NotR program SHA.
 void registerStockRestoreEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
+void registerStockArmorSetEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
+void registerStockFightSkillEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
+void registerStockEquipmentStatEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
 // Both the game and its contract use this complete choice of initialization path.
 // Returns true when a definition supplied the fields, false after a VM constructor.
 bool initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::IItem>& item,

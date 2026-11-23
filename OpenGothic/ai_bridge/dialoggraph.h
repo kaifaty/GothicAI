@@ -15,8 +15,8 @@
 
 #include "game/gamescript.h"
 
-#include "expr.h"
-#include "program.h"
+#include "storygraph/expr.h"
+#include "storygraph/program.h"
 #include "storyeffects.h"
 #include "storyruntime.h"
 
@@ -34,8 +34,8 @@ namespace storygraph {
 // With -devmode (or GOTHIC_AI_STORYCHECK=1) every script condition is also computed from its lifted form
 // and differences are logged: the check of stage 2, on the live game.
 // The script functions of dialogs (conditions, information, choices) run as their programs (program.h), by
-// the Interpreter of the StoryRuntime, not by the VM; script functions they call still run in the VM. GOTHIC_AI_STORYEXEC=0 turns
-// it off. A patch may put a program of the
+// the StoryRuntime Interpreter. For the verified stock program, it also resolves nested programs.
+// GOTHIC_AI_STORYEXEC=0 selects the script path. A patch may put a program of the
 // director in place of a dialog's own (op "program"), and a dialog of the director may have one: those run
 // in any case.
 class DialogGraph final {

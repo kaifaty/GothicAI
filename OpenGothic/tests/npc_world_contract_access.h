@@ -1,16 +1,43 @@
 #pragma once
 
 #include "storygraph/eval.h"
+#include "game/gamescript.h"
+#include "game/serialize.h"
+#include "graphics/mesh/skeleton.h"
+#include "world/objects/interactive.h"
+#include "world/objects/item.h"
+#include "world/objects/npc.h"
+#include "world/waypoint.h"
+#include "world/world.h"
+
+#include <Tempest/MemReader>
+#include <Tempest/MemWriter>
+#include <stdexcept>
+#include <string>
+#include <vector>
+void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled);
 
 // Test-only access keeps the production creation entry point unchanged.
 struct NpcDefinitionContract {
   static auto& definitions(GameScript& script) { return script.npcDefinitions; }
   static auto& placements(GameScript& script) { return script.placementDefinitions; }
+  static int32_t& storyChapter(GameScript& script) { return script.storyChapter; }
+  static int32_t currentStoryWorld(GameScript& script) { return script.currentStoryWorld; }
+  static const auto& worldEntryLatches(GameScript& script) { return script.worldEntryLatches; }
+  static const auto& deathProgress(GameScript& script) { return script.deathProgress; }
+  static void saveChapter(GameScript& script, Serialize& out) { script.saveSym(out,*script.findSymbol("KAPITEL")); }
+  static auto& crimeAbsolutionLevels(GameScript& script) { return script.crimeAbsolutionLevels; }
+  static auto& crimeCounters(GameScript& script) { return script.petzCrimeCounters; }
+  static auto& questLog(GameScript& script) { return script.quests; }
+  static void saveCrimeGlobal(GameScript& script, Serialize& out, daedalus::DaedalusSymbol& symbol) { script.saveSym(out,symbol); }
   static auto& activities(GameScript& script) { return script.activityDefinitions; }
   static auto& aiState(Npc& npc) { return npc.aiState; }
   static int32_t& lastHitSpell(Npc& npc) { return npc.lastHitSpell; }
+  static int32_t activeSpellInfo(const Npc& npc) { return npc.spellInfo; }
+  static ScriptFn perception(const Npc& npc, PercType type) { return npc.perception[type].func; }
   static auto& activityEvents(Npc& npc) { return npc.activityEvents; }
   static bool& activityEventsOn(GameScript& script) { return script.activityEvents; }
+  static const auto& dialogInfos(const GameScript& script) { return script.dialogsInfo; }
   static auto& previousState(Npc& npc) { return npc.aiPrevState; }
   static void lastHitSpell(Npc& npc, int32_t spell) { npc.lastHitSpell=spell; }
   static ScriptFn perceptionCallback(const Npc& npc, PercType type) { return npc.perception[type].func; }
@@ -31,6 +58,7 @@ struct NpcDefinitionContract {
   static AiQueue& queue(Npc& npc) { return npc.aiQueue; }
   static uint64_t& refusalDeadline(Npc& npc) { return npc.refuseTalkMilis; }
   static auto& perceptions(Npc& npc) { return npc.perception; }
+  static uint64_t perceptionTime(const Npc& npc) { return npc.perceptionTime; }
   static const AiQueue& overlayQueue(const Npc& npc) { return npc.aiQueueOverlay; }
   static bool walking(const Npc& npc) { return !npc.go2.empty(); }
   static const auto& physicsPosition(const Npc& npc) { return npc.physic.position(); }
@@ -39,7 +67,9 @@ struct NpcDefinitionContract {
   static const auto& items(GameScript& script) { return script.itemDefinitions; }
   static const auto& routines(GameScript& script) { return script.routineDefinitions; }
   static auto& random(GameScript& script) { return script.randGen; }
+  static auto& guildAttitudes(GameScript& script) { return script.gilAttitudes; }
   static int& outputOrder(GameScript& script) { return script.aiOutOrderId; }
+  static auto& passivePerceptions(World& world) { return world.wobj.sndPerc; }
   // the views of items (graphics/itemview): the sword and the bow on a body, a lying item's
   static const ItemView& sword(const Npc& npc) { return npc.visual.sword.view; }
   static const ItemView& bow(const Npc& npc) { return npc.visual.bow.view; }
@@ -88,17 +118,66 @@ struct NpcDefinitionContract {
   // an object's model and its effects of the animations' events (MdlVisual::startEffect)
   static const MdlVisual& model(const Interactive& mob) { return mob.objVisual().mdl.view; }
   static const auto& effects(const MdlVisual& view) { return view.effects; }
+  static const auto& effects(const Npc& npc) { return effects(npc.visual); }
   static size_t bone(const MdlVisual& view, std::string_view name) { return view.skeleton->findNode(name); }
   static const AnimationSolver& solver(const MdlVisual& view) { return view.solver; }
   };
 
-inline const WayPoint* activityRow(Npc& npc,size_t init,std::string& name,gtime* start=nullptr) {
-  const WayPoint* point=nullptr;
-  npc.forEachRoutine([&](const Npc::RoutineInfo& row) {
-    if(point==nullptr && row.state.ptr==init && row.waypoint!=nullptr) {
-      point=row.waypoint; name=std::string(row.point);
-      if(start) *start=row.start;
-      }
-    });
-  return point;
+namespace NpcWorldFixture {
+
+inline void require(bool condition, const char* message) {
+  if(!condition)
+    throw std::runtime_error(message);
   }
+
+inline std::vector<uint8_t> savedNpc(Npc& npc) {
+  std::vector<uint8_t> bytes;
+  {
+    Tempest::MemWriter writer(bytes);
+    Serialize out(writer);
+    out.setContext(&npc.world());
+    npc.save(out,0,"/npc/");
+    }
+  return bytes;
+  }
+
+inline void loadSavedNpc(Npc& npc,const std::vector<uint8_t>& bytes) {
+  Tempest::MemReader reader(bytes);
+  Serialize in(reader);
+  in.setContext(&npc.world());
+  npc.load(in,0,"/npc/");
+  if(npc.world().player()==&npc)
+    npc.world().script().setInstanceNPC("HERO",npc);
+  npc.postValidate();
+  npc.setSimTier(NpcSimTier::Full);
+  }
+
+inline Npc* activityNpc(World& world,const char* name) {
+  const auto symbol=world.script().findSymbolIndex(name);
+  for(uint32_t i=0;i<world.npcCount();++i)
+    if(world.npcById(i)->instanceSymbol()==symbol)
+      return world.npcById(i);
+  return nullptr;
+  }
+
+// The NPC's queue as text, front first, without taking it.
+inline std::vector<std::string> activityQueue(const Npc& npc) {
+  auto queue=NpcDefinitionContract::queue(npc);
+  std::vector<std::string> actions;
+  while(queue.size()>0) {
+    const auto a=queue.pop();
+    actions.push_back(std::string(AiQueue::actionName(uint32_t(a.act)))+" "+std::to_string(a.i0)+" "+std::to_string(a.i1)+" "+
+                      a.s0+" "+(a.point ? a.point->name : "")+" "+(a.target ? std::string(a.target->displayName()) : "")+" "+
+                      std::to_string(a.func.ptr));
+    }
+  return actions;
+  }
+
+void oldWorldNpcCases(World& world,Npc& context);
+void dragonIslandChapterWorld(World& world);
+void prepareRoutineWitnessWorld(World& world, bool events);
+void gregAtDexter(World& world);
+void companionPlayerPerceptions(World& world,Npc& npc,Npc& hero);
+void fightSoundPerceptions(World& world,Npc& npc,Npc& hero);
+
+} // namespace NpcWorldFixture

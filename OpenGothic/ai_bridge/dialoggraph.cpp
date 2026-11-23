@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <utility>
 
 #include "commandline.h"
 #include "gothic.h"
@@ -533,6 +534,12 @@ bool DialogGraph::onScript(daedalus::DaedalusSymbol& fn, int32_t& result) {
     return false;
   rt.ensureLifter();
   auto& interp = interpreter(*v);
+  auto& resolver = interp.resolveProgram;
+  struct RestoreResolver {
+    decltype(storygraph::Interpreter::resolveProgram)& target;
+    decltype(storygraph::Interpreter::resolveProgram)  saved;
+    ~RestoreResolver() { target = std::move(saved); }
+    } restore{resolver,std::exchange(resolver,{})};
   if(auto* mine = replaced.empty() ? nullptr : replacedProgram(*v,fn.index())) {
     // the director's program in place of the scripts'
     auto r = interp.run(*mine);
@@ -546,17 +553,23 @@ bool DialogGraph::onScript(daedalus::DaedalusSymbol& fn, int32_t& result) {
     }
   if(!running)
     return false;
-  auto it = programs.find(fn.index());
-  if(it==programs.end()) {
-    it = programs.emplace(fn.index(), storygraph::liftProgram(*v,rt.bytecode(),fn.index())).first;
-    if(!it->second.error.empty()) {
-      notPrograms++;
-      Log::e("[story] ", fn.name(), " is not a program (", it->second.error, "): the VM runs it");
+  const auto lift = [this,v](const daedalus::DaedalusSymbol& symbol) -> const storygraph::Program* {
+    auto it = programs.find(symbol.index());
+    if(it==programs.end()) {
+      it = programs.emplace(symbol.index(),storygraph::liftProgram(*v,rt.bytecode(),symbol.index())).first;
+      if(!it->second.error.empty()) {
+        notPrograms++;
+        Log::e("[story] ", symbol.name(), " is not a program (", it->second.error, "): the VM runs it");
+        }
       }
-    }
-  if(!it->second.error.empty())
+    return it->second.error.empty() ? &it->second : nullptr;
+    };
+  const auto* program = lift(fn);
+  if(program==nullptr)
     return false;
-  auto r = interp.run(it->second);
+  if(const auto* script = rt.script(); script!=nullptr && script->usesVerifiedNpcProgram())
+    resolver = lift;
+  auto r = interp.run(*program);
   ran++;
   if(!r.ok) {
     // what ran before the error is done: the VM can't run it again
