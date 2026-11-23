@@ -355,6 +355,12 @@ class GameScript final : public GameRules {
     int32_t runExitIfRoomLeft();
     void runPortalCollisionReaction();
     void runClearRoomTalk();
+    bool wantsToAttackRoomIntruder(const std::shared_ptr<daedalus::INpc>& self);
+    int32_t playerCrime(const std::shared_ptr<daedalus::INpc>& self);
+    int32_t currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>& self);
+    bool isToughGuy(const std::shared_ptr<daedalus::INpc>& self);
+    void startNpcAttack(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
+                        int32_t reason, int32_t wait);
     void runQuietSoundReaction(Npc& listener);
 
     void setPerceptionPreset(bool normal);

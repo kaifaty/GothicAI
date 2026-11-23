@@ -277,7 +277,7 @@ void GameScript::runPortalCollisionReaction() {
 
   if(alliedToFormerRoom && (formerGuild==GIL_SLD || formerGuild==GIL_MIL)) {
     const auto reason = findSymbol("AR_LEFTPORTALROOM")->get_int();
-    vm.call_function<void>("B_ATTACK",self,other,reason,0);
+    startNpcAttack(self,other,reason,0);
     return;
     }
 
@@ -290,7 +290,7 @@ void GameScript::runPortalCollisionReaction() {
 
 void GameScript::runClearRoomTalk() {
   const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
-  const bool wantsAttack = vm.call_function<int32_t>("C_WANTTOATTACKROOMINTRUDER",self)!=0;
+  const bool wantsAttack = wantsToAttackRoomIntruder(self);
   sayToNpc(self,std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()),
            wantsAttack ? "$GETOUTOFHERE" : "$WHYAREYOUINHERE");
   }
@@ -423,7 +423,7 @@ int32_t GameScript::runExitIfRoomLeft() {
   npc_clearaiqueue(self);
   ai_standup(self);
   stopLookAtNpc(self);
-  const bool wantsAttack = vm.call_function<int32_t>("C_WANTTOATTACKROOMINTRUDER",self)!=0;
+  const bool wantsAttack = wantsToAttackRoomIntruder(self);
   sayToNpc(self,std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()),
            wantsAttack ? "$YESGOOUTOFHERE" : "$WISEMOVE");
   ai_continueroutine(self);
@@ -442,7 +442,7 @@ bool GameScript::runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
   const auto gotoOther = [&] { ai_gotowp(self,npc_getnearestwp(otherNpc())); };
   const auto turnToOther = [&] { turnToNpc(self,otherNpc()); };
   const auto say = [&](std::string_view line) { sayToNpc(self,otherNpc(),line); };
-  const auto wantsAttack = [&] { return vm.call_function<int32_t>("C_WANTTOATTACKROOMINTRUDER",self)!=0; };
+  const auto wantsAttack = [&] { return wantsToAttackRoomIntruder(self); };
 
   const std::string_view name = symbol.name();
   if(name=="ZS_CLEARROOM") {
@@ -479,7 +479,7 @@ bool GameScript::runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
     if(wantsAttack()) {
       if(npc_getstatetime(self)>5) {
         const auto reason = findSymbol("AR_CLEARROOM")->get_int();
-        vm.call_function<void>("B_ATTACK",self,other(),reason,0);
+        startNpcAttack(self,otherNpc(),reason,0);
         result = LOOP_END;
         return true;
         }
@@ -502,6 +502,139 @@ bool GameScript::runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
     return true;
     }
   return false;
+  }
+
+bool GameScript::wantsToAttackRoomIntruder(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("C_WANTTOATTACKROOMINTRUDER.SLF")->set_instance(self);
+  const auto owner = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto crime = playerCrime(owner);
+  const auto guild = owner ? owner->guild : GIL_NONE;
+  return crime!=findSymbol("CRIME_NONE")->get_int() || guild==GIL_DJG || guild==GIL_SLD || guild==GIL_PAL || guild==GIL_MIL;
+  }
+
+int32_t GameScript::playerCrime(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("B_GETPLAYERCRIME.SLF")->set_instance(self);
+  constexpr size_t crimeType = 1, crimeDay = 2, crimeAbsolution = 46;
+  const auto none = findSymbol("CRIME_NONE")->get_int();
+  const auto crime = self ? self->aivar[crimeType] : 0;
+  if(crime<=findSymbol("CRIME_ATTACK")->get_int() && (self ? self->aivar[crimeDay] : 0)<wld_getday()-2)
+    return none;
+  const auto recordedLevel = self ? self->aivar[crimeAbsolution] : 0;
+  return recordedLevel<currentAbsolutionLevel(self) ? none : crime;
+  }
+
+int32_t GameScript::currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("B_GETCURRENTABSOLUTIONLEVEL.SLF")->set_instance(self);
+  findSymbol("C_NPCBELONGSTOOLDCAMP.SLF")->set_instance(self);
+  const auto guild = self ? self->guild : GIL_NONE;
+  const auto type = self ? self->type : NpcType::G2_AMBIENT;
+  const bool city = guild==GIL_PAL || guild==GIL_MIL || guild==GIL_VLK;
+  if(city && (type==NpcType::G2_OC_AMBIENT || type==NpcType::G2_OC_MAIN))
+    return findSymbol("ABSOLUTIONLEVEL_OLDCAMP")->get_int();
+  findSymbol("C_NPCBELONGSTOCITY.SLF")->set_instance(self);
+  if(city)
+    return findSymbol("ABSOLUTIONLEVEL_CITY")->get_int();
+  findSymbol("C_NPCBELONGSTOMONASTERY.SLF")->set_instance(self);
+  if(guild==GIL_NOV || guild==GIL_KDF)
+    return findSymbol("ABSOLUTIONLEVEL_MONASTERY")->get_int();
+  findSymbol("C_NPCBELONGSTOFARM.SLF")->set_instance(self);
+  if(guild==GIL_SLD || guild==GIL_BAU)
+    return findSymbol("ABSOLUTIONLEVEL_FARM")->get_int();
+  findSymbol("C_NPCBELONGSTOBL.SLF")->set_instance(self);
+  if(type==NpcType::G2_BL_MAIN || type==NpcType::G2_BL_AMBIENT)
+    return findSymbol("ABSOLUTIONLEVEL_BL")->get_int();
+  return 0;
+  }
+
+bool GameScript::isToughGuy(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("C_NPCISTOUGHGUY.SLF")->set_instance(self);
+  constexpr size_t tough = 57;
+  const auto guild = self ? self->guild : GIL_NONE;
+  return (self && self->aivar[tough]==1) || guild==GIL_PIR || guild==GIL_BDT || guild==GIL_DJG || guild==GIL_SLD;
+  }
+
+void GameScript::startNpcAttack(const std::shared_ptr<daedalus::INpc>& attacker,
+                                const std::shared_ptr<daedalus::INpc>& target, int32_t reason, int32_t wait) {
+  auto& selfSlot = *findSymbol("B_ATTACK.SLF");
+  auto& otherSlot = *findSymbol("B_ATTACK.OTH");
+  auto& reasonSlot = *findSymbol("B_ATTACK.ATTACK_REASON");
+  auto& waitSlot = *findSymbol("B_ATTACK.WAIT");
+  waitSlot.set_int(wait);
+  reasonSlot.set_int(reason);
+  otherSlot.set_instance(target);
+  selfSlot.set_instance(attacker);
+  const auto self = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(selfSlot.get_instance()); };
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(otherSlot.get_instance()); };
+  const auto value = [this](std::string_view name) { return findSymbol(name)->get_int(); };
+
+  constexpr size_t invincible = 4, lastTarget = 7, attackReason = 9, waitBeforeAttack = 23;
+  constexpr size_t lastPlayerReason = 47, enemyOverride = 61, lastFightComment = 64;
+  self()->aivar[waitBeforeAttack] = waitSlot.get_int();
+  if(reasonSlot.get_int()==value("AR_SUDDENENEMYINFERNO")) {
+    self()->aivar[enemyOverride] = 0;
+    npc_sendpassiveperc(self(),PERC_ASSESSFIGHTSOUND,self(),other());
+    }
+
+  if(npc_isinstate(self(),int(ZS_Talk))) {
+    self()->aivar[invincible] = 0;
+    if(auto actor = other())
+      actor->aivar[invincible] = 0;
+    }
+
+  const bool sameTarget = self()->aivar[lastTarget]==hlp_getinstanceid(other());
+  const bool attacking = npc_isinstate(self(),int(ZS_Attack));
+  bool changeReason = true;
+  if(sameTarget && attacking) {
+    const auto current = self()->aivar[attackReason];
+    findSymbol("C_NPCHASATTACKREASONTOKILL.SLF")->set_instance(self());
+    const bool wantsToKill = current==value("AR_GUARDCALLEDTOKILL") || current==value("AR_GUARDSTOPSINTRUDER") ||
+                             current==value("AR_HUMANMURDEREDHUMAN") || current==value("AR_GUILDENEMY") || current==value("AR_KILL");
+    changeReason = reasonSlot.get_int()>current && !wantsToKill;
+    }
+  if(changeReason) {
+    self()->aivar[attackReason] = reasonSlot.get_int();
+    if(npc_isplayer(other()))
+      self()->aivar[lastPlayerReason] = reasonSlot.get_int();
+    }
+
+  const auto hasReason = [&](std::string_view name) { return self()->aivar[attackReason]==value(name); };
+  const auto memorize = [&](std::string_view name) {
+    vm.call_function<void>("B_MEMORIZEPLAYERCRIME",self(),other(),value(name));
+    };
+  if(hasReason("AR_SHEEPKILLER"))
+    memorize("CRIME_SHEEPKILLER");
+  if(hasReason("AR_REACTTOWEAPON") || hasReason("AR_REACTTODAMAGE")) {
+    const bool friendNpc = int32_t(self()->type)==value("NPCTYPE_FRIEND");
+    const bool targetPlayer = npc_isplayer(other());
+    const bool toughGuy = isToughGuy(self());
+    if(!(friendNpc && targetPlayer) && !toughGuy)
+      memorize("CRIME_ATTACK");
+    }
+  if(hasReason("AR_USEMOB") || hasReason("AR_THEFT"))
+    memorize("CRIME_THEFT");
+  if(hasReason("AR_HUMANMURDEREDHUMAN"))
+    memorize("CRIME_MURDER");
+
+  if(npc_isinstate(self(),int(ZS_Attack)))
+    return;
+  if(hasReason("AR_KILL")) {
+    findSymbol("B_SETATTITUDE.ATT")->set_int(int32_t(ATT_HOSTILE));
+    findSymbol("B_SETATTITUDE.SLF")->set_instance(self());
+    npc_setattitude(self(),ATT_HOSTILE);
+    npc_settempattitude(self(),ATT_HOSTILE);
+    }
+  if(npc_isplayer(other()))
+    self()->aivar[0] = value("FIGHT_CANCEL");
+  self()->aivar[lastFightComment] = 0;
+  if(!npc_isinstate(self(),int(ZS_Talk))) {
+    npc_clearaiqueue(self());
+    clearPerceptions(self());
+    }
+  npc_settarget(self(),other());
+  findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(int32_t(BS_LIE));
+  findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self());
+  const auto mustStand = ActivityDefinitions::bodyStateContains(npc_getbodystate(self()),BS_LIE);
+  ai_startstate(self(),int(ZS_Attack),mustStand ? 1 : 0,"");
   }
 
 int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {

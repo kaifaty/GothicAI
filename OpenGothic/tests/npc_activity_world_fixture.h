@@ -1761,6 +1761,7 @@ void quietSoundRooms(Gothic& gothic) {
   const auto roomTalkPc=vm.find_symbol_by_index(roomTalk.ptr)->address();
   const auto attack=script.findFunction("ZS_ATTACK");
   const auto attackReason=vm.find_symbol_by_name("AR_CLEARROOM")->get_int();
+  const auto attackPc=vm.find_symbol_by_name("B_ATTACK")->address();
   const auto roomCode=std::array{vm.find_symbol_by_index(roomPhases.init)->address(),
                                  vm.find_symbol_by_index(roomPhases.loop)->address(),
                                  vm.find_symbol_by_index(roomPhases.end)->address(),
@@ -1781,7 +1782,7 @@ void quietSoundRooms(Gothic& gothic) {
     for(bool native:{false,true}) {
       prepare(true);
       const auto guild=npc->handle().guild;
-  const auto aivar=std::to_array(npc->handle().aivar);
+      const auto aivar=std::to_array(npc->handle().aivar);
       if(hostile) npc->handle().guild=GIL_MIL;
       setPrivateRoom(true);
       events=native;
@@ -1790,11 +1791,12 @@ void quietSoundRooms(Gothic& gothic) {
               npc->aiQueueFront() && npc->aiQueueFront()->func==clear,
               "clear room: the stock portal event starts the private-room reaction");
       std::array<size_t,4> vmEntries{};
-      size_t roomTalkBytecode=0;
+      size_t roomTalkBytecode=0, attackBytecode=0;
       vm.observe_instructions([&](const auto&) {
         for(size_t i=0;i<roomCode.size();++i)
           vmEntries[i]+=vm.pc()==roomCode[i];
         roomTalkBytecode+=vm.pc()==roomTalkPc;
+        attackBytecode+=vm.pc()==attackPc;
         });
       Contract::nextAiAction(*npc);
       Contract::tickRoutine(*npc);
@@ -1810,6 +1812,23 @@ void quietSoundRooms(Gothic& gothic) {
               roomTalkBytecode==(native ? 0u : 1u) &&
               saysTo(*npc,hero,hostile ? "$GETOUTOFHERE" : "$WHYAREYOUINHERE"),
               "clear room: addressing the owner repeats the appropriate warning through the selected callback");
+      if(!hostile) {
+        const auto day=int(world.time().day());
+        const auto crime=vm.find_symbol_by_name("CRIME_ATTACK")->get_int();
+        const auto level=vm.call_function<int32_t>("B_GETCURRENTABSOLUTIONLEVEL",std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()));
+        npc->handle().aivar[1]=crime;
+        npc->handle().aivar[46]=level;
+        for(const auto age : {2,3}) {
+          npc->handle().aivar[2]=day-age;
+          npc->clearAiQueue();
+          require(npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSTALK) &&
+                  saysTo(*npc,hero,age==2 ? "$GETOUTOFHERE" : "$WHYAREYOUINHERE"),
+                  "clear room: an attack is remembered for exactly two whole days");
+          }
+        npc->handle().aivar[1]=aivar[1];
+        npc->handle().aivar[2]=aivar[2];
+        npc->handle().aivar[46]=aivar[46];
+        }
       const auto loop=[&] { return script.invokeState(npc,&hero,&hero,ScriptFn(roomPhases.loop)); };
       npc->clearAiQueue();
       npc->setStateTime(2600);
@@ -1825,6 +1844,7 @@ void quietSoundRooms(Gothic& gothic) {
         require(loop()==LOOP_END && npc->handle().aivar[9]==attackReason && npc->aiQueueFront() &&
                 npc->aiQueueFront()->act==AI_StartState && npc->aiQueueFront()->func==attack &&
                 npc->aiQueueFront()->target==&hero,"clear room: the sixth second queues the original attack reason");
+        require(attackBytecode==(native ? 0u : 1u),"clear room: escalation uses the selected attack executor");
         if(native) require(activityQueue(*npc)==originalAttack,"clear room: the escalation queue matches the VM");
         else originalAttack=activityQueue(*npc);
         }
