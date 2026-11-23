@@ -1339,6 +1339,139 @@ void humanAttackOutcomeHelpers(World& world,Npc& npc,Npc& hero) {
   std::puts("Human attack outcomes: fleeing parameters, quest items, plunder and finishing match the VM");
   }
 
+void humanGuardCalls(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  auto& perceptions=Contract::passivePerceptions(world);
+  const auto priorEvents=events;
+  const auto priorOrder=Contract::outputOrder(script);
+  const auto priorCount=perceptions.size();
+  const auto self=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  const auto priorSelf=vm.global_self()->get_instance(), priorOther=vm.global_other()->get_instance();
+  const auto savedGuild=self->guild, savedOtherGuild=other->guild;
+  const auto savedInvincible=other->aivar[4];
+  const auto priorAivar=std::to_array(self->aivar);
+  auto& wantedSlot=*vm.find_symbol_by_name("C_WANTTOCALLGUARDS.SLF");
+  auto& toughSlot=*vm.find_symbol_by_name("C_NPCISTOUGHGUY.SLF");
+  const auto priorWanted=wantedSlot.get_instance(), priorTough=toughSlot.get_instance();
+  const auto* wanted=vm.find_symbol_by_name("C_WANTTOCALLGUARDS");
+  const auto* call=vm.find_symbol_by_name("B_CALLGUARDS");
+  const auto loop=script.findFunction("ZS_ATTACK_LOOP");
+  const auto checkEmission=[&](std::string_view line,size_t voices,size_t sounds) {
+    auto overlay=Contract::overlayQueue(npc);
+    require(overlay.size()==voices && perceptions.size()==priorCount+sounds &&
+            Contract::outputOrder(script)==priorOrder+int(voices),
+            "guard call: overlay order and fight-sound count match the original");
+    for(size_t i=0;i<voices;++i) {
+      const auto action=overlay.pop();
+      require(action.act==AI_OutputSvmOverlay && action.target==&hero && action.s0==line && action.i0==priorOrder+int(i),
+              "guard call: the original alarm or request is addressed to the opponent");
+      }
+    for(size_t i=priorCount;i<perceptions.size();++i) {
+      const auto& sound=perceptions[i];
+      require(sound.what==PERC_ASSESSFIGHTSOUND && sound.self==&npc && sound.other==&hero && sound.victim==&npc,
+              "guard call: the passive fight sound preserves the sender, aggressor and victim");
+      }
+    perceptions.resize(priorCount);
+    };
+  const auto prepare=[&] {
+    npc.clearAiQueue();
+    Contract::outputOrder(script)=priorOrder;
+    };
+  vm.global_self()->set_instance(self);
+  vm.global_other()->set_instance(other);
+  other->aivar[4]=0;
+  require(!hero.isDown() && hero.playAnimByName("S_RUNL",BS_RUN,true) && hero.bodyStateMasked()==BS_RUN,
+          "guard call: the target must be running to retain the attack state clock");
+  struct Site { std::string_view reason, line; uint32_t guild; int32_t party, tough; bool checkedTough, sound; };
+  for(bool native:{false,true}) {
+    events=native;
+    self->guild=GIL_BDT;
+    self->aivar[15]=0;
+    other->guild=GIL_PAL;
+    vm.push_instance(other);
+    vm.unsafe_call_bl(wanted);
+    require(vm.pop_int()==1 && wantedSlot.get_instance()==other && vm.global_self()->get_instance()==self,
+            "guard call: the predicate uses the argument guild and the global caller's party flag");
+    self->aivar[15]=1;
+    vm.push_instance(other);
+    vm.unsafe_call_bl(wanted);
+    require(vm.pop_int()==0 && wantedSlot.get_instance()==other,
+            "guard call: an eligible argument cannot bypass the caller's party flag");
+    other->guild=savedOtherGuild;
+    for(const Site site:{
+        Site{"AR_GUARDCALLEDTOROOM","$ALARM",GIL_VLK,0,0,false,false},
+        Site{"AR_HUMANMURDEREDHUMAN","$ALARM",GIL_MIL,0,0,false,true},
+        Site{"AR_GUILDENEMY","$GUARDS",GIL_BAU,0,0,true,true},
+        Site{"AR_REACTTOWEAPON","",GIL_BAU,0,1,true,false},
+        Site{"AR_GUARDSTOPSINTRUDER","$ALARM",GIL_BAU,0,1,false,true},
+        Site{"AR_USEMOB","$GUARDS",GIL_VLK,0,0,true,true},
+        Site{"AR_CLEARROOM","$ALARM",GIL_SLD,0,0,false,true},
+        Site{"AR_THEFT","",GIL_VLK,1,0,false,false},
+        Site{"AR_THEFT","",GIL_BDT,0,0,false,false}}) {
+      self->guild=site.guild;
+      self->aivar[9]=script.intSymbol(site.reason,-1);
+      self->aivar[15]=site.party;
+      self->aivar[57]=site.tough;
+      toughSlot.set_instance(nullptr);
+      prepare();
+      size_t callEntries=0,wantedEntries=0;
+      vm.observe_instructions([&](const auto&) {
+        callEntries+=vm.pc()==call->address();
+        wantedEntries+=vm.pc()==wanted->address();
+        });
+      vm.unsafe_call_bl(call);
+      vm.observe_instructions({});
+      checkEmission(site.line,size_t(!site.line.empty()),size_t(site.sound));
+      require(callEntries==size_t(!native) && wantedEntries==size_t(!native) && wantedSlot.get_instance()==self &&
+              toughSlot.get_instance()==(site.checkedTough ? self : nullptr),
+              "guard call: BL selects the right body and writes the saved parameters only in the original branches");
+      }
+    self->guild=GIL_BAU;
+    self->aivar[9]=script.intSymbol("AR_THEFT",-1);
+    self->aivar[15]=0;
+    self->aivar[57]=0;
+    self->aivar[8]=0;
+    self->aivar[19]=0;
+    self->aivar[24]=std::numeric_limits<int32_t>::max();
+    self->aivar[27]=60;
+    self->aivar[59]=0;
+    self->aivar[63]=10000;
+    npc.setTarget(&hero);
+    size_t loopBytecode=0;
+    vm.observe_instructions([&](const auto&) { loopBytecode+=vm.pc()==call->address(); });
+    for(const auto& [time,calls,sounds]:{std::array{2999,0,0},std::array{3000,1,1},std::array{8999,1,0},std::array{9000,2,1}}) {
+      prepare();
+      npc.setStateTime(time);
+      require(script.invokeState(&npc,&hero,nullptr,loop)==LOOP_CONTINUE && self->aivar[19]==calls,
+              "guard call: the attack loop advances the two counters at three and nine whole seconds");
+      checkEmission("$GUARDS",size_t(sounds),size_t(sounds));
+      }
+    prepare();
+    self->aivar[19]=0;
+    npc.setStateTime(9000);
+    require(script.invokeState(&npc,&hero,nullptr,loop)==LOOP_CONTINUE && self->aivar[19]==2,
+            "guard call: a first late attack tick still makes both original calls");
+    checkEmission("$GUARDS",2,2);
+    vm.observe_instructions({});
+    require(loopBytecode==(native ? 0u : 4u),"guard call: the native attack loop bypasses the original helper body");
+    }
+  self->guild=savedGuild;
+  other->aivar[4]=savedInvincible;
+  std::copy(priorAivar.begin(),priorAivar.end(),self->aivar);
+  wantedSlot.set_instance(priorWanted);
+  toughSlot.set_instance(priorTough);
+  vm.global_self()->set_instance(priorSelf);
+  vm.global_other()->set_instance(priorOther);
+  hero.stopAnim("S_RUNL");
+  prepare();
+  events=priorEvents;
+  std::puts("Guard calls: eligibility, overlay, fight sound and attack timing match the VM");
+  }
+
 void fleeAndWatchPhases(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -2580,6 +2713,7 @@ void quietSoundRooms(Gothic& gothic) {
   observePlayerPhases(restored,*listener,guest,true);
   humanReactionPhases(restored,*listener,guest);
   humanAttackOutcomeHelpers(restored,*listener,guest);
+  humanGuardCalls(restored,*listener,guest);
 
   gothic.clearGame().reset();
   {

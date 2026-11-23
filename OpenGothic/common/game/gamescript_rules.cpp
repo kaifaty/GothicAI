@@ -514,6 +514,10 @@ void GameScript::loadNativeHumanPerceptions() {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
   using Actor = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("C_WANTTOCALLGUARDS",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    return wantsToCallGuards(npc);
+    }},enabled);
+  vm.override_function("B_CALLGUARDS",std::function<void()>{[this] { callGuards(); }},enabled);
   vm.override_function("C_WANTTOFLEE",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     rememberFleeCheck(self,other);
     return 0;
@@ -2000,11 +2004,11 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
     if(!jumping && !running)
       npc_setstatetime(self,0);
     if(aivar[guardCalls]==0 && npc_getstatetime(self)>2) {
-      vm.call_function<void>("B_CALLGUARDS");
+      callGuards();
       aivar[guardCalls] = 1;
       }
     if(aivar[guardCalls]==1 && npc_getstatetime(self)>8) {
-      vm.call_function<void>("B_CALLGUARDS");
+      callGuards();
       aivar[guardCalls] = 2;
       }
     vm.call_function<void>("B_CREATEAMMO",self);
@@ -2491,6 +2495,58 @@ bool GameScript::isToughGuy(const std::shared_ptr<daedalus::INpc>& self) {
   constexpr size_t tough = 57;
   const auto guild = self ? self->guild : GIL_NONE;
   return (self && self->aivar[tough]==1) || guild==GIL_PIR || guild==GIL_BDT || guild==GIL_DJG || guild==GIL_SLD;
+  }
+
+bool GameScript::wantsToCallGuards(const std::shared_ptr<daedalus::INpc>& npc) {
+  findSymbol("C_WANTTOCALLGUARDS.SLF")->set_instance(npc);
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  constexpr size_t partyMember = 15; // AIV_PARTYMEMBER
+  if(self==nullptr || self->aivar[partyMember]!=0 || npc==nullptr)
+    return false;
+  const auto guild = npc->guild;
+  return guild==GIL_BAU || guild==GIL_SLD || guild==GIL_VLK || guild==GIL_MIL || guild==GIL_PAL;
+  }
+
+void GameScript::callGuards() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  if(!wantsToCallGuards(self))
+    return;
+  constexpr size_t attackReason = 9; // AIV_ATTACKREASON
+  const auto reason = [&](std::string_view name) { return self->aivar[attackReason]==findSymbol(name)->get_int(); };
+  const auto shout = [&](std::string_view line, bool sendFightSound) {
+    const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+    sayToNpc(self,other,line,true);
+    if(sendFightSound)
+      npc_sendpassiveperc(self,PERC_ASSESSFIGHTSOUND,self,other);
+    };
+  const auto callForHelp = [&] {
+    const auto guild = self->guild;
+    if(guild==GIL_SLD || guild==GIL_PAL || guild==GIL_MIL)
+      shout("$ALARM",true);
+    else if(!isToughGuy(self))
+      shout("$GUARDS",true);
+    };
+
+  if(reason("AR_GUARDCALLEDTOROOM") || reason("AR_GUARDCALLEDTOTHIEF") ||
+     reason("AR_GUARDSTOPSFIGHT") || reason("AR_GUARDCALLEDTOKILL")) {
+    shout("$ALARM",false);
+    return;
+    }
+  if(reason("AR_HUMANMURDEREDHUMAN") || reason("AR_GUILDENEMY")) {
+    callForHelp();
+    return;
+    }
+  if(reason("AR_GUARDSTOPSINTRUDER")) {
+    shout("$ALARM",true);
+    return;
+    }
+  if(reason("AR_USEMOB") || reason("AR_THEFT") || reason("AR_REACTTOWEAPON")) {
+    if(!isToughGuy(self))
+      shout("$GUARDS",true);
+    return;
+    }
+  if(reason("AR_CLEARROOM"))
+    callForHelp();
   }
 
 void GameScript::startNpcAttack(const std::shared_ptr<daedalus::INpc>& attacker,

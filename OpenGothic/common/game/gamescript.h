@@ -502,6 +502,8 @@ class GameScript final : public GameRules {
     int32_t currentAbsolutionLevel(const std::shared_ptr<daedalus::INpc>& self);
     void adjustPetzCrime(const std::shared_ptr<daedalus::INpc>& witness, std::optional<int32_t> newCrime);
     bool isToughGuy(const std::shared_ptr<daedalus::INpc>& self);
+    bool wantsToCallGuards(const std::shared_ptr<daedalus::INpc>& npc);
+    void callGuards();
     void startNpcAttack(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
                         int32_t reason, int32_t wait);
     void runQuietSoundReaction(Npc& listener);
