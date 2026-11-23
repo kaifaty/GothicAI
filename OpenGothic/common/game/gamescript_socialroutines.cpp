@@ -2,6 +2,7 @@
 
 #include "world/objects/npc.h"
 
+#include <algorithm>
 #include <array>
 
 namespace {
@@ -412,4 +413,120 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
     }
   result = LOOP_CONTINUE;
   return true;
+  }
+
+bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  if(ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
+    return false;
+  constexpr size_t startedTalk = 3; // AIV_NPCSTARTEDTALK in the verified program
+  constexpr size_t invincible = 4; // AIV_INVINCIBLE
+  constexpr size_t talkedToPlayer = 5; // AIV_TALKEDTOPLAYER
+  constexpr size_t partyMember = 15; // AIV_PARTYMEMBER
+  constexpr size_t toughGuyNewsOverride = 25; // AIV_TOUGHGUYNEWSOVERRIDE
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto seated = [&](const std::shared_ptr<daedalus::INpc>& actor) {
+    return ActivityDefinitions::bodyStateContains(npc_getbodystate(actor),BS_SIT);
+    };
+  const auto predicate = [&](std::string_view name) { return vm.call_function<int32_t>(name,self)!=0; };
+  auto& talkFix = *findSymbol("ZSTALKBUGFIX");
+
+  const std::string_view name = symbol.name();
+  if(name=="ZS_TALK") {
+    const auto player = other();
+    result = 0;
+    if(player && player->aivar[invincible]==1)
+      return true;
+    self->aivar[invincible] = 1;
+    if(player)
+      player->aivar[invincible] = 1;
+
+    if(self->guild<GIL_SEPERATOR_HUM) {
+      if(seated(self)) {
+        const auto target = npc_getlookattarget(self);
+        findSymbol("ZS_TALK.TARGET")->set_instance(target);
+        if(!hlp_isvalidnpc(target))
+          ai_lookatnpc(self,other());
+        } else {
+        vm.call_function<void>("B_LOOKATNPC",self,other());
+        }
+      ai_removeweapon(self);
+      }
+    if(!seated(self))
+      vm.call_function<void>("B_TURNTONPC",self,other());
+    if(!seated(other())) {
+      vm.call_function<void>("B_TURNTONPC",other(),self);
+      if(npc_getdisttonpc(other(),self)<80)
+        ai_dodge(other());
+      }
+
+    if(self->guild<GIL_SEPERATOR_HUM) {
+      const auto attitude = npc_getattitude(self,other());
+      if(attitude==ATT_HOSTILE || attitude==ATT_ANGRY) {
+        const bool bandit = self->guild==GIL_BDT;
+        const bool fakeBandit = vm.call_function<int32_t>("C_PLAYERISFAKEBANDIT",self,other())!=0;
+        if(!bandit || !fakeBandit)
+          mdl_startfaceani(self,"S_ANGRY",1.f,-1.f);
+        }
+      if(self->type==NpcType::G2_TAL_AMBIENT || self->type==NpcType::G2_BL_AMBIENT ||
+         self->type==NpcType::G2_OC_AMBIENT || self->type==NpcType::G2_AMBIENT) {
+        vm.call_function<void>("B_ASSIGNAMBIENTINFOS",self);
+        if(predicate("C_NPCBELONGSTOCITY"))
+          vm.call_function<void>("B_ASSIGNCITYGUIDE",self);
+        }
+      static constexpr std::string_view noPartyPotion[] = {"PARDOS_NW","PARDOS","BIFF_DI","BIFF_NW","BIFF"};
+      const auto selfId = hlp_getinstanceid(self);
+      const bool excluded = std::ranges::any_of(noPartyPotion,[&](std::string_view instance) {
+        return hlp_getinstanceid(findSymbol(instance)->get_instance())==selfId;
+        });
+      if(!excluded && self->aivar[partyMember]==1)
+        vm.call_function<void>("B_ADDON_GIVEPOTION",self);
+      const bool canOfferNews = self->aivar[toughGuyNewsOverride]==0;
+      const bool toughGuy = predicate("C_NPCISTOUGHGUY");
+      if(canOfferNews && toughGuy)
+        vm.call_function<void>("B_ASSIGNTOUGHGUYNEWS",self);
+      if(predicate("C_NPCHASAMBIENTNEWS"))
+        vm.call_function<void>("B_ASSIGNAMBIENTNEWS",self);
+      }
+    if(self->guild==GIL_DRAGON)
+      ai_playani(self,"T_STAND_2_TALK");
+    ai_processinfos(self);
+    talkFix.set_int(0);
+    return true;
+    }
+
+  if(name=="ZS_TALK_LOOP") {
+    const bool hasWaited = talkFix.get_int()==1;
+    const bool finished = infomanager_hasfinished();
+    if(!hasWaited || !finished) {
+      talkFix.set_int(1);
+      result = LOOP_CONTINUE;
+      return true;
+      }
+    self->aivar[invincible] = 0;
+    if(const auto player=other())
+      player->aivar[invincible] = 0;
+    self->aivar[startedTalk] = 0;
+    self->aivar[talkedToPlayer] = 1;
+    if(self->guild<GIL_SEPERATOR_HUM) {
+      vm.call_function<void>("B_STOPLOOKAT",self);
+      mdl_startfaceani(self,"S_NEUTRAL",1.f,-1.f);
+      }
+    if(self->guild==GIL_DRAGON)
+      ai_playani(self,"T_TALK_2_STAND");
+    result = LOOP_END;
+    return true;
+    }
+
+  if(name=="ZS_TALK_END") {
+    npc_setrefusetalk(other(),20);
+    const bool unfriendly = npc_getattitude(self,other())!=ATT_FRIENDLY;
+    const bool publicRoom = wld_getplayerportalguild()==int32_t(GIL_PUBLIC);
+    const bool bothered = predicate("C_NPCISBOTHEREDBYPLAYERROOMGUILD");
+    if((unfriendly && publicRoom) || bothered)
+      ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),0,"");
+    result = 0;
+    return true;
+    }
+  return false;
   }
