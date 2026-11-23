@@ -1857,6 +1857,7 @@ std::string npcName(World& world,const Npc& npc) { return std::string(world.scri
 }
 
 #include "npc_activity_world_fixture.h"
+#include "npc_placement_world_fixture.h"
 
 namespace {
 
