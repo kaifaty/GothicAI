@@ -505,6 +505,9 @@ std::vector<std::vector<std::string>> spellVictimPhasesWorld(Gothic& gothic, boo
     require(victim.startState(state,"",gtime::endOfTime(),true),"spell victim: start the actual AI state");
     victim.setOther(&caster);
     ActivityStream stream(world,victim);
+    // This fixture counts phases. Native damage consumes external returns before the next VM instruction.
+    script.getVm().observe_externals({});
+    script.getVm().observe_instructions({});
     Contract::tickRoutine(victim);
     require(Contract::perceptionCallback(victim,PERC_ASSESSMAGIC)==restart && victim.handle().aivar[row.marker]==int(drain),
             "spell victim: Init binds the matching restart and seeds the tick marker");
