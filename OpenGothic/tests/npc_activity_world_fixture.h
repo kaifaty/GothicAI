@@ -3031,6 +3031,79 @@ void monsterHuntAndEatBodyPhases(World& world, Npc& monster, Npc& target) {
   std::puts("Monster hunt and eat body: original and native approach, perception and missing-target phases agree");
   }
 
+void monsterBodyPerception(World& world, Npc& monster, Npc& body) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  const auto externalControl=monster.isExternalControl();
+  auto& ai=monster.handle().aivar;
+  const auto previousVars=std::to_array(ai);
+  const auto previousGuild=monster.handle().guild;
+  const auto previousBodyGuild=body.handle().guild;
+  const auto previousBodyPosition=body.position();
+  auto& hitPoints=body.handle().attribute[ATR_HITPOINTS];
+  const auto previousHitPoints=hitPoints;
+  body.setPosition(monster.position()+Tempest::Vec3(100,0,0));
+  body.updateTransform();
+  hitPoints=0;
+  monster.setExternalControl(false);
+  const auto handler=script.findFunction("B_MM_ASSESSBODY");
+  const auto eat=script.findFunction("ZS_MM_EATBODY");
+  const auto handlerPc=script.findSymbol(size_t(handler.ptr))->address();
+  const auto wantsToEatPc=script.findSymbol("C_WANTTOEAT")->address();
+  const auto boar=script.findSymbol("ID_KEILER")->get_int();
+  struct Scene { Guild monster; Guild body; int party; int realId; int priority; bool eat; };
+  const std::array scenes={Scene{GIL_WOLF,GIL_SHEEP,0,0,0,true},Scene{GIL_WOLF,GIL_SHEEP,1,0,0,false},
+                           Scene{GIL_WOLF,GIL_SHEEP,0,boar,0,false},Scene{GIL_WOLF,GIL_SHEEP,0,0,1,false},
+                           Scene{GIL_GIANT_BUG,GIL_MINECRAWLER,0,0,0,true},Scene{GIL_SCAVENGER,GIL_SCAVENGER,0,0,0,false},
+                           Scene{GIL_GIANT_RAT,GIL_SCAVENGER,0,0,0,true}};
+  for(const auto& scene:scenes) {
+    monster.handle().guild=scene.monster;
+    body.handle().guild=scene.body;
+    ai[15]=scene.party;
+    ai[29]=scene.priority;
+    ai[43]=scene.realId;
+    std::vector<std::string> original;
+    for(bool native:{false,true}) {
+      events=native;
+      monster.clearAiQueue();
+      monster.aiPush(AiQueue::aiWait(100));
+      monster.setPerceptionEnable(PERC_ASSESSBODY,handler.ptr);
+      size_t handlerEntries=0,wantsToEatEntries=0;
+      vm.observe_instructions([&](const auto&) {
+        handlerEntries+=vm.pc()==handlerPc;
+        wantsToEatEntries+=vm.pc()==wantsToEatPc;
+        });
+      const bool delivered=monster.perceptionProcess(body,nullptr,monster.qDistTo(body),PERC_ASSESSBODY);
+      vm.observe_instructions({});
+      require(delivered && handlerEntries==(native ? 0u : 1u) && wantsToEatEntries==(!native && scene.priority==0 ? 1u : 0u),
+              "monster body perception: the handler and prey predicate run bytecode only in VM mode");
+      const auto* front=monster.aiQueueFront();
+      if(scene.eat)
+        require(front && front->act==AI_StartState && front->func==eat && front->target==&body && !monster.hasPerc(PERC_ASSESSBODY),
+                "monster body perception: an eligible corpse replaces the queue with feeding");
+      else
+        require(front && front->act==AI_Wait && monster.hasPerc(PERC_ASSESSBODY),"monster body perception: rejection preserves the queue");
+      const auto queue=activityQueue(monster);
+      if(native)
+        require(queue==original,"monster body perception: original and native leave the same queue");
+      else
+        original=queue;
+      }
+    }
+  events=previousEvents;
+  monster.setExternalControl(externalControl);
+  monster.handle().guild=previousGuild;
+  body.handle().guild=previousBodyGuild;
+  body.setPosition(previousBodyPosition);
+  body.updateTransform();
+  hitPoints=previousHitPoints;
+  std::copy(previousVars.begin(),previousVars.end(),ai);
+  monster.clearAiQueue();
+  std::puts("Monster body perception: original and native feeding eligibility and interruption agree");
+  }
+
 std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -3187,6 +3260,7 @@ std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   monsterThreatAndFleePhases(world,*wolf,hero);
   monsterEnemyPerception(world,*wolf,sheep,hero);
   monsterHuntAndEatBodyPhases(world,*wolf,sheep);
+  monsterBodyPerception(world,*wolf,sheep);
   const auto attack=script.findFunction("ZS_MM_ATTACK");
   require(wolf->startState(attack,site->name),"the wolf must enter attack before saving");
   wolf->setTarget(&hero);

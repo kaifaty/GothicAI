@@ -189,7 +189,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     otherSymbol.set_instance(hlp_getnpc(ai[lastTarget]));
     if(needsWeapon())
       ai_removeweapon(self);
-    if(vm.call_function<int32_t>("C_WANTTOEAT",self,other())!=0 && npc_isdead(other())) {
+    if(monsterWantsToEat(self,other()) && npc_isdead(other())) {
       npc_clearaiqueue(self);
       ai_startstate(self,int(findFunction("ZS_MM_EATBODY").ptr),0,"");
       }
@@ -314,7 +314,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     return true;
     }
 
-  if(vm.call_function<int32_t>("C_WANTTOEAT",self,other())!=0 && ai[monsterPriority]==findSymbol("PRIO_EAT")->get_int()) {
+  if(monsterWantsToEat(self,other()) && ai[monsterPriority]==findSymbol("PRIO_EAT")->get_int()) {
     stop();
     result = LOOP_END;
     return true;
@@ -487,11 +487,76 @@ bool GameScript::nativeMonsterPerceptionsEnabled() {
   }
 
 bool GameScript::invokeNativeMonsterPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe) {
-  if(symbol.name()!="B_MM_ASSESSENEMY" || !nativeMonsterPerceptionsEnabled())
+  const auto name = symbol.name();
+  if((name!="B_MM_ASSESSENEMY" && name!="B_MM_ASSESSBODY") || !nativeMonsterPerceptionsEnabled())
     return false;
   probe.fromRecord();
-  runMonsterAssessEnemy();
+  if(name=="B_MM_ASSESSENEMY")
+    runMonsterAssessEnemy();
+  else
+    runMonsterAssessBody();
   return true;
+  }
+
+bool GameScript::monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monster, const std::shared_ptr<daedalus::INpc>& body) {
+  // An old save can restore a last target that is absent from this world.
+  if(body==nullptr)
+    return vm.call_function<int32_t>("C_WANTTOEAT",monster,body)!=0;
+
+  findSymbol("C_WANTTOEAT.SLF")->set_instance(monster);
+  findSymbol("C_WANTTOEAT.OTH")->set_instance(body);
+  if(monster->aivar[partyMember]==1)
+    return false;
+
+  const auto guild = body->guild;
+  const bool humanoid = guild<GIL_SEPERATOR_HUM || guild>GIL_SEPERATOR_ORC;
+  const bool smallAnimal = guild==GIL_SHEEP || guild==GIL_GIANT_RAT || guild==GIL_MOLERAT;
+  const bool commonPrey = smallAnimal || guild==GIL_HARPY || guild==GIL_WOLF || guild==GIL_SUMMONED_WOLF ||
+                         guild==GIL_GOBBO || guild==GIL_WARAN || guild==GIL_LURKER;
+  const bool insect = guild==GIL_MEATBUG || guild==GIL_GIANT_BUG || guild==GIL_BLOODFLY;
+  switch(monster->guild) {
+    case GIL_SCAVENGER:
+    case GIL_GIANT_RAT:
+      return humanoid || commonPrey || insect || guild==GIL_MINECRAWLER || guild==GIL_SHADOWBEAST || guild==GIL_SNAPPER ||
+             (monster->guild==GIL_GIANT_RAT && guild==GIL_SCAVENGER);
+    case GIL_GIANT_BUG:
+      return guild==GIL_MEATBUG || guild==GIL_BLOODFLY || guild==GIL_MINECRAWLER;
+    case GIL_WARAN:
+      return guild==GIL_SCAVENGER || guild==GIL_HARPY || guild==GIL_GOBBO;
+    case GIL_WOLF:
+      return monster->aivar[realId]!=findSymbol("ID_KEILER")->get_int() && (guild<GIL_SEPERATOR_HUM || smallAnimal);
+    case GIL_SUMMONED_WOLF:
+      return smallAnimal;
+    case GIL_MINECRAWLER:
+      return humanoid || insect;
+    case GIL_LURKER:
+      return humanoid || guild==GIL_GOBBO;
+    case GIL_ZOMBIE:
+      return humanoid;
+    case GIL_SNAPPER:
+      return humanoid || commonPrey || guild==GIL_SCAVENGER || guild==GIL_SHADOWBEAST;
+    case GIL_SHADOWBEAST:
+      return humanoid || commonPrey || guild==GIL_SCAVENGER || guild==GIL_SNAPPER;
+    default:
+      return false;
+    }
+  }
+
+void GameScript::runMonsterAssessBody() {
+  const auto self = std::static_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::static_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  if(self->guild>GIL_SEPERATOR_ORC || npc_getheighttonpc(self,other)>findSymbol("PERC_DIST_HEIGHT")->get_int() ||
+     self->aivar[monsterPriority]==findSymbol("PRIO_ATTACK")->get_int() || !monsterWantsToEat(self,other))
+    return;
+  if(npc_isinstate(self,int(findFunction("ZS_MM_ATTACK").ptr))) {
+    const auto attacker = hlp_getnpc(self->aivar[lastTarget]);
+    findSymbol("B_MM_ASSESSBODY.STOERENFRIED")->set_instance(attacker);
+    if(npc_getdisttonpc(attacker,other)<=findSymbol("FIGHT_DIST_MONSTER_ATTACKRANGE")->get_int())
+      return;
+    }
+  npc_clearaiqueue(self);
+  vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+  ai_startstate(self,int(findFunction("ZS_MM_EATBODY").ptr),0,"");
   }
 
 bool GameScript::monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey) {
