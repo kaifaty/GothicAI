@@ -47,8 +47,8 @@ bool Npc::canSneak() const {
   return talentSkill(TALENT_SNEAK)!=0;
   }
 
-void Npc::setRefuseTalk(uint64_t milis) {
-  refuseTalkMilis = owner.tickCount()+milis;
+void Npc::setRefuseTalkSeconds(int32_t seconds) {
+  refuseTalkMilis = owner.tickCount()+uint64_t(std::max(seconds,0))*1000;
   }
 
 int32_t Npc::attribute(Attribute a) const {

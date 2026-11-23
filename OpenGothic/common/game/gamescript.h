@@ -152,6 +152,7 @@ class GameScript final : public GameRules {
     daedalus::DaedalusSymbol*     findSymbol(const size_t s);
     // the hero has heard this dialog of the npc's, as when it is played (Npc_KnowsInfo)
     void                        setNpcInfoKnown(const NpcRecord& npc, const daedalus::IInfo& info);
+    bool                        doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) const;
     size_t                      findSymbolIndex(std::string_view s) override;
     size_t                      symbolsCount() const;
 
@@ -244,10 +245,13 @@ class GameScript final : public GameRules {
   private:
     enum MonsterRoutine { MonsterSleep, MonsterRest, MonsterRoam, MonsterEatGround, MonsterWusel, MonsterOrcSit };
     friend struct NpcDefinitionContract;
+    friend class StoryRuntime;
     bool invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe);
     bool invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);
     bool runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    int32_t giveInventoryItems(const std::shared_ptr<daedalus::INpc>& giver,
+                               const std::shared_ptr<daedalus::INpc>& taker, int32_t item, int32_t amount);
     bool runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runBanditCamp(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runDormantGolem(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -258,6 +262,7 @@ class GameScript final : public GameRules {
     void resetRoutineNpc(const std::shared_ptr<daedalus::INpc>& self);
     bool npcBodyStateContains(const std::shared_ptr<daedalus::INpc>& self, BodyState state);
     bool runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -411,6 +416,11 @@ class GameScript final : public GameRules {
     void loadNativeEquipment();
     void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
     void selectWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
+    void loadNativeTalkReaction();
+    bool canRunNativeTalkReaction();
+    bool invokeNativeTalkPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
+    void runAssessTalk();
+    bool refusesTalk(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     int32_t runEnterRoomReaction();
     int32_t runExitIfRoomLeft();
     void runPortalCollisionReaction();
@@ -659,7 +669,6 @@ class GameScript final : public GameRules {
     void sort(std::vector<DlgChoice>& dlg);
     // a dialog's condition, information or choice: the story graph runs it if it takes it, else the VM
     int32_t dialogFunction(daedalus::DaedalusSymbol* fn, bool returns);
-    bool doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) const;
 
     void saveSym(Serialize& fout, daedalus::DaedalusSymbol& s);
 

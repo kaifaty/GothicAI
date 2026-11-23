@@ -17,6 +17,68 @@ using storygraph::ExprP;
 using storygraph::Expr;
 using daedalus::DaedalusDataType;
 
+class StoryRuntime::LiveExternals final : public storygraph::Externals {
+  public:
+    LiveExternals(GameScript& script, bool effects)
+      : script(script), fallback(script.getVm()), effects(effects) {}
+
+    storygraph::Value call(const daedalus::DaedalusSymbol& fn, const std::vector<storygraph::Value>& args) override {
+      using storygraph::Value;
+      const std::string_view name=fn.name();
+      if(effects && !fn.has_return() && args.size()==2 && args[0].type==Value::Str) {
+        if(name=="LOG_CREATETOPIC" && args[1].type==Value::Int)
+          script.log_createtopic(args[0].s,args[1].i);
+        else if(name=="LOG_SETTOPICSTATUS" && args[1].type==Value::Int)
+          script.log_settopicstatus(args[0].s,args[1].i);
+        else if(name=="LOG_ADDENTRY" && args[1].type==Value::Str)
+          script.log_addentry(args[0].s,args[1].s);
+        else
+          return fallback.call(fn,args);
+        return Value::integer(0);
+        }
+
+      const bool deadQuery=name=="NPC_ISDEAD";
+      const bool query=fn.has_return() && fn.rtype()==DaedalusDataType::INT &&
+                       (deadQuery || name=="NPC_KNOWSINFO" || name=="NPC_HASITEMS" ||
+                        name=="NPC_ISINSTATE" || name=="NPC_WASINSTATE" || name=="NPC_ISINROUTINE");
+      const bool effect=effects && (name=="NPC_SETREFUSETALK" || name=="NPC_SETATTITUDE") && !fn.has_return();
+      if((!query && !effect) || args.size()!=(deadQuery ? 1u : 2u) || args[0].type!=Value::Inst ||
+         (!deadQuery && args[1].type!=Value::Int))
+        return fallback.call(fn,args);
+
+      auto* record=dynamic_cast<daedalus::INpc*>(args[0].inst.get());
+      auto* npc=script.findNpc(static_cast<NpcRecord*>(record));
+      if(args[0].inst && !npc)
+        return fallback.call(fn,args);
+      if(deadQuery)
+        return Value::integer(npc==nullptr || script.isDead(*npc));
+      if(!npc)
+        return Value::integer(0);
+
+      const auto value=args[1].i;
+      if(name=="NPC_KNOWSINFO")
+        return Value::integer(script.doesNpcKnowInfo(npc->handle(),uint32_t(value)));
+      if(name=="NPC_HASITEMS")
+        return Value::integer(int32_t(npc->itemCount(uint32_t(value))));
+      if(name=="NPC_ISINSTATE")
+        return Value::integer(npc->isInState(uint32_t(value)));
+      if(name=="NPC_WASINSTATE")
+        return Value::integer(npc->wasInState(uint32_t(value)));
+      if(name=="NPC_ISINROUTINE")
+        return Value::integer(npc->isInRoutine(uint32_t(value)));
+      if(name=="NPC_SETREFUSETALK")
+        npc->setRefuseTalkSeconds(value);
+      else
+        npc->setAttitude(Attitude(value));
+      return Value::integer(0);
+      }
+
+  private:
+    GameScript& script;
+    storygraph::VmExternals fallback;
+    bool effects;
+  };
+
 StoryRuntime::StoryRuntime(std::function<std::string(const std::string&,const std::string&)> ownLine)
   :ownLine(std::move(ownLine)) {
   }
@@ -141,7 +203,10 @@ storygraph::Interpreter& StoryRuntime::interpreter(daedalus::DaedalusVm& v) {
   if(runFor==&v && interp!=nullptr)
     return *interp;
   interp.reset();
-  engine = std::make_unique<storygraph::VmExternals>(v);  // the engine's own functions, as the VM calls them
+  if(auto* sc=script(); sc!=nullptr && &sc->getVm()==&v)
+    engine = std::make_unique<LiveExternals>(*sc,true);
+  else
+    engine = std::make_unique<storygraph::VmExternals>(v);
   interp = std::make_unique<storygraph::Interpreter>(v,*engine);
   interp->ownLine = [this](const std::string& npc, const std::string& text) { return ownLine(npc,text); };
   interp->choices = [this](const storygraph::Step& s) { return choices && choices(s); };
@@ -274,18 +339,29 @@ std::string StoryRuntime::checkProgram(daedalus::DaedalusVm& v, const storygraph
   return steps(p.steps);
   }
 
-std::optional<bool> StoryRuntime::test(const ExprP& e, std::string_view what) {
-  auto* v = vm();
-  if(v==nullptr)
+std::optional<storygraph::Value> StoryRuntime::evaluate(const ExprP& e, std::string& error) {
+  auto* sc=script();
+  if(sc==nullptr) {
+    error = "no world";
     return std::nullopt;
+    }
   ensureLifter();
   lifted->whyNotLifted(e);  // lifts the script functions it calls
-  storygraph::VmExternals engine(*v);
-  storygraph::Evaluator   ev(*v,lifted->helpers(),engine);
-  auto r = ev.eval(e);
+  LiveExternals engine(*sc,false);
+  storygraph::Evaluator ev(sc->getVm(),lifted->helpers(),engine);
+  auto r=ev.eval(e);
+  error = ev.why();
+  return r;
+  }
+
+std::optional<bool> StoryRuntime::test(const ExprP& e, std::string_view what) {
+  if(vm()==nullptr)
+    return std::nullopt;
+  std::string error;
+  auto r=evaluate(e,error);
   if(!r || r->type!=storygraph::Value::Int) {
     if(once(std::string("eval:") + std::string(what)))
-      Log::e("[story] condition of ",what," not computed: ",r ? "not an int" : ev.why());
+      Log::e("[story] condition of ",what," not computed: ",r ? "not an int" : error);
     return std::nullopt;
     }
   return r->i!=0;

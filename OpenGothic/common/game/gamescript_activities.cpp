@@ -12,6 +12,10 @@ void GameScript::loadNativeRoutines() {
   vm.override_function("B_MM_ASSESSENEMY",std::function<void()>{[this] { runMonsterAssessEnemy(); }},[this] {
     return nativeMonsterPerceptionsEnabled();
     });
+  using NpcHandle = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("B_GIVEINVITEMS",std::function<int32_t(NpcHandle,NpcHandle,int32_t,int32_t)>{
+    [this](NpcHandle giver,NpcHandle taker,int32_t item,int32_t amount) { return giveInventoryItems(giver,taker,item,amount); }
+    },[this] { return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off; });
 
   static constexpr NativeRoutinePhase routines[] = {
     {"ZS_GOTOBED",            &GameScript::runMovementRoutine},
@@ -67,6 +71,7 @@ void GameScript::loadNativeRoutines() {
     {"ZS_HEALSELF",           &GameScript::runHealSelf},
     {"ZS_BANDIT",             &GameScript::runBanditCamp},
     {"ZS_GOLEMDOWN",          &GameScript::runDormantGolem},
+    {"ZS_TALK",               &GameScript::runTalk},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
     {"ZS_MM_ATTACK",         &GameScript::runMonsterAttack},
     {"ZS_MM_THREATENENEMY",   &GameScript::runMonsterThreat},

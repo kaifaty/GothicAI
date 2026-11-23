@@ -23,6 +23,9 @@ struct NpcDefinitionContract {
   static const auto& foodPool(const Npc& npc) { return npc.foodPool; }
   static void tickActivityDeadline(Npc& npc) { npc.tickActivityDeadline(); }
   static const AiQueue& queue(const Npc& npc) { return npc.aiQueue; }
+  static AiQueue& queue(Npc& npc) { return npc.aiQueue; }
+  static uint64_t& refusalDeadline(Npc& npc) { return npc.refuseTalkMilis; }
+  static auto& perceptions(Npc& npc) { return npc.perception; }
   static bool walking(const Npc& npc) { return !npc.go2.empty(); }
   static const auto& physicsPosition(const Npc& npc) { return npc.physic.position(); }
   // An action at the head of the queue, as an interruption ahead of the queued use.
