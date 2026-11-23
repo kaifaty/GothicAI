@@ -5144,6 +5144,60 @@ void bindNpcGlobals(World& world) {
   std::puts("NPC global bindings: all 310 aliases and chapter semantics match with zero script instructions");
   }
 
+void initializeMonsterAttitudes(World& world) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& matrix=NpcDefinitionContract::guildAttitudes(script);
+  const auto previousMatrix=matrix;
+  const auto* function=script.findSymbol("B_INITMONSTERATTITUDES");
+  auto* from=script.findSymbol("B_SETMONSTERATTITUDE.FROMGUILD");
+  auto* attitude=script.findSymbol("B_SETMONSTERATTITUDE.ATTITUDE");
+  auto* to=script.findSymbol("B_SETMONSTERATTITUDE.TOGUILD");
+  const auto summonedZombie=script.intSymbol("GIL_SUMMONEDZOMBIE",-1);
+  require(function && from && attitude && to && summonedZombie>=0,"monster attitudes: the stock initializer and saved parameters must exist");
+  const auto savedFrom=from->get_int(), savedAttitude=attitude->get_int(), savedTo=to->get_int();
+  const auto* configured=std::getenv("OPENGOTHIC_NPC_RECORDS");
+  const auto savedRecords=configured ? std::optional<std::string>(configured) : std::nullopt;
+  size_t setters=0;
+  const auto observer=vm.add_call_observer([&](const auto& symbol) { setters+=symbol.name()=="B_SETMONSTERATTITUDE"; });
+  const auto restore=[&] {
+    vm.remove_call_observer(observer);
+    vm.observe_instructions({});
+    matrix=previousMatrix;
+    from->set_int(savedFrom);
+    attitude->set_int(savedAttitude);
+    to->set_int(savedTo);
+    if(savedRecords) setenv("OPENGOTHIC_NPC_RECORDS",savedRecords->c_str(),1);
+    else unsetenv("OPENGOTHIC_NPC_RECORDS");
+    };
+  try {
+    std::vector<int32_t> original;
+    for(bool native:{false,true}) {
+      if(native) unsetenv("OPENGOTHIC_NPC_RECORDS");
+      else setenv("OPENGOTHIC_NPC_RECORDS","0",1);
+      std::fill(matrix.begin(),matrix.end(),-1);
+      setters=0;
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { ++instructions; });
+      vm.unsafe_call_bl(function);
+      vm.observe_instructions({});
+      require((instructions==0)==native && setters==(native ? 0u : 1932u),
+              "monster attitudes: the native call replaces 1932 original setter calls");
+      const auto untouched=std::count(matrix.begin(),matrix.end(),-1);
+      require(untouched>0 && size_t(untouched)<matrix.size(),"monster attitudes: initialization leaves unrelated guild pairs unchanged");
+      require(from->get_int()==summonedZombie && attitude->get_int()==ATT_NEUTRAL && to->get_int()==summonedZombie,
+              "monster attitudes: the saved parameter fields match the final original call");
+      if(native)
+        require(matrix==original,"monster attitudes: every directional guild pair matches the original");
+      else
+        original=matrix;
+      }
+    restore();
+    }
+  catch(...) { restore(); throw; }
+  std::puts("Monster attitudes: the whole ordered guild matrix matches the VM including untouched entries");
+  }
+
 void shrinkSpellCast(World& world) {
   auto& script=world.script();
   auto& vm=script.getVm();
@@ -5988,6 +6042,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
         transformNpcRecords(*gothic.world());
       initializePerceptionRanges(*gothic.world());
       bindNpcGlobals(*gothic.world());
+      initializeMonsterAttitudes(*gothic.world());
       }
     const auto save=pointActivitiesWorld(gothic,events);
     itemRoutinePhasesWorld(gothic,events);
