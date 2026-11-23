@@ -4010,6 +4010,7 @@ void moverChildSave() {
   animationEffects(gothic);
   guardCampfireChange(gothic);
   gothic.clearGame().reset();
+  remainingRoutineWitnesses(gothic);
   }
 
 }
