@@ -254,10 +254,14 @@ class GameScript final : public GameRules {
     bool runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runMonsterThreat(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runMonsterFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window);
     void enableMonsterRoutinePerceptions(Npc& npc);
     void beginMonsterRoutine(Npc& npc, bool desynchronize = true, WalkBit mode = WalkBit::WM_Walk);
+    void desynchronizeMonster(Npc& npc);
+    void validateMonsterTarget(const std::shared_ptr<daedalus::INpc>& self);
     bool endMonsterRoutine(Npc& npc, MonsterRoutine routine);
     void removeRavensStoneGuardians(Npc& npc);
     void loadNativeRoutines();

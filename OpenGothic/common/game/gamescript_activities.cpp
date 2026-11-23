@@ -46,6 +46,8 @@ void GameScript::loadNativeRoutines() {
     {"ZS_CLEARROOM",          &GameScript::runClearRoom},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
     {"ZS_MM_ATTACK",         &GameScript::runMonsterAttack},
+    {"ZS_MM_THREATENENEMY",   &GameScript::runMonsterThreat},
+    {"ZS_MM_FLEE",            &GameScript::runMonsterFlee},
     {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_REST",        &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_ROAM",        &GameScript::runRoamingRoutine},
@@ -106,10 +108,17 @@ void GameScript::enableMonsterRoutinePerceptions(Npc& npc) {
 void GameScript::beginMonsterRoutine(Npc& npc, bool desynchronize, WalkBit mode) {
   npc.aiPush(AiQueue::aiSetWalkMode(mode));
   if(desynchronize)
-    desynchronizeNpc();
+    desynchronizeMonster(npc);
   const auto& waypoint = npc.handle().wp;
   if(NpcEngineCalls::nearestWaypoint(world(),npc)!=waypoint)
     NpcEngineCalls::gotoWaypoint(world(),npc,waypoint);
+  }
+
+void GameScript::desynchronizeMonster(Npc& npc) {
+  const auto delay = rollRandom(1000,&npc,true);
+  findSymbol("B_MM_DESYNCHRONIZE.MSEC")->set_int(int32_t(delay));
+  if(delay>0)
+    npc.aiPush(AiQueue::aiWait(delay));
   }
 
 bool GameScript::endMonsterRoutine(Npc& npc, MonsterRoutine routine) {

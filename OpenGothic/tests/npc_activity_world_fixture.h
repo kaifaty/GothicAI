@@ -2777,6 +2777,96 @@ void monsterAttackPhases(World& world, Npc& monster, Npc& hero) {
   std::puts("Monster attack: original and native Init, attack, warning, resumed pursuit and End agree");
   }
 
+void monsterThreatAndFleePhases(World& world, Npc& monster, Npc& hero) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  auto& random=NpcDefinitionContract::random(script);
+  const auto initialRandom=random;
+  const auto previousEvents=events;
+  const auto previousPosition=hero.position();
+  const auto threat=activityPhases(script,"ZS_MM_THREATENENEMY");
+  const auto flee=activityPhases(script,"ZS_MM_FLEE");
+  const auto attack=script.findFunction("ZS_MM_ATTACK");
+  auto& lastTarget=monster.handle().aivar[7];
+  auto& loadedTarget=monster.handle().aivar[65];
+  const auto savedLastTarget=lastTarget;
+  const auto savedLoadedTarget=loadedTarget;
+  auto* delay=script.findSymbol("B_MM_DESYNCHRONIZE.MSEC");
+  const auto savedDelay=delay->get_int();
+  const auto placeHero=[&](int distance) {
+    const auto centerOffset=hero.centerPosition()-hero.position();
+    hero.setPosition(monster.centerPosition()-centerOffset+Tempest::Vec3(float(distance)+0.25f,0,0));
+    hero.updateTransform();
+    require(int(std::sqrt(monster.qDistTo(hero)))==distance,"monster combat: the target must be at the fixture distance");
+    };
+
+  struct Step { size_t function; int distance; uint64_t time; int result; };
+  const std::array steps={Step{threat.init,950,0,0},Step{threat.loop,950,3999,LOOP_CONTINUE},
+                          Step{threat.loop,700,0,LOOP_END},Step{threat.loop,950,4000,LOOP_END},
+                          Step{threat.loop,1501,4000,LOOP_END},Step{threat.end,1501,0,0},
+                          Step{flee.init,1999,0,0},Step{flee.loop,1999,999,LOOP_CONTINUE},
+                          Step{flee.loop,1999,1000,LOOP_CONTINUE},Step{flee.loop,2000,1000,LOOP_END},
+                          Step{flee.end,2000,0,0}};
+  std::array<std::vector<std::string>,steps.size()> original;
+  for(bool native:{false,true}) {
+    events=native;
+    random=initialRandom;
+    lastTarget=int32_t(hero.instanceSymbol());
+    loadedTarget=0;
+    delay->set_int(savedDelay);
+    monster.setPerceptionDisable(PERC_ASSESSBODY);
+    monster.setPerceptionDisable(PERC_ASSESSMAGIC);
+    for(size_t i=0;i<steps.size();++i) {
+      const auto& step=steps[i];
+      placeHero(step.distance);
+      monster.clearAiQueue();
+      if(i==4 || i==9)
+        monster.aiPush(AiQueue::aiWait(100));
+      monster.setTarget(i>6 ? &hero : nullptr);
+      monster.setStateTime(step.time);
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { ++instructions; });
+      const auto result=script.invokeState(&monster,i==6 ? nullptr : &hero,nullptr,ScriptFn(step.function));
+      vm.observe_instructions({});
+      require(result==step.result && (instructions==0)==native,"monster combat: result and executor must agree at the distance and time boundary");
+      auto witness=activityQueue(monster);
+      witness.push_back(std::to_string(monster.stateTime()));
+      witness.push_back(std::to_string(lastTarget));
+      witness.push_back(std::to_string(loadedTarget));
+      witness.push_back(std::to_string(delay->get_int()));
+      if(native)
+        require(witness==original[i],"monster combat: original and native leave the same queue, timer and target bookkeeping");
+      else
+        original[i]=std::move(witness);
+
+      const auto* front=monster.aiQueueFront();
+      if(i==0)
+        require(monster.hasPerc(PERC_ASSESSBODY) && monster.hasPerc(PERC_ASSESSMURDER),"monster threat: Init enables its perceptions");
+      if(i==1)
+        require(front && front->act==AI_TurnToNpc && front->target==&hero,"monster threat: warning turns towards the target");
+      if(i==2 || i==3)
+        require(front && front->act==AI_StartState && front->func==attack && front->target==&hero && monster.target()==&hero,
+                "monster threat: close range or elapsed warning queues attack against the same target");
+      if(i==6)
+        require(monster.target()==&hero && loadedTarget==1,"monster flee: Init restores the previous target with no OTHER supplied");
+      if(i==7 || i==8)
+        require(front && front->act==AI_Flee && monster.stateTime()==(i==7 ? 999u : 0u),"monster flee: Loop queues fleeing and resets elapsed seconds");
+      if(i==4 || i==9)
+        require(!front,"monster combat: leaving range clears the queue and ends the state");
+      }
+    }
+  events=previousEvents;
+  random=initialRandom;
+  lastTarget=savedLastTarget;
+  loadedTarget=savedLoadedTarget;
+  delay->set_int(savedDelay);
+  hero.setPosition(previousPosition);
+  hero.updateTransform();
+  monster.clearAiQueue();
+  std::puts("Monster threat and flee: original and native phases agree at the pursuit distance and warning time boundaries");
+  }
+
 std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
@@ -2930,6 +3020,7 @@ std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   wolf->setPosition(site->position());
   test.moveHero(site->position()+Tempest::Vec3(450,0,0),0);
   monsterAttackPhases(world,*wolf,hero);
+  monsterThreatAndFleePhases(world,*wolf,hero);
   const auto attack=script.findFunction("ZS_MM_ATTACK");
   require(wolf->startState(attack,site->name),"the wolf must enter attack before saving");
   wolf->setTarget(&hero);

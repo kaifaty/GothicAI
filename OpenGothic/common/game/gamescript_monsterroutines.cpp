@@ -7,8 +7,8 @@ constexpr std::string_view roam = "FP_ROAM";
 constexpr std::string_view campfire = "FP_CAMPFIRE";
 constexpr size_t routinePosition = 19;
 
-// Stock NotR AIVAR slots used by ZS_MM_ATTACK in the verified program.
-enum MonsterAttackVar : size_t {
+// Stock NotR AIVAR slots used by the combat states in the verified program.
+enum MonsterCombatVar : size_t {
   invincible = 4,
   lastTarget = 7,
   pursuitEnd = 8,
@@ -113,6 +113,21 @@ bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& sym
   return true;
   }
 
+void GameScript::validateMonsterTarget(const std::shared_ptr<daedalus::INpc>& self) {
+  auto& ai = self->aivar;
+  auto& otherSymbol = *vm.global_other();
+  if(!hlp_isvalidnpc(std::dynamic_pointer_cast<daedalus::INpc>(otherSymbol.get_instance()))) {
+    const auto restored = hlp_getnpc(ai[lastTarget]);
+    otherSymbol.set_instance(restored);
+    npc_settarget(self,restored);
+    ai[loadGame] = 1;
+    } else {
+    npc_gettarget(self);
+    ai[lastTarget] = hlp_getinstanceid(std::dynamic_pointer_cast<daedalus::INpc>(otherSymbol.get_instance()));
+    ai[loadGame] = 0;
+    }
+  }
+
 bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   auto& ai = self->aivar;
@@ -138,17 +153,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     enable(PERC_ASSESSWARN,"B_MM_ASSESSWARN");
     enable(PERC_ASSESSSURPRISE,"B_MM_ASSESSSURPRISE");
 
-    // B_VALIDATEOTHER restores the last target when this state starts without OTHER.
-    if(!hlp_isvalidnpc(other())) {
-      const auto restored = hlp_getnpc(ai[lastTarget]);
-      otherSymbol.set_instance(restored);
-      npc_settarget(self,restored);
-      ai[loadGame] = 1;
-      } else {
-      npc_gettarget(self);
-      ai[lastTarget] = hlp_getinstanceid(other());
-      ai[loadGame] = 0;
-      }
+    validateMonsterTarget(self);
     if(self->guild==GIL_SHEEP) {
       npc_clearaiqueue(self);
       vm.call_function<void>("B_CLEARPERCEPTIONS",self);
@@ -319,5 +324,87 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     }
   stop();
   result = LOOP_END;
+  return true;
+  }
+
+bool GameScript::runMonsterThreat(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const auto phase = symbol.name();
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  if(phase=="ZS_MM_THREATENENEMY") {
+    auto enable = [&](PercType perception, std::string_view callback) {
+      npc.setPerceptionEnable(perception,findFunction(callback).ptr);
+      };
+    npc.setPerceptionTime(2000);
+    enable(PERC_ASSESSBODY,"B_MM_ASSESSBODY");
+    enable(PERC_ASSESSMAGIC,"B_ASSESSMAGIC");
+    enable(PERC_ASSESSDAMAGE,"B_MM_ASSESSDAMAGE");
+    enable(PERC_ASSESSOTHERSDAMAGE,"B_MM_ASSESSOTHERSDAMAGE");
+    enable(PERC_ASSESSMURDER,"B_MM_ASSESSOTHERSDAMAGE");
+    ai_standup(self);
+    npc_sendpassiveperc(self,PERC_ASSESSWARN,other,self);
+    result = 0;
+    return true;
+    }
+  if(phase=="ZS_MM_THREATENENEMY_END") {
+    result = 0;
+    return true;
+    }
+  if(phase!="ZS_MM_THREATENENEMY_LOOP")
+    return false;
+
+  const auto distance = npc_getdisttonpc(self,other);
+  if(distance>findSymbol("PERC_DIST_MONSTER_ACTIVE_MAX")->get_int()) {
+    npc_clearaiqueue(self);
+    result = LOOP_END;
+    return true;
+    }
+  if(distance<=findSymbol("FIGHT_DIST_MONSTER_ATTACKRANGE")->get_int() ||
+     npc_getstatetime(self)>=findSymbol("MONSTER_THREATEN_TIME")->get_int()) {
+    npc_clearaiqueue(self);
+    npc_settarget(self,other);
+    ai_startstate(self,int(findFunction("ZS_MM_ATTACK").ptr),0,"");
+    result = LOOP_END;
+    return true;
+    }
+  ai_turntonpc(self,other);
+  ai_playani(self,"T_WARN");
+  result = LOOP_CONTINUE;
+  return true;
+  }
+
+bool GameScript::runMonsterFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  const auto phase = symbol.name();
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  if(phase=="ZS_MM_FLEE") {
+    npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction("B_ASSESSMAGIC").ptr);
+    validateMonsterTarget(self);
+    ai_standup(self);
+    ai_setwalkmode(self,int(WalkBit::WM_Run));
+    npc_sendpassiveperc(self,PERC_ASSESSWARN,other(),self);
+    desynchronizeMonster(npc);
+    result = 0;
+    return true;
+    }
+  if(phase=="ZS_MM_FLEE_END") {
+    result = 0;
+    return true;
+    }
+  if(phase!="ZS_MM_FLEE_LOOP")
+    return false;
+
+  npc_gettarget(self);
+  if(npc_getdisttonpc(self,other())>=2000) {
+    npc_clearaiqueue(self);
+    result = LOOP_END;
+    return true;
+    }
+  if(npc_getstatetime(self)>0) {
+    npc_sendpassiveperc(self,PERC_ASSESSWARN,other(),self);
+    npc_setstatetime(self,0);
+    }
+  ai_flee(self);
+  result = LOOP_CONTINUE;
   return true;
   }
