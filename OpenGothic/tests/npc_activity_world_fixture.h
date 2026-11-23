@@ -4027,6 +4027,50 @@ auto stockEquipmentHelpers(ActivityEventsWorld& test, Npc& hero, const Npc& rese
   return std::make_pair(std::move(inventory),darkMageQueue);
   }
 
+auto stockArmorSetEffects(World& world, bool native) {
+  auto& script=world.script();
+  auto& hero=*world.player();
+  auto* mika=activityNpc(world,"MIL_337_MIKA");
+  const auto armor=script.findSymbolIndex("ITAR_MIL_L");
+  const auto belt=script.findSymbolIndex("ITBE_ADDON_MIL_01");
+  auto& armorFlag=*script.findSymbol("MILARMOR_EQUIPPED");
+  auto& beltFlag=*script.findSymbol("MIL01_EQUIPPED");
+  const auto bonus=script.findSymbol("BA_BONUS01")->get_int();
+  require(mika && mika->currentArmor() && mika->currentArmor()->clsId()==armor && !hero.currentArmor() &&
+          armorFlag.get_int()==0 && beltFlag.get_int()==0,"armor sets: the stock guard wears the armor and the hero starts without the set");
+  const auto npcProtection=std::to_array(mika->handle().protection);
+  size_t armorCalls=0;
+  auto& vm=script.getVm();
+  const auto observer=vm.add_call_observer([&](const auto& fn) {
+    armorCalls+=fn.name()=="EQUIP_ITAR_MIL_L" || fn.name()=="UNEQUIP_ITAR_MIL_L";
+    });
+  require(hero.addItem(belt,1) && hero.addItem(armor,1),"armor sets: add the actual stock equipment");
+  hero.useItem(belt);
+  require(beltFlag.get_int()==1 && hero.getItem(belt)->isEquipped(),"armor sets: the matching belt must be worn through inventory");
+  const auto beltOnly=std::to_array(hero.handle().protection);
+  mika->unequipItem(armor);
+  mika->useItem(armor);
+  require(mika->currentArmor() && mika->currentArmor()->clsId()==armor && armorFlag.get_int()==0 &&
+          std::to_array(mika->handle().protection)==npcProtection,
+          "armor sets: the guard keeps ordinary armor protection with the hero's belt active");
+  hero.useItem(armor);
+  const auto withSet=std::to_array(hero.handle().protection);
+  const auto* worn=hero.currentArmor();
+  require(worn && worn->clsId()==armor && armorFlag.get_int()==1,"armor sets: the hero's armor must set the saved flag");
+  for(size_t i=0;i<withSet.size();++i) {
+    const bool affected=i==PROT_EDGE || i==PROT_BLUNT || i==PROT_POINT || i==PROT_MAGIC || i==PROT_FIRE;
+    require(withSet[i]==beltOnly[i]+worn->handle().protection[i]+(affected ? bonus : 0),
+            "armor sets: add base armor and the five matching belt bonuses in the original fields");
+    }
+  hero.unequipItem(armor);
+  require(!hero.currentArmor() && armorFlag.get_int()==0 && std::to_array(hero.handle().protection)==beltOnly,
+          "armor sets: removing the armor subtracts both contributions and clears the flag");
+  hero.useItem(armor);
+  vm.remove_call_observer(observer);
+  require(armorCalls==(native ? 0u : 5u),"armor sets: Mika and the hero must use the selected callback executor");
+  return std::pair{withSet,beltOnly};
+  }
+
 void npcUnconsciousLifecycle(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   constexpr auto* actor="BAU_951_HILDA";
@@ -4068,6 +4112,7 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   std::vector<std::string> originalInit,originalEnd;
   std::vector<uint8_t> knockedOut,healing,pendingPotion;
   std::pair<std::vector<size_t>,std::vector<std::string>> stockEquipment;
+  std::pair<std::array<int32_t,PROT_MAX>,std::array<int32_t,PROT_MAX>> stockArmor;
   int32_t originalXp=0;
   for(bool native:{false,true}) {
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
@@ -4089,6 +4134,9 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     const auto equipment=stockEquipmentHelpers(test,hero,*npc,native);
     if(native) require(equipment==stockEquipment,"equipment: spell preparation creates items and queues actions in stock order");
     else stockEquipment=equipment;
+    const auto armor=stockArmorSetEffects(world,native);
+    if(native) require(armor==stockArmor,"armor sets: native protection matches the stock callbacks");
+    else stockArmor=armor;
     script.setSeed(73106);
     const auto beforeXp=hero.experience();
     const auto wakeAt=int64_t(script.findSymbol("HAI_TIME_UNCONSCIOUS")->get_int())*1000;
@@ -4277,6 +4325,23 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   gothic.setGame(std::make_unique<GameSession>(potionIn));
   auto& potionWorld=*gothic.world();
   auto& potionScript=potionWorld.script();
+  auto& potionVm=potionScript.getVm();
+  size_t loadedPotionCalls=0,loadedArmorCalls=0;
+  const auto potionObserver=potionVm.add_call_observer([&](const auto& symbol) {
+    loadedPotionCalls+=symbol.name()=="USEITPO_HEALTH_03";
+    loadedArmorCalls+=symbol.name()=="UNEQUIP_ITAR_MIL_L";
+    });
+  auto& armoredHero=*potionWorld.player();
+  const auto armor=potionScript.findSymbolIndex("ITAR_MIL_L");
+  require(armoredHero.currentArmor() && armoredHero.currentArmor()->clsId()==armor &&
+          potionScript.findSymbol("MILARMOR_EQUIPPED")->get_int()==1 &&
+          potionScript.findSymbol("MIL01_EQUIPPED")->get_int()==1 &&
+          std::to_array(armoredHero.handle().protection)==stockArmor.first,
+          "armor sets: the VM-era save restores the equipped item, flags and protection together");
+  armoredHero.unequipItem(armor);
+  require(!armoredHero.currentArmor() && potionScript.findSymbol("MILARMOR_EQUIPPED")->get_int()==0 &&
+          std::to_array(armoredHero.handle().protection)==stockArmor.second && loadedArmorCalls==0,
+          "armor sets: native unequip removes the saved bonus exactly once");
   require(potionScript.findSymbol("B_SELECTSPELL.DK_RND")->get_int()==int32_t(std::mt19937(73106)()%10),
           "equipment: normal load keeps the original saved spell-selection draw");
   require(potionScript.findSymbol("B_READYSPELL.SPELL")->get_int()==potionScript.findSymbol("SPL_ICEBOLT")->get_int() &&
@@ -4288,11 +4353,6 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
           drinker->itemCount(potion)>0,"health potions: load restores a pending VM-era drink without healing");
   const auto before=potionWorld.player()->attribute(ATR_HITPOINTS);
   const auto count=drinker->itemCount(potion);
-  auto& potionVm=potionScript.getVm();
-  size_t loadedPotionCalls=0;
-  const auto potionObserver=potionVm.add_call_observer([&](const auto& symbol) {
-    loadedPotionCalls+=symbol.name()=="USEITPO_HEALTH_03";
-    });
   Contract::finishItemUseAnimation(*drinker);
   potionVm.remove_call_observer(potionObserver);
   require(Contract::pendingItemUse(*drinker)==0 && drinker->attribute(ATR_HITPOINTS)==200 &&

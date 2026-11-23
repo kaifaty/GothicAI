@@ -1164,7 +1164,7 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
     return;
 
   ScopeVar self(*vm.global_self(), npc->handlePtr());
-  if(!itemDefinitions.restoreEffects.empty() && activityEvents && !floorDefer.active() &&
+  if(nativeRoutineProgram && activityEvents && !floorDefer.active() &&
      ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off) {
     const auto it = itemDefinitions.restoreEffects.find(functionSymbol->index());
     if(it!=itemDefinitions.restoreEffects.end()) {
@@ -1173,6 +1173,8 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
       npc_changeattribute(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()),effect.attribute,amount);
       return;
       }
+    if(applyArmorSetEffect(*npc,functionSymbol->index()))
+      return;
     }
   vm.call_function<void>(functionSymbol);
   }

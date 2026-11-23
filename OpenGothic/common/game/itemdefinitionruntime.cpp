@@ -129,3 +129,34 @@ void ItemDefinitionRuntime::registerStockRestoreEffects(Definitions& definitions
       throw std::runtime_error("stock item restore: duplicate callback "+std::string(callback));
     }
   }
+
+void ItemDefinitionRuntime::registerStockArmorSetEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
+  struct StockArmorSet {
+    std::string_view item;
+    std::string_view armorFlag;
+    std::string_view beltFlag;
+    };
+  static constexpr StockArmorSet stock[] = {
+    {"ITAR_MIL_L",       "MILARMOR_EQUIPPED",     "MIL01_EQUIPPED"},
+    {"ITAR_MIL_M",       "MILARMOR_EQUIPPED",     "MIL01_EQUIPPED"},
+    {"ITAR_SLD_L",       "SLDARMOR_EQUIPPED",     "SLD01_EQUIPPED"},
+    {"ITAR_SLD_M",       "SLDARMOR_EQUIPPED",     "SLD01_EQUIPPED"},
+    {"ITAR_SLD_H",       "SLDARMOR_EQUIPPED",     "SLD01_EQUIPPED"},
+    {"ITAR_DJG_CRAWLER", "MCARMOR_EQUIPPED",      "MC_EQUIPPED"},
+    {"ITAR_NOV_L",       "NOVARMOR_EQUIPPED",     "NOV01_EQUIPPED"},
+    {"ITAR_KDF_L",       "KDFARMOR_EQUIPPED",     "KDF01_EQUIPPED"},
+    {"ITAR_KDF_H",       "KDFARMOR_EQUIPPED",     "KDF01_EQUIPPED"},
+    {"ITAR_LEATHER_L",   "LEATHERARMOR_EQUIPPED", "LEATHER01_EQUIPPED"},
+    };
+  for(const auto& [item,armor,belt] : stock) {
+    const auto* armorFlag = program.find_symbol_by_name(armor);
+    const auto* beltFlag = program.find_symbol_by_name(belt);
+    for(bool equip : {true,false}) {
+      const auto callback = std::string(equip ? "EQUIP_" : "UNEQUIP_").append(item);
+      const auto* function = program.find_symbol_by_name(callback);
+      if(function==nullptr || armorFlag==nullptr || beltFlag==nullptr)
+        throw std::runtime_error("stock armor set: missing symbol for "+callback);
+      definitions.armorSetEffects.emplace(function->index(),ArmorSetEffect{armorFlag->index(),beltFlag->index(),equip});
+      }
+    }
+  }

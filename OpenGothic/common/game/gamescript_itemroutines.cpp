@@ -7,6 +7,23 @@
 #include <algorithm>
 #include <array>
 
+bool GameScript::applyArmorSetEffect(Npc& npc, uint32_t callback) {
+  const auto it = itemDefinitions.armorSetEffects.find(callback);
+  if(it==itemDefinitions.armorSetEffects.end())
+    return false;
+  if(npc.isPlayer()) {
+    const auto& effect = it->second;
+    vm.find_symbol_by_index(effect.armorFlag)->set_int(effect.equip ? 1 : 0);
+    if(vm.find_symbol_by_index(effect.beltFlag)->get_int()==1) {
+      const auto amount = findSymbol("BA_BONUS01")->get_int();
+      const auto delta = effect.equip ? amount : -amount;
+      for(const auto protection : {PROT_EDGE,PROT_BLUNT,PROT_POINT,PROT_MAGIC,PROT_FIRE})
+        npc.changeProtection(protection,npc.protection(protection)+delta);
+      }
+    }
+  return true;
+  }
+
 namespace {
 enum class Kind { HoldItem, Brush, Eat, Drink, Joint, Spit, Wash, Hammer };
 
