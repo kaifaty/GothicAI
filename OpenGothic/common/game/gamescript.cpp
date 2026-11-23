@@ -1213,7 +1213,8 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
       return;
       }
     if(applyCumulativeFoodEffect(functionSymbol->name()) || applyStockItemUseEffect(functionSymbol->name()) ||
-       applyArmorSetEffect(*npc,functionSymbol->index()) || applyFightSkillItemEffect(*npc,functionSymbol->index()))
+       applyArmorSetEffect(*npc,functionSymbol->index()) || applyFightSkillItemEffect(*npc,functionSymbol->index()) ||
+       applyEquipmentStatEffect(*npc,functionSymbol->index()))
       return;
     }
   vm.call_function<void>(functionSymbol);

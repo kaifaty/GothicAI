@@ -745,10 +745,12 @@ auto stockArmorSetEffects(World& world, bool native) {
   require(mika && mika->currentArmor() && mika->currentArmor()->clsId()==armor && !hero.currentArmor() &&
           armorFlag.get_int()==0 && beltFlag.get_int()==0,"armor sets: the stock guard wears the armor and the hero starts without the set");
   const auto npcProtection=std::to_array(mika->handle().protection);
-  size_t armorCalls=0;
+  size_t armorCalls=0, accessoryCalls=0;
   auto& vm=script.getVm();
   const auto observer=vm.add_call_observer([&](const auto& fn) {
     armorCalls+=fn.name()=="EQUIP_ITAR_MIL_L" || fn.name()=="UNEQUIP_ITAR_MIL_L";
+    accessoryCalls+=fn.name()=="EQUIP_ITRI_PROT_TOTAL_01" || fn.name()=="UNEQUIP_ITRI_PROT_TOTAL_01" ||
+                    fn.name()=="EQUIP_ITAM_DEX_STRG_01" || fn.name()=="UNEQUIP_ITAM_DEX_STRG_01";
     });
   require(hero.addItem(belt,1) && hero.addItem(armor,1),"armor sets: add the actual stock equipment");
   hero.useItem(belt);
@@ -772,8 +774,41 @@ auto stockArmorSetEffects(World& world, bool native) {
   require(!hero.currentArmor() && armorFlag.get_int()==0 && std::to_array(hero.handle().protection)==beltOnly,
           "armor sets: removing the armor subtracts both contributions and clears the flag");
   hero.useItem(armor);
+  const auto ring=script.findSymbolIndex("ITRI_PROT_TOTAL_01");
+  const auto amulet=script.findSymbolIndex("ITAM_DEX_STRG_01");
+  require(hero.addItem(ring,1) && mika->addItem(amulet,1),"equipment stats: add the stock ring and amulet");
+  const auto beforeRing=std::to_array(hero.handle().protection);
+  const auto beforeMika=std::to_array(mika->handle().attribute);
+  std::vector<uint16_t> writes;
+  const auto heroHandle=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
+  vm.observe_member_writes([&](const auto& symbol,uint16_t index,const auto* context) {
+    if(symbol.name()=="C_NPC.PROTECTION" && context==heroHandle.get())
+      writes.push_back(index);
+    });
+  hero.useItem(ring);
+  require(hero.getItem(ring)->isEquipped() && hero.protection(PROT_EDGE)==beforeRing[PROT_EDGE]+3 &&
+          hero.protection(PROT_POINT)==beforeRing[PROT_POINT]+3 && hero.protection(PROT_FIRE)==beforeRing[PROT_FIRE]+2,
+          "equipment stats: a total protection ring applies its distinct bonuses");
+  hero.unequipItem(ring);
+  vm.observe_member_writes({});
+  require(std::to_array(hero.handle().protection)==beforeRing &&
+          writes==std::vector<uint16_t>{PROT_EDGE,PROT_BLUNT,PROT_POINT,PROT_FIRE,PROT_MAGIC,
+                                        PROT_EDGE,PROT_BLUNT,PROT_POINT,PROT_FIRE,PROT_MAGIC},
+          "equipment stats: the ring removes every signed bonus in the original order");
+  mika->useItem(amulet,Item::NSLOT,true);
+  require(mika->getItem(amulet)->isEquipped() && mika->attribute(ATR_STRENGTH)==beforeMika[ATR_STRENGTH]+8 &&
+          mika->attribute(ATR_DEXTERITY)==beforeMika[ATR_DEXTERITY]+8,
+          "equipment stats: an ordinary NPC receives both amulet attributes");
+  mika->handle().attribute[ATR_STRENGTH]=3;
+  mika->unequipItem(amulet);
+  require(mika->attribute(ATR_STRENGTH)==0 && mika->attribute(ATR_DEXTERITY)==beforeMika[ATR_DEXTERITY],
+          "equipment stats: unequip uses the engine attribute clamp");
+  mika->handle().attribute[ATR_STRENGTH]=beforeMika[ATR_STRENGTH];
+  hero.delItem(ring,1);
+  mika->delItem(amulet,1);
   vm.remove_call_observer(observer);
-  require(armorCalls==(native ? 0u : 5u),"armor sets: Mika and the hero must use the selected callback executor");
+  require(armorCalls==(native ? 0u : 5u) && accessoryCalls==(native ? 0u : 4u),
+          "armor sets and equipment stats: Mika and the hero must use the selected callback executor");
   return std::pair{withSet,beltOnly};
   }
 

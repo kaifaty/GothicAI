@@ -249,3 +249,75 @@ void ItemDefinitionRuntime::registerStockFightSkillEffects(Definitions& definiti
   bind("ALRIKSSWORD",TALENT_1H,10,false);
   bind("MORGANSRING",TALENT_1H,10,false);
   }
+
+void ItemDefinitionRuntime::registerStockEquipmentStatEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
+  struct Change {
+    std::variant<Protection,Attribute> stat;
+    std::string_view amount;
+    };
+  static constexpr struct Pair {
+    std::string_view callback;
+    std::initializer_list<Change> changes;
+    } stock[] = {
+    {"ITAM_PROT_EDGE_01", {{PROT_EDGE, "AM_PROTEDGE"}, {PROT_BLUNT, "AM_PROTEDGE"}}},
+    {"ITAM_PROT_FIRE_01", {{PROT_FIRE, "AM_PROTFIRE"}}},
+    {"ITAM_PROT_MAGE_01", {{PROT_MAGIC, "AM_PROTMAGE"}}},
+    {"ITAM_PROT_POINT_01", {{PROT_POINT, "AM_PROTPOINT"}}},
+    {"VALUE_AM_PROTTOTAL",
+     {{PROT_EDGE, "AM_TPROTEDGE"}, {PROT_BLUNT, "AM_TPROTEDGE"}, {PROT_POINT, "AM_TPROTPOINT"},
+      {PROT_FIRE, "AM_TPROTFIRE"}, {PROT_MAGIC, "AM_TPROTMAGE"}}},
+    {"ITBE_ADDON_PROT_EDGE", {{PROT_EDGE, "BELTBONUS_PROTEDGE"}, {PROT_BLUNT, "BELTBONUS_PROTEDGE"}}},
+    {"ITBE_ADDON_PROT_EDGPOI",
+     {{PROT_EDGE, "BELTBONUS_PROTEDGPOI"}, {PROT_BLUNT, "BELTBONUS_PROTEDGPOI"}, {PROT_POINT, "BELTBONUS_PROTEDGPOI"}}},
+    {"ITBE_ADDON_PROT_FIRE", {{PROT_FIRE, "BELTBONUS_PROTFIRE"}}},
+    {"ITBE_ADDON_PROT_MAGIC", {{PROT_MAGIC, "BELTBONUS_PROTMAGIC"}}},
+    {"ITBE_ADDON_PROT_POINT", {{PROT_POINT, "BELTBONUS_PROTPOINT"}}},
+    {"ITBE_ADDON_PROT_TOTAL",
+     {{PROT_EDGE, "BELTBONUS_PROTTOTAL"}, {PROT_BLUNT, "BELTBONUS_PROTTOTAL"}, {PROT_POINT, "BELTBONUS_PROTTOTAL"},
+      {PROT_MAGIC, "BELTBONUS_PROTTOTAL"}, {PROT_FIRE, "BELTBONUS_PROTTOTAL"}}},
+    {"ITRI_PROT_EDGE_01", {{PROT_EDGE, "RI_PROTEDGE"}, {PROT_BLUNT, "RI_PROTEDGE"}}},
+    {"ITRI_PROT_EDGE_02", {{PROT_EDGE, "RI_PROTEDGE02"}, {PROT_BLUNT, "RI_PROTEDGE02"}}},
+    {"ITRI_PROT_FIRE_01", {{PROT_FIRE, "RI_PROTFIRE"}}},
+    {"ITRI_PROT_FIRE_02", {{PROT_FIRE, "RI_PROTFIRE02"}}},
+    {"ITRI_PROT_MAGE_01", {{PROT_MAGIC, "RI_PROTMAGE"}}},
+    {"ITRI_PROT_MAGE_02", {{PROT_MAGIC, "RI_PROTMAGE02"}}},
+    {"ITRI_PROT_POINT_01", {{PROT_POINT, "RI_PROTPOINT"}}},
+    {"ITRI_PROT_POINT_01_MIS", {{PROT_POINT, "RI_PROTPOINT"}}},
+    {"ITRI_PROT_POINT_02", {{PROT_POINT, "RI_PROTPOINT02"}}},
+    {"ITRI_PROT_TOTAL_01",
+     {{PROT_EDGE, "RI_TPROTEDGE"}, {PROT_BLUNT, "RI_TPROTEDGE"}, {PROT_POINT, "RI_TPROTPOINT"},
+      {PROT_FIRE, "RI_TPROTFIRE"}, {PROT_MAGIC, "RI_TPROTMAGE"}}},
+    {"ITRI_PROT_TOTAL_02",
+     {{PROT_EDGE, "RI_TPROTEDGE02"}, {PROT_BLUNT, "RI_TPROTEDGE02"}, {PROT_POINT, "RI_TPROTPOINT02"},
+      {PROT_FIRE, "RI_TPROTFIRE02"}, {PROT_MAGIC, "RI_TPROTMAGE02"}}},
+    {"VALENTINOSRING", {{PROT_EDGE, "RI_PROTEDGE"}, {PROT_BLUNT, "RI_PROTEDGE"}}},
+    {"ITAM_DEX_01", {{ATR_DEXTERITY, "AM_DEX"}}},
+    {"ITAM_DEX_STRG_01", {{ATR_DEXTERITY, "AM_DEXSTRG_DEX"}, {ATR_STRENGTH, "AM_DEXSTRG_STRG"}}},
+    {"ITAM_STRG_01", {{ATR_STRENGTH, "AM_STRG"}}},
+    {"ITBE_ADDON_DEX_10", {{ATR_DEXTERITY, "BELTBONUS_DEX02"}}},
+    {"ITBE_ADDON_DEX_5", {{ATR_DEXTERITY, "BELTBONUS_DEX01"}}},
+    {"ITBE_ADDON_STR_10", {{ATR_STRENGTH, "BELTBONUS_STR02"}}},
+    {"ITBE_ADDON_STR_5", {{ATR_STRENGTH, "BELTBONUS_STR01"}}},
+    {"ITRI_DEX_01", {{ATR_DEXTERITY, "RI_DEX"}}},
+    {"ITRI_DEX_02", {{ATR_DEXTERITY, "RI_DEX02"}}},
+    {"ITRI_DEX_STRG_01", {{ATR_STRENGTH, "RI_DEXSTRG_STRG"}, {ATR_DEXTERITY, "RI_DEXSTRG_DEX"}}},
+    {"ITRI_STR_01", {{ATR_STRENGTH, "RI_STRG"}}},
+    {"ITRI_STR_02", {{ATR_STRENGTH, "RI_STRG02"}}},
+    };
+  for(const auto& row : stock) {
+    std::vector<EquipmentStatChange> changes;
+    changes.reserve(row.changes.size());
+    for(const auto& [stat,amount] : row.changes) {
+      const auto* value = program.find_symbol_by_name(amount);
+      if(value==nullptr || value->type()!=daedalus::DaedalusDataType::INT || !value->is_const())
+        throw std::runtime_error("stock equipment stat: invalid amount "+std::string(amount));
+      changes.push_back({stat,value->index()});
+      }
+    for(bool equip : {true,false}) {
+      const auto name = std::string(equip ? "EQUIP_" : "UNEQUIP_").append(row.callback);
+      const auto* function = program.find_symbol_by_name(name);
+      if(function==nullptr || !definitions.equipmentStatEffects.emplace(function->index(),EquipmentStatEffect{changes,equip}).second)
+        throw std::runtime_error("stock equipment stat: invalid callback "+name);
+      }
+    }
+  }

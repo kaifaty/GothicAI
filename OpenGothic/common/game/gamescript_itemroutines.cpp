@@ -1097,6 +1097,27 @@ bool GameScript::applyFightSkillItemEffect(Npc& npc, uint32_t callback) {
                                        effect.talent,effect.delta,npcDefinitions.helpers);
   }
 
+bool GameScript::applyEquipmentStatEffect(Npc& npc, uint32_t callback) {
+  const auto it = itemDefinitions.equipmentStatEffects.find(callback);
+  if(it==itemDefinitions.equipmentStatEffects.end())
+    return false;
+  const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  auto* protection = findSymbol("C_NPC.PROTECTION");
+  const auto& effect = it->second;
+  for(const auto& change : effect.changes) {
+    const auto amount = uint32_t(vm.find_symbol_by_index(change.amount)->get_int());
+    const auto delta = effect.equip ? amount : 0u-amount;
+    if(const auto* index = std::get_if<Protection>(&change.stat)) {
+      const auto current = uint32_t(vm.get_int(actor,protection,*index));
+      vm.set_int(actor,protection,*index,std::bit_cast<int32_t>(current+delta));
+      }
+    else {
+      npc_changeattribute(actor,std::get<Attribute>(change.stat),std::bit_cast<int32_t>(delta));
+      }
+    }
+  return true;
+  }
+
 namespace {
 enum class Kind { HoldItem, Brush, Eat, Drink, Joint, Spit, Wash, Hammer };
 

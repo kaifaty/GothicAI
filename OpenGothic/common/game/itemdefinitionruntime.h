@@ -8,6 +8,7 @@
 #include <optional>
 #include <unordered_map>
 #include <variant>
+#include <vector>
 
 namespace ItemDefinitionRuntime {
 struct RestoreChange {
@@ -35,6 +36,14 @@ struct FightSkillEffect {
   int32_t delta;
   bool    playerOnly;
   };
+struct EquipmentStatChange {
+  std::variant<Protection,Attribute> stat;
+  uint32_t amount;
+  };
+struct EquipmentStatEffect {
+  std::vector<EquipmentStatChange> changes;
+  bool equip;
+  };
 struct Definitions {
   std::unordered_map<uint32_t,ItemRecord> items;
   std::unordered_map<uint32_t,RestoreEffect> restoreEffects;
@@ -42,6 +51,7 @@ struct Definitions {
   std::unordered_map<uint32_t,PermanentAttributeEffect> permanentAttributeEffects;
   std::unordered_map<uint32_t,ArmorSetEffect> armorSetEffects;
   std::unordered_map<uint32_t,FightSkillEffect> fightSkillEffects;
+  std::unordered_map<uint32_t,EquipmentStatEffect> equipmentStatEffects;
   };
 Definitions resolve(const ItemDefinitions::Library& library, const daedalus::DaedalusScript& script);
 // Select the section by the verified program-record SHA, applying the game's environment switch.
@@ -51,6 +61,7 @@ Definitions load(const std::filesystem::path& base, const daedalus::DaedalusScri
 void registerStockRestoreEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
 void registerStockArmorSetEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
 void registerStockFightSkillEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
+void registerStockEquipmentStatEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
 // Both the game and its contract use this complete choice of initialization path.
 // Returns true when a definition supplied the fields, false after a VM constructor.
 bool initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::IItem>& item,
