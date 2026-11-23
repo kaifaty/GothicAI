@@ -499,6 +499,19 @@ void GameScript::loadNativeHumanPerceptions() {
     validateCombatTarget(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
     }},enabled);
   using Actor = std::shared_ptr<daedalus::INpc>;
+  vm.override_function("C_WANTTOFLEE",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    rememberFleeCheck(self,other);
+    return 0;
+    }},enabled);
+  vm.override_function("C_NPCRANSACKSALWAYS",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    return alwaysRansacks(npc);
+    }},enabled);
+  vm.override_function("C_WANTTORANSACK",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    return wantsToRansack(npc);
+    }},enabled);
+  vm.override_function("B_FINISHINGMOVE",std::function<void(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    queueFinishingMove(self,other);
+    }},enabled);
   vm.override_function("C_NPCISGATEGUARD",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return isGateGuard(npc);
     }},enabled);
@@ -1794,6 +1807,40 @@ void GameScript::sayAttackEnd() {
     }
   }
 
+void GameScript::rememberFleeCheck(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  // The verified program always returns FALSE after assigning the parameters.
+  findSymbol("C_WANTTOFLEE.OTH")->set_instance(other);
+  findSymbol("C_WANTTOFLEE.SLF")->set_instance(self);
+  }
+
+bool GameScript::alwaysRansacks(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("C_NPCRANSACKSALWAYS.SLF")->set_instance(self);
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto id = hlp_getinstanceid(self);
+  const auto carriesItemFor = [&](std::string_view owner, std::string_view item) {
+    return npc_hasitems(other,int(findSymbolIndex(item)))>0 && hlp_getinstanceid(findSymbol(owner)->get_instance())==id;
+    };
+  return carriesItemFor("GARWIG","HOLY_HAMMER_MIS") || carriesItemFor("ROD","ITMW_2H_ROD");
+  }
+
+bool GameScript::wantsToRansack(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("C_WANTTORANSACK.SLF")->set_instance(self);
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  if(self==nullptr || (npc_isplayer(other) && self->type==NpcType::G2_FRIEND) ||
+     hlp_getinstanceid(self)==hlp_getinstanceid(findSymbol("RAVEN")->get_instance()))
+    return false;
+  const auto guild = self->guild;
+  return guild!=GIL_KDW && guild!=GIL_NOV && guild!=GIL_KDF && guild!=GIL_PAL && guild!=GIL_ORC && guild!=GIL_DMT;
+  }
+
+void GameScript::queueFinishingMove(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("B_FINISHINGMOVE.OTH")->set_instance(other);
+  findSymbol("B_FINISHINGMOVE.SLF")->set_instance(self);
+  if(!npc_isinfightmode(self,int(FightMode::FMODE_MELEE)))
+    npc_settofightmode(self,int(findSymbolIndex("ITMW_1H_MISC_SWORD")));
+  ai_finishingmove(self,other);
+  }
+
 bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
   constexpr size_t lastFightAgainstPlayer = 0; // AIV_LASTFIGHTAGAINSTPLAYER
   constexpr size_t invincible = 4; // AIV_INVINCIBLE
@@ -1844,13 +1891,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
     npc_percenable(self,PERC_ASSESSSURPRISE,int(findFunction("B_ASSESSSURPRISE").ptr));
     validateCombatTarget(self);
     aivar[lastTarget] = hlp_getinstanceid(other());
-    if(vm.call_function<int32_t>("C_WANTTOFLEE",self,other())!=0) {
-      npc_clearaiqueue(self);
-      clearPerceptions(self);
-      npc_settarget(self,other());
-      start("ZS_FLEE");
-      return true;
-      }
+    rememberFleeCheck(self,other());
     if(aivar[loadedGame]==0)
       sayAttackReason();
     if(npc_isinfightmode(self,int(FightMode::FMODE_NONE))) {
@@ -2007,12 +2048,12 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
   if(wld_getguildattitude(int(self->guild),guild(hero()))!=ATT_HOSTILE && targetValue(killedByPlayer)==1)
     setCombatAttitude(self,ATT_FRIENDLY);
   if(vm.call_function<int32_t>("C_NPCHASATTACKREASONTOKILL",self)!=0 && npc_isinstate(other(),int(ZS_Unconscious)))
-    vm.call_function<void>("B_FINISHINGMOVE",self,other());
+    queueFinishingMove(self,other());
   ai_removeweapon(self);
   const bool near = npc_getdisttonpc(self,other())<constant("PERC_DIST_INTERMEDIAT");
-  const bool alwaysRansack = vm.call_function<int32_t>("C_NPCRANSACKSALWAYS",self)!=0;
+  const bool alwaysRansack = alwaysRansacks(self);
   const bool robbed = targetValue(ransacked)!=0;
-  const bool wantToRansack = vm.call_function<int32_t>("C_WANTTORANSACK",self)!=0;
+  const bool wantToRansack = wantsToRansack(self);
   const bool down = targetDown();
   if(near && (alwaysRansack || !robbed) && wantToRansack && down) {
     if(const auto target = other())
