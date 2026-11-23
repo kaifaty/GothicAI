@@ -88,14 +88,27 @@ bool GameScript::applyStockItemUseEffect(std::string_view callback) {
     external("CONCATSTRINGS");
     vm.set_string(vm.unsafe_get_gi(),findSymbol(scratch),0,vm.pop_string());
     };
-  const auto print = [&](const char* message, int32_t x, int32_t y, const char* font, int32_t seconds = 2) {
+  const auto screen = [&](const char* message, int32_t x, int32_t y, const char* font, int32_t seconds) {
     reference(message);
     vm.push_int(x);
     vm.push_int(y);
     reference(font);
     vm.push_int(seconds);
-    if(external("PRINTSCREEN"))
+    return external("PRINTSCREEN");
+    };
+  const auto print = [&](const char* message, int32_t x, int32_t y, const char* font, int32_t seconds = 2) {
+    if(screen(message,x,y,font,seconds))
       (void)vm.pop_int();
+    };
+  const auto playEffect = [&](const char* name, daedalus::DaedalusSymbol* actor) {
+    reference(name);
+    vm.push_reference(actor);
+    vm.push_reference(actor);
+    vm.push_int(0);
+    vm.push_int(0);
+    vm.push_int(0);
+    reference("FALSE");
+    external("WLD_PLAYEFFECT");
     };
   const auto read = [&](const char* name) {
     return vm.get_int(vm.unsafe_get_gi(),findSymbol(name),0);
@@ -246,14 +259,7 @@ bool GameScript::applyStockItemUseEffect(std::string_view callback) {
     set("SC_OBSESSIONCOUNTER",0);
     print("PRINT_CLEARSCOBSESSION",-1,-1,"FONT_SCREEN",3);
 
-    reference("$15858"); // Stock spellFX_LIGHTSTAR_VIOLET.
-    vm.push_reference(hero);
-    vm.push_reference(hero);
-    vm.push_int(0);
-    vm.push_int(0);
-    vm.push_int(0);
-    reference("FALSE");
-    external("WLD_PLAYEFFECT");
+    playEffect("$15858",hero); // Stock spellFX_LIGHTSTAR_VIOLET.
     reference("$15859"); // Stock SFX_HealObsession.
     external("SND_PLAY");
     return true;
@@ -294,6 +300,90 @@ bool GameScript::applyStockItemUseEffect(std::string_view callback) {
       for(const auto target:targets)
         invokeKillNpc(int32_t(findSymbolIndex(target)));
       setFlag("ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_ONETIME");
+      }
+    return true;
+    }
+
+  if(callback=="USE_SWAMPHERB" || callback=="USE_ZEITSPALT_ADDON") {
+    vm.push_reference(self);
+    external("NPC_ISPLAYER");
+    if(vm.pop_int()!=0) {
+      if(callback=="USE_SWAMPHERB") {
+        playEffect("$14573",self); // Stock SLOW_TIME.
+        } else {
+        playEffect("$13288",self); // Stock spellFX_BELIARSRAGE.
+        reference("$13289"); // Stock SLOW_MOTION stop cue.
+        external("WLD_STOPEFFECT");
+        playEffect("$13290",self); // Stock SLOW_MOTION start cue.
+        }
+      }
+    return true;
+    }
+  if(callback=="USEITPO_POTIONOFDEATH") {
+    RestoreContext restore{vm,vm.unsafe_get_gi()};
+    auto* hero = vm.global_hero();
+    const auto context = [&](daedalus::DaedalusSymbol* role) {
+      auto instance = role->get_instance();
+      vm.unsafe_set_gi(instance);
+      return instance;
+      };
+    auto* attributes = findSymbol("C_NPC.ATTRIBUTE");
+    const auto guild = vm.get_int(context(hero),findSymbol("C_NPC.GUILD"),0);
+    if(guild==read("GIL_KDF")) {
+      playEffect("$16161",hero); // Stock spellFX_LIGHTSTAR_BLUE.
+      reference("$16162"); // Stock SFX_HealObsession.
+      external("SND_PLAY");
+      const auto refill = [&](Attribute current, Attribute maximum) {
+        const auto from = context(self);
+        const auto to = context(self);
+        vm.set_int(to,attributes,current,vm.get_int(from,attributes,maximum));
+        };
+      refill(ATR_HITPOINTS,ATR_HITPOINTSMAX);
+      refill(ATR_MANA,ATR_MANAMAX);
+      auto* aivar = findSymbol("C_NPC.AIVAR");
+      const auto increase = [&](const char* attr,uint16_t training) {
+        attribute(attr);
+        vm.push_int(5);
+        external("NPC_CHANGEATTRIBUTE");
+        const auto before = vm.get_int(context(self),aivar,training);
+        vm.set_int(context(self),aivar,training,std::bit_cast<int32_t>(uint32_t(before)+5u));
+        };
+      increase("ATR_STRENGTH",81); // REAL_STRENGTH
+      increase("ATR_DEXTERITY",82); // REAL_DEXTERITY
+
+      // The void script frame keeps the three screen results until the overlay has started.
+      int32_t notices = 0;
+      notices += screen("PRINT_LEARNSTR5",-1,45,"FONT_SCREEN",2);
+      notices += screen("PRINT_LEARNDEX5",-1,55,"FONT_SCREEN",2);
+      notices += screen("PRINT_FULLYHEALED",-1,65,"FONT_SCREEN",2);
+      vm.push_reference(self);
+      reference("$16163"); // Stock HUMANS_SPRINT.MDS.
+      reference("TIME_SPEED");
+      external("MDL_APPLYOVERLAYMDSTIMED");
+      for(int32_t i=0; i<notices; ++i)
+        (void)vm.pop_int();
+      } else {
+      vm.push_reference(hero);
+      vm.push_int(std::bit_cast<int32_t>(3.f)); // Stock AI_WAIT float operand.
+      external("AI_WAIT");
+      vm.push_reference(self);
+      reference("$16164"); // Stock S_FIRE_VICTIM.
+      external("AI_PLAYANI");
+      playEffect("$16165",hero); // Stock VOB_MAGICBURN.
+      vm.push_reference(self);
+      vm.push_reference(self);
+      reference("$16166"); // Stock $Dead voice line.
+      vm.unsafe_call_bl(findSymbol("B_SAY"));
+      vm.push_reference(self);
+      reference("$16167"); // Stock VOB_MAGICBURN stop cue.
+      external("AI_STOPFX");
+      attribute("ATR_HITPOINTS");
+      const auto maximum = vm.get_int(context(self),attributes,ATR_HITPOINTSMAX);
+      vm.push_int(std::bit_cast<int32_t>(0u-uint32_t(maximum)));
+      external("NPC_CHANGEATTRIBUTE");
+      vm.push_reference(self);
+      reference("$16168"); // Stock S_FIRE_VICTIM stop cue.
+      external("NPC_STOPANI");
       }
     return true;
     }

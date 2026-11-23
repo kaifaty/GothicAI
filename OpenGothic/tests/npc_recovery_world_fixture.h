@@ -933,7 +933,8 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
                     symbol.name()=="USE_APPLE" || symbol.name()=="USE_MUSHROOM_01" ||
                     symbol.name()=="USE_MEATSOUP" || symbol.name()=="USEITPO_GEIST_01" ||
                     symbol.name()=="USEITPO_MEGADRINK" || symbol.name()=="USELOUHAMMER" ||
-                    symbol.name()=="USEITPO_STORY" || symbol.name()=="USE_TESTTRIGGER";
+                    symbol.name()=="USEITPO_STORY" || symbol.name()=="USE_TESTTRIGGER" ||
+                    symbol.name()=="USE_SWAMPHERB" || symbol.name()=="USE_ZEITSPALT_ADDON";
       });
 
     require(Settings::physicsFlags().meleeHealInterrupt,"health potions: the fixture uses deferred potion effects");
@@ -1072,8 +1073,13 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     script.invokeItem(npc,script.findFunction("USEITPO_GEIST_01"));
     require(npc->attribute(ATR_HITPOINTS)==-980 && Contract::aiState(*npc).started==isStarted,
             "special potion: the first spirit potion writes raw negative HP without an immediate health transition");
-    size_t repeatedEffects=0;
-    vm.observe_externals([&](const auto&) { ++repeatedEffects; });
+    size_t repeatedEffects=0,playerChecks=0;
+    vm.observe_externals([&](const auto& symbol) {
+      if(symbol.name()=="NPC_ISPLAYER")
+        ++playerChecks;
+      else
+        ++repeatedEffects;
+      });
     const std::array oneTimeItems={
       std::pair{"USEITPO_STORY","B_RAVENSESCAPEINTOTEMPELAVI_ONETIME"},
       std::pair{"USE_TESTTRIGGER","ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_ONETIME"},
@@ -1086,9 +1092,12 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
       require(flag->get_int()==1,"story consumable: a saved completed flag persists");
       flag->set_int(prior);
       }
+    require(repeatedEffects==0 && playerChecks==0,"story consumables: completed events do not replay their engine effects");
+    script.invokeItem(npc,script.findFunction("USE_SWAMPHERB"));
+    script.invokeItem(npc,script.findFunction("USE_ZEITSPALT_ADDON"));
     vm.observe_externals({});
-    require(repeatedEffects==0,"story consumables: completed events do not replay their engine effects");
-    require(restoreCalls==(native ? 0u : potionUse.size()+permanentUse.size()+foodUse.size()+9),
+    require(repeatedEffects==0 && playerChecks==2,"visual consumables: only the player can start their effects");
+    require(restoreCalls==(native ? 0u : potionUse.size()+permanentUse.size()+foodUse.size()+11),
             "item restores: only fallback executes the callback bodies");
     vm.global_self()->set_instance(previousSelf);
     std::copy(attributes.begin(),attributes.end(),npc->handle().attribute);
