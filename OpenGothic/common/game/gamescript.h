@@ -329,6 +329,7 @@ class GameScript final : public GameRules {
     bool endMonsterRoutine(Npc& npc, MonsterRoutine routine);
     void removeRavensStoneGuardians(Npc& npc);
     void loadNativeRoutines();
+    void loadNativeRoutineExchange();
 
     using NativeRoutineCallback = bool (GameScript::*)(Npc&, const daedalus::DaedalusSymbol&, int&);
     enum class RoutineWake : uint8_t { Timer, Sleep, Smalltalk, Herald, Concert };
