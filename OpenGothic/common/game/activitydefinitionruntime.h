@@ -19,7 +19,7 @@ enum class Mode : uint8_t { Off, Accepted, All };
 Mode mode();
 // The states whose record parity is accepted; other captured states need "all".
 bool accepted(std::string_view state);
-// With events off, mobs poll the recorded Loop and point states use the VM.
+// With events off, simple mobs poll the recorded Loop. Seated and point states use the VM.
 bool events();
 
 struct Phase {

@@ -1045,6 +1045,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      isActivityPoint(const WayPoint* point) const;
     void      stopWaitingForPoints();
     void      tickPointGesture();
+    void      tickSeatedGesture();
+    void      playActivityGesture();
     void      pushActivityCommand(AiQueue::AiAction&& action);
     void      seekActivityPlace();
     int       invokeRoutine(ScriptFn function);

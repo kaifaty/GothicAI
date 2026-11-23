@@ -1461,8 +1461,22 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
         "the real ZS_SIT_THRONE, whose Init asks the body state first, is refused by the comparison");
   const auto& guard=library.points.at("ZS_STAND_GUARDING");
   using Form=ActivityDefinitions::PointActivity::Form;
-  check(library.points.size()==5 && guard.form==Form::Guard && library.activities.size()==8,
-        "five point forms and all eight mob records import from the installed program");
+  const auto seatedCount=size_t(std::count_if(library.activities.begin(),library.activities.end(),[](const auto& entry) {
+    return entry.second.seated.has_value();
+    }));
+  check(library.points.size()==5 && guard.form==Form::Guard && library.activities.size()==8+seatedCount,
+        "five point forms and the original untimed mob records still import");
+  if(addon) {
+    check(seatedCount==2,"both seated forms import from Night of the Raven");
+    for(const auto& [state,scheme,range]:{std::tuple{"ZS_SIT_BENCH","BENCH",8},std::tuple{"ZS_SIT_CHAIR","CHAIR",10}}) {
+      const auto& mob=library.activities.at(state);
+      const auto& seated=mob.seated.value();
+      check(mob.scheme==scheme && mob.busyBodyState==65547 && mob.useState==1 && mob.leaveState==-1 &&
+            seated.timerSeconds==5 && seated.rollRange==range && seated.animations==
+            std::vector<std::string>{"R_CHAIR_RANDOM_1","R_CHAIR_RANDOM_2","R_CHAIR_RANDOM_3","R_CHAIR_RANDOM_4"},
+            std::string(state)+" matches the original seat and ordered gesture limits");
+      }
+    }
   if(addon) check(library.uncaptured.contains("ZS_WASH_FP"),"the similar WASH free point stays outside the PEE form");
   check(guard.point=="STAND" && guard.enterAnimation=="T_STAND_2_HGUARD" && guard.leaveAnimation=="T_HGUARD_2_STAND" &&
         guard.timerSeconds==5 && guard.rollRange==10 && guard.gestures[0].animation=="T_HGUARD_LOOKAROUND" &&
@@ -1508,20 +1522,27 @@ void realActivities(const NpcSnapshot::Program& program,const fs::path& base,con
   const auto section=base/"definitions"/program.sha256/"activities.json";
   if(fs::exists(section)) {
     const auto ready=ActivityDefinitions::read(base,program.sha256);
-    if(read(section)["version"]==2) {
-      check(fs::is_regular_file(base/"base-files.json"),"the archived v2 reference requires its payload manifest");
+    const auto version=read(section)["version"].GetInt();
+    if(version<ActivityDefinitions::FormatVersion) {
+      check(fs::is_regular_file(base/"base-files.json"),"an archived section requires its payload manifest");
       const auto manifest=read(base/"base-files.json");
       const auto files=manifest["files"].GetArray();
       const auto path=section.lexically_relative(base).generic_string();
       const auto entry=std::find_if(files.begin(),files.end(),[&](const auto& f) { return f["path"].GetString()==path; });
       check(entry!=files.end() && (*entry)["sha256"].GetString()==BaseImport::sha256File(section),
-            "the archived v2 section, including every fallback reason, matches its payload manifest");
-      check(symbols(ready)==states,"v2 covers the full symbol set of the installed routines");
-      check(ready.activities==library.activities && ready.points.size()==1 && ready.points.at("ZS_STAND_GUARDING")==guard,
-            "the v2 ready section retains the original mobs and guard");
-      for(auto name:{"ZS_SIT_CAMPFIRE","ZS_PEE","ZS_STAND_ARMSCROSSED","ZS_STAND_WP"})
-        check(ready.uncaptured.contains(name),"v2 keeps the original fallback for "+std::string(name));
-      std::cout<<"Ready v2: "<<states.size()<<" routine state symbols, 8 mobs, 1 guard, "<<ready.uncaptured.size()<<" on the VM\n";
+            "the archived section matches its payload manifest");
+      check(symbols(ready)==states,"the archived section covers the installed routines");
+      auto untimed=library.activities;
+      std::erase_if(untimed,[](const auto& entry) { return entry.second.seated.has_value(); });
+      check(ready.activities==untimed,"archived sections retain the original untimed mobs");
+      if(version==2) {
+        check(ready.points.size()==1 && ready.points.at("ZS_STAND_GUARDING")==guard,"v2 retains the guard");
+        for(auto name:{"ZS_SIT_CAMPFIRE","ZS_PEE","ZS_STAND_ARMSCROSSED","ZS_STAND_WP"})
+          check(ready.uncaptured.contains(name),"v2 keeps the original fallback for "+std::string(name));
+        }
+      else check(ready.points==library.points,"v3 retains all point forms");
+      std::cout<<"Ready v"<<version<<": "<<states.size()<<" routine state symbols, "<<ready.activities.size()
+               <<" mobs, "<<ready.points.size()<<" point forms, "<<ready.uncaptured.size()<<" on the VM\n";
       }
     else {
       std::ifstream x(section,std::ios::binary),y(file,std::ios::binary);

@@ -12,9 +12,9 @@ using DefinitionJson::at;
 using DefinitionJson::string;
 using DefinitionJson::bytes;
 using DefinitionJson::integer;
-ActivityDefinitions::MobActivity mob(const Json& json) {
+ActivityDefinitions::MobActivity mob(const Json& json,int version) {
   using namespace ActivityDefinitions;
-  require(json.IsObject() && json.MemberCount()==9,"unexpected parameter field");
+  require(json.IsObject(),"expected object parameters");
   MobActivity a;
   const auto& perceptions=at(json,"perceptions");
   require(perceptions.IsObject() && perceptions.MemberCount()==2 && at(perceptions,"deferred").IsBool() &&
@@ -32,6 +32,21 @@ ActivityDefinitions::MobActivity mob(const Json& json) {
   a.useState=integer(at(json,"use_state"));
   a.leaveState=integer(at(json,"leave_state"));
   a.loopResult=integer(at(json,"loop_result"));
+  if(version>=4 && json.HasMember("seated")) {
+    const auto& parameters=at(json,"seated");
+    DefinitionJson::object(parameters,{"timer_seconds","roll_range","animations"});
+    auto& seated=a.seated.emplace();
+    seated.timerSeconds=integer(at(parameters,"timer_seconds"));
+    seated.rollRange=integer(at(parameters,"roll_range"));
+    const auto& animations=at(parameters,"animations");
+    require(seated.timerSeconds>=0 && seated.rollRange>0 && animations.IsArray() &&
+            !animations.Empty() && animations.Size()<=uint32_t(seated.rollRange),"invalid seated gestures");
+    for(const auto& animation:animations.GetArray()) {
+      seated.animations.push_back(bytes(animation));
+      require(!seated.animations.back().empty(),"empty seated animation");
+      }
+    }
+  require(json.MemberCount()==(a.seated ? 10u : 9u),"unexpected parameter field");
   return a;
   }
 ActivityDefinitions::PointActivity point(const Json& json,int version) {
@@ -39,7 +54,7 @@ ActivityDefinitions::PointActivity point(const Json& json,int version) {
   using Form=PointActivity::Form;
   PointActivity a;
   unsigned fields=6;
-  if(version==FormatVersion) {
+  if(version>=3) {
     const auto name=string(at(json,"form"));
     const auto& names=PointActivity::FormNames;
     const auto form=std::find(names.begin(),names.end(),name);
@@ -121,7 +136,7 @@ ActivityDefinitions::Library ActivityDefinitions::read(const std::filesystem::pa
     require(!doc.HasParseError(),"invalid JSON");
     require(string(at(doc,"format"))=="gothic-activity-definitions","unsupported format");
     const auto& version=at(doc,"version");
-    require(version.IsInt() && (version.GetInt()==2 || version.GetInt()==FormatVersion),"unsupported version");
+    require(version.IsInt() && version.GetInt()>=2 && version.GetInt()<=FormatVersion,"unsupported version");
     require(!string(at(doc,"program_name")).empty(),"empty program name");
     require(string(at(doc,"program_sha256"))==programSha256,"program SHA differs");
     require(string(at(doc,"string_encoding"))=="unicode-byte-mapping","unsupported string encoding");
@@ -145,7 +160,7 @@ ActivityDefinitions::Library ActivityDefinitions::read(const std::filesystem::pa
         const auto type=string(at(record,"template"));
         require(type=="mob" || type=="point","unsupported activity template");
         if(type=="point") result.points.emplace(name,point(at(record,"parameters"),version.GetInt()));
-        else result.activities.emplace(name,mob(at(record,"parameters")));
+        else result.activities.emplace(name,mob(at(record,"parameters"),version.GetInt()));
         }
       catch(const std::exception& e) { throw std::runtime_error(name+": "+e.what()); }
       }

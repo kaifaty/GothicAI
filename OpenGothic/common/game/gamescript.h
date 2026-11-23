@@ -218,7 +218,7 @@ class GameScript final : public GameRules {
 
     const ActivityEvents::Record* eventActivity(ScriptFn init) override;
     std::vector<std::string_view> eventActivityNames();
-    void         runPointGesture(Npc& npc, const ActivityDefinitions::PointActivity& point) override;
+    void         runActivityGesture(Npc& npc, const ActivityEvents::Record& activity) override;
 
   private:
     friend struct NpcDefinitionContract;

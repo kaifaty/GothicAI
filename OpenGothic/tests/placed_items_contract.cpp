@@ -2173,8 +2173,8 @@ void activityDefinitionsWorld(Gothic& gothic) {
   std::vector<std::string> accepted;
   for(const auto& spec:worldActivities)
     accepted.emplace_back(spec.state);
-  constexpr size_t pointPhases=5*2; // Init and End of the five point activities; their polled Loops run in the VM.
-  activitySwitch(script,accepted,"ZS_ROAST_SCAVENGER",pointPhases);
+  constexpr size_t eventPhases=7*2; // Init and End of five point activities and two seated activities.
+  activitySwitch(script,accepted,"ZS_ROAST_SCAVENGER",eventPhases);
   std::vector<WorldActivity> activities;
   std::set<Npc*> actors;
   for(const auto& spec:worldActivities) {
@@ -2198,7 +2198,7 @@ void activityDefinitionsWorld(Gothic& gothic) {
     actors.insert(activity.actor);
     activities.push_back(std::move(activity));
     }
-  require(NpcDefinitionContract::activities(script).phases.size()==3*activities.size()+pointPhases,
+  require(NpcDefinitionContract::activities(script).phases.size()==3*activities.size()+eventPhases,
           "the game must load the accepted mob phases and the point activities' Init and End");
   size_t events=0;
   for(auto& activity:activities)

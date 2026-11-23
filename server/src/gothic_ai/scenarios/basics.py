@@ -1314,12 +1314,13 @@ async def m5c_free_npc(
     habit = Habit(
         "stand quietly and think", "ZS_STAND_WP" if current != "ZS_STAND_WP" else "ZS_STAND_ARMSCROSSED"
     )
-    scripted = Habit("sit on a bench", "ZS_SIT_BENCH")
+    scripted = Habit("sit on a throne", "ZS_SIT_THRONE")
     results: dict[str, str] = {}
-    catalog = info.event_activities or []
+    catalog = set(info.event_activities or [])
+    missing = {habit.state, "ZS_SIT_BENCH", "ZS_SIT_CHAIR"} - catalog
     results["event_catalog"] = (
-        f"{'done' if habit.state in catalog and scripted.state not in catalog else 'failed'} "
-        f"({len(catalog)} event states, planned {habit.state})"
+        f"{'done' if not missing and scripted.state not in catalog else 'failed'} "
+        f"({len(catalog)} event states, planned {habit.state}, missing {sorted(missing)})"
     )
     started_lines: list[LineStarted] = []
     link.listeners.append(lambda m: started_lines.append(m) if isinstance(m, LineStarted) else None)
